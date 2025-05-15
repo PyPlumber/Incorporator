@@ -10,4 +10,5 @@ The algorithm will:
   Convert values to primitive Python Classes or Dictionary pointers
   Change field/attribute field names
   
-  
+
+  Tests were done using the Rick and Morty API.
