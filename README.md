@@ -1,6 +1,6 @@
 # Incorporator
 
-The Incorporator is a Super Class meant to convert data records into instances of a Subclass.
+The Incorporator is a Python Super Class meant to convert data records into instances of a Subclass.
 
 ## Description
 
