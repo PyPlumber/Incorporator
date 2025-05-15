@@ -20,7 +20,6 @@ The algorithm will:
 ## Getting Started
 
 Review Constants_API.py for SubClass parameters
-Run <New Incorporator SubClass> refreshDataREST(nextURL, rPath)
 
 ### Dependencies
 
@@ -30,8 +29,8 @@ PANDAS for JSON Normalize, requests for JSON API call, copy for Dictionaries, da
 
 ### Executing program
 
-* How to run the program
-* Step-by-step bullets
+* Create New Incorporator SubClass
+* Run <New Incorporator SubClass>.refreshDataREST(nextURL, rPath)
 ```
 Review Constants_API.py for SubClass creation
 Then use dictionary reference and attribute name for direct references, example: charList[4].origin
