@@ -25,9 +25,6 @@ class Incorporator:
         refreshDataREST (cls): Return dictionary of objects from JSON
     """
 
-    ##TODO separate conv, update logic from JSON DF parsing
-    ##TODO Formatted DisplayInfo with Details of all class attributes
-
 
 
     codeDict = UserDict()
