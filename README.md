@@ -1,15 +1,8 @@
 # Incorporator
 
-Simple overview of use/purpose.
-
-## Description
-
 The Incorporator is a Super Class meant to convert data records into instances of a Subclass.
 
-## Getting Started
-
-Review Constants_API.py for SubClass parameters
-Run <New Incorporator SubClass> refreshDataREST(nextURL, rPath)
+## Description
 
 The algorithm will:
   Use PANDAS to parse JSON into DataFrames for manipulation.
@@ -23,6 +16,11 @@ The algorithm will:
   Convert values to primitive Python Classes or Dictionary pointers
   
   Change field/attribute field names
+
+## Getting Started
+
+Review Constants_API.py for SubClass parameters
+Run <New Incorporator SubClass> refreshDataREST(nextURL, rPath)
 
 ### Dependencies
 
