@@ -1,6 +1,4 @@
-RESULTS FROM testRickAndMortyOOP
-
-21 - Testicle Monster Dimension
+23 - Earth (C-500A)
 St. Gloopy Noops Hospital
 
 
@@ -8,6 +6,7 @@ St. Gloopy Noops Hospital
 Female
 20 - Earth (Replacement Dimension)
 Code:    20 Name: Earth (Replacement Dimension)
+{'code': 33, 'name': 'Beebo', 'status': 'Dead', 'species': 'Alien', 'type': '', 'gender': 'Male', 'created': Timestamp('2017-11-05 09:21:55.595000+0000', tz='tzutc()'), 'origin': 10 - Venzenulon 7{'code': 10, 'name': 'Venzenulon 7', 'type': 'Planet', 'dimension': 'unknown', 'created': Timestamp('2017-11-18 11:21:51.643000+0000', tz='tzutc()')}, 'location_url': 10 - Venzenulon 7{'code': 10, 'name': 'Venzenulon 7', 'type': 'Planet', 'dimension': 'unknown', 'created': Timestamp('2017-11-18 11:21:51.643000+0000', tz='tzutc()')}}
 
 
 4 - M. Night Shaym-Aliens!
