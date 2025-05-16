@@ -1,0 +1,46 @@
+RESULTS FROM testRickAndMortyOOP
+
+21 - Testicle Monster Dimension
+St. Gloopy Noops Hospital
+
+
+4 - Beth Smith
+Female
+20 - Earth (Replacement Dimension)
+Code:    20 Name: Earth (Replacement Dimension)
+
+
+4 - M. Night Shaym-Aliens!
+
+
+Episode 7 was titled Raising Gazorpazorp.
+The episode aired on 10, Mar 2014.
+The API instance was created in 2017.
+
+
+It had 14 characters:
+Code:     1 Name: Rick Sanchez        
+Code:     2 Name: Morty Smith         
+Code:     3 Name: Summer Smith        
+Code:     4 Name: Beth Smith          
+Code:     5 Name: Jerry Smith         
+Code:    59 Name: Brad Anderson       
+Code:   151 Name: Gwendolyn           
+Code:   168 Name: Jackie              
+Code:   211 Name: Ma-Sha              
+Code:   230 Name: Morty Jr.           
+Code:   258 Name: Pawnshop Clerk      
+Code:   329 Name: Snuffles (Snowball) 
+Code:   376 Name: Veronica Ann Bennet 
+Code:   401 Name: Morty Jr's interviewer
+
+
+Here is episode 7's character origin distribution:
+Origin
+Earth (Replacement Dimension)    6
+Gazorpazorp                      4
+                                 2
+Earth (C-137)                    2
+Name: count, dtype: int64
+
+Process finished with exit code 0
