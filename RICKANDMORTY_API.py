@@ -8,10 +8,7 @@ RickAndMortyAPI = Incorporator.Incorporator.incSubCls('RickAndMortyAPI','id', 'n
     codeAdds= {},
     exclAdds=['url'],
     convAdds={
-        'residents': lambda x: list(map(lambda y: Character.codeDict.get(Location.getCodeFromUrl(y),Location.codeDict[None]), x)),
         'created': lambda x: parser.parse(x) if x else "",
-        'air_date': lambda x: parser.parse(x) if x else "",
-        'characters': lambda x: list(map(lambda y: Character.codeDict.get(Location.getCodeFromUrl(y),Location.codeDict[None]), x)),
         'location_url': lambda x: Location.codeDict.get(Location.getCodeFromUrl(x),Location.codeDict[None]),
         'origin_url': lambda x: Location.codeDict.get(Location.getCodeFromUrl(x),Location.codeDict[None])
     },
@@ -21,14 +18,19 @@ Location = RickAndMortyAPI.incSubCls('Location','id', 'name',
     RickAndMortyAPI.endpointAPI+"location/",
     codeAdds= {},
     exclAdds=['residents'],
-    convAdds={},
+    convAdds={
+        'residents': lambda x: list(map(lambda y: Character.codeDict.get(Location.getCodeFromUrl(y), Location.codeDict[None]), x)),
+    },
     nameAdds={})
 
 Episode = RickAndMortyAPI.incSubCls('Episode','id', 'name',
     RickAndMortyAPI.endpointAPI+"episode/",
     codeAdds= {},
     exclAdds=[],
-    convAdds={},
+    convAdds={
+        'air_date': lambda x: parser.parse(x) if x else "",
+        'characters': lambda x: list(map(lambda y: Character.codeDict.get(Location.getCodeFromUrl(y), Location.codeDict[None]), x)),
+    },
     nameAdds={})
 
 Character = RickAndMortyAPI.incSubCls('Character','id', 'name',

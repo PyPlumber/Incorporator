@@ -1,25 +1,26 @@
 import pandas as pd
-import Constants_API
+import RICKANDMORTY_API
 
-# print(vars(Constants_API.RickAndMortyAPI))
-# print(vars(Constants_API.Location))
-# print(vars(Constants_API.Episode))
-# print(vars(Constants_API.Character))
+# print(vars(RICKANDMORTY_API.RickAndMortyAPI))
+# print(vars(RICKANDMORTY_API.Location))
+# print(vars(RICKANDMORTY_API.Episode))
+# print(vars(RICKANDMORTY_API.Character))
 
-locList = Constants_API.Location.refreshDataREST(Constants_API.Location.endpointAPI, rPath='results', nextUrlPath=['info','next'])
-print(locList[21])
+locList = RICKANDMORTY_API.Location.refreshDataREST(RICKANDMORTY_API.Location.endpointAPI, rPath='results', nextUrlPath=['info','next'])
+print(locList[23])
 print(locList[16].name)
 print("\n")
 
-charList = Constants_API.Character.refreshDataREST(Constants_API.Character.endpointAPI, rPath='results', nextUrlPath=['info','next'])
+charList = RICKANDMORTY_API.Character.refreshDataREST(RICKANDMORTY_API.Character.endpointAPI, rPath='results', nextUrlPath=['info','next'])
 print(charList[4])
 print(charList[4].gender)
 print(charList[4].origin)
 charList[4].origin.displayInfo()
+charList[33].displayInfo(True)
 
 print("\n")
 
-epsList = Constants_API.Episode.refreshDataREST(Constants_API.Episode.endpointAPI, rPath='results', nextUrlPath=['info','next'])
+epsList = RICKANDMORTY_API.Episode.refreshDataREST(RICKANDMORTY_API.Episode.endpointAPI, rPath='results', nextUrlPath=['info','next'])
 print(epsList[4])
 
 print("\n")

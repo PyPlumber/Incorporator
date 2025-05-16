@@ -2,11 +2,13 @@ from collections import UserDict, UserList
 import requests
 import pandas as pd
 import copy
+import re
 
 class Incorporator:
     """A super class meant to give children classes:
         * standard data type conversion methods
         * dictionary of class instances by given key
+        * attributes that act as pointers to related Class instances
         * algorithm that dynamically names attributes during ingestion
 
     Attributes:
@@ -25,8 +27,6 @@ class Incorporator:
         refreshDataREST (cls): Return dictionary of objects from JSON
     """
 
-
-
     codeDict = UserDict()
     convDict = UserDict()
     nameDict = UserDict()
@@ -41,6 +41,14 @@ class Incorporator:
 
     def __str__(self):
         return f"{self.code} - {self.name}"
+
+    def __repr__(self):
+        return f"{self.code} - {self.name}{self.__dict__}"
+
+    def __deepcopy__(self, memo):
+        new_obj = Incorporator()
+        memo[id(self)] = new_obj
+        return new_obj
 
     ## Formatted Code and Name print for visual checks
     def displayInfo(self,detailFlg=False):  # method without self parameter
@@ -81,6 +89,7 @@ class Incorporator:
         newExclLst.extend(exclAdds)
         newConvDict.update(convAdds)
         newNameDict.update(nameAdds)
+
         return type(newSubCls, (cls, ),{'codeIdx': codeAttr, 'nameIdx': nameAttr, 'endpointAPI': endpntAPI,
             'codeDict': newCodeDict, 'exclLst': newExclLst, 'convDict': newConvDict, 'nameDict': newNameDict
             })
@@ -93,14 +102,17 @@ class Incorporator:
         else:
             return Incorporator.nextUrlREST(jsonDict.get(keyPathLst[0], {}), keyPathLst[1:])
 
-    ## Pop page as code from API URL
+    ## Get page as code from URL
     @staticmethod
-    def getCodeFromUrl(urlAPI):
+    def getCodeFromUrl(urlAPI, position=0):
+        urlPattern = r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
+        urlList = [re.sub("^/|/$", "", i) for i in re.findall(urlPattern, urlAPI)]
+        codeList = [i.split('/')[-1] for i in urlList]
         try:
-            i = int(str(urlAPI).split("/").pop())
-        except ValueError:
-            i = urlAPI
-        return i
+            cd = int(codeList[position])
+        except (ValueError, IndexError):
+            cd = urlAPI
+        return cd
 
     @classmethod
     def refreshDataREST(cls, nextUrl, rPath='results', nextUrlPath=None):
@@ -108,13 +120,15 @@ class Incorporator:
             ## While API pages are avaliable loop through JSON Batches
             ## Use pandas DF to normalize batch, set Class code as index, remove exclList
             batch = requests.Session().get(nextUrl).json()
-            batchDF = pd.json_normalize(batch, rPath, sep="_").set_index(cls.codeIdx).drop(columns=cls.exclLst)
+            batchDF   = pd.json_normalize(batch, rPath, sep="_").drop(columns=cls.exclLst)
+            batchDF[cls.codeIdx] = batchDF[cls.codeIdx].apply(cls.cnvattr(cls.codeIdx))
+            batchDF = batchDF.set_index(cls.codeIdx)
+            batchDict = batchDF[cls.nameIdx].to_dict()
             nextUrl = Incorporator.nextUrlREST(batch,nextUrlPath)
 
             ## Iterate Batch dict {code:name} to retrieve OR
             ## create missing Class instances
             defaultInstance = cls.getOrCreate(None, 'Null')
-            batchDict = batchDF[cls.nameIdx].to_dict()
             for key, value in batchDict.items():
                 cls.getOrCreate(key, value)
 
@@ -125,4 +139,5 @@ class Incorporator:
                 setattr(defaultInstance, cls.nameattr(col), "")
                 for key, value in attribDF.items():
                     setattr(cls.codeDict[key], cls.nameattr(col), value)
+
         return cls.codeDict
