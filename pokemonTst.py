@@ -11,3 +11,6 @@ print(pokeList[121].name)
 
 pokeList[125].displayInfo()
 
+pokeList[900].displayInfo()
+
+pokeList[2].displayInfo(True)
