@@ -46,7 +46,7 @@ class Incorporator:
         return f"{self.code} - {self.name}{self.__dict__}"
 
     def __deepcopy__(self, memo):
-        new_obj = Incorporator()
+        new_obj = Incorporator(None, 'Null')
         memo[id(self)] = new_obj
         return new_obj
 
@@ -118,13 +118,15 @@ class Incorporator:
     def refreshDataREST(cls, nextUrl, rPath='results', nextUrlPath=None):
         while nextUrl:
             ## While API pages are avaliable loop through JSON Batches
-            ## Use pandas DF to normalize batch, set Class code as index, remove exclList
-            batch = requests.Session().get(nextUrl).json()
-            batchDF   = pd.json_normalize(batch, rPath, sep="_").drop(columns=cls.exclLst)
+            ## Use pandas DF to normalize batch, remove exclList
+            batch   = requests.Session().get(nextUrl).json()
+            batchDF = pd.json_normalize(batch, rPath, sep="_").drop(columns=cls.exclLst)
             batchDF[cls.codeIdx] = batchDF[cls.codeIdx].apply(cls.cnvattr(cls.codeIdx))
-            batchDF = batchDF.set_index(cls.codeIdx)
+
+            ##set Class code as index,
+            batchDF   = batchDF.set_index(cls.codeIdx)
             batchDict = batchDF[cls.nameIdx].to_dict()
-            nextUrl = Incorporator.nextUrlREST(batch,nextUrlPath)
+            nextUrl   = Incorporator.nextUrlREST(batch,nextUrlPath)
 
             ## Iterate Batch dict {code:name} to retrieve OR
             ## create missing Class instances

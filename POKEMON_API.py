@@ -5,11 +5,7 @@ PokemonBase = Incorporator.Incorporator.incSubCls('PokemonBase','id', 'name',
     codeAdds= {},
     exclAdds=[],
     convAdds={
-
         'url': lambda x: PokemonBase.getCodeFromUrl(x)
-        # 'air_date': lambda x: parser.parse(x) if x else "",
-        # 'characters': lambda x: list(map(lambda y: Character.codeDict.get(Location.getCodeFromUrl(y),Location.codeDict[None]), x)),
-        # 'location_url': lambda x: Location.codeDict.get(Location.getCodeFromUrl(x),Location.codeDict[None]),
     },
     nameAdds={})
 
