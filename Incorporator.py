@@ -1,4 +1,3 @@
-from collections import UserDict, UserList
 import requests
 import pandas as pd
 import copy
@@ -27,15 +26,14 @@ class Incorporator:
         refreshDataREST (cls): Return dictionary of objects from JSON
     """
 
-    codeDict = UserDict()
-    convDict = UserDict()
-    nameDict = UserDict()
-    exclLst  = UserList()
+    codeDict = dict()
+    convDict = dict()
+    nameDict = dict()
+    exclLst  = list()
     codeIdx  = ''
     nameIdx  = ''
 
     def __init__(self, code, name=""):
-        # Storing the idx code and name
         self.code = code
         self.name = name
 
@@ -74,11 +72,11 @@ class Incorporator:
     def nameattr(cls, attr):
         return cls.nameDict.get(attr, attr)
 
-    ## Return SubCls for data ingesttion
+    ## Return SubCls for data ingestion
     @classmethod
     def incSubCls(
             cls, newSubCls, codeAttr, nameAttr, endpntAPI,
-            codeAdds=None, exclAdds=None, convAdds=None, nameAdds=None
+            codeAdds=None, exclAdds=[], convAdds=None, nameAdds=None
     ):
         newCodeDict = copy.deepcopy(cls.codeDict)
         newExclLst  = copy.deepcopy(cls.exclLst)
@@ -102,11 +100,12 @@ class Incorporator:
         else:
             return Incorporator.nextUrlREST(jsonDict.get(keyPathLst[0], {}), keyPathLst[1:])
 
-    ## Get page as code from URL
+    ## Get page as code from URL, consider lists and trail slash
     @staticmethod
     def getCodeFromUrl(urlAPI, position=0):
         urlPattern = r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
-        urlList = [re.sub("^/|/$", "", i) for i in re.findall(urlPattern, urlAPI)]
+        urlList  = re.findall(urlPattern, urlAPI)
+        urlList  = [re.sub("^/|/$", "", i) for i in urlList]
         codeList = [i.split('/')[-1] for i in urlList]
         try:
             cd = int(codeList[position])
@@ -117,7 +116,7 @@ class Incorporator:
     @classmethod
     def refreshDataREST(cls, nextUrl, rPath='results', nextUrlPath=None):
         while nextUrl:
-            ## While API pages are avaliable loop through JSON Batches
+            ## While API pages are available loop through JSON Batches
             ## Use pandas DF to normalize batch, remove exclList
             batch   = requests.Session().get(nextUrl).json()
             batchDF = pd.json_normalize(batch, rPath, sep="_").drop(columns=cls.exclLst)
