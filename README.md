@@ -1,25 +1,25 @@
 # Incorporator
 
-The Incorporator is a Python "Super" Class meant to convert data records into instances of a Subclass.
+The Incorporator is a Python "Super" Class desgined to quickly automate retrieval and conversion of data records from an external source.  Create a subclass of the Incorporator and populate it with instances of the external data records.  The subclass instances contain the converted data attributes as properties.  Subclass properties can store hashmap keys to related data records stored in a different Incorporator subclass.
 
 ## Description
 
 The algorithm will:
   Use PANDAS to parse JSON into DataFrames for manipulation.
+
+  Create a Class for the data records to reference attributes
   
-  Create a Class dictionary for a given unique data record index/key/field
-  
-  Create a Class for the data records
-  
-  Dynamically name Class attributes for the incoming field names
+  Create a Class Dictionary for a given unique data record index/key/field
+     
+  Dynamically name Class properties for the incoming field or attributes names
   
   Convert values to primitive Python Classes or Dictionary pointers
   
-  Change field/attribute field names
+  Change or override incoming field/attribute field names
 
 ## Getting Started
 
-Review Constants_API.py for SubClass parameters
+The current implementation for REST API requires only these inputs: url, instance key , instance name.
 
 ### Dependencies
 
@@ -38,7 +38,8 @@ Then use dictionary reference and attribute name for direct references, example:
 
 ## Help
 
-Only tested againg Rick and Mory API so far
+Rick and Mory API shows relational capabilities of loading with Incorporator
+Pokemon API test shows flexibility working with larger datasets quickly.
 ```
 
 ```
