@@ -1,6 +1,6 @@
 # Incorporator
 
-The Incorporator is a Python "Super" Class desgined to quickly automate retrieval and conversion of data records from an external source.  Create a subclass of the Incorporator and populate it with instances of the external data records.  The subclass instances contain the converted data attributes as properties.  Subclass properties can store hashmap keys to related data records stored in a different Incorporator subclass.
+The Incorporator is a Python "Super" Class designed to quickly automate retrieval and conversion of data records from an external source.  Create a subclass of the Incorporator to populate it with instances of the external data records.  The subclass instances will store the converted incoming data attributes as class properties.  Subclass properties can and may store hashmaps to similar Incorporator sublass objects instead of storing additional copies of the original data
 
 ## Description
 
