@@ -25,6 +25,10 @@ class Incorporator:
         nextUrlREST (static): Get next API URL from JSON
         refreshDataREST (cls): Return dictionary of objects from JSON
     """
+    ##TODO new func getDateTimeFromStr
+    ##TODO batchDict as funct return
+    ##TODO is endpointAPI needed in refreshDataREST call
+
 
     codeDict = dict()
     convDict = dict()
