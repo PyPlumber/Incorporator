@@ -126,7 +126,7 @@ class Incorporator:
             batchDF = pd.json_normalize(batch, rPath, sep="_").drop(columns=cls.exclLst)
             batchDF[cls.codeIdx] = batchDF[cls.codeIdx].apply(cls.cnvattr(cls.codeIdx))
 
-            ##set Class code as index,
+            ## set Class code as index,
             batchDF   = batchDF.set_index(cls.codeIdx)
             batchDict = batchDF[cls.nameIdx].to_dict()
             nextUrl   = Incorporator.nextUrlREST(batch,nextUrlPath)
