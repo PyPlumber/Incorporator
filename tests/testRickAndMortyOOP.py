@@ -11,12 +11,12 @@ print(locList[23])
 print(locList[16].name)
 print("\n")
 
-charList = RICKANDMORTY_API.Character.refreshDataREST(RICKANDMORTY_API.Character.endpointAPI, rPath='results', nextUrlPath=['info', 'next'])
-print(charList[4])
-print(charList[4].gender)
-print(charList[4].origin)
-charList[4].origin.displayInfo()
-charList[33].displayInfo(True)
+# charList = RICKANDMORTY_API.Character.refreshDataREST(RICKANDMORTY_API.Character.endpointAPI, rPath='results', nextUrlPath=['info', 'next'])
+# print(charList[4])
+# print(charList[4].gender)
+# print(charList[4].origin)
+# charList[4].origin.displayInfo()
+# charList[33].displayInfo(True)
 
 print("\n")
 
@@ -32,18 +32,18 @@ print(f"The API instance was created in {story.created.strftime('%Y')}.")
 
 print("\n")
 
-cast = story.characters
-print(f"It had {len(cast)} characters:")
-for character in cast:
-    character.displayInfo()
-
-
-print("\n")
-
-origins = []
-for character in cast:
-    origins.append([character.name, character.origin.name])
-
-originsDF = pd.DataFrame(origins, columns =['Character', 'Origin'])
-print(f"Here is episode {story.code}'s character origin distribution:")
-print(originsDF.value_counts('Origin'))
+# cast = story.characters
+# print(f"It had {len(cast)} characters:")
+# for character in cast:
+#     character.displayInfo()
+#
+#
+# print("\n")
+#
+# origins = []
+# for character in cast:
+#     origins.append([character.name, character.origin.name])
+#
+# originsDF = pd.DataFrame(origins, columns =['Character', 'Origin'])
+# print(f"Here is episode {story.code}'s character origin distribution:")
+# print(originsDF.value_counts('Origin'))

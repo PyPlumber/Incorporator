@@ -1,13 +1,13 @@
-from src import Incorporator
+import Incorporator
 
 PokemonBase = Incorporator.Incorporator.incSubCls('PokemonBase', 'id', 'name',
     'https://pokeapi.co/api/v2/',
-                                                  codeAdds= {},
-                                                  exclAdds=[],
-                                                  convAdds={
+    codeAdds= {},
+    exclAdds=[],
+    convAdds={
         'url': lambda x: PokemonBase.getCodeFromUrl(x)
     },
-                                                  nameAdds={})
+    nameAdds={})
 
 Language = PokemonBase.incSubCls('Language','url', 'name',
     PokemonBase.endpointAPI+'language/',
