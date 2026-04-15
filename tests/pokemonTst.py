@@ -1,4 +1,4 @@
-from src import POKEMON_API
+import POKEMON_API
 
 langList = POKEMON_API.Language.refreshDataREST(POKEMON_API.Language.endpointAPI, rPath='results', nextUrlPath=['next'])
 print(langList[1])
