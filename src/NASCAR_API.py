@@ -1,4 +1,5 @@
 from dateutil import parser
+from datetime import datetime
 import Incorporator
 
 NascarBase = Incorporator.Incorporator.incSubCls('NascarBase', 'id', 'name',
@@ -16,7 +17,7 @@ TrackBase = NascarBase.incSubCls('TrackBase','track_id', 'track_name',
     nameAdds={})
 
 RaceBase = NascarBase.incSubCls('RaceBase','race_id', 'race_name',
-    NascarBase.endpointAPI+'2026/'+'race_list_basic.json',
+    NascarBase.endpointAPI+str(datetime.now().year)+'/race_list_basic.json',
     codeAdds= {},
     exclAdds=['schedule','track_name'],
     convAdds=dict({
@@ -49,55 +50,37 @@ TruckRaceBase = NascarBase.incSubCls('RaceBase','race_id', 'race_name',
     convAdds={},
     nameAdds={})
 
-# trackList  = TrackBase.refreshDataREST(TrackBase.endpointAPI, rPath='items', nextUrlPath=['next'])
-# nascrRaces = NascarRaceBase.refreshDataREST(NascarRaceBase.endpointAPI, rPath='series_1', nextUrlPath=['next'])
-# buschRaces = BuschRaceBase.refreshDataREST(BuschRaceBase.endpointAPI, rPath='series_2', nextUrlPath=['next'])
-# truckRaces = TruckRaceBase.refreshDataREST(TruckRaceBase.endpointAPI, rPath='series_3', nextUrlPath=['next'])
+DriverBase = NascarBase.incSubCls('DriverBase','Nascar_Driver_ID', 'Full_Name',
+    NascarBase.endpointAPI+'drivers.json',
+    codeAdds= {},
+    exclAdds=[],
+    convAdds=dict({
+        'DOB': lambda x: parser.parse(x) if x else "",
+        'DOD': lambda x: parser.parse(x) if x else ""
+    }),
+    nameAdds={})
 
-# # NASCAR API Initialization
-# API_URL = "https://cf.nascar.com/live/feeds/live-feed.json"
-# nascar_feed = NASCARFeed(API_URL)
-#
-# # Other URLS
-# # https://cf.nascar.com/cacher/2024/2/5451/weekend-feed.json
-# # https://cf.nascar.com/cacher/2024/2/5451/live-stage-points.json
-# # https://cf.nascar.com/cacher/2024/2/5451/lap-averages.json
-# # https://cf.nascar.com/cacher/tracks.json
-# # https://cf.nascar.com/cacher/2024/race_list_basic.json
-#
-# MANU_POINTS_URL = "https://cf.nascar.com/cacher/2022/1/final/1-manufacturer-points.json" # url to pull manufacturer points
-# OWNERS_POINTS_URL = "https://cf.nascar.com/cacher/2022/1/final/1-owners-points.json" # url to pull owners points
-# DRIVERS_POINTS_URL = "https://cf.nascar.com/cacher/2022/1/final/1-drivers-points.json" # url to pull drivers and driver points
-# RACE_RESULTS_URL = f"https://cf.nascar.com/cacher/2022/1/{curr_race_id}/weekend-feed.json" # url to pull race results
-# ADVANCED_DRIVER_STATS_URL = f"https://cf.nascar.com/cacher/2022/1/deep-driver-stats.json" # url to pull advanced driver stats
-# LIVE_FEED_URL = "https://cf.nascar.com/cacher/live/live-feed.json" # url to pull live feed data
+NascarStandings = NascarBase.incSubCls('NascarStandings','position', 'driver_name',
+    'https://cf.nascar.com/data/cacher/production/'+str(datetime.now().year)+'/1/racinginsights-points-feed.json',
+    codeAdds= {},
+    exclAdds=[],
+    convAdds={},
+    nameAdds={})
 
-# https://cf.nascar.com/cacher/2026/race_list_basic.json
+BuschStandings = NascarBase.incSubCls('BuschStandings','position', 'driver_name',
+    'https://cf.nascar.com/data/cacher/production/'+str(datetime.now().year)+'/2/racinginsights-points-feed.json',
+    codeAdds= {},
+    exclAdds=[],
+    convAdds={},
+    nameAdds={})
 
-# https://cf.nascar.com/live-ops/live-ops.json
-# https://cf.nascar.com/cacher/live/live-feed.json
+TruckStandings = NascarBase.incSubCls('TruckStandings','position', 'driver_name',
+    'https://cf.nascar.com/data/cacher/production/'+str(datetime.now().year)+'/3/racinginsights-points-feed.json',
+    codeAdds= {},
+    exclAdds=[],
+    convAdds={},
+    nameAdds={})
 
-# get_season_schedule
-# https://cf.nascar.com/cacher/{year}/race_list_basic.json
 
-# get next, finished races
-# https://cf.nascar.com/cacher/{datetime.now().year}/race_list_basic.json
 
-# get_race_results
-# https://cf.nascar.com/data/cacher/production/{year}/{series}/{race_id}/raceResults.json
-
-# get_points_standings
-# https://cf.nascar.com/data/cacher/production/{year}/{series}/racinginsights-points-feed.json
-
-# all_drivers_info
-# https://cf.nascar.com/cacher/drivers.json
-
-# get_owners_points
-# https://cf.nascar.com/cacher/{year}/{series}/final/{series}-owners-points.json
-
-# get_manufacturer_points
-# https://cf.nascar.com/cacher/{year}/{series}/final/{series}-manufacturer-points.json
-
-# get_pit_data
-# https://cf.nascar.com/cacher/live/series_{series}/{race_id}/live-pit-data.json
 

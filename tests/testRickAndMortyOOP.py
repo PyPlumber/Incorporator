@@ -11,12 +11,12 @@ print(locList[23])
 print(locList[16].name)
 print("\n")
 
-# charList = RICKANDMORTY_API.Character.refreshDataREST(RICKANDMORTY_API.Character.endpointAPI, rPath='results', nextUrlPath=['info', 'next'])
-# print(charList[4])
-# print(charList[4].gender)
-# print(charList[4].origin)
-# charList[4].origin.displayInfo()
-# charList[33].displayInfo(True)
+charList = RICKANDMORTY_API.Character.refreshDataREST(RICKANDMORTY_API.Character.endpointAPI, rPath='results', nextUrlPath=['info', 'next'])
+print(charList[4])
+print(charList[4].gender)
+print(charList[4].origin)
+charList[4].origin.displayInfo()
+charList[33].displayInfo(True)
 
 print("\n")
 

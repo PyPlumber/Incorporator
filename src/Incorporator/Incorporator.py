@@ -99,6 +99,8 @@ class Incorporator:
     ## Recursion through JSON dictionaries to Next URL value
     @staticmethod
     def nextUrlREST(jsonDict, keyPathLst):
+        if keyPathLst is None:
+            return None
         if len(keyPathLst) == 1:
             return jsonDict.get(keyPathLst[0],None)
         else:
@@ -118,7 +120,7 @@ class Incorporator:
         return cd
 
     @classmethod
-    def refreshDataREST(cls, nextUrl, rPath='results', nextUrlPath=None):
+    def refreshDataREST(cls, nextUrl, rPath=None, nextUrlPath=None):
         while nextUrl:
             ## While API pages are available loop through JSON Batches
             ## Use pandas DF to normalize batch, remove exclList
