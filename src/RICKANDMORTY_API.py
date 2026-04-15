@@ -1,18 +1,18 @@
 from dateutil import parser
-from src import Incorporator
+import Incorporator
 
 ## Create Super and Subs for each connected Class
 
 RickAndMortyAPI = Incorporator.Incorporator.incSubCls('RickAndMortyAPI', 'id', 'name',
     'https://rickandmortyapi.com/api/',
-                                                      codeAdds = dict(),
-                                                      exclAdds = list(),
-                                                      convAdds = dict({
+    codeAdds = dict(),
+    exclAdds = list(),
+    convAdds = dict({
         'created': lambda x: parser.parse(x) if x else "",
         'location_url': lambda x: Location.codeDict.get(Location.getCodeFromUrl(x),Location.codeDict[None]),
         'origin_url': lambda x: Location.codeDict.get(Location.getCodeFromUrl(x),Location.codeDict[None])
-}),
-                                                      nameAdds = dict({}))
+    }),
+    nameAdds = dict({}))
 
 Location = RickAndMortyAPI.incSubCls('Location','id', 'name',
     RickAndMortyAPI.endpointAPI+"location/",
