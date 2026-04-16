@@ -61,21 +61,21 @@ DriverBase = NascarBase.incSubCls('DriverBase','Nascar_Driver_ID', 'Full_Name',
     nameAdds={})
 
 NascarStandings = NascarBase.incSubCls('NascarStandings','position', 'driver_name',
-    'https://cf.nascar.com/data/cacher/production/'+str(datetime.now().year)+'/1/racinginsights-points-feed.json',
+    f"https://cf.nascar.com/data/cacher/production/{datetime.now().year}/1/racinginsights-points-feed.json",
     codeAdds= {},
     exclAdds=[],
     convAdds={},
     nameAdds={})
 
 BuschStandings = NascarBase.incSubCls('BuschStandings','position', 'driver_name',
-    'https://cf.nascar.com/data/cacher/production/'+str(datetime.now().year)+'/2/racinginsights-points-feed.json',
+    f"https://cf.nascar.com/data/cacher/production/{datetime.now().year}/2/racinginsights-points-feed.json",
     codeAdds= {},
     exclAdds=[],
     convAdds={},
     nameAdds={})
 
 TruckStandings = NascarBase.incSubCls('TruckStandings','position', 'driver_name',
-    'https://cf.nascar.com/data/cacher/production/'+str(datetime.now().year)+'/3/racinginsights-points-feed.json',
+    f"https://cf.nascar.com/data/cacher/production/{datetime.now().year}/3/racinginsights-points-feed.json",
     codeAdds= {},
     exclAdds=[],
     convAdds={},
