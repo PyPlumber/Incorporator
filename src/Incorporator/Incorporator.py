@@ -1,5 +1,3 @@
-from itertools import batched
-
 import requests
 import pandas as pd
 import copy
@@ -7,7 +5,6 @@ import re
 
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
-
 
 class Incorporator:
     """A super class meant to give children classes:
@@ -125,8 +122,10 @@ class Incorporator:
             cd = urlAPI
         return cd
 
+    ## Update Class instances from REST API source
     @classmethod
     def refreshDataREST(cls, nextUrl, rPath=None, nextUrlPath=None):
+        ## Set Retry Controls
         def retryREST(session, retryUrl, backoffFactor=1.0):
             retryControls = Retry(
                 total=5,
@@ -136,15 +135,16 @@ class Incorporator:
             session.mount("https://", HTTPAdapter(max_retries=retryControls))
             return session.get(retryUrl)
 
-        def jsonControlREST(session, nextUrl, backoffFactor=1.0):
+        ## Set Error Controls
+        def jsonControlREST(session, jsonUrl, backoffFactor=1.0):
             try:
-                response = retryREST(session, nextUrl)
+                response = retryREST(session, jsonUrl)
                 response.raise_for_status()
                 jsonData = response.json()
             except requests.exceptions.HTTPError as http_err:
-                print(f"HTTP Error occurred: {http_err} URL: {nextUrl}")
+                print(f"HTTP Error occurred: {http_err} URL: {jsonUrl}")
             except requests.exceptions.JSONDecodeError:
-                print(f"DEBUGGING JSON DECODE ERROR, URL Called: {nextUrl}")
+                print(f"DEBUGGING JSON DECODE ERROR, URL Called: {jsonUrl}")
                 print(f"Status Code: {response.status_code}")
                 print(f"Content-Type: {response.headers.get('Content-Type')}")
                 raw_preview = response.text[:250] if response.text else "[Empty Response Body]"
@@ -152,7 +152,6 @@ class Incorporator:
             except requests.exceptions.ConnectionError:
                 print("Network Error: All retries exhausted, still cannot connect.")
             except requests.exceptions.RequestException as e:
-                # Problem: Network issues, DNS, or timeouts
                 print(f"An unexpected network error occurred: {e}")
             return jsonData
 
@@ -185,5 +184,5 @@ class Incorporator:
 
         sessionREST.close()
 
-        ## Return completed dictionary of inctances
+        ## Return completed dictionary of instances
         return cls.codeDict
