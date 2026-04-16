@@ -1,7 +1,13 @@
+from itertools import batched
+
 import requests
 import pandas as pd
 import copy
 import re
+
+from requests.adapters import HTTPAdapter
+from urllib3 import Retry
+
 
 class Incorporator:
     """A super class meant to give children classes:
@@ -121,10 +127,42 @@ class Incorporator:
 
     @classmethod
     def refreshDataREST(cls, nextUrl, rPath=None, nextUrlPath=None):
+        def retryREST(session, retryUrl, backoffFactor=1.0):
+            retryControls = Retry(
+                total=5,
+                backoff_factor=backoffFactor,
+                status_forcelist=[429, 500, 502, 503, 504],
+            )
+            session.mount("https://", HTTPAdapter(max_retries=retryControls))
+            return session.get(retryUrl)
+
+        def jsonControlREST(session, nextUrl, backoffFactor=1.0):
+            try:
+                response = retryREST(session, nextUrl)
+                response.raise_for_status()
+                jsonData = response.json()
+            except requests.exceptions.HTTPError as http_err:
+                print(f"HTTP Error occurred: {http_err} URL: {nextUrl}")
+            except requests.exceptions.JSONDecodeError:
+                print(f"DEBUGGING JSON DECODE ERROR, URL Called: {nextUrl}")
+                print(f"Status Code: {response.status_code}")
+                print(f"Content-Type: {response.headers.get('Content-Type')}")
+                raw_preview = response.text[:250] if response.text else "[Empty Response Body]"
+                print(f"Raw Response Preview:\n{raw_preview}")
+            except requests.exceptions.ConnectionError:
+                print("Network Error: All retries exhausted, still cannot connect.")
+            except requests.exceptions.RequestException as e:
+                # Problem: Network issues, DNS, or timeouts
+                print(f"An unexpected network error occurred: {e}")
+            return jsonData
+
+        ## While API pages are available loop through JSON Batches
+        sessionREST = requests.Session()
         while nextUrl:
-            ## While API pages are available loop through JSON Batches
+            ## Control checks for API response
+            batch = jsonControlREST(sessionREST, nextUrl)
+
             ## Use pandas DF to normalize batch, remove exclList
-            batch   = requests.Session().get(nextUrl).json()
             batchDF = pd.json_normalize(batch, rPath, sep="_").drop(columns=cls.exclLst)
             batchDF[cls.codeIdx] = batchDF[cls.codeIdx].apply(cls.cnvattr(cls.codeIdx))
 
@@ -133,9 +171,8 @@ class Incorporator:
             batchDict = batchDF[cls.nameIdx].to_dict()
             nextUrl   = Incorporator.nextUrlREST(batch,nextUrlPath)
 
-            ## Iterate Batch dict {code:name} to retrieve OR
+            ## Iterate Batch dict {code:name} to find OR
             ## create missing Class instances
-            defaultInstance = cls.getOrCreate(None, 'Null')
             for key, value in batchDict.items():
                 cls.getOrCreate(key, value)
 
@@ -143,8 +180,10 @@ class Incorporator:
             ## Iterate DF dict of {code:row value} to update Class instances
             for col in batchDF.columns.values:
                 attribDF = batchDF[col].apply(cls.cnvattr(col)).rename({col:cls.nameattr(col)}).to_dict()
-                setattr(defaultInstance, cls.nameattr(col), "")
                 for key, value in attribDF.items():
                     setattr(cls.codeDict[key], cls.nameattr(col), value)
 
+        sessionREST.close()
+
+        ## Return completed dictionary of inctances
         return cls.codeDict

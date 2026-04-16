@@ -9,8 +9,8 @@ RickAndMortyAPI = Incorporator.Incorporator.incSubCls('RickAndMortyAPI', 'id', '
     exclAdds = list(),
     convAdds = dict({
         'created': lambda x: parser.parse(x) if x else "",
-        'location_url': lambda x: Location.codeDict.get(Location.getCodeFromUrl(x),Location.codeDict[None]),
-        'origin_url': lambda x: Location.codeDict.get(Location.getCodeFromUrl(x),Location.codeDict[None])
+        'location_url': lambda x: Location.codeDict.get(Location.getCodeFromUrl(x),""),
+        'origin_url': lambda x: Location.codeDict.get(Location.getCodeFromUrl(x),"")
     }),
     nameAdds = dict({}))
 
@@ -19,7 +19,7 @@ Location = RickAndMortyAPI.incSubCls('Location','id', 'name',
     codeAdds = dict({}),
     exclAdds = list(['residents']),
     convAdds = dict({
-        'residents': lambda x: list(map(lambda y: Character.codeDict.get(Location.getCodeFromUrl(y), Location.codeDict[None]), x)),
+        'residents': lambda x: list(map(lambda y: Character.codeDict.get(Location.getCodeFromUrl(y), ""), x)),
     }),
     nameAdds = dict({}))
 
@@ -29,7 +29,7 @@ Episode = RickAndMortyAPI.incSubCls('Episode','id', 'name',
     exclAdds = list([]),
     convAdds = dict({
         'air_date': lambda x: parser.parse(x) if x else "",
-        'characters': lambda x: list(map(lambda y: Character.codeDict.get(Location.getCodeFromUrl(y), Location.codeDict[None]), x)),
+        'characters': lambda x: list(map(lambda y: Character.codeDict.get(Location.getCodeFromUrl(y), ""), x)),
     }),
     nameAdds = dict({}))
 
