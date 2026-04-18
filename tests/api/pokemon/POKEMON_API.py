@@ -1,6 +1,6 @@
-import Incorporator
+import Incorporator as Incorp
 
-PokemonBase = Incorporator.Incorporator.incSubCls('PokemonBase', 'id', 'name',
+PokemonBase = Incorp.Incorporator.incSubCls('PokemonBase', 'id', 'name',
     'https://pokeapi.co/api/v2/',
     codeAdds= {},
     exclAdds=[],
