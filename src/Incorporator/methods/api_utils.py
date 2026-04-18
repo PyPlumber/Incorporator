@@ -7,6 +7,7 @@ class IncorpApiMixin:
     #         backoff_factor=backoffFactor,
     #         status_forcelist=[429, 500, 502, 503, 504],
     #     )
+
     #     session.mount("https://", HTTPAdapter(max_retries=retryControls))
     #     return session.get(retryUrl)
     pass
