@@ -1,3 +1,3 @@
 import Incorporator as Incorp
 
-print(Incorp.Incorporator)
+print(Incorp.Incorporator.__doc__)
