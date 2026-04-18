@@ -1,1 +1,1 @@
-from Incorporator.inc_logic import Incorporator
+from Incorporator.incorp_logic import Incorporator
