@@ -2,7 +2,8 @@ import requests
 import pandas as pd
 import copy
 import re
-
+from datetime import date
+from dateutil.parser import parse, ParserError
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
@@ -17,7 +18,7 @@ class Incorporator:
         codeDict (dict): instance code returns associated object instance
         convDict (dict): DF column name returns given type conversion function
         nameDict (dict): DF column name given new column name
-        exclList (list): DF column names given will be excluded
+        exclLst (list): DF column names given will be excluded
         codeIdx (str): DF column name for cls Dictionary key values
         nameIdx (str): DF column name for object instance name values
 
@@ -28,11 +29,6 @@ class Incorporator:
         nextUrlREST (static): Get next API URL from JSON
         refreshDataREST (cls): Return dictionary of objects from JSON
     """
-    ##TODO new func getDateTimeFromStr
-    ##TODO batchDict as funct return
-    ##TODO is endpointAPI needed in refreshDataREST call
-
-
     codeDict = dict()
     convDict = dict()
     nameDict = dict()
@@ -85,6 +81,8 @@ class Incorporator:
             cls, newSubCls, codeAttr, nameAttr, endpntAPI,
             codeAdds=None, exclAdds=[], convAdds=None, nameAdds=None
     ):
+        if exclAdds is None:
+            exclAdds = []
         newCodeDict = copy.deepcopy(cls.codeDict)
         newExclLst  = copy.deepcopy(cls.exclLst)
         newConvDict = copy.deepcopy(cls.convDict)
@@ -122,9 +120,21 @@ class Incorporator:
             cd = urlAPI
         return cd
 
+    ## Get date and time class
+    @staticmethod
+    def parseDateTime(input_string, force_dt=False):
+        try:
+            dt = parse(input_string)
+            return dt
+        except (ParserError, TypeError, ValueError):
+            if force_dt:
+                return date.min
+            else:
+                return None
+
     ## Update Class instances from REST API source
     @classmethod
-    def refreshDataREST(cls, nextUrl, rPath=None, nextUrlPath=None):
+    def refreshDataREST(cls, nextUrl=None, rPath=None, nextUrlPath=None):
         ## Set Retry Controls
         def retryREST(session, retryUrl, backoffFactor=1.0):
             retryControls = Retry(
@@ -155,8 +165,21 @@ class Incorporator:
                 print(f"An unexpected network error occurred: {e}")
             return jsonData
 
+        ## Create Class Instances and  dictionary entires
+        def createClassInstances(createDF):
+            ## set Class code as index,
+            createDict = createDF[cls.nameIdx].to_dict()
+
+            ## Iterate Batch dict to find OR create
+            for key, value in createDict.items():
+                cls.getOrCreate(key, value)
+
+
         ## While API pages are available loop through JSON Batches
         sessionREST = requests.Session()
+        if nextUrl is None:
+            nextUrl = cls.endpointAPI
+
         while nextUrl:
             ## Control checks for API response
             batch = jsonControlREST(sessionREST, nextUrl)
@@ -165,15 +188,9 @@ class Incorporator:
             batchDF = pd.json_normalize(batch, rPath, sep="_").drop(columns=cls.exclLst)
             batchDF[cls.codeIdx] = batchDF[cls.codeIdx].apply(cls.cnvattr(cls.codeIdx))
 
-            ## set Class code as index,
-            batchDF   = batchDF.set_index(cls.codeIdx)
-            batchDict = batchDF[cls.nameIdx].to_dict()
-            nextUrl   = Incorporator.nextUrlREST(batch,nextUrlPath)
-
-            ## Iterate Batch dict {code:name} to find OR
-            ## create missing Class instances
-            for key, value in batchDict.items():
-                cls.getOrCreate(key, value)
+            ## Get Code and create instances with dictionary
+            batchDF = batchDF.set_index(cls.codeIdx)
+            createClassInstances(batchDF)
 
             ## Iterate DF columns to convert values
             ## Iterate DF dict of {code:row value} to update Class instances
@@ -182,7 +199,8 @@ class Incorporator:
                 for key, value in attribDF.items():
                     setattr(cls.codeDict[key], cls.nameattr(col), value)
 
-        sessionREST.close()
+            nextUrl = Incorporator.nextUrlREST(batch, nextUrlPath)
 
         ## Return completed dictionary of instances
+        sessionREST.close()
         return cls.codeDict
