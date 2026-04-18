@@ -7,7 +7,10 @@ from dateutil.parser import parse, ParserError
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
-class Incorporator:
+from Incorporator.methods.api_utils import IncorpApiMixin
+from Incorporator.methods.json_utils import IncorpJsonMixin
+
+class Incorporator(IncorpApiMixin, IncorpJsonMixin):
     """A super class meant to give children classes:
         * standard data type conversion methods
         * dictionary of class instances by given key
