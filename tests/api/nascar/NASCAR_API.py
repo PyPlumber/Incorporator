@@ -1,4 +1,4 @@
-import Incorporator
+import Incorporator as Incorp
 from datetime import datetime
 
 def convDriverSeries(series_text):
@@ -12,8 +12,7 @@ def convDriverSeries(series_text):
 
     return None
 
-
-NascarBase = Incorporator.Incorporator.incSubCls('NascarBase', 'id', 'name',
+NascarBase = Incorp.Incorporator.incSubCls('NascarBase', 'id', 'name',
     'https://cf.nascar.com/cacher/',
     codeAdds= {},
     exclAdds=[],

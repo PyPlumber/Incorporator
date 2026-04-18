@@ -25,5 +25,3 @@ PokeSpecies = PokemonBase.incSubCls('PokeSpecies','url', 'name',
     },
     nameAdds={})
 
-
-## :"https://pokeapi.co/api/v2/ability/?limit=20&offset=20"

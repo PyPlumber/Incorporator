@@ -1,0 +1,2 @@
+class IncorpJsonMixin:
+    pass
