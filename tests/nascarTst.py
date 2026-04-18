@@ -1,4 +1,4 @@
-import NASCAR_API
+from nascar import NASCAR_API
 
 drivers = NASCAR_API.DriverBase.refreshDataREST(rPath='response')
 # trackList  = NASCAR_API.TrackBase.refreshDataREST(NASCAR_API.TrackBase.endpointAPI, rPath='items')
@@ -36,20 +36,22 @@ for teamCd, roster in league_teams_raw.items():
     for series_id in range(1,4):
          league_teams[teamCd][series_id].sort(key=lambda x:int(x.Badge))
 
+series_score = {}
 team_score = {}
 for team, roster in  league_teams.items():
-    print(f"Team {team}!")
-    print("-------------")
+    print(f'{{"{team}":[')
+    team_score[team] = 0
     series_list = ('Cup', 'Busch', 'Truck')
     for series_id, series_name in enumerate(series_list,start=1):
-        team_score[series_id] = {}
-        team_score[series_id][team] = 0
+        series_score[series_id] = {}
+        series_score[series_id][team] = 0
         for idx, driver in enumerate(roster[series_id], start=1):
-            team_score[series_id][team] += league_scores[(series_id,driver.code)]
+            series_score[series_id][team] += league_scores[(series_id,driver.code)]
             print(f'{{"Series": "{series_name:<7}", "Driver": "{idx:<2}", "name": "{driver.Full_Name:<20}", "car": "{driver.Badge:<4}", "team": "{driver.Team:<25}", "wins": {points_standings[series_id][int(driver.code)].wins:<2}, "t10": {points_standings[series_id][int(driver.code)].top_10:<2}, "points": {league_scores[(series_id,driver.code)]:<3}}},')
+        team_score[team] += series_score[series_id][team]
+    print(f'],')
+    print('}')
 
-        # team_score[4] = {}
-        # team_score[4][team] += team_score[series_id][team]
-        print('\n')
-
-    print(f"\nYou're team's total score is: {team_score[1][team]+team_score[2][team]+team_score[3][team]}","\n")
+    for series_id, series_name in enumerate(series_list, start=1):
+        print(f'{{"Series": "{series_name:<11}", "points": "{series_score[series_id][team]:<5}", "percentage": "{series_score[series_id][team]/team_score[team]:4.0%}"}},')
+    print(f'{{"Series": "{'GRAND TOTAL':<11}", "points": "{team_score[team]:<5}", "percentage": "{1:4.0%}"}},')

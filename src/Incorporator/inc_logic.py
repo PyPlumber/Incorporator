@@ -174,7 +174,6 @@ class Incorporator:
             for key, value in createDict.items():
                 cls.getOrCreate(key, value)
 
-
         ## While API pages are available loop through JSON Batches
         sessionREST = requests.Session()
         if nextUrl is None:

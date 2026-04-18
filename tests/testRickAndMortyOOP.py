@@ -1,5 +1,4 @@
-import pandas as pd
-import RICKANDMORTY_API
+from rickandmorty import RICKANDMORTY_API
 
 # print(vars(RICKANDMORTY_API.RickAndMortyAPI))
 # print(vars(RICKANDMORTY_API.Location))
