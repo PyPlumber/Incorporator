@@ -5,7 +5,7 @@ PokemonBase = Incorp.Incorporator.incSubCls('PokemonBase', 'id', 'name',
     codeAdds= {},
     exclAdds=[],
     convAdds={
-        'url': lambda x: PokemonBase.getCodeFromUrl(x)
+        'url': lambda x: PokemonBase.getCodeFromUrlAPI(x)
     },
     nameAdds={})
 
