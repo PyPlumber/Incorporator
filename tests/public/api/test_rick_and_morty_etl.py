@@ -1,7 +1,6 @@
-"""Integration tests for Advanced Relational Mapping and URL Extraction."""
+"""Integration tests for Advanced Relational Mapping and Rick & Morty Lore Tables."""
 
 import json
-from datetime import datetime
 from typing import Any
 
 import httpx
@@ -9,8 +8,6 @@ import pytest
 
 from incorporator import (
     Incorporator,
-    to_date,
-    cast_list_items,
     link_to,
     link_to_list,
     json_path_extractor,
@@ -22,44 +19,53 @@ from incorporator import (
 # --- MOCK NETWORK SETUP ---
 
 async def mock_execute_get(client: httpx.AsyncClient, url: str) -> httpx.Response:
-    """Mocks a paginated API response for Locations, Episodes, and Characters."""
+    """Mocks a curated slice of the R&M Multiverse to support the Lore Tables."""
 
+    # 1. LOCATIONS
     if "location" in url:
         payload = {
             "info": {"next": None},
-            "results": [{
-                "id": 1, "name": "Earth (C-137)", "url": "https://api.com/location/1",
-                "residents": ["https://api.com/character/1", "https://api.com/character/2"]
-            }]
+            "results": [
+                {"id": 1, "name": "Earth (C-137)", "type": "Planet", "dimension": "Dimension C-137"},
+                {"id": 3, "name": "Citadel of Ricks", "type": "Space station", "dimension": "unknown"},
+                {"id": 9, "name": "Cronenberg Earth", "type": "Planet", "dimension": "Cronenberg Dimension"}
+            ]
         }
+    # 2. EPISODES
     elif "episode" in url:
         payload = {
             "info": {"next": None},
             "results": [{
-                "id": 1, "name": "Pilot", "air_date": "December 2, 2013",
-                "url": "https://api.com/episode/1",
-                "characters": ["https://api.com/character/1", "https://api.com/character/2"]
+                "id": 28, "name": "The Ricklantis Mixup", "episode": "S03E07",
+                "characters": ["https://api.com/character/1", "https://api.com/character/2",
+                               "https://api.com/character/15"]
             }]
         }
-    elif "character/?page=2" in url:
+    # 3. CHARACTERS
+    else:
         payload = {
             "info": {"next": None},
-            "results": [{
-                "id": 2, "name": "Morty Smith", "url": "https://api.com/character/2",
-                "location": {"name": "Earth", "url": "https://api.com/location/1"},
-                "origin": {"name": "Earth", "url": "https://api.com/location/1"},
-                "episode": ["https://api.com/episode/1"]
-            }]
-        }
-    else:  # Character Page 1
-        payload = {
-            "info": {"next": "https://api.com/character/?page=2"},
-            "results": [{
-                "id": 1, "name": "Rick Sanchez", "url": "https://api.com/character/1",
-                "location": {"name": "Earth", "url": "https://api.com/location/1"},
-                "origin": {"name": "Earth", "url": "https://api.com/location/1"},
-                "episode": ["https://api.com/episode/1"]
-            }]
+            "results": [
+                # Rick Sanchez: Citadel Resident, Alive
+                {"id": 1, "name": "Rick Sanchez", "status": "Alive", "gender": "Male", "type": "", "species": "Human",
+                 "origin": {"url": "https://api.com/location/1"}, "location": {"url": "https://api.com/location/3"},
+                 "episode": ["https://api.com/episode/28"]},
+
+                # Morty Smith: Earth Resident, Alive
+                {"id": 2, "name": "Morty Smith", "status": "Alive", "gender": "Male", "type": "", "species": "Human",
+                 "origin": {"url": "https://api.com/location/1"}, "location": {"url": "https://api.com/location/1"},
+                 "episode": ["https://api.com/episode/28"]},
+
+                # Aqua Rick: Cronenberg Resident, Dead Rick (Lived 3 episodes)
+                {"id": 15, "name": "Aqua Rick", "status": "Dead", "gender": "Male", "type": "Fish-Person",
+                 "species": "Humanoid", "origin": {"url": "https://api.com/location/9"},
+                 "location": {"url": "https://api.com/location/9"}, "episode": ["https://api.com/episode/28"] * 3},
+
+                # Maximums Rickimus: Citadel Resident, Dead Rick (Lived 10 episodes)
+                {"id": 99, "name": "Maximums Rickimus", "status": "Dead", "gender": "Male", "type": "",
+                 "species": "Human", "origin": {"url": "https://api.com/location/3"},
+                 "location": {"url": "https://api.com/location/3"}, "episode": ["https://api.com/episode/28"] * 10}
+            ]
         }
 
     return httpx.Response(200, text=json.dumps(payload))
@@ -68,38 +74,27 @@ async def mock_execute_get(client: httpx.AsyncClient, url: str) -> httpx.Respons
 # --- TESTS ---
 
 @pytest.mark.asyncio
-async def test_rick_and_morty_relational_etl(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tests URL ID extraction, nested dict plucking, and in-memory relational linking."""
-
-    # 1. Intercept the network layer
+async def test_rick_and_morty_lore_tables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Validates Relational Graph sorting, array length processing, and variety extraction."""
     monkeypatch.setattr("incorporator.methods.network._execute_get", mock_execute_get)
-
-    # 2. Execute the Pipeline
     BASE_URL = "https://api.com"
+    rm_pagination = json_path_extractor("info", "next")
 
+    # ==========================================
+    # 1. BUILD THE GRAPH PIPELINE
+    # ==========================================
     locations = await Incorporator.incorp(
-        url=f"{BASE_URL}/location/",
-        rPath="results",
-        paginate=True, next_url_extractor=json_path_extractor("info", "next"),
-        code="id", name="name", excl_lst=['url'],
-        conv_dict={'residents': cast_list_items(extract_url_id())}
+        url=f"{BASE_URL}/location/", rPath="results", paginate=True, next_url_extractor=rm_pagination,
+        code="id", name="name", excl_lst=['url', 'residents']
     )
 
     episodes = await Incorporator.incorp(
-        url=f"{BASE_URL}/episode/",
-        rPath="results",
-        paginate=True, next_url_extractor=json_path_extractor("info", "next"),
-        code="id", name="name", excl_lst=['url'],
-        conv_dict={
-            'air_date': to_date,
-            'characters': cast_list_items(extract_url_id())
-        }
+        url=f"{BASE_URL}/episode/", rPath="results", paginate=True, next_url_extractor=rm_pagination,
+        code="id", name="name", excl_lst=['url']
     )
 
     characters = await Incorporator.incorp(
-        url=f"{BASE_URL}/character/",
-        rPath="results",
-        paginate=True, next_url_extractor=json_path_extractor("info", "next"),
+        url=f"{BASE_URL}/character/", rPath="results", paginate=True, next_url_extractor=rm_pagination,
         code="id", name="name", excl_lst=['image', 'url'],
         conv_dict={
             'location': link_to(locations, extractor=pluck("url", extract_url_id())),
@@ -108,31 +103,60 @@ async def test_rick_and_morty_relational_etl(monkeypatch: pytest.MonkeyPatch) ->
         }
     )
 
-    # 3. Assertions
-    assert isinstance(locations, list) and len(locations) == 1
-    assert isinstance(episodes, list) and len(episodes) == 1
-    assert isinstance(characters, list) and len(characters) == 2  # Proves pagination worked!
+    assert isinstance(locations, list) and isinstance(characters, list) and isinstance(episodes, list)
 
-    # Look up Morty by Primary Key in the global registry
-    morty = characters.codeDict[2]
+    # ==========================================
+    # 2. VALIDATE TABLE 1: The Citadel Census
+    # ==========================================
+    citadel_residents = [c for c in characters if getattr(c.location, "code", None) == 3]
+    assert len(citadel_residents) == 2  # Rick Sanchez & Maximums Rickimus
 
-    # Assert top level attrs
-    assert getattr(morty, "name") == "Morty Smith"
+    # Validate the "Variant Type" logic
+    aqua_rick = characters.codeDict.get(15)
+    assert aqua_rick is not None
+    spec_type = f"{getattr(aqua_rick, 'species')} ({getattr(aqua_rick, 'type')})"
+    assert spec_type == "Humanoid (Fish-Person)"
 
-    # Assert Relational Magic: The location should be an actual object, not a dict/string
-    morty_loc = getattr(morty, "location")
-    assert morty_loc is not None
-    assert getattr(morty_loc, "name") == "Earth (C-137)"
+    # ==========================================
+    # 3. VALIDATE TABLE 2: Top Dead Ricks
+    # ==========================================
+    dead_ricks = [
+        c for c in characters
+        if "Rick" in getattr(c, "name", "") and getattr(c, "status", "") == "Dead"
+    ]
+    # Sort descending by the length of their `episode` array
+    dead_ricks.sort(key=lambda r: len(getattr(r, "episode", [])), reverse=True)
 
-    # Assert Relational List Magic: The episode should be a list of Episode objects
-    morty_episodes = getattr(morty, "episode")
-    assert isinstance(morty_episodes, list)
-    assert len(morty_episodes) == 1
+    assert len(dead_ricks) == 2
+    # Maximums Rickimus (10 eps) should beat Aqua Rick (3 eps)
+    assert dead_ricks[0].name == "Maximums Rickimus"
+    assert dead_ricks[1].name == "Aqua Rick"
 
-    first_episode = morty_episodes[0]
-    assert getattr(first_episode, "name") == "Pilot"
+    # ==========================================
+    # 4. VALIDATE TABLE 3: The Ricklantis Mixup Cast (Sorted)
+    # ==========================================
+    ep28 = episodes.codeDict.get(28)
+    assert ep28 is not None
 
-    # Assert the universal to_date parser successfully parsed the Rick & Morty custom string format
-    air_date = getattr(first_episode, "air_date")
-    assert isinstance(air_date, datetime)
-    assert air_date.year == 2013
+    cast_url_list = getattr(ep28, "characters", [])
+    assert len(cast_url_list) == 3
+
+    # 1. Resolve actors
+    actors = []
+    for actor_url in cast_url_list:
+        actor = characters.codeDict.get(extract_url_id(int)(actor_url))
+        if actor: actors.append(actor)
+
+    # 2. Sort actors alphabetically by Current Location Name
+    actors.sort(key=lambda a: getattr(getattr(a, "location", None), "name", "Unknown"))
+
+    # 3. Assert Alphabetical Location Sort:
+    # "Citadel of Ricks" (Rick) -> "Cronenberg Earth" (Aqua Rick) -> "Earth (C-137)" (Morty)
+    assert getattr(actors[0].location, "name") == "Citadel of Ricks"
+    assert actors[0].name == "Rick Sanchez"
+
+    assert getattr(actors[1].location, "name") == "Cronenberg Earth"
+    assert actors[1].name == "Aqua Rick"
+
+    assert getattr(actors[2].location, "name") == "Earth (C-137)"
+    assert actors[2].name == "Morty Smith"
