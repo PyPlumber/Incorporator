@@ -1,9 +1,9 @@
-import Incorporator as Incorp
+import incorporator as Incorp
 
 ## Create Super and Subs for each connected Class
 
-RickAndMortyAPI = Incorp.Incorporator.incSubCls('RickAndMortyAPI', 'id', 'name',
-    'https://rickandmortyapi.com/api/',
+RickAndMortyAPI = Incorp.Incorporator.incorp('RickAndMortyAPI', 'id', 'name',
+    url='https://rickandmortyapi.com/api/',rPath='results',
     codeAdds = dict(),
     exclAdds = list(),
     convAdds = dict({
@@ -13,8 +13,8 @@ RickAndMortyAPI = Incorp.Incorporator.incSubCls('RickAndMortyAPI', 'id', 'name',
     }),
     nameAdds = dict({}))
 
-Location = RickAndMortyAPI.incSubCls('Location','id', 'name',
-    RickAndMortyAPI.endpointAPI+"location/",
+Location = RickAndMortyAPI.incorp('Location', 'id', 'name',
+    url=RickAndMortyAPI.url +"location/",rPath='results',
     codeAdds = dict({}),
     exclAdds = list(['residents']),
     convAdds = dict({
@@ -22,8 +22,8 @@ Location = RickAndMortyAPI.incSubCls('Location','id', 'name',
     }),
     nameAdds = dict({}))
 
-Episode = RickAndMortyAPI.incSubCls('Episode','id', 'name',
-    RickAndMortyAPI.endpointAPI+"episode/",
+Episode = RickAndMortyAPI.incorp('Episode', 'id', 'name',
+    url=RickAndMortyAPI.url +"episode/",
     codeAdds = dict({}),
     exclAdds = list([]),
     convAdds = dict({
@@ -32,8 +32,8 @@ Episode = RickAndMortyAPI.incSubCls('Episode','id', 'name',
     }),
     nameAdds = dict({}))
 
-Character = RickAndMortyAPI.incSubCls('Character','id', 'name',
-    RickAndMortyAPI.endpointAPI+"character/",
+Character = RickAndMortyAPI.incorp('Character', 'id', 'name',
+    url=RickAndMortyAPI.url +"character/",
     codeAdds = dict({}),
     exclAdds = list([
         'episode',

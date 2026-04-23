@@ -1,0 +1,4 @@
+code,name,last_rcd,is_live_data,api_endpoint
+bulbasaur,bulbasaur,2026-04-22T02:49:58.056448Z,True,1
+ivysaur,ivysaur,2026-04-22T02:49:58.056499Z,True,2
+venusaur,venusaur,2026-04-22T02:49:58.056514Z,True,3

@@ -1,4 +1,4 @@
-import Incorporator as Incorp
+import incorporator as Incorp
 from datetime import datetime
 
 def convDriverSeries(series_text):
@@ -12,22 +12,22 @@ def convDriverSeries(series_text):
 
     return None
 
-NascarBase = Incorp.Incorporator.incSubCls('NascarBase', 'id', 'name',
-    'https://cf.nascar.com/cacher/',
+NascarBase = Incorp.Incorporator.incorp('NascarBase', 'id', 'name',
+    url='https://cf.nascar.com/cacher/',
     codeAdds= {},
     exclAdds=[],
     convAdds={},
     nameAdds={})
 
-TrackBase = NascarBase.incSubCls('TrackBase','track_id', 'track_name',
-    NascarBase.endpointAPI+'tracks.json',
+TrackBase = NascarBase.incorp('TrackBase', 'track_id', 'track_name',
+    url=NascarBase.url +'tracks.json',
     codeAdds= {},
     exclAdds=[],
     convAdds={},
     nameAdds={})
 
-DriverBase = NascarBase.incSubCls('DriverBase','Nascar_Driver_ID', 'Full_Name',
-    NascarBase.endpointAPI+'drivers.json',
+DriverBase = NascarBase.incorp('DriverBase', 'Nascar_Driver_ID', 'Full_Name',
+    url=NascarBase.url +'drivers.json',rPath='response',
     codeAdds= {},
     exclAdds=[
         'Series_Logo','Short_Name','Description','Hobbies','Children','Residing_City',
@@ -44,8 +44,8 @@ DriverBase = NascarBase.incSubCls('DriverBase','Nascar_Driver_ID', 'Full_Name',
         }),
     nameAdds={})
 
-RaceBase = NascarBase.incSubCls('RaceBase','race_id', 'race_name',
-    NascarBase.endpointAPI+str(datetime.now().year)+'/race_list_basic.json',
+RaceBase = NascarBase.incorp('RaceBase', 'race_id', 'race_name',
+    url=NascarBase.url + str(datetime.now().year) +'/race_list_basic.json',
     codeAdds= {},
     exclAdds=['schedule','track_name'],
     convAdds=dict({
@@ -60,28 +60,29 @@ RaceBase = NascarBase.incSubCls('RaceBase','race_id', 'race_name',
         'track_id': 'track'
         })
 
-NascarRaceBase = RaceBase.incSubCls('NascarRaceBase','race_id', 'race_name',
-    RaceBase.endpointAPI,
+NascarRaceBase = RaceBase.incorp('NascarRaceBase', 'race_id', 'race_name',
+    url=RaceBase.url,
     codeAdds= {},
     exclAdds=[],
     convAdds={},
     nameAdds={})
 
-BuschRaceBase = RaceBase.incSubCls('BuschRaceBase','race_id', 'race_name',
-    RaceBase.endpointAPI,
+BuschRaceBase = RaceBase.incorp('BuschRaceBase', 'race_id', 'race_name',
+    url=RaceBase.url,
     codeAdds= {},
     exclAdds=[],
     convAdds={},
     nameAdds={})
 
-TruckRaceBase = RaceBase.incSubCls('TruckRaceBase','race_id', 'race_name',
-    RaceBase.endpointAPI,
+TruckRaceBase = RaceBase.incorp('TruckRaceBase', 'race_id', 'race_name',
+    url=RaceBase.url,
     codeAdds= {},
     exclAdds=[],
     convAdds={},
     nameAdds={})
-StandingsBase = NascarBase.incSubCls('NascarStandings','driver_id', 'driver_name',
-    f"https://cf.nascar.com/data/cacher/production/{datetime.now().year}/",
+
+StandingsBase = NascarBase.incorp('NascarStandings', 'driver_id', 'driver_name',
+    url=f"https://cf.nascar.com/data/cacher/production/{datetime.now().year}/",
     codeAdds={},
     exclAdds=[
         'delta_playoff','is_clinch','starts','poles',
@@ -91,27 +92,24 @@ StandingsBase = NascarBase.incSubCls('NascarStandings','driver_id', 'driver_name
     nameAdds={})
 
 
-NascarStandings = StandingsBase.incSubCls('NascarStandings','driver_id', 'driver_name',
-    StandingsBase.endpointAPI+'1/racinginsights-points-feed.json',
-    codeAdds= {},
-    exclAdds=[],
-    convAdds={},
-    nameAdds={})
-
-BuschStandings = StandingsBase.incSubCls('NascarStandings','driver_id', 'driver_name',
-    StandingsBase.endpointAPI+'2/racinginsights-points-feed.json',
-    codeAdds= {},
-    exclAdds=[],
-    convAdds={},
-    nameAdds={})
-
-TruckStandings = StandingsBase.incSubCls('NascarStandings','driver_id', 'driver_name',
-    StandingsBase.endpointAPI+'3/racinginsights-points-feed.json',
+NascarStandings = StandingsBase.incorp('NascarStandings', 'driver_id', 'driver_name',
+    url=StandingsBase.url +'1/racinginsights-points-feed.json',
     codeAdds= {},
     exclAdds=[],
     convAdds={},
     nameAdds={})
 
 
+TruckStandings = StandingsBase.incorp('NascarStandings', 'driver_id', 'driver_name',
+    url=StandingsBase.url +'3/racinginsights-points-feed.json',
+    codeAdds= {},
+    exclAdds=[],
+    convAdds={},
+    nameAdds={})
 
-
+BuschStandings = StandingsBase.incorp('NascarStandings', 'driver_id', 'driver_name',
+    url=StandingsBase.url +'2/racinginsights-points-feed.json',
+    codeAdds= {},
+    exclAdds=[],
+    convAdds={},
+    nameAdds={})

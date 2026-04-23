@@ -1,0 +1,43 @@
+# ========================================
+# PyIncorp: Git Ignore Definitions
+# ========================================
+
+# 1. Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+
+# 2. Virtual Environments
+venv/
+.venv/
+env/
+.env
+
+# 3. PyCharm & IDE Settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 4. Testing & Coverage
+.pytest_cache/
+.tox/
+.coverage
+htmlcov/
+
+# 5. Build Artifacts & Packaging
+build/
+dist/
+*.egg-info/
+pyincorp.egg-info/
+
+# 6. PyIncorp Generated Logs & Temp Data
+*.log
+*debug.log
+*error.log
+*api.log
+
+# 7. OS Specific Files
+.DS_Store
+Thumbs.db
