@@ -30,9 +30,10 @@ async def _read_file(file_path: str) -> str:
 
 # --- LIVE NETWORK ENGINE ---
 
+# Retry attempts to 8, and max wait to 30 seconds for strict 429 APIs.
 @retry(
-    stop=stop_after_attempt(5),
-    wait=wait_random_exponential(multiplier=1, min=2, max=10),
+    stop=stop_after_attempt(8),
+    wait=wait_random_exponential(multiplier=1.5, min=2, max=30),
     retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
     reraise=True
 )
@@ -56,10 +57,10 @@ def _extract_rfc5988_next_link(link_header: str) -> Optional[str]:
 
 
 async def stream_raw_data(
-    source: str,
-    is_file: bool = False,
-    paginate: bool = False,
-    next_url_extractor: Optional[Callable[[str], Optional[str]]] = None
+        source: str,
+        is_file: bool = False,
+        paginate: bool = False,
+        next_url_extractor: Optional[Callable[[str], Optional[str]]] = None
 ) -> AsyncGenerator[str, None]:
     """
     Advanced router that yields data payloads.
@@ -70,7 +71,7 @@ async def stream_raw_data(
         return
 
     # Instantiating the client here ensures connection pooling across all paginated requests
-    async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
         current_url: Optional[str] = source
 
         while current_url:
@@ -99,6 +100,10 @@ async def stream_raw_data(
                     raise IncorporatorNetworkError(f"Pagination extractor failed on {current_url}: {e}")
 
             current_url = next_url
+
+            # If there is another page to fetch, wait 0.5s to evade IP tracking/bans.
+            if current_url:
+                await asyncio.sleep(0.5)
 
 
 async def get_raw_data(source: str, is_file: bool = False) -> str:

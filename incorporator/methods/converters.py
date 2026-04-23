@@ -24,18 +24,43 @@ def to_bool(value: Any) -> bool:
 
 
 def to_date(value: Any) -> Optional[datetime]:
-    """Parses ISO-8601 strings into datetime objects. Returns None if empty."""
+    """Parses standard ISO-8601 and various common date strings into datetime objects.
+    Returns None if empty.
+    """
     if not value:
         return None
     if isinstance(value, datetime):
         return value
 
-    try:
-        safe_str = str(value).strip().replace('Z', '+00:00')
-        return datetime.fromisoformat(safe_str)
-    except ValueError as e:
-        raise ValueError(f"Could not parse '{value}' into a datetime object: {e}")
+    safe_str = str(value).strip().replace('Z', '+00:00')
 
+    # 1. Try standard ISO-8601 (Fastest native path)
+    try:
+        return datetime.fromisoformat(safe_str)
+    except ValueError:
+        pass
+
+    # 2. Universal Fallback Patterns
+    fallback_formats =[
+        "%B %d, %Y",                 # Long: December 2, 2013
+        "%Y-%m-%d %H:%M:%S",         # SQL Timestamps: 2026-04-22 23:59:59
+        "%m/%d/%Y",                  # US Short: 04/22/2026
+        "%d/%m/%Y",                  # EU Short: 22/04/2026
+        "%Y/%m/%d",                  # Asian Short: 2026/04/22
+        "%d %b %Y",                  # 22 Apr 2026
+        "%b %d, %Y",                 # Apr 22, 2026
+        "%Y-%m-%dT%H:%M:%S.%f",      # ISO with truncated timezone
+        "%a, %d %b %Y %H:%M:%S %Z",  # RFC 2822 / HTTP headers: Wed, 22 Apr 2026 23:59:59 GMT
+    ]
+
+    for fmt in fallback_formats:
+        try:
+            return datetime.strptime(safe_str, fmt)
+        except ValueError:
+            continue
+
+    # If all formats fail, raise the standard error our pipeline expects
+    raise ValueError(f"Could not parse '{value}' into a datetime object using any known format.")
 
 def to_int(value: Any) -> Optional[int]:
     """Safely converts strings/floats to integers. Returns None if empty."""
@@ -61,15 +86,20 @@ def to_float(value: Any) -> Optional[float]:
 # WRAPPERS (Usage in conv_dict: {'key': split_and_get('/')})
 # ==========================================
 
-def split_and_get(delimiter: str = '/', index: int = -1) -> Callable[[Any], Optional[str]]:
-    """Splits a string and grabs a specific index. Returns None if empty."""
+def split_and_get(
+        delimiter: str = '/',
+        index: int = -1,
+        cast_type: Optional[Callable[[Any], Any]] = None
+) -> Callable[[Any], Any]:
+    """Splits a string, grabs a specific index, and optionally casts it. Returns None if empty."""
 
-    def _splitter(value: Any) -> Optional[str]:
+    def _splitter(value: Any) -> Any:
         if not value:
             return None
         try:
-            return str(value).strip(delimiter).split(delimiter)[index]
-        except IndexError:
+            result = str(value).strip(delimiter).split(delimiter)[index]
+            return cast_type(result) if cast_type else result
+        except (IndexError, ValueError, TypeError):
             return None
 
     return _splitter
@@ -80,13 +110,10 @@ def cast_list_items(cast_type: Callable[[Any], Any]) -> Callable[[Any], List[Any
 
     def _caster(lst: Any) -> List[Any]:
         if not lst:
-            return[]
+            return []
         if not isinstance(lst, list):
-            # Gracefully handle a single item that should have been a list
             return [cast_type(lst)]
-
-        # Comprehension ignores None items to prevent casting errors
-        return[cast_type(item) for item in lst if item is not None and item != ""]
+        return [cast_type(item) for item in lst if item is not None and item != ""]
 
     return _caster
 
@@ -100,13 +127,17 @@ def default_if_null(default_value: Any) -> Callable[[Any], Any]:
     return _defaulter
 
 
-def link_to(dataset: Any) -> Callable[[Any], Any]:
-    """Generates a null-safe relational mapper for conv_dict.
-    Safely connects foreign keys to an IncorporatorList's codeDict.
+def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
+    """
+    Generates a null-safe relational mapper for conv_dict.
+    Optionally accepts an `extractor` to pre-process the foreign key (e.g., extracting an ID from a URL).
     """
     registry = getattr(dataset, "codeDict", {})
 
-    def _mapper(key: Any) -> Any:
+    def _mapper(val: Any) -> Any:
+        # Pre-process the value if an extractor was provided
+        key = extractor(val) if extractor else val
+
         if not key:
             return None
         if key in registry:
@@ -115,5 +146,18 @@ def link_to(dataset: Any) -> Callable[[Any], Any]:
             return registry.get(int(key))
         except (ValueError, TypeError):
             return None
+
+    return _mapper
+
+
+def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], List[Any]]:
+    """Maps an array of foreign keys to an array of Incorporator objects."""
+    base_linker = link_to(dataset, extractor)
+
+    def _mapper(val_list: Any) -> List[Any]:
+        if not isinstance(val_list, list):
+            return []
+        # Applies the base_linker to every item, discarding None results
+        return [obj for v in val_list if (obj := base_linker(v)) is not None]
 
     return _mapper

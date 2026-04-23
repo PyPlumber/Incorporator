@@ -22,16 +22,6 @@ def conv_driver_series(x: Any) -> str | None:
         return None
 
 
-def _get_relation(registry: dict, key: Any) -> Any:
-    """Safely checks a registry for both the raw key and integer-casted key."""
-    if not key: return None
-    if key in registry: return registry[key]
-    try:
-        return registry.get(int(key))
-    except (ValueError, TypeError):
-        return None
-
-
 async def main() -> None:
     print("🏁 Initiating NASCAR Data Gateway...\n")
 
