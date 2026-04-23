@@ -25,6 +25,7 @@ env/
 .tox/
 .coverage
 htmlcov/
+tests/public/api/real
 
 # 5. Build Artifacts & Packaging
 build/
