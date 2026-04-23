@@ -12,7 +12,10 @@ from .methods.converters import (
     cast_list_items,
     default_if_null,
     link_to,
-    link_to_list
+    link_to_list,
+    json_path_extractor,
+    extract_url_id,
+    pluck
 )
 from .methods.exceptions import (
     IncorporatorError,
@@ -36,6 +39,9 @@ __all__ =[
     "default_if_null",
     "link_to",
     "link_to_list",
+    "json_path_extractor",
+    "extract_url_id",
+    "pluck",
     "IncorporatorError",
     "IncorporatorFormatError",
     "IncorporatorNetworkError",

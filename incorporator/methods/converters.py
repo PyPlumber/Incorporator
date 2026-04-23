@@ -5,6 +5,7 @@ They gracefully handle None or empty strings to prevent ETL pipeline crashes.
 Designed to be passed into the 'conv_dict' parameter during Dynamic Class Building.
 """
 
+import json
 from datetime import datetime
 from typing import Any, Callable, List, Optional
 
@@ -161,3 +162,57 @@ def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None)
         return [obj for v in val_list if (obj := base_linker(v)) is not None]
 
     return _mapper
+
+  # <--- Make sure json is imported at the top of converters.py!
+
+
+# ==========================================
+# URL & NESTED DATA TOOLS
+# ==========================================
+
+def json_path_extractor(*keys: str) -> Callable[[str], Optional[str]]:
+    """
+    Creates a pagination extractor that drills into a JSON body using a sequence of keys.
+    Example: json_path_extractor('info', 'next') finds data['info']['next'].
+    """
+    def _extractor(raw_json_str: str) -> Optional[str]:
+        try:
+            data = json.loads(raw_json_str)
+            for key in keys:
+                if isinstance(data, dict):
+                    data = data.get(key)
+                else:
+                    return None
+            return str(data) if data else None
+        except Exception:
+            return None
+    return _extractor
+
+
+def extract_url_id(cast_type: Callable[[Any], Any] = int) -> Callable[[Any], Any]:
+    """
+    Extracts the trailing ID from a REST URL (e.g., '.../character/1/' -> 1).
+    """
+    def _extractor(url_str: Any) -> Any:
+        if not isinstance(url_str, str) or not url_str:
+            return None
+        try:
+            clean_str = url_str.strip('/')
+            result = clean_str.split('/')[-1]
+            return cast_type(result) if cast_type else result
+        except (ValueError, TypeError, IndexError):
+            return None
+    return _extractor
+
+
+def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
+    """
+    Extracts a specific key from a nested dictionary, falling back to the raw value.
+    Optionally chains the result into another converter (like extract_url_id).
+    """
+    def _plucker(val: Any) -> Any:
+        extracted = val.get(key) if isinstance(val, dict) else val
+        if chain:
+            return chain(extracted)
+        return extracted
+    return _plucker

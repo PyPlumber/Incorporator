@@ -36,15 +36,6 @@ def extract_rm_url(val: Any) -> Any:
     return extract_id(url)
 
 
-# def parse_rm_date(date_str: Any) -> datetime | None:
-#     """Custom parser for R&M's non-ISO date format ('December 2, 2013')."""
-#     if not date_str or not isinstance(date_str, str): return None
-#     try:
-#         return datetime.strptime(date_str, "%B %d, %Y")
-#     except ValueError:
-#         return None
-
-
 # --- MAIN PIPELINE ---
 
 async def main() -> None:
