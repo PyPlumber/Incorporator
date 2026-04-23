@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import datetime
+
 from incorporator import (
     to_bool,
     to_date,
@@ -9,7 +10,8 @@ from incorporator import (
     to_float,
     split_and_get,
     cast_list_items,
-    default_if_null
+    default_if_null,
+    link_to
 )
 
 
@@ -76,3 +78,39 @@ def test_default_if_null() -> None:
     assert defaulter("Valid") == "Valid"
     assert defaulter(None) == "N/A"
     assert defaulter("") == "N/A"
+
+
+def test_link_to_relational_mapping() -> None:
+    """Asserts relational mapping handles codeDicts, integer casting, and nulls safely."""
+
+    # 1. Mock an IncorporatorList with a codeDict
+    class MockDataset:
+        def __init__(self, registry_data: dict) -> None:  # type: ignore
+            self.codeDict = registry_data
+
+    mock_obj_1 = {"name": "Daytona"}
+    mock_obj_2 = {"name": "Talladega"}
+
+    # Simulate a registry containing an integer key and a string key
+    dataset = MockDataset({
+        1: mock_obj_1,
+        "A100": mock_obj_2
+    })
+
+    mapper = link_to(dataset)
+
+    # --- SUCCESSFUL MAPPINGS ---
+    assert mapper(1) == mock_obj_1  # Direct integer match
+    assert mapper("1") == mock_obj_1  # String-to-integer cast match
+    assert mapper("A100") == mock_obj_2  # Direct string match
+
+    # --- NULL SAFETY & FALLBACKS ---
+    assert mapper(None) is None  # Null safety
+    assert mapper("") is None  # Empty string safety
+    assert mapper(999) is None  # Missing key
+    assert mapper("bad_id") is None  # Invalid cast safety (fails int() but catches ValueError)
+
+    # --- DATASET METADATA SAFETY ---
+    # What if the user accidentally passes a flat list or None instead of an IncorporatorList?
+    bad_mapper = link_to(None)
+    assert bad_mapper(1) is None

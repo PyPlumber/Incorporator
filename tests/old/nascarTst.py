@@ -1,80 +1,62 @@
-# from nascar import NASCAR_API
-#
-# drivers = NASCAR_API.DriverBase.refresh(rPath='response')
-# # trackList  = NASCAR_API.TrackBase.refreshDataREST(NASCAR_API.TrackBase.endpointAPI, rPath='items')
-# # nascrRaces = NASCAR_API.NascarRaceBase.refreshDataREST(NASCAR_API.NascarRaceBase.endpointAPI, rPath='series_1')
-# # buschRaces = NASCAR_API.BuschRaceBase.refreshDataREST(NASCAR_API.BuschRaceBase.endpointAPI, rPath='series_2')
-# # truckRaces = NASCAR_API.TruckRaceBase.refreshDataREST(NASCAR_API.TruckRaceBase.endpointAPI, rPath='series_3')
-# nascarStandings = NASCAR_API.NascarStandings.refresh()
-# buschStandings = NASCAR_API.BuschStandings.refresh()
-# truckStandings = NASCAR_API.TruckStandings.refresh()
-#
-# league_teams_raw = {
-#     "King": [(3.0, 4235), (2.0, 4441), (1.0, 3989), (1.0, 4062), (1.0, 4123), (1.0, 4272), (1.0, 3859), (1.0, 4481)],
-#     "Intim'tor": [(3.0, 4312), (2.0, 34), (1.0, 4030), (1.0, 4023), (1.0, 3989), (1.0, 4153), (1.0, 4065), (1.0, 4481)],
-#     "WonderBoy": [(3.0, 4235), (2.0, 4133), (1.0, 4153), (1.0, 4030), (1.0, 1816), (1.0, 4065), (1.0, 3859), (1.0, 4481)],
-#     "AlabamaG": [(3.0, 4446), (2.0, 34), (1.0, 4030), (1.0, 454), (1.0, 4023), (1.0, 4153), (1.0, 4065), (1.0, 4481)],
-#     "Jaws": [(3.0, 4446), (2.0, 34), (1.0, 4065), (1.0, 4030), (1.0, 4153), (1.0, 3859), (1.0, 4001), (1.0, 4481)],
-#     "Seven": [(3.0, 4235), (2.0, 4133), (1.0, 1816), (1.0, 454), (1.0, 4062), (1.0, 1361), (1.0, 3859), (1.0, 4481)],
-#     "Cale": [(3.0, 4427), (2.0, 4133), (1.0, 4023), (1.0, 4001), (1.0, 4153), (1.0, 4030), (1.0, 4065), (1.0, 4481)],
-#     "SilverFox": [(3.0, 4235), (2.0, 34), (1.0, 4023), (1.0, 3989), (1.0, 4062), (1.0, 4153), (1.0, 4469), (1.0, 4481)]
-#     }
-#
-# points_standings = {1: nascarStandings, 2: buschStandings, 3: truckStandings}
-# league_roster = {player for roster in  league_teams_raw.values() for player in roster}
-#
-#
-# league_scores = {}
-# for driver in league_roster:
-#     league_scores[driver] = 0
-#     league_scores[driver] += points_standings[int(driver[0])][driver[1]].points
-#
-# league_teams = {}
-# for teamCd, roster in league_teams_raw.items():
-#     league_teams[teamCd] = {}
-#     for series_id, driverId in roster:
-#         league_teams[teamCd].setdefault(series_id,[]).append(drivers[driverId])
-#     for series_id in range(1,4):
-#          league_teams[teamCd][series_id].sort(key=lambda x:int(x.Badge))
-#
-# series_score = {}
-# team_score = {}
-# for team, roster in  league_teams.items():
-#     print(f'{{"{team}":[')
-#     team_score[team] = 0
-#     series_list = ('Cup', 'Busch', 'Truck')
-#     for series_id, series_name in enumerate(series_list,start=1):
-#         series_score[series_id] = {}
-#         series_score[series_id][team] = 0
-#         for idx, driver in enumerate(roster[series_id], start=1):
-#             series_score[series_id][team] += league_scores[(series_id,driver.code)]
-#             print(f'{{"Series": "{series_name:<7}", "Driver": "{idx:<2}", "name": "{driver.Full_Name:<20}", "car": "{driver.Badge:<4}", "team": "{driver.Team:<25}", "wins": {points_standings[series_id][int(driver.code)].wins:<2}, "t10": {points_standings[series_id][int(driver.code)].top_10:<2}, "points": {league_scores[(series_id,driver.code)]:<3}}},')
-#         team_score[team] += series_score[series_id][team]
-#     print(f'],')
-#     print('}')
-#
-#     for series_id, series_name in enumerate(series_list, start=1):
-#         print(f'{{"Series": "{series_name:<11}", "points": "{series_score[series_id][team]:<5}", "percentage": "{series_score[series_id][team]/team_score[team]:4.0%}"}},')
-#     print(f'{{"Series": "{'GRAND TOTAL':<11}", "points": "{team_score[team]:<5}", "percentage": "{1:4.0%}"}},')
-
-
 import asyncio
-from incorporator import Incorp, to_date
+from datetime import datetime
+from typing import Any
+
+from incorporator import Incorporator, to_date, link_to
+
+# --- HELPER FUNCTIONS & CONSTANTS ---
+
+SERIES_MAP = {
+    1: "nascar-cup-series",
+    2: "nascar-oreilly-auto-parts-series",
+    3: "nascar-craftsman-truck-series"
+}
 
 
+def conv_driver_series(x: Any) -> str | None:
+    """Safely maps the driver series ID to its string name."""
+    if not x: return None
+    try:
+        return SERIES_MAP.get(int(x))
+    except (ValueError, TypeError):
+        return None
 
-async def main():
-    print("Fetching Nascar Drivers...")
 
-    # 2. Await the classmethod, assigning the old to an instance list (e.g., drivers)
-    drivers = await Incorp.incorp(
-        url="https://cf.nascar.com/cacher/drivers.json",  # Fixed string quotes
+def _get_relation(registry: dict, key: Any) -> Any:
+    """Safely checks a registry for both the raw key and integer-casted key."""
+    if not key: return None
+    if key in registry: return registry[key]
+    try:
+        return registry.get(int(key))
+    except (ValueError, TypeError):
+        return None
+
+
+async def main() -> None:
+    print("🏁 Initiating NASCAR Data Gateway...\n")
+
+    CURRENT_YEAR = datetime.now().year
+    CFC_BASE = "https://cf.nascar.com/cacher"
+    PROD_BASE = f"https://cf.nascar.com/data/cacher/production/{CURRENT_YEAR}"
+
+    # ==========================================
+    # 1. FETCH FOUNDATIONAL DATA (Tracks & Drivers)
+    # ==========================================
+    print("-> Fetching Tracks...")
+    tracks = await Incorporator.incorp(
+        url=f"{CFC_BASE}/tracks.json",
+        rPath="items",
+        code="track_id",
+        name="track_name"
+    )
+
+    print("-> Fetching Drivers...")
+    drivers = await Incorporator.incorp(
+        url=f"{CFC_BASE}/drivers.json",
         rPath="response",
-        code="Nascar_Driver_ID",  # Assigned to keyword
-        name="Full_Name",  # Assigned to keyword
-
-        codeAdds={},
-        exclAdds=[
+        code="Nascar_Driver_ID",
+        name="Full_Name",
+        excl_lst=[
             'Series_Logo', 'Short_Name', 'Description', 'Hobbies', 'Children', 'Residing_City',
             'Residing_State', 'Residing_Country', 'Image_Transparent', 'SecondaryImage', 'Career_Stats',
             'Age', 'Rank', 'Points', 'Points_Behind', 'No_Wins', 'Poles', 'Top5', 'Top10', 'Laps_Led',
@@ -82,21 +64,80 @@ async def main():
             'Integrated_Sponsor_URL', 'Silly_Season_Change', 'Silly_Season_Change_Description',
             'Driver_Post_Status', 'Driver_Part_Time'
         ],
-        convAdds={  # Cleaned up dict() wrapper
+        conv_dict={
             'DOB': to_date,
-            'DOD': to_date
-            # 'Driver_Series': lambda x: convDriverSeries(x) if x else None
-        },
-        nameAdds=[]  # Fixed: Must be a list (or completely omitted if empty)
+            'DOD': to_date,
+            'Driver_Series': conv_driver_series
+        }
     )
 
-    # 3. Validation
-    print(f"Successfully loaded {len(drivers)} drivers!")
-    drivers[0].display()
-    drivers[1].display()
-    drivers[2].display()
-    d = drivers[3]
-    print(d.Badge, d.Full_Name, d.Team)
+    # ==========================================
+    # 2. FETCH RELATIONAL DATA (Cup Races)
+    # ==========================================
+    print("-> Fetching Cup Schedule & Mapping Relationships...")
+
+    date_fields = ['date_scheduled', 'race_date', 'qualifying_date', 'tunein_date']
+
+    cup_races = await Incorporator.incorp(
+        url=f"{CFC_BASE}/{CURRENT_YEAR}/race_list_basic.json",
+        rPath="series_1",
+        code="race_id",
+        name="race_name",
+        excl_lst=['schedule', 'track_name'],
+
+        # Look how incredibly clean this is now!
+        conv_dict={
+            'track_id': link_to(tracks),
+            'pole_winner_driver_id': link_to(drivers),
+            **{key: to_date for key in date_fields}
+        },
+
+        name_chg=[('track_id', 'track')]
+    )
+
+    # ==========================================
+    # 3. FETCH STANDINGS (Using DRY exclusion lists)
+    # ==========================================
+    print("-> Fetching Live Standings...")
+    standings_excl = [
+        'delta_playoff', 'is_clinch', 'starts', 'poles',
+        'driver_first_name', 'driver_last_name', 'driver_suffix'
+    ]
+
+    cup_standings = await Incorporator.incorp(
+        url=f"{PROD_BASE}/1/racinginsights-points-feed.json",
+        code="driver_id", name="driver_name", excl_lst=standings_excl
+    )
+
+    # ==========================================
+    # 4. VALIDATION & DX SHOWCASE
+    # ==========================================
+    print("\n✅ Pipeline Complete! Validating Data...")
+
+    tracks_count = len(tracks) if isinstance(tracks, list) else 1
+    drivers_count = len(drivers) if isinstance(drivers, list) else 1
+    races_count = len(cup_races) if isinstance(cup_races, list) else 1
+
+    print(f"Loaded: {tracks_count} Tracks, {drivers_count} Drivers, {races_count} Cup Races.")
+
+    if isinstance(cup_races, list) and isinstance(cup_standings, list):
+        sample_race = cup_races[5]
+
+        print("\n--- Relational Magic Showcase ---")
+        # Notice we can safely use .name now because the ETL actually ran and renamed "race_name"!
+        print(f"Race: {getattr(sample_race, 'name', 'Unknown')}")
+
+        if getattr(sample_race, 'track', None):
+            print(f"Track Name: {sample_race.track.name}")  # type: ignore
+
+        if getattr(sample_race, 'pole_winner_driver_id', None):
+            # Because the ETL ran, this is now a Driver object, not an integer!
+            print(f"Pole Winner: {sample_race.pole_winner_driver_id.name}")  # type: ignore
+
+        print("\n--- Current Cup Leader ---")
+        if cup_standings:
+            print(f"Name: {getattr(cup_standings[0], 'name', 'Unknown')}")
+            print(f"Points: {getattr(cup_standings[0], 'points', 'N/A')}")
 
 
 if __name__ == "__main__":

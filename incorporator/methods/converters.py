@@ -12,7 +12,6 @@ from typing import Any, Callable, List, Optional
 # ==========================================
 # DIRECT CASTERS (Usage in conv_dict: {'key': to_bool})
 # ==========================================
-
 def to_bool(value: Any) -> bool:
     """Safely converts strings ('true', '1', 'yes') to booleans. Returns False if empty."""
     if isinstance(value, bool):
@@ -99,3 +98,22 @@ def default_if_null(default_value: Any) -> Callable[[Any], Any]:
         return default_value if value is None or value == "" else value
 
     return _defaulter
+
+
+def link_to(dataset: Any) -> Callable[[Any], Any]:
+    """Generates a null-safe relational mapper for conv_dict.
+    Safely connects foreign keys to an IncorporatorList's codeDict.
+    """
+    registry = getattr(dataset, "codeDict", {})
+
+    def _mapper(key: Any) -> Any:
+        if not key:
+            return None
+        if key in registry:
+            return registry[key]
+        try:
+            return registry.get(int(key))
+        except (ValueError, TypeError):
+            return None
+
+    return _mapper

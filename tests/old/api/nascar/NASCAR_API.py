@@ -14,7 +14,7 @@ def convDriverSeries(series_text):
 
 NascarBase = Incorp.Incorporator.incorp('NascarBase', 'id', 'name',
     url='https://cf.nascar.com/cacher/',
-    codeAdds= {},
+    codeAdds= {1:"nascar-cup-series",2:nascar-oreilly-auto-parts-series,3:nascar-craftsman-truck-series},
     exclAdds=[],
     convAdds={},
     nameAdds={})

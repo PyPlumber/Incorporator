@@ -10,7 +10,8 @@ from .methods.converters import (
     to_float,
     split_and_get,
     cast_list_items,
-    default_if_null
+    default_if_null,
+    link_to  # <--- ADDED HERE
 )
 from .methods.exceptions import (
     IncorporatorError,
@@ -32,6 +33,7 @@ __all__ =[
     "split_and_get",
     "cast_list_items",
     "default_if_null",
+    "link_to",  # <--- ADDED HERE
     "IncorporatorError",
     "IncorporatorFormatError",
     "IncorporatorNetworkError",
