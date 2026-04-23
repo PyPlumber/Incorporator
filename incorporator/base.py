@@ -1,5 +1,6 @@
 """The core super class and declarative factory for Incorporator."""
 
+import asyncio
 import weakref
 from datetime import datetime, timezone
 from typing import (
@@ -15,7 +16,7 @@ from .methods.format_parsers import FormatType
 TIncorporator = TypeVar("TIncorporator", bound="Incorporator")
 
 
-class IncorporatorList(list, Generic[TIncorporator]):  # type: ignore
+class IncorporatorList(list[TIncorporator]):
     """A specialized list that provides direct access to the dynamic class registry."""
 
     def __init__(self, model_class: Type[TIncorporator], items: List[TIncorporator]):
@@ -80,8 +81,8 @@ class Incorporator(BaseModel):
     @classmethod
     async def incorp(
             cls: Type[TIncorporator],
-            url: Optional[str] = None,
-            file: Optional[str] = None,
+            url: Optional[Union[str, List[str]]] = None,
+            file: Optional[Union[str, List[str]]] = None,
             rPath: Optional[str] = None,
             code: Optional[str] = None,
             name: Optional[str] = None,
@@ -95,18 +96,61 @@ class Incorporator(BaseModel):
     ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
         """Declarative factory to fetch data and generate a mapped Incorporator subclass."""
 
+        # ==========================================
+        # NATIVE CONCURRENCY ENGINE
+        # ==========================================
+        if isinstance(url, list) or isinstance(file, list):
+            tasks = []
+            if isinstance(url, list):
+                tasks = [
+                    cls.incorp(
+                        url=u, rPath=rPath, code=code, name=name, static_dct=static_dct,
+                        excl_lst=excl_lst, conv_dict=conv_dict, name_chg=name_chg,
+                        format_type=format_type, paginate=paginate, next_url_extractor=next_url_extractor
+                    ) for u in url
+                ]
+            elif isinstance(file, list):
+                tasks = [
+                    cls.incorp(
+                        file=f, rPath=rPath, code=code, name=name, static_dct=static_dct,
+                        excl_lst=excl_lst, conv_dict=conv_dict, name_chg=name_chg,
+                        format_type=format_type, paginate=paginate, next_url_extractor=next_url_extractor
+                    ) for f in file
+                ]
+
+            results = await asyncio.gather(*tasks)
+
+            flat_results: List[TIncorporator] = []
+            for res in results:
+                if isinstance(res, list):
+                    flat_results.extend(res)
+                else:
+                    flat_results.append(res)  # Mypy correctly narrows this to TIncorporator!
+
+            if not flat_results:
+                raise ValueError("No data returned from concurrent execution.")
+
+            ActualClass = flat_results[0].__class__
+            return IncorporatorList(ActualClass, flat_results)
+
+        # ==========================================
+        # STANDARD PIPELINE
+        # ==========================================
         source = file if file else url
         if not source:
             raise ValueError("Either 'url' or 'file' must be provided.")
 
+        if not isinstance(source, str):
+            raise ValueError("Source must be a string at this point in the pipeline.")
+
         if file:
-            cls.file = file
+            cls.file = source
         else:
-            cls.url = url
+            cls.url = source
 
         active_format = format_type or _infer_format(source)
 
-        # 1. FETCH & PARSE (Handles single pages or multi-page accumulation)
+        # 1. FETCH & PARSE
         accumulated_data: List[Any] = []
         is_single_object = False
 
@@ -149,8 +193,9 @@ class Incorporator(BaseModel):
         )
 
         # 3. BUILD SCHEMA
-        DynamicClass = schema_builder.infer_dynamic_schema("DynamicModel", transformed_data, cls)
-        ActualClass = cast(Type[TIncorporator], DynamicClass)
+        # We cast the returned Type[BaseModel] back into our expected Incorporator Subclass Type
+        ActualClass = cast(Type[TIncorporator],
+                           schema_builder.infer_dynamic_schema("DynamicModel", transformed_data, cls))
 
         # 4. INSTANTIATE AND RETURN
         if isinstance(transformed_data, list):
@@ -163,8 +208,8 @@ class Incorporator(BaseModel):
     async def refresh(
             cls: Type[TIncorporator],
             instance: Union[TIncorporator, List[TIncorporator]],
-            new_url: Optional[str] = None,
-            new_file: Optional[str] = None,
+            new_url: Optional[Union[str, List[str]]] = None,
+            new_file: Optional[Union[str, List[str]]] = None,
             format_type: Optional[FormatType] = None,
             rPath: Optional[str] = None,
             paginate: bool = False,
@@ -172,6 +217,53 @@ class Incorporator(BaseModel):
     ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
         """Hydrates an existing Incorporator subclass instance with new data."""
 
+        # ==========================================
+        # NATIVE CONCURRENCY ENGINE
+        # ==========================================
+        if isinstance(new_url, list) or isinstance(new_file, list) or (
+                isinstance(instance, list) and not new_url and not new_file):
+            tasks = []
+            inst_list = instance if isinstance(instance, list) else [instance]
+
+            if isinstance(new_url, list):
+                tasks = [
+                    cls.refresh(
+                        instance=inst, new_url=u, format_type=format_type, rPath=rPath,
+                        paginate=paginate, next_url_extractor=next_url_extractor
+                    ) for inst, u in zip(inst_list * len(new_url), new_url)
+                ]
+            elif isinstance(new_file, list):
+                tasks = [
+                    cls.refresh(
+                        instance=inst, new_file=f, format_type=format_type, rPath=rPath,
+                        paginate=paginate, next_url_extractor=next_url_extractor
+                    ) for inst, f in zip(inst_list * len(new_file), new_file)
+                ]
+            else:
+                tasks = [
+                    cls.refresh(
+                        instance=inst, format_type=format_type, rPath=rPath,
+                        paginate=paginate, next_url_extractor=next_url_extractor
+                    ) for inst in inst_list
+                ]
+
+            results = await asyncio.gather(*tasks)
+            flat_results: List[TIncorporator] = []
+            for res in results:
+                if isinstance(res, list):
+                    flat_results.extend(res)
+                else:
+                    flat_results.append(res)
+
+            if not flat_results:
+                raise ValueError("No data returned from concurrent refresh.")
+
+            ActualClass = flat_results[0].__class__
+            return IncorporatorList(ActualClass, flat_results)
+
+        # ==========================================
+        # STANDARD PIPELINE
+        # ==========================================
         TargetClass = instance[0].__class__ if isinstance(instance, list) else instance.__class__
         active_url = new_url or getattr(TargetClass, "url", None)
         active_file = new_file or getattr(TargetClass, "file", None)
@@ -179,6 +271,9 @@ class Incorporator(BaseModel):
         source = active_file if active_file else active_url
         if not source:
             raise ValueError("No valid origin to refresh from. Provide new_url or new_file.")
+
+        if not isinstance(source, str):
+            raise ValueError("Source must be a string at this point in the pipeline.")
 
         active_format = format_type or _infer_format(source)
 
@@ -229,6 +324,8 @@ class Incorporator(BaseModel):
         active_format = format_type or _infer_format(file_path)
         instances = instance if isinstance(instance, list) else [instance]
 
+        # Extract dictionaries using Pydantic's native dump, respecting our dynamic aliases
         data_dicts = [obj.model_dump(by_alias=True, mode='json') for obj in instances]
 
+        # Await the background-threaded writer
         await format_parsers.write_destination_data(data_dicts, file_path, active_format)

@@ -89,23 +89,17 @@ def infer_dynamic_schema(
     for raw_key, value in sample_dict.items():
         safe_key = sanitize_json_key(raw_key)
         if isinstance(value, dict):
-            nested_model = infer_dynamic_schema(f"{model_name}_{safe_key}", value, BaseModel)
-            # Wrapped in Optional
+            nested_model: Any = infer_dynamic_schema(f"{model_name}_{safe_key}", value, BaseModel)
             fields[safe_key] = (Optional[nested_model], Field(alias=raw_key, default=None))
         elif isinstance(value, list) and len(value) > 0 and isinstance(value[0], dict):
-            nested_model = infer_dynamic_schema(f"{model_name}_{safe_key}Item", value[0], BaseModel)
-            # Wrapped in Optional
-            fields[safe_key] = (Optional[List[nested_model]],
-                                Field(alias=raw_key, default_factory=list))  # type: ignore
+            nested_model_list: Any = infer_dynamic_schema(f"{model_name}_{safe_key}Item", value[0], BaseModel)
+            fields[safe_key] = (Optional[List[nested_model_list]], Field(alias=raw_key, default_factory=list))
         else:
-            field_type = type(value) if value is not None else Any
-
-            # JSON freely mixes ints and floats. If we infer an int, we must allow floats too.
+            field_type: Any = type(value) if value is not None else Any
             if field_type is int:
-                field_type = Union[int, float]  # type: ignore
-
-            # Wrapped in Optional
+                field_type = Union[int, float]
             fields[safe_key] = (Optional[field_type], Field(alias=raw_key, default=None))
+
 
     try:
         DynamicModel = create_model(
@@ -115,6 +109,7 @@ def infer_dynamic_schema(
             **fields
         )
 
+        # --- THE DEEPCOPY SHIELD ---
         # Isolates class-level mutable attributes (like codeDict) so subclasses don't share memory
         for attr_name in dir(base_class):
             if not attr_name.startswith("__") and attr_name not in PYDANTIC_RESERVED:

@@ -99,7 +99,7 @@ def split_and_get(
             return None
         try:
             result = str(value).strip(delimiter).split(delimiter)[index]
-            return cast_type(result) if cast_type else result
+            return cast_type(result) if cast_type is not None else result
         except (IndexError, ValueError, TypeError):
             return None
 
@@ -199,7 +199,7 @@ def extract_url_id(cast_type: Callable[[Any], Any] = int) -> Callable[[Any], Any
         try:
             clean_str = url_str.strip('/')
             result = clean_str.split('/')[-1]
-            return cast_type(result) if cast_type else result
+            return cast_type(result) if cast_type is not None else result
         except (ValueError, TypeError, IndexError):
             return None
     return _extractor
