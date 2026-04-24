@@ -80,21 +80,27 @@ class JSONHandler(BaseFormatHandler):
 class CSVHandler(BaseFormatHandler):
     def parse(self, raw_data: str) -> List[Dict[str, Any]]:
         try:
-            reader = csv.DictReader(io.StringIO(raw_data.strip()))
+            # DSA: Passed raw_data directly to avoid O(N) memory duplication from .strip()
+            reader = csv.DictReader(io.StringIO(raw_data))
             rows: List[Dict[str, Any]] = []
+
             for row in reader:
                 parsed_row: Dict[str, Any] = {}
                 for k, v in row.items():
                     safe_k = str(k) if k is not None else "unknown_column"
-                    # NESTED CSV FIX: If the string looks like JSON, parse it back to a dict/list!
-                    if v and isinstance(v, str) and (
-                            (v.startswith('{') and v.endswith('}')) or (v.startswith('[') and v.endswith(']'))):
+
+                    # DSA: Replaced string method calls with O(1) index lookups for tight loop efficiency
+                    if v and (
+                            (v[0] == '{' and v[-1] == '}') or
+                            (v[0] == '[' and v[-1] == ']')
+                    ):
                         try:
                             parsed_row[safe_k] = json.loads(v)
                         except json.JSONDecodeError:
                             parsed_row[safe_k] = v
                     else:
                         parsed_row[safe_k] = v
+
                 rows.append(parsed_row)
             return rows
         except csv.Error as e:
@@ -124,10 +130,16 @@ class CSVHandler(BaseFormatHandler):
 class XMLHandler(BaseFormatHandler):
     def parse(self, raw_data: str) -> Dict[str, Any]:
         try:
-            root = ET.fromstring(raw_data.strip())
+            # DSA: Try O(1) memory parsing first without .strip() string duplication
+            root = ET.fromstring(raw_data)
             return _xml_to_dict(root)
-        except ET.ParseError as e:
-            raise IncorporatorFormatError(f"Invalid XML: {e}")
+        except ET.ParseError:
+            try:
+                # Fallback: Only duplicate memory if strict parser chokes on leading whitespace
+                root = ET.fromstring(raw_data.strip())
+                return _xml_to_dict(root)
+            except ET.ParseError as e:
+                raise IncorporatorFormatError(f"Invalid XML: {e}")
 
     def write(self, data: List[Dict[str, Any]], file_path: str) -> None:
         with open(file_path, 'w', encoding='utf-8') as f:

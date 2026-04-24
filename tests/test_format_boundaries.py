@@ -15,10 +15,10 @@ async def test_csv_etl_type_conversions(csv_users_payload: str, tmp_path: Path) 
     mock_file.write_text(csv_users_payload)
 
     users = await Incorporator.incorp(
-        file=str(mock_file),
+        inc_file=str(mock_file),
         format_type=FormatType.CSV,
-        code='id',
-        name='username',
+        inc_code='id',
+        inc_name='username',
         excl_lst=['account_balance'],  # Drop financial data
         conv_dict={
             # CSV readers return strings by default. conv_dict handles the type casting.
@@ -39,17 +39,17 @@ async def test_csv_etl_type_conversions(csv_users_payload: str, tmp_path: Path) 
 
 @pytest.mark.asyncio
 async def test_xml_etl_rpath_and_renaming(xml_catalog_payload: str, tmp_path: Path) -> None:
-    """Tests that Incorporator parses nested XML, drills down via rPath, and renames tags."""
+    """Tests that Incorporator parses nested XML, drills down via rec_path, and renames tags."""
     mock_file = tmp_path / "catalog.xml"
     mock_file.write_text(xml_catalog_payload)
 
     books = await Incorporator.incorp(
-        file=str(mock_file),
+        inc_file=str(mock_file),
         format_type=FormatType.XML,
         # Drill straight through the catalog wrapper into the book array!
-        rPath='catalog.book',
-        code='id',
-        name='title',
+        rec_path='catalog.book',
+        inc_code='id',
+        inc_name='title',
         name_chg=[('title', 'book_title'), ('price', 'cost_usd')],  # Rename XML tags
         conv_dict={
             'price': lambda x: float(x)  # Convert XML text to float

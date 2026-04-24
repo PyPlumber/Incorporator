@@ -1,8 +1,8 @@
-"""Integration tests for Concurrent API Fetching, Subclassing, and Relational Mapping."""
+"""Integration tests for the "Discovery & Enrichment" pattern using the `inc_parent` parameter."""
 
 import asyncio
 import json
-from typing import Any, List
+from typing import Any
 
 import httpx
 import pytest
@@ -15,112 +15,101 @@ from incorporator import (
 )
 
 
-# --- EXPLICIT SUBCLASSING & WRAPPERS ---
-
-class MockSpecies(Incorporator):
-    pass
+# --- EXPLICIT SUBCLASSING ---
+class Nav(Incorporator): pass
 
 
-class MockPokemon(Incorporator):
-    pass
+class Habitat(Incorporator): pass
 
 
-class RegistryWrapper:
-    """A wrapper to hold strong references to asyncio.gather results for link_to mapping."""
+class Species(Incorporator): pass
 
-    def __init__(self, items: List[Any]) -> None:
-        self.codeDict = {item.code: item for item in items}
+
+class Pokemon(Incorporator): pass
 
 
 # --- MOCK NETWORK SETUP ---
-
-async def mock_execute_get(client: httpx.AsyncClient, url: str) -> httpx.Response:
-    """Mocks the REST 'Detail Endpoints' for specific Pokemon and Species."""
-
-    if "pokemon-species/1/" in url:
-        payload = {
-            "id": 1, "name": "bulbasaur", "is_legendary": False, "is_mythical": False,
-            "habitat": {"name": "grassland", "url": "https://pokeapi.co/api/v2/pokemon-habitat/1/"}
-        }
-    elif "pokemon-species/150/" in url:
-        payload = {
-            "id": 150, "name": "mewtwo", "is_legendary": True, "is_mythical": False,
-            "habitat": {"name": "rare", "url": "https://pokeapi.co/api/v2/pokemon-habitat/5/"}
-        }
-    elif "pokemon/1/" in url:
-        payload = {
-            "id": 1, "name": "bulbasaur",
-            "species": {"name": "bulbasaur", "url": "https://pokeapi.co/api/v2/pokemon-species/1/"}
-        }
-    elif "pokemon/150/" in url:
-        payload = {
-            "id": 150, "name": "mewtwo",
-            "species": {"name": "mewtwo", "url": "https://pokeapi.co/api/v2/pokemon-species/150/"}
-        }
+async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+    if "pokemon-habitat" in url:
+        payload = {"results": [
+            {"id": 5, "name": "rare", "url": "https://api.com/pokemon-habitat/5/"},
+            {"id": 1, "name": "grassland", "url": "https://api.com/pokemon-habitat/1/"}
+        ]}
+    elif "pokemon-species/150" in url:
+        payload = {"id": 150, "name": "mewtwo", "is_legendary": True,
+                   "habitat": {"name": "rare", "url": "https://api.com/pokemon-habitat/5/"}}
+    elif "pokemon-species/1" in url:
+        payload = {"id": 1, "name": "bulbasaur", "is_legendary": False,
+                   "habitat": {"name": "grassland", "url": "https://api.com/pokemon-habitat/1/"}}
+    elif "/pokemon/150" in url:
+        payload = {"id": 150, "name": "mewtwo", "base_experience": 306,
+                   "species": {"name": "mewtwo", "url": "https://api.com/pokemon-species/150/"}}
+    elif "/pokemon/1" in url:
+        payload = {"id": 1, "name": "bulbasaur", "base_experience": 64,
+                   "species": {"name": "bulbasaur", "url": "https://api.com/pokemon-species/1/"}}
+    elif "/pokemon-species" in url:
+        payload = {"results": [{"name": "mewtwo", "url": "https://api.com/pokemon-species/150/"},
+                               {"name": "bulbasaur", "url": "https://api.com/pokemon-species/1/"}]}
+    elif "/pokemon" in url:
+        payload = {"results": [{"name": "mewtwo", "url": "https://api.com/pokemon/150/"},
+                               {"name": "bulbasaur", "url": "https://api.com/pokemon/1/"}]}
     else:
         payload = {}
-
     return httpx.Response(200, text=json.dumps(payload))
 
 
 # --- TESTS ---
-
 @pytest.mark.asyncio
-async def test_pokemon_concurrent_detail_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tests asyncio.gather concurrency, explicit subclassing, and nested dict plucking."""
-
-    # 1. Intercept the network layer
+async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("incorporator.methods.network._execute_get", mock_execute_get)
+    BASE_URL = "https://api.com"
 
-    BASE_URL = "https://pokeapi.co/api/v2"
-    target_ids = [1, 150]
+    # 1. DISCOVERY PHASE
+    habitats, species_nav, pokemon_nav = await asyncio.gather(
+        Habitat.incorp(inc_url=f"{BASE_URL}/pokemon-habitat/", rec_path="results", inc_code="id", inc_name="name",
+                       excl_lst=['url']),
+        Nav.incorp(inc_url=f"{BASE_URL}/pokemon-species/?limit=2", rec_path="results", inc_name="name",
+                   name_chg=[('url', 'detail_url')]),
+        Nav.incorp(inc_url=f"{BASE_URL}/pokemon/?limit=2", rec_path="results", inc_name="name",
+                   name_chg=[('url', 'detail_url')])
+    )
 
-    # 2. FETCH SPECIES CONCURRENTLY
-    species_tasks = [
-        MockSpecies.incorp(
-            url=f"{BASE_URL}/pokemon-species/{pid}/",
-            code="id", name="name", excl_lst=["url"],
-            conv_dict={"habitat": pluck("name")}
-        ) for pid in target_ids
-    ]
+    # 2. ENRICHMENT PHASE (The Magic)
+    species = await Species.incorp(
+        inc_parent=species_nav,
+        inc_code="id", inc_name="name", excl_lst=["url"],
+        conv_dict={"habitat": link_to(habitats, extractor=pluck("url", extract_url_id(int)))}
+    )
 
-    # Assert they are fetched concurrently and held in strong references
-    loaded_species = await asyncio.gather(*species_tasks)
-    assert len(loaded_species) == 2
+    enriched_pokemon = await Pokemon.incorp(
+        inc_parent=pokemon_nav,
+        inc_code="id", inc_name="name", excl_lst=["url"],
+        conv_dict={"species": link_to(species, extractor=pluck("url", extract_url_id(int)))}
+    )
 
-    species_registry = RegistryWrapper(loaded_species)
+    # 3. ASSERTIONS & SORTING (Sort by Base Experience)
+    assert isinstance(enriched_pokemon, list) and len(enriched_pokemon) == 2
 
-    # 3. FETCH POKEMON CONCURRENTLY & MAP TO SPECIES
-    pokemon_tasks = [
-        MockPokemon.incorp(
-            url=f"{BASE_URL}/pokemon/{pid}/",
-            code="id", name="name", excl_lst=["url"],
-            conv_dict={
-                "species": link_to(species_registry, extractor=pluck("url", extract_url_id()))
-            }
-        ) for pid in target_ids
-    ]
+    enriched_pokemon.sort(key=lambda p: getattr(p, "base_experience", 0), reverse=True)
 
-    loaded_pokemon = await asyncio.gather(*pokemon_tasks)
-    assert len(loaded_pokemon) == 2
+    assert getattr(enriched_pokemon[0], "inc_name") == "mewtwo"
+    assert getattr(enriched_pokemon[1], "inc_name") == "bulbasaur"
 
-    # 4. VALIDATE THE GRAPH DATABASE
-    pokemon_registry = RegistryWrapper(loaded_pokemon).codeDict
+    # 4. SHOWCASE TABLE
+    print("\n\n" + "=" * 85)
+    print(" ✨ TABLE 1: ENRICHMENT PHASE (Sorted by Base Experience)")
+    print("=" * 85)
+    print(f"{'POKEMON':<15} | {'BASE EXP':<10} | {'LEGENDARY?':<15} | {'HABITAT'}")
+    print("-" * 85)
+    for p_rich in enriched_pokemon:
+        name = str(getattr(p_rich, "inc_name", "N/A")).capitalize()
+        exp = str(getattr(p_rich, "base_experience", "N/A"))
 
-    # Validate Bulbasaur (ID 1)
-    bulbasaur = pokemon_registry.get(1)
-    assert bulbasaur is not None
-    assert getattr(bulbasaur, "name") == "bulbasaur"
+        s_obj = getattr(p_rich, "species", None)
+        is_leg = "Yes" if getattr(s_obj, "is_legendary", False) else "No"
 
-    b_species = getattr(bulbasaur, "species")
-    assert getattr(b_species, "is_legendary") is False
-    assert getattr(b_species, "habitat") == "grassland"
+        h_obj = getattr(s_obj, "habitat", None) if s_obj else None
+        hab = str(getattr(h_obj, "inc_name", "N/A")).capitalize()
 
-    # Validate Mewtwo (ID 150)
-    mewtwo = pokemon_registry.get(150)
-    assert mewtwo is not None
-    assert getattr(mewtwo, "name") == "mewtwo"
-
-    m_species = getattr(mewtwo, "species")
-    assert getattr(m_species, "is_legendary") is True
-    assert getattr(m_species, "habitat") == "rare"
+        print(f"{name:<15} | {exp:<10} | {is_leg:<15} | {hab}")
+    print("=" * 85 + "\n")

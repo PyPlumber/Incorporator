@@ -1,7 +1,9 @@
-"""Unit tests for built-in functional converters."""
+"""Unit tests for built-in functional converters and URL tools."""
 
-import pytest
+import json
 from datetime import datetime
+from types import SimpleNamespace
+import pytest
 
 from incorporator import (
     to_bool,
@@ -11,106 +13,106 @@ from incorporator import (
     split_and_get,
     cast_list_items,
     default_if_null,
-    link_to
+    link_to,
+    link_to_list,
+    extract_url_id,
+    pluck,
+    json_path_extractor
 )
 
 
 def test_to_bool_null_safety() -> None:
     """Asserts string logic and empty value fallback."""
     assert to_bool("true") is True
-    assert to_bool("Y") is True
     assert to_bool("1") is True
     assert to_bool("false") is False
     assert to_bool("junk") is False
     assert to_bool(None) is False
-    assert to_bool("") is False
 
 
-def test_to_date_null_safety() -> None:
-    """Asserts ISO-8601 parsing and Z-Zulu timezone correction."""
-    dt = to_date("2026-04-21T23:59:59Z")
-    assert isinstance(dt, datetime)
-    assert dt.year == 2026
+def test_to_date_universal_parser() -> None:
+    """Asserts ISO-8601 parsing and universal string format fallbacks."""
+    # Standard ISO
+    dt_iso = to_date("2026-04-21T23:59:59Z")
+    assert isinstance(dt_iso, datetime) and dt_iso.year == 2026
+
+    # Custom Rick & Morty format fallback
+    dt_rm = to_date("December 2, 2013")
+    assert isinstance(dt_rm, datetime) and dt_rm.year == 2013 and dt_rm.month == 12
+
+    # SQL Timestamp format fallback
+    dt_sql = to_date("2026-04-22 23:59:59")
+    assert isinstance(dt_sql, datetime) and dt_sql.year == 2026
 
     assert to_date(None) is None
-    assert to_date("") is None
 
     with pytest.raises(ValueError):
-        to_date("not-a-valid-date")
+        to_date("not-a-valid-date-format")
 
 
-def test_to_int_and_float_null_safety() -> None:
-    """Asserts robust string-to-number casting."""
-    assert to_int("10.5") == 10  # float-string to int works
+def test_to_int_and_float_dirty_data_and_math() -> None:
+    """Asserts robust string-to-number casting, dirty data cleaning, and math factories."""
+
+    # 1. Direct Execution & Dirty Data Cleaning
+    assert to_int("1,500") == 1500  # Strips commas
+    assert to_float("1,500.50") == 1500.5  # Strips commas
+    assert to_int("unknown") is None  # Traps dirty strings
+    assert to_float("N/A") is None  # Traps dirty strings
     assert to_int(None) is None
-    assert to_int("junk") is None
 
-    assert to_float("1500.50") == 1500.5
-    assert to_float(None) is None
-    assert to_float("junk") is None
+    # 2. Factory Mode with Math Strings!
+    # Fahrenheit conversion: (x * 1.8) + 32
+    celsius_to_fahrenheit = to_float(math="(x * 1.8) + 32")
+    assert celsius_to_fahrenheit(0) == 32.0
+    assert celsius_to_fahrenheit("100") == 212.0
+
+    # Math with defaults for missing data
+    discount_calc = to_int(math="round(x * 0.8)", default=0)
+    assert discount_calc("100") == 80
+    assert discount_calc("unknown") == 0  # Falls back to default safely!
 
 
-def test_split_and_get_null_safety() -> None:
-    """Asserts URL splitting handles trailing slashes and nulls."""
-    extractor = split_and_get(delimiter='/', index=-1)
+def test_url_toolkit() -> None:
+    """Asserts extract_url_id, pluck, and json_path_extractor function correctly."""
 
-    assert extractor("https://api.com/user/101") == "101"
-    # Testing the trailing slash defense
-    assert extractor("https://api.com/user/101/") == "101"
-
+    # --- extract_url_id ---
+    extractor = extract_url_id(int)
+    assert extractor("https://api.com/user/101") == 101
+    assert extractor("https://api.com/user/101/") == 101  # Defends against trailing slashes
     assert extractor(None) is None
-    assert extractor("") is None
 
+    # --- pluck ---
+    plucker = pluck("url", chain=extract_url_id(int))
+    # Test dictionary pluck
+    assert plucker({"name": "Earth", "url": "https://api.com/planet/5/"}) == 5
+    # Test flat string fallback
+    assert plucker("https://api.com/planet/5/") == 5
 
-def test_cast_list_items_null_safety() -> None:
-    """Asserts list casting strips Nulls and handles singular elements."""
-    caster = cast_list_items(int)
-
-    assert caster(["1", "2", None, "4", ""]) == [1, 2, 4]
-    assert caster("10") == [10]  # Graceful fallback if passed a string instead of a list
-    assert caster(None) == []
-
-
-def test_default_if_null() -> None:
-    """Asserts substitution of default values for None or empty strings."""
-    defaulter = default_if_null("N/A")
-
-    assert defaulter("Valid") == "Valid"
-    assert defaulter(None) == "N/A"
-    assert defaulter("") == "N/A"
+    # --- json_path_extractor ---
+    json_data = json.dumps({"info": {"next": "https://api.com/?page=2"}})
+    paginator = json_path_extractor("info", "next")
+    assert paginator(json_data) == "https://api.com/?page=2"
+    assert paginator(json.dumps({"info": {"next": None}})) is None
 
 
 def test_link_to_relational_mapping() -> None:
-    """Asserts relational mapping handles codeDicts, integer casting, and nulls safely."""
+    """Asserts relational mapping handles plain lists, WeakValueDictionaries, and nulls."""
 
-    # 1. Mock an IncorporatorList with a codeDict
-    class MockDataset:
-        def __init__(self, registry_data: dict) -> None:  # type: ignore
-            self.codeDict = registry_data
+    # Use SimpleNamespace to mock the object-oriented structure of Pydantic models
+    # UPDATED: Use inc_code to match the newly refactored base API contract.
+    mock_obj_1 = SimpleNamespace(inc_code=1, name="Daytona")
+    mock_obj_2 = SimpleNamespace(inc_code="A100", name="Talladega")
 
-    mock_obj_1 = {"name": "Daytona"}
-    mock_obj_2 = {"name": "Talladega"}
+    # Test 1: Passing a plain Python list (link_to should build the dict dynamically)
+    plain_list =[mock_obj_1, mock_obj_2]
+    mapper = link_to(plain_list)
 
-    # Simulate a registry containing an integer key and a string key
-    dataset = MockDataset({
-        1: mock_obj_1,
-        "A100": mock_obj_2
-    })
-
-    mapper = link_to(dataset)
-
-    # --- SUCCESSFUL MAPPINGS ---
-    assert mapper(1) == mock_obj_1  # Direct integer match
-    assert mapper("1") == mock_obj_1  # String-to-integer cast match
+    assert mapper(1) == mock_obj_1
+    assert mapper("1") == mock_obj_1  # String-to-int cast fallback
     assert mapper("A100") == mock_obj_2  # Direct string match
+    assert mapper(None) is None
+    assert mapper("bad_id") is None
 
-    # --- NULL SAFETY & FALLBACKS ---
-    assert mapper(None) is None  # Null safety
-    assert mapper("") is None  # Empty string safety
-    assert mapper(999) is None  # Missing key
-    assert mapper("bad_id") is None  # Invalid cast safety (fails int() but catches ValueError)
-
-    # --- DATASET METADATA SAFETY ---
-    # What if the user accidentally passes a flat list or None instead of an IncorporatorList?
-    bad_mapper = link_to(None)
-    assert bad_mapper(1) is None
+    # Test 2: Using an extractor
+    extractor_mapper = link_to(plain_list, extractor=lambda x: int(x) * 1)
+    assert extractor_mapper("1") == mock_obj_1

@@ -13,7 +13,8 @@ async def test_incorporator_reads_local_json_successfully(clean_json_file: str) 
 
     # 1. Execute the minimal vertical slice
     # Note: format_type is omitted here to test the _infer_format auto-detection
-    results = await Incorporator.incorp(file=clean_json_file)
+    # UPDATED: Use inc_file= to match the new API contract
+    results = await Incorporator.incorp(inc_file=clean_json_file)
 
     # 2. Assert orchestration returned the correct type
     assert isinstance(results, list)
@@ -37,7 +38,8 @@ async def test_incorporator_raises_custom_error_on_bad_json(broken_json_file: st
 
     # Assert that our specific custom error is raised, protecting the user from messy tracebacks
     with pytest.raises(IncorporatorFormatError) as exc_info:
-        await Incorporator.incorp(file=broken_json_file)
+        # UPDATED: Use inc_file= to match the new API contract
+        await Incorporator.incorp(inc_file=broken_json_file)
 
     # Assert the error message contains helpful context
     assert "Invalid JSON" in str(exc_info.value)

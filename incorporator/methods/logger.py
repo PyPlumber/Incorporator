@@ -96,9 +96,9 @@ class LoggingMixin:
         def _read_disk() -> List[Dict[str, Any]]:
             filepath = f"{cls.__name__}_error.log"
             if not os.path.exists(filepath):
-                return []
+                return[]
 
-            errors: List[Dict[str, Any]] = []
+            errors: List[Dict[str, Any]] =[]
             with open(filepath, 'r', encoding='utf-8') as f:
                 for line in f:
                     if line.strip():
@@ -133,10 +133,11 @@ class LoggingMixin:
         """Generates a meta string detailing the class origin and instance identity."""
         cls = self.__class__
         cls_name = getattr(cls, '__name__', 'UnknownClass')
+        # Updated property lookups to match the refactored base.py schema contract
         return (
             f'class:"{cls_name}", name:"{cls_name}", '
-            f'self:"{getattr(self, "code", None)}", name:"{getattr(self, "name", None)}", '
-            f'file: "{getattr(cls, "file", None)}", url: "{getattr(cls, "url", None)}"'
+            f'self:"{getattr(self, "inc_code", None)}", name:"{getattr(self, "inc_name", None)}", '
+            f'file: "{getattr(cls, "inc_file", None)}", url: "{getattr(cls, "inc_url", None)}"'
         )
 
     def _get_logger(self) -> logging.Logger:

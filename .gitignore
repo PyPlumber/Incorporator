@@ -33,12 +33,17 @@ dist/
 *.egg-info/
 pyincorp.egg-info/
 
-# 6. PyIncorp Generated Logs & Temp Data
-*.log
-*debug.log
-*error.log
-*api.log
-
 # 7. OS Specific Files
 .DS_Store
 Thumbs.db
+
+# Incorporator Log Files
+*.log
+
+# Temporary ETL JSON Feeds
+temp_*.json
+final_*.json
+*website_feed.json
+
+# Private Developer Scripts
+real_*.py

@@ -23,7 +23,9 @@ async def test_multiplex_file_routing(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
     monkeypatch.chdir(tmp_path)
     setup_class_logger(MockAPIEndpoint1)
-    obj = MockAPIEndpoint1(code=99, name="TestInstance")
+
+    # UPDATED: Use inc_code and inc_name to match the refactored base API
+    obj = MockAPIEndpoint1(inc_code=99, inc_name="TestInstance")
 
     obj.log_info("Standard info trace")
     obj.log_error("Standard error trace")
@@ -57,7 +59,9 @@ async def test_get_error_async_reader(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
     monkeypatch.chdir(tmp_path)
     setup_class_logger(MockAPIEndpoint2)
-    obj = MockAPIEndpoint2(code=99, name="TestInstance")
+
+    # UPDATED: Use inc_code and inc_name to match the refactored base API
+    obj = MockAPIEndpoint2(inc_code=99, inc_name="TestInstance")
 
     obj.log_error("Disk read test")
 

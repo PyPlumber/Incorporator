@@ -34,7 +34,6 @@ def apply_etl_transformations(
         parsed_data: Union[Dict[str, Any], List[Dict[str, Any]]],
         code_attr: Optional[str] = None,
         name_attr: Optional[str] = None,
-        static_dct: Optional[Dict[str, Any]] = None,
         excl_lst: Optional[List[str]] = None,
         conv_dict: Optional[Dict[str, Callable[[Any], Any]]] = None,
         name_chg: Optional[List[Tuple[str, str]]] = None,
@@ -49,23 +48,24 @@ def apply_etl_transformations(
         if excl_lst:
             for key in excl_lst:
                 item.pop(key, None)
-        if static_dct:
-            item.update(static_dct)
+
         if conv_dict:
             for key, func in conv_dict.items():
-                if key in item:
-                    try:
-                        item[key] = func(item[key])
-                    except Exception as e:
-                        raise ValueError(f"conv_dict failed on key '{key}': {e}")
+                try:
+                    # If the key is missing from the API, item.get() returns None.
+                    item[key] = func(item.get(key, None))
+                except Exception as e:
+                    raise ValueError(f"conv_dict failed on key '{key}': {e}")
+
         if name_chg:
             for old_key, new_key in name_chg:
                 if old_key in item:
                     item[new_key] = item.pop(old_key)
+
         if code_attr and code_attr in item:
-            item['code'] = item[code_attr]
+            item['inc_code'] = item[code_attr]
         if name_attr and name_attr in item:
-            item['name'] = item[name_attr]
+            item['inc_name'] = item[name_attr]
 
     return items if isinstance(parsed_data, list) else items[0]
 
@@ -88,6 +88,13 @@ def infer_dynamic_schema(
     fields: Dict[str, Any] = {}
     for raw_key, value in sample_dict.items():
         safe_key = sanitize_json_key(raw_key)
+
+        # --- THE TYPE SHIELD ---
+        # If the attribute already exists on the base Incorporator class (like inc_code or inc_name),
+        # we skip redefining it. This preserves their permissive typing (Any) and stops serialization warnings!
+        if safe_key in base_class.model_fields:
+            continue
+
         if isinstance(value, dict):
             nested_model: Any = infer_dynamic_schema(f"{model_name}_{safe_key}", value, BaseModel)
             fields[safe_key] = (Optional[nested_model], Field(alias=raw_key, default=None))
@@ -97,9 +104,9 @@ def infer_dynamic_schema(
         else:
             field_type: Any = type(value) if value is not None else Any
             if field_type is int:
+                # Promote integers to allow for floats to prevent validation errors on inconsistent APIs
                 field_type = Union[int, float]
             fields[safe_key] = (Optional[field_type], Field(alias=raw_key, default=None))
-
 
     try:
         DynamicModel = create_model(
