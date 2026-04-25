@@ -1,11 +1,13 @@
 """Multiplex logging architecture and wrapper subclass for Incorporator."""
 
 import asyncio
+import atexit
 import json
 import logging
-import os
 import queue
-from logging.handlers import QueueHandler, QueueListener
+import re
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+from pathlib import Path
 from typing import Any, Dict, List, Type, TypeVar, Union
 
 # Import the Incorporator base class
@@ -15,6 +17,22 @@ TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
 
 # Global registry to prevent duplicate background threads if a class is dynamically rebuilt
 _ACTIVE_LISTENERS: Dict[str, QueueListener] = {}
+
+
+def _cleanup_listeners() -> None:
+    """Gracefully shuts down all background logging threads on application exit."""
+    for listener in _ACTIVE_LISTENERS.values():
+        listener.stop()
+    _ACTIVE_LISTENERS.clear()
+
+
+atexit.register(_cleanup_listeners)
+
+
+def _safe_log_filename(prefix: str, suffix: str) -> str:
+    """Sanitizes strings to prevent Path Traversal when generating log file names."""
+    clean_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', prefix)
+    return f"{clean_prefix}_{suffix}"
 
 
 class JSONFormatter(logging.Formatter):
@@ -59,19 +77,38 @@ def setup_class_logger(cls: Type[Any]) -> None:
     logger.setLevel(logging.DEBUG)
     formatter = JSONFormatter()
 
+    # Log Rotation Settings: Max 5MB per file, keeping 3 backups (Max ~15MB total per log type)
+    max_bytes = 5 * 1024 * 1024
+    backup_count = 3
+
     # 1. Debug File Handler (Captures everything)
-    debug_fh = logging.FileHandler(f"{cls_name}_debug.log", encoding='utf-8')
+    debug_fh = RotatingFileHandler(
+        _safe_log_filename(cls_name, "debug.log"),
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding='utf-8'
+    )
     debug_fh.setLevel(logging.DEBUG)
     debug_fh.setFormatter(formatter)
 
     # 2. Error/Main File Handler (Captures INFO and ERROR)
-    error_fh = logging.FileHandler(f"{cls_name}_error.log", encoding='utf-8')
+    error_fh = RotatingFileHandler(
+        _safe_log_filename(cls_name, "error.log"),
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding='utf-8'
+    )
     error_fh.setLevel(logging.INFO)
     error_fh.addFilter(StandardFilter())
     error_fh.setFormatter(formatter)
 
     # 3. API File Handler (Captures only Web Traffic)
-    api_fh = logging.FileHandler(f"{cls_name}_api.log", encoding='utf-8')
+    api_fh = RotatingFileHandler(
+        _safe_log_filename(cls_name, "api.log"),
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding='utf-8'
+    )
     api_fh.setLevel(logging.INFO)
     api_fh.addFilter(APIFilter())
     api_fh.setFormatter(formatter)
@@ -94,18 +131,23 @@ class LoggingMixin:
         """Reads the {cls.__name__}_error.log JSON file and formats the logs."""
 
         def _read_disk() -> List[Dict[str, Any]]:
-            filepath = f"{cls.__name__}_error.log"
-            if not os.path.exists(filepath):
-                return[]
+            filename = _safe_log_filename(cls.__name__, "error.log")
+            path = Path(filename).resolve()
 
-            errors: List[Dict[str, Any]] =[]
-            with open(filepath, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.strip():
-                        try:
-                            errors.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            pass
+            if not path.is_file():
+                return []
+
+            errors: List[Dict[str, Any]] = []
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            try:
+                                errors.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                pass
+            except OSError:
+                pass  # Safely ignore disk errors during read attempts
             return errors
 
         # Execute disk read in a background worker thread (Pillar E)

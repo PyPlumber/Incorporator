@@ -47,7 +47,7 @@ async def mock_auto_pagination_api(url: str, *args: Any, **kwargs: Any) -> httpx
 async def test_invisible_url_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
     """Proves the framework automatically increments `page` and `offset` queries silently."""
 
-    monkeypatch.setattr("incorporator.methods.network._execute_get", mock_auto_pagination_api)
+    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_auto_pagination_api)
 
     # ==========================================
     # TEST 1: The Standard `page=` Incrementer

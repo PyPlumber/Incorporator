@@ -1,5 +1,5 @@
 # ========================================
-# PyIncorp: Git Ignore Definitions
+# Incorporator: Git Ignore Definitions
 # ========================================
 
 # 1. Python Bytecode & Cache
@@ -7,43 +7,58 @@ __pycache__/
 *.py[cod]
 *$py.class
 .mypy_cache/
+.ruff_cache/
 
 # 2. Virtual Environments
 venv/
 .venv/
 env/
-.env
 
-# 3. PyCharm & IDE Settings
+# 3. Secrets & Credentials (CRITICAL SAFETY)
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+secrets.json
+client_secret.json
+
+# 4. PyCharm, VSCode & IDE Settings
 .idea/
 .vscode/
 *.swp
 *.swo
+.ipynb_checkpoints/
 
-# 4. Testing & Coverage
+# 5. Testing & Coverage
 .pytest_cache/
 .tox/
 .coverage
 htmlcov/
 tests/public/api/real
 
-# 5. Build Artifacts & Packaging
+# 6. Build Artifacts & Packaging
 build/
 dist/
 *.egg-info/
-pyincorp.egg-info/
+incorporator.egg-info/
 
 # 7. OS Specific Files
 .DS_Store
 Thumbs.db
+*.sqlite3
 
-# Incorporator Log Files
+# 8. Incorporator Log Files
 *.log
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Temporary ETL JSON Feeds
+# 9. Temporary ETL Data Feeds & Output
 temp_*.json
 final_*.json
 *website_feed.json
+*.csv
+*.xml
 
-# Private Developer Scripts
+# 10. Private Developer Scripts
 real_*.py

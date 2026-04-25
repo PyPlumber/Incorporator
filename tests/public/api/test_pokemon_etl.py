@@ -61,7 +61,7 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
 # --- TESTS ---
 @pytest.mark.asyncio
 async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("incorporator.methods.network._execute_get", mock_execute_get)
+    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_execute_get)
     BASE_URL = "https://api.com"
 
     # 1. DISCOVERY PHASE

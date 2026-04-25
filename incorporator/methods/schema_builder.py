@@ -1,6 +1,7 @@
 """Dynamic Pydantic model generation engine."""
 
 import copy
+import keyword
 import re
 import weakref
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
@@ -11,6 +12,7 @@ from .exceptions import IncorporatorSchemaError
 
 # Cache to prevent recompiling identical schemas during deep nesting
 SCHEMA_REGISTRY: Dict[Tuple[str, frozenset[str]], Type[BaseModel]] = {}
+MAX_REGISTRY_SIZE = 1000  # <--- NEW: Hard boundary to prevent OOM leaks
 
 # The protective shield for Pydantic internals
 PYDANTIC_RESERVED = {
@@ -21,12 +23,25 @@ PYDANTIC_RESERVED = {
 
 
 def sanitize_json_key(key: str) -> str:
-    """Sanitizes keys to PEP 8 standards and prevents Pydantic collision."""
+    """Sanitizes keys to PEP 8 standards and prevents Python/Pydantic collisions."""
     clean_key = re.sub(r'[^a-zA-Z0-9_]', '_', key)
-    if clean_key and clean_key[0].isdigit():
+
+    # 1. Metaprogramming Crash Defense: Catch empty strings
+    if not clean_key:
+        clean_key = "empty_key"
+
+    # 2. Number Prefix Defense
+    if clean_key[0].isdigit():
         clean_key = f"_{clean_key}"
+
+    # 3. Dot-Notation DX Defense: Prevent Python reserved keywords
+    if keyword.iskeyword(clean_key):
+        clean_key = f"{clean_key}_"
+
+    # 4. Pydantic Internal Shield
     if clean_key in PYDANTIC_RESERVED:
         clean_key = f"safe_{clean_key}"
+
     return clean_key
 
 
@@ -55,7 +70,8 @@ def apply_etl_transformations(
                     # If the key is missing from the API, item.get() returns None.
                     item[key] = func(item.get(key, None))
                 except Exception as e:
-                    raise ValueError(f"conv_dict failed on key '{key}': {e}")
+                    # <--- NEW: Using framework-specific exception hierarchy
+                    raise IncorporatorSchemaError(f"conv_dict failed on key '{key}': {e}") from e
 
         if name_chg:
             for old_key, new_key in name_chg:
@@ -128,8 +144,12 @@ def infer_dynamic_schema(
 
         # 2. Cache Registration: Only cache pure BaseModels to prevent cross-contamination of codeDicts
         if base_class is BaseModel:
+            # <--- NEW: OOM Prevention. If cache gets too large, sweep it.
+            if len(SCHEMA_REGISTRY) >= MAX_REGISTRY_SIZE:
+                SCHEMA_REGISTRY.clear()
+
             SCHEMA_REGISTRY[cache_key] = DynamicModel
 
         return DynamicModel
     except Exception as e:
-        raise IncorporatorSchemaError(f"Failed to compile dynamic schema {model_name}: {e}")
+        raise IncorporatorSchemaError(f"Failed to compile dynamic schema {model_name}: {e}") from e

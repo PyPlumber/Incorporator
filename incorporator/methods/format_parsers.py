@@ -4,9 +4,11 @@ import asyncio
 import csv
 import io
 import json
+import re
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Union
 
 from .exceptions import IncorporatorFormatError
@@ -17,6 +19,16 @@ class FormatType(str, Enum):
     JSON = "json"
     CSV = "csv"
     XML = "xml"
+
+
+def infer_format(path_or_url: str) -> FormatType:
+    """Helper to auto-detect format from a file extension or URL."""
+    path_lower = path_or_url.lower()
+    if path_lower.endswith(".csv"):
+        return FormatType.CSV
+    if path_lower.endswith(".xml"):
+        return FormatType.XML
+    return FormatType.JSON
 
 
 def _xml_to_dict(element: ET.Element) -> Dict[str, Any]:
@@ -50,6 +62,15 @@ def _xml_to_dict(element: ET.Element) -> Dict[str, Any]:
     return result
 
 
+def _check_xml_security(raw_data: str) -> None:
+    """Pre-flight check to block DTDs and Entities (XXE) without external dependencies."""
+    if re.search(r'<!(?:DOCTYPE|ENTITY)', raw_data, re.IGNORECASE):
+        raise IncorporatorFormatError(
+            "Security Policy Violation: XML DTDs and External Entities (XXE) are strictly "
+            "blocked to prevent 'Billion Laughs' memory exhaustion attacks."
+        )
+
+
 class BaseFormatHandler(ABC):
     """Abstract Strategy for parsing and writing different data formats."""
 
@@ -73,8 +94,12 @@ class JSONHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"Invalid JSON: {e}")
 
     def write(self, data: List[Dict[str, Any]], file_path: str) -> None:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4)
+        try:
+            path = Path(file_path).resolve()
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=4)
+        except OSError as e:
+            raise IncorporatorFormatError(f"JSON File IO Error on {file_path}: {e}") from e
 
 
 class CSVHandler(BaseFormatHandler):
@@ -110,25 +135,30 @@ class CSVHandler(BaseFormatHandler):
         if not data:
             return
 
-        with open(file_path, 'w', encoding='utf-8', newline='') as f:
-            # NESTED CSV FIX: Serialize dicts/lists so they don't break when written to a flat CSV
-            processed_data: List[Dict[str, Any]] = []
-            for row in data:
-                new_row: Dict[str, Any] = {}
-                for k, v in row.items():
-                    if isinstance(v, (dict, list)):
-                        new_row[k] = json.dumps(v)  # Enforces double-quotes for valid JSON
-                    else:
-                        new_row[k] = v
-                processed_data.append(new_row)
+        try:
+            path = Path(file_path).resolve()
+            with open(path, 'w', encoding='utf-8', newline='') as f:
+                # NESTED CSV FIX: Serialize dicts/lists so they don't break when written to a flat CSV
+                processed_data: List[Dict[str, Any]] = []
+                for row in data:
+                    new_row: Dict[str, Any] = {}
+                    for k, v in row.items():
+                        if isinstance(v, (dict, list)):
+                            new_row[k] = json.dumps(v)  # Enforces double-quotes for valid JSON
+                        else:
+                            new_row[k] = v
+                    processed_data.append(new_row)
 
-            writer = csv.DictWriter(f, fieldnames=list(processed_data[0].keys()))
-            writer.writeheader()
-            writer.writerows(processed_data)
+                writer = csv.DictWriter(f, fieldnames=list(processed_data[0].keys()))
+                writer.writeheader()
+                writer.writerows(processed_data)
+        except OSError as e:
+            raise IncorporatorFormatError(f"CSV File IO Error on {file_path}: {e}") from e
 
 
 class XMLHandler(BaseFormatHandler):
     def parse(self, raw_data: str) -> Dict[str, Any]:
+        _check_xml_security(raw_data)
         try:
             # DSA: Try O(1) memory parsing first without .strip() string duplication
             root = ET.fromstring(raw_data)
@@ -142,17 +172,25 @@ class XMLHandler(BaseFormatHandler):
                 raise IncorporatorFormatError(f"Invalid XML: {e}")
 
     def write(self, data: List[Dict[str, Any]], file_path: str) -> None:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            root = ET.Element("root")
-            for item in data:
-                item_el = ET.SubElement(root, "item")
-                for key, val in item.items():
-                    clean_key = str(key).replace(" ", "_")
-                    child = ET.SubElement(item_el, clean_key)
-                    child.text = str(val) if val is not None else ""
+        try:
+            path = Path(file_path).resolve()
+            with open(path, 'w', encoding='utf-8') as f:
+                root = ET.Element("root")
+                for item in data:
+                    item_el = ET.SubElement(root, "item")
+                    for key, val in item.items():
+                        clean_key = str(key).replace(" ", "_")
+                        # Tag names must not start with a number in XML
+                        if clean_key and clean_key[0].isdigit():
+                            clean_key = f"_{clean_key}"
 
-            tree = ET.ElementTree(root)
-            tree.write(f, encoding='unicode')
+                        child = ET.SubElement(item_el, clean_key)
+                        child.text = str(val) if val is not None else ""
+
+                tree = ET.ElementTree(root)
+                tree.write(f, encoding='unicode')
+        except OSError as e:
+            raise IncorporatorFormatError(f"XML File IO Error on {file_path}: {e}") from e
 
 
 # Registry mapping Enums to their respective Handler instances

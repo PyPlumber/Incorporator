@@ -1,3 +1,15 @@
-pydantic>=2.0
-pytest
-pytest-asyncio
+# ==========================================
+# INCORPORATOR V1.0.0: DEV ENVIRONMENT
+# ==========================================
+# Run `pip install -r requirements-dev.txt` to bootstrap your environment.
+
+# 1. Install the local package in "editable" mode so code changes reflect instantly.
+# This automatically installs pydantic, httpx, and tenacity from the pyproject.toml.
+-e .
+
+# 2. Testing Framework
+pytest>=7.0
+pytest-asyncio>=0.21.0
+
+# 3. Static Type Checking
+mypy>=1.0.0

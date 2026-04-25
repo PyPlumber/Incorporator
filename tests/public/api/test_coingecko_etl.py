@@ -39,7 +39,7 @@ async def mock_infinite_coingecko_api(url: str, *args: Any, **kwargs: Any) -> ht
 async def test_coingecko_call_lim_pagination_cutoff(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests that a paginating API is forcefully halted exactly at `call_lim` pages."""
 
-    monkeypatch.setattr("incorporator.methods.network._execute_get", mock_infinite_coingecko_api)
+    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_infinite_coingecko_api)
     TARGET_LIMIT = 7
 
     # Fetch coins, utilizing the Zero-Boilerplate heuristic paginator and call_lim!

@@ -83,7 +83,7 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
 async def test_swapi_hateoas_relational_graph(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests dynamic URL extraction, list linking, and native dirty-data cleaning."""
 
-    monkeypatch.setattr("incorporator.methods.network._execute_get", mock_execute_get)
+    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_execute_get)
     BASE_URL = "https://swapi.dev/api"
     swapi_pagination = json_path_extractor("next")
 

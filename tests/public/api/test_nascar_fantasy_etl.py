@@ -60,7 +60,7 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
 async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Validates data fetching, scoring, and the complete JSON React export pipeline."""
 
-    monkeypatch.setattr("incorporator.methods.network._execute_get", mock_execute_get)
+    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_execute_get)
     BASE = "https://api.nascar.com"
 
     # ==========================================

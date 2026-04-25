@@ -83,7 +83,7 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
 @pytest.mark.asyncio
 async def test_rick_and_morty_lore_tables(monkeypatch: pytest.MonkeyPatch) -> None:
     """Validates Relational Graph sorting, array length processing, and registry resolution."""
-    monkeypatch.setattr("incorporator.methods.network._execute_get", mock_execute_get)
+    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_execute_get)
     BASE_URL = "https://api.com"
     rm_pagination = json_path_extractor("info", "next")
 
