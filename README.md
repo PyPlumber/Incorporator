@@ -130,26 +130,39 @@ asyncio.run(get_luke())
 Pass shallow objects into `inc_parent` to trigger automatic concurrent bulk detail scraping.
 
 ```python
-# 1. SHALLOW DISCOVERY: Fetch 150 navigation URLs
-pokemon_nav = await Nav.incorp(
-    inc_url="https://pokeapi.co/api/v2/pokemon/?limit=50&offset=0",
-    inc_name="name", name_chg=[('url', 'detail_url')], 
-    inc_page=NextUrlPaginator("next"), call_lim=3
-)
+class Nav(Incorporator): pass
 
-def calculate_bst(stats: list) -> int:
-    return sum(s.get("base_stat", 0) for s in stats if isinstance(s, dict))
+class Pokemon(Incorporator): pass
 
-# 2. DEEP ENRICHMENT: Pass the parent objects. The framework tears out 'detail_url', 
-# fires 150 concurrent requests, and builds deep objects automatically.
-enriched_pokemon = await Pokemon.incorp(
-    inc_parent=pokemon_nav, 
-    inc_code="id", inc_name="name",
-    conv_dict={
-        # Dynamically calculate Base Stat Total from the nested JSON array
-        "stats": calc(calculate_bst, "stats", default=0, target_type=int)
-    }
-)
+async def inc_pokedex():
+    BASE_URL = "https://pokeapi.co/api/v2"
+
+    # 1. SHALLOW DISCOVERY: Fetch 150 navigation URLs
+    pokemon_nav = await Nav.incorp(
+        inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
+        rec_path="results",
+        inc_name="name",
+        name_chg=[('url', 'detail_url')],
+        inc_page=NextUrlPaginator("next"),
+        call_lim=3  # 3 pages * 50 = 150 Pokemon
+    )
+
+    def calculate_bst(stats: list) -> int:
+        return sum(s.get("base_stat", 0) for s in stats if isinstance(s, dict))
+
+    # 2. DEEP ENRICHMENT: Pass the parent objects. The framework tears out 'detail_url',
+    # fires 150 concurrent requests, and builds deep objects automatically.
+    enriched_pokemon = await Pokemon.incorp(
+        inc_parent=pokemon_nav,
+        inc_code="id",
+        inc_name="name",
+        excl_lst=["sprites", "moves", "game_indices", "held_items"]
+    )
+
+    for pokemon in enriched_pokemon[:3]:
+        print(pokemon.inc_name, pokemon.abilities[0].ability.name)
+
+asyncio.run(inc_pokedex())
 ```
 
 ### Showcase 3: Local XML to Live JSON Bulk POST (NHTSA API)
