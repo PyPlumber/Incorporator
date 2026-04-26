@@ -1,4 +1,3 @@
-```markdown
 ## 🌌 Incorporator (v1.0.0)
 **The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway.**
 
@@ -188,4 +187,3 @@ instance.log_api("Web traffic trace") # Routes to isolated api.log
 4. Check typing: `mypy --strict incorporator`.
 
 *Built for data engineers who want to sleep at night.*
-```
