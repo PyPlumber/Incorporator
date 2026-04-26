@@ -169,30 +169,37 @@ asyncio.run(inc_pokedex())
 Seamlessly bridge deep local XML data with live JSON REST APIs.
 
 ```python
-# 1. Extract nested data from a local XML file
-invoices = await JimmyInvoice.incorp(
-    inc_file="shady_jimmy.xml",
-    rec_path="Dealership.AuditFile.Invoices.Invoice"
-)
+class JimmyInvoice(Incorporator): pass
 
-vin_batch_string = ";".join([getattr(inv.Vehicle, "VIN", "") for inv in invoices])
+class NHTSARecord(Incorporator): pass
 
-# 2. Hit a live JSON Bulk Endpoint using a POST payload
-live_records = await NHTSARecord.incorp(
-    inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
-    method="POST",
-    form_payload={"format": "json", "DATA": vin_batch_string},
-    rec_path="Results",
-    inc_code="VIN",
-    conv_dict={ "ModelYear": inc(int) } # Force string years to integers
-)
+async def audit_jimmys():
+    # 1. Extract nested data from a local XML file
+    invoices = await JimmyInvoice.incorp(
+        inc_file="shady_jimmy.xml",
+        rec_path="Dealership.AuditFile.Invoices.Invoice"
+    )
 
-# 3. Audit instantly via the memory-safe registry
-for inv in invoices:
-    vin = inv.Vehicle.VIN
-    actual_car = live_records.inc_dict.get(vin)
-    if actual_car.ModelYear != int(inv.Vehicle.Year):
-        print("Fraud Detected!")
+    vin_batch_string = ";".join([getattr(inv.Vehicle, "VIN", "") for inv in invoices])
+
+    # 2. Hit a live JSON Bulk Endpoint using a POST payload
+    live_records = await NHTSARecord.incorp(
+        inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
+        method="POST",
+        form_payload={"format": "json", "DATA": vin_batch_string},
+        rec_path="Results",
+        inc_code="VIN",
+        conv_dict={"ModelYear": inc(int)}  # Force string years to integers
+    )
+
+    # 3. Audit instantly via the memory-safe registry
+    for inv in invoices:
+        vin = inv.Vehicle.VIN
+        actual_car = live_records.inc_dict.get(vin)
+        if actual_car.ModelYear != int(inv.Vehicle.Year):
+            print("Fraud Detected!", inv.inc_code, inv.Vehicle.Model)
+
+asyncio.run(audit_jimmys())
 ```
 
 ---
