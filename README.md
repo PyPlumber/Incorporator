@@ -23,22 +23,24 @@ pip install incorporator
 
 **The Incorporator Way:**
 ```python
-from incorporator import Incorporator
-from incorporator.methods.paginate import NextUrlPaginator
-
 class Crypto(Incorporator): pass
 
-# Fetch 150 coins, auto-paginate, generate Pydantic models on the fly, and rate-limit perfectly.
-coins = await Crypto.incorp(
-    inc_url="https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd",
-    inc_code="id",
-    inc_name="name",
-    inc_page=NextUrlPaginator("next"), 
-    call_lim=3
+async def crypto_coins():
+    # Fetch 150 coins, auto-paginate, generate Pydantic models on the fly, and rate-limit perfectly.
+    coins = await Crypto.incorp(
+        inc_url="https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd",
+        inc_code="id",
+        inc_name="name",
+        inc_page=NextUrlPaginator("next"),
+        call_lim=3
 )
 
-print(coins[0].inc_name)       # "Bitcoin"
-print(coins[0].current_price)  # 64000.00 (Dynamically typed as float by Pydantic V2!)
+    # Returns Dynamically created class and dictionary
+    bitcoin = coins.inc_dict['bitcoin']
+    print(bitcoin.circulating_supply)       # 20021206.0
+    print(bitcoin.current_price)            # 78321
+
+asyncio.run(crypto_coins())
 ```
 
 ---
