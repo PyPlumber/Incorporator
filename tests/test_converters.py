@@ -81,14 +81,14 @@ def test_calc_and_calc_all_markers() -> None:
         return x + y
 
     # 1. Row-based calc
-    c_op = calc(dummy_math, default=0, type=flt, input_list=["mass", "gravity"])
+    c_op = calc(dummy_math, "mass", "gravity", default=0, target_type=flt)
     assert isinstance(c_op, CalcOp)
     assert c_op.default == 0
     assert c_op.target_type is float
     assert c_op.input_list == ["mass", "gravity"]
 
     # 2. Batch column calc_all
-    ca_op = calc_all(dummy_math, type=int)
+    ca_op = calc_all(dummy_math, target_type=int)
     assert isinstance(ca_op, CalcAllOp)
     assert ca_op.target_type is int
     assert ca_op.input_list == []  # Defaults to empty list intelligently

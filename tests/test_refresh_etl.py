@@ -62,7 +62,7 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
         inc_code="symbol",
         inc_name="company_name",
         conv_dict={
-            "current_price": calc(float, default=0.0, type=flt)
+            "current_price": calc(float, default=0.0, target_type=flt)
         }
     )
 
@@ -82,7 +82,7 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
         inc_code="symbol",
         inc_name="company_name",
         conv_dict={
-            "current_price": calc(float, default=0.0, type=flt)
+            "current_price": calc(float, default=0.0, target_type=flt)
         }
     )
 

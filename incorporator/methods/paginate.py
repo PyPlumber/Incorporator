@@ -178,7 +178,7 @@ class OffsetPaginator(AsyncPaginator):
 class PageNumberPaginator(AsyncPaginator):
     """Example: CoinGecko or ReqRes API (page=1, page=2, ...)."""
 
-    def __init__(self, page_param: str = "page", start_page: int = 1) -> None:
+    def __init__(self, page_param: str = "page", start_page: int = 1, *items_keys: str) -> None:
         super().__init__()
         self.page_param = page_param
         self.start_page = start_page

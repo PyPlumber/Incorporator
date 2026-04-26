@@ -30,6 +30,11 @@ def infer_format(path_or_url: str) -> FormatType:
         return FormatType.XML
     return FormatType.JSON
 
+def _serialize_nested(val: Any) -> Any:
+    """Safely serializes nested lists/dicts to JSON strings for flat format exports."""
+    if isinstance(val, (dict, list)):
+        return json.dumps(val)
+    return val
 
 def _xml_to_dict(element: ET.Element) -> Dict[str, Any]:
     """Recursively converts an XML ElementTree into a Python dictionary."""
@@ -138,16 +143,7 @@ class CSVHandler(BaseFormatHandler):
         try:
             path = Path(file_path).resolve()
             with open(path, 'w', encoding='utf-8', newline='') as f:
-                # NESTED CSV FIX: Serialize dicts/lists so they don't break when written to a flat CSV
-                processed_data: List[Dict[str, Any]] = []
-                for row in data:
-                    new_row: Dict[str, Any] = {}
-                    for k, v in row.items():
-                        if isinstance(v, (dict, list)):
-                            new_row[k] = json.dumps(v)  # Enforces double-quotes for valid JSON
-                        else:
-                            new_row[k] = v
-                    processed_data.append(new_row)
+                processed_data =[{k: _serialize_nested(v) for k, v in row.items()} for row in data]
 
                 writer = csv.DictWriter(f, fieldnames=list(processed_data[0].keys()))
                 writer.writeheader()
@@ -185,7 +181,8 @@ class XMLHandler(BaseFormatHandler):
                             clean_key = f"_{clean_key}"
 
                         child = ET.SubElement(item_el, clean_key)
-                        child.text = str(val) if val is not None else ""
+                        safe_val = _serialize_nested(val)
+                        child.text = str(safe_val) if safe_val is not None else ""
 
                 tree = ET.ElementTree(root)
                 tree.write(f, encoding='unicode')

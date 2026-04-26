@@ -81,9 +81,9 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
     )
 
     standings_conv = {
-        'points': calc(int, default=0, type=int),
-        'wins': calc(int, default=0, type=int),
-        'top_10': calc(int, default=0, type=int)
+        'points': calc(int, default=0, target_type=int),
+        'wins': calc(int, default=0, target_type=int),
+        'top_10': calc(int, default=0, target_type=int)
     }
 
     cup_st, busch_st, truck_st = await asyncio.gather(

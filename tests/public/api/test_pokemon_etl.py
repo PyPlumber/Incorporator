@@ -9,10 +9,10 @@ import pytest
 
 from incorporator import (
     Incorporator,
-    extract_url_id,
-    pluck,
-    link_to
+
 )
+from incorporator.methods.converters import calc
+from incorporator.methods.paginate import NextUrlPaginator
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -29,87 +29,153 @@ class Pokemon(Incorporator): pass
 
 
 # --- MOCK NETWORK SETUP ---
-async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
-    if "pokemon-habitat" in url:
-        payload = {"results": [
-            {"id": 5, "name": "rare", "url": "https://api.com/pokemon-habitat/5/"},
-            {"id": 1, "name": "grassland", "url": "https://api.com/pokemon-habitat/1/"}
-        ]}
-    elif "pokemon-species/150" in url:
-        payload = {"id": 150, "name": "mewtwo", "is_legendary": True,
-                   "habitat": {"name": "rare", "url": "https://api.com/pokemon-habitat/5/"}}
-    elif "pokemon-species/1" in url:
-        payload = {"id": 1, "name": "bulbasaur", "is_legendary": False,
-                   "habitat": {"name": "grassland", "url": "https://api.com/pokemon-habitat/1/"}}
-    elif "/pokemon/150" in url:
-        payload = {"id": 150, "name": "mewtwo", "base_experience": 306,
-                   "species": {"name": "mewtwo", "url": "https://api.com/pokemon-species/150/"}}
-    elif "/pokemon/1" in url:
-        payload = {"id": 1, "name": "bulbasaur", "base_experience": 64,
-                   "species": {"name": "bulbasaur", "url": "https://api.com/pokemon-species/1/"}}
-    elif "/pokemon-species" in url:
-        payload = {"results": [{"name": "mewtwo", "url": "https://api.com/pokemon-species/150/"},
-                               {"name": "bulbasaur", "url": "https://api.com/pokemon-species/1/"}]}
-    elif "/pokemon" in url:
-        payload = {"results": [{"name": "mewtwo", "url": "https://api.com/pokemon/150/"},
-                               {"name": "bulbasaur", "url": "https://api.com/pokemon/1/"}]}
+import json
+from typing import Any
+import httpx
+
+
+async def mock_pokeapi_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+    """Mocks the PokeAPI REST endpoints for Shallow Pagination and Deep Enrichment."""
+
+    # 1. SHALLOW PAGINATION MOCKS
+    if "offset=0" in url:
+        payload = {
+            "next": "https://pokeapi.co/api/v2/pokemon/?limit=50&offset=50",
+            "results": [
+                {"name": "bulbasaur", "url": "https://pokeapi.co/api/v2/pokemon/1/"},
+                {"name": "ivysaur", "url": "https://pokeapi.co/api/v2/pokemon/2/"}
+            ]
+        }
+    elif "offset=50" in url:
+        payload = {
+            "next": None,  # End of pagination for the mock
+            "results": [
+                {"name": "mewtwo", "url": "https://pokeapi.co/api/v2/pokemon/150/"}
+            ]
+        }
+
+    # 2. DEEP DRILL MOCKS (HATEOAS)
+    elif "/pokemon/1/" in url:
+        payload = {
+            "id": 1,
+            "name": "bulbasaur",
+            "weight": 69,
+            "types": [{"type": {"name": "grass"}}, {"type": {"name": "poison"}}],
+            "stats": [
+                {"base_stat": 45, "stat": {"name": "hp"}},
+                {"base_stat": 49, "stat": {"name": "attack"}}
+            ]  # BST = 94
+        }
+    elif "/pokemon/2/" in url:
+        payload = {
+            "id": 2,
+            "name": "ivysaur",
+            "weight": 130,
+            "types": [{"type": {"name": "grass"}}, {"type": {"name": "poison"}}],
+            "stats": [
+                {"base_stat": 60, "stat": {"name": "hp"}},
+                {"base_stat": 62, "stat": {"name": "attack"}}
+            ]  # BST = 122
+        }
+    elif "/pokemon/150/" in url:
+        payload = {
+            "id": 150,
+            "name": "mewtwo",
+            "weight": 1220,
+            "types": [{"type": {"name": "psychic"}}],
+            "stats": [
+                {"base_stat": 106, "stat": {"name": "hp"}},
+                {"base_stat": 110, "stat": {"name": "attack"}},
+                {"base_stat": 154, "stat": {"name": "special-attack"}}
+            ]  # BST = 370
+        }
     else:
         payload = {}
-    return httpx.Response(200, text=json.dumps(payload))
 
+    req = httpx.Request("GET", url)
+    return httpx.Response(200, text=json.dumps(payload), request=req)
+
+# --- DECLARATIVE ETL FUNCTIONS ---
+def calculate_bst(stats_array: Any) -> int:
+    """Calculates Base Stat Total by summing the 'base_stat' of all entries."""
+    if not isinstance(stats_array, list): return 0
+    return sum(stat_obj.get("base_stat", 0) for stat_obj in stats_array if isinstance(stat_obj, dict))
+
+
+def format_typing(types_array: Any) -> str:
+    """Formats a nested types array into a clean string (e.g., 'Grass / Poison')."""
+    if not isinstance(types_array, list): return "Unknown"
+    type_names = [t.get("type", {}).get("name", "").capitalize() for t in types_array if isinstance(t, dict)]
+    return " / ".join(type_names)
 
 # --- TESTS ---
 @pytest.mark.asyncio
 async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_execute_get)
-    BASE_URL = "https://api.com"
+    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_pokeapi_execute_get)
+    print("🔴 Booting up the Pokedex Terminal...")
+    BASE_URL = "https://pokeapi.co/api/v2"
 
-    # 1. DISCOVERY PHASE
-    habitats, species_nav, pokemon_nav = await asyncio.gather(
-        Habitat.incorp(inc_url=f"{BASE_URL}/pokemon-habitat/", rec_path="results", inc_code="id", inc_name="name",
-                       excl_lst=['url']),
-        Nav.incorp(inc_url=f"{BASE_URL}/pokemon-species/?limit=2", rec_path="results", inc_name="name",
-                   name_chg=[('url', 'detail_url')]),
-        Nav.incorp(inc_url=f"{BASE_URL}/pokemon/?limit=2", rec_path="results", inc_name="name",
-                   name_chg=[('url', 'detail_url')])
+    # ==========================================
+    # 1. PHASE 1: SHALLOW DISCOVERY
+    # ==========================================
+    print("⏳ Running Phase 1: Shallow Discovery (Fetching 150 records)...")
+    pokemon_nav = await Nav.incorp(
+        inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
+        rec_path="results",
+        inc_name="name",
+        name_chg=[('url', 'detail_url')],
+        inc_page=NextUrlPaginator("next"),
+        call_lim=3  # 3 pages * 50 = 150 Pokemon
     )
 
-    # 2. ENRICHMENT PHASE (The Magic)
-    species = await Species.incorp(
-        inc_parent=species_nav,
-        inc_code="id", inc_name="name", excl_lst=["url"],
-        conv_dict={"habitat": link_to(habitats, extractor=pluck("url", extract_url_id(int)))}
-    )
+    print(f"✅ Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
 
+    # ==========================================
+    # 2. PHASE 2: DEEP ENRICHMENT (HATEOAS)
+    # ==========================================
+    # Showcasing `inc_parent`: Automatically extracts `detail_url` from the Nav objects
+    # and concurrently fetches all 150 detailed JSON payloads!
     enriched_pokemon = await Pokemon.incorp(
         inc_parent=pokemon_nav,
-        inc_code="id", inc_name="name", excl_lst=["url"],
-        conv_dict={"species": link_to(species, extractor=pluck("url", extract_url_id(int)))}
+        inc_code="id",
+        inc_name="name",
+        excl_lst=["sprites", "moves", "game_indices", "held_items"],
+        conv_dict={
+            # Using the clean *input_keys syntax to target the 'stats' and 'types' JSON arrays
+            "stats": calc(calculate_bst, "stats", default=0, target_type=int),
+            "types": calc(format_typing, "types", default="Unknown", target_type=str)
+        },
+        name_chg=[("stats", "base_stat_total")]
     )
 
-    # 3. ASSERTIONS & SORTING (Sort by Base Experience)
-    assert isinstance(enriched_pokemon, list) and len(enriched_pokemon) == 2
+    # Assertions
+    assert len(enriched_pokemon) == 3
 
-    enriched_pokemon.sort(key=lambda p: getattr(p, "base_experience", 0), reverse=True)
+    mewtwo = next(p for p in enriched_pokemon if p.inc_name == "mewtwo")
+    assert getattr(mewtwo, "base_stat_total") == 370
+    assert getattr(mewtwo, "types") == "Psychic"
 
-    assert getattr(enriched_pokemon[0], "inc_name") == "mewtwo"
-    assert getattr(enriched_pokemon[1], "inc_name") == "bulbasaur"
+    # ==========================================
+    # 3. LORE TABLE: The Gen 1 Power Rankings
+    # ==========================================
+    if isinstance(enriched_pokemon, list):
+        # SORT LOGIC: Sort descending by Base Stat Total (BST) to find the strongest!
+        enriched_pokemon.sort(key=lambda p: getattr(p, "base_stat_total", 0), reverse=True)
 
-    # 4. SHOWCASE TABLE
-    print("\n\n" + "=" * 85)
-    print(" ✨ TABLE 1: ENRICHMENT PHASE (Sorted by Base Experience)")
-    print("=" * 85)
-    print(f"{'POKEMON':<15} | {'BASE EXP':<10} | {'LEGENDARY?':<15} | {'HABITAT'}")
-    print("-" * 85)
-    for p_rich in enriched_pokemon:
-        name = str(getattr(p_rich, "inc_name", "N/A")).capitalize()
-        exp = str(getattr(p_rich, "base_experience", "N/A"))
+        print("\n" + "=" * 90)
+        print(" 🏆 TABLE 1: KANTO POWER RANKINGS (Sorted by Base Stat Total)")
+        print("    Showcasing: `inc_parent` Deep-Drill and `calc` Array Reductions.")
+        print("=" * 90)
+        print(f"{'POKEMON':<20} | {'BASE STAT TOTAL':<18} | {'PRIMARY TYPING':<25} | {'WEIGHT (hg)'}")
+        print("-" * 90)
 
-        s_obj = getattr(p_rich, "species", None)
-        is_leg = "Yes" if getattr(s_obj, "is_legendary", False) else "No"
+        # Display the Top 15 strongest Pokemon
+        for p_rich in enriched_pokemon[:15]:
+            name = str(getattr(p_rich, "inc_name", "N/A")).capitalize()
+            bst = getattr(p_rich, "base_stat_total", 0)
+            typing = str(getattr(p_rich, "types", "Unknown"))
+            weight = getattr(p_rich, "weight", 0)
 
-        h_obj = getattr(s_obj, "habitat", None) if s_obj else None
-        hab = str(getattr(h_obj, "inc_name", "N/A")).capitalize()
+            print(f"{name:<20} | {bst:<18} | {typing:<25} | {weight}")
 
-        print(f"{name:<15} | {exp:<10} | {is_leg:<15} | {hab}")
-    print("=" * 85 + "\n")
+        print("=" * 90 + "\n")

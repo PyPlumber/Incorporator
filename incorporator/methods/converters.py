@@ -78,26 +78,22 @@ class CalcAllOp:
 
 def calc(
         func: Callable[..., Any],
-        marker: Any = None,
-        *,
+        *input_keys: str,
         default: Any = None,
-        type: Any = None,
-        input_list: Optional[List[str]] = None
+        target_type: Any = None
 ) -> CalcOp:
     """Creates a multi-input row calculation."""
-    return CalcOp(func, default, type, input_list or [])
+    return CalcOp(func, default, target_type, list(input_keys))
 
-
+# (Apply the exact same signature change to calc_all)
 def calc_all(
         func: Callable[..., Any],
-        marker: Any = None,
-        *,
+        *input_keys: str,
         default: Any = None,
-        type: Any = None,
-        input_list: Optional[List[str]] = None
+        target_type: Any = None
 ) -> CalcAllOp:
     """Creates a batch/array calculation down an entire column."""
-    return CalcAllOp(func, default, type, input_list or [])
+    return CalcAllOp(func, default, target_type, list(input_keys))
 
 
 # ==========================================
@@ -219,7 +215,9 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
         # Failsafe for single objects
         reg = getattr(dataset, "inc_dict", {})
         if isinstance(reg, collections.abc.Mapping):
-            registry = {**reg, **{str(k): v for k, v in reg.items()}}
+            #Create a copy to prevent GC RuntimeError during iteration
+            safe_reg = reg.copy() if hasattr(reg, 'copy') else reg
+            registry = {**safe_reg, **{str(k): v for k, v in safe_reg.items()}}
 
     def _mapper(val: Any) -> Any:
         key = extractor(val) if extractor is not None else val
