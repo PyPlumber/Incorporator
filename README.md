@@ -181,9 +181,7 @@ instance.log_api("Web traffic trace") # Routes to isolated api.log
 ```
 
 ## 🤝 Contributing
-1. Clone the repo.
-2. `pip install -e .[dev]` (Installs `pytest`, `mypy`, `ruff`).
-3. Run tests: `pytest tests/ -v`.
+1. Let's go!
 4. Check typing: `mypy --strict incorporator`.
 
 *Built for data engineers who want to sleep at night.*
