@@ -1,332 +1,268 @@
-"""Built-in data converters and lambda wrappers for Incorporator.
+"""
+Built-in Type-Ranked Conversion Engine for Incorporator.
 
-These functions abstract away messy lambda syntax and are 100% "Null-Safe".
-They gracefully handle None or empty strings to prevent ETL pipeline crashes.
-Designed to be passed into the 'conv_dict' parameter during Dynamic Class Building.
+Provides the `inc()`, `calc()`, and `calc_all()` syntax for Attribute-Based processing.
+Includes a Ranked Dictionary of fallbacks to guarantee 100% "Null-Safe" ETL pipelines.
 """
 
-import ast
 import collections.abc
-import json
-import operator
+import logging
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import (
+    Any, Callable, Dict, List, Optional, TypeVar
+)
+
+from pydantic import TypeAdapter
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar('T')
 
 # ==========================================
-# SAFE MATH EVALUATOR (Security Fix)
+# 1. DX SENTINELS & ALIASES
 # ==========================================
-_ALLOWED_BIN_OPS: Dict[type, Callable[[Any, Any], Any]] = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.Pow: operator.pow
-}
-
-_ALLOWED_UNARY_OPS: Dict[type, Callable[[Any], Any]] = {
-    ast.USub: operator.neg
-}
-
-_ALLOWED_FUNCS: Dict[str, Callable[..., Any]] = {
-    'abs': abs, 'round': round, 'min': min, 'max': max
-}
+flt = float
 
 
-def _safe_eval_ast(node: ast.AST, env: Dict[str, float]) -> float:
-    """Safely evaluates a mathematical AST, preventing Arbitrary Code Execution."""
-    if isinstance(node, ast.Expression):
-        return _safe_eval_ast(node.body, env)
-    elif isinstance(node, ast.Constant):
-        if isinstance(node.value, (int, float)):
-            return float(node.value)
-        raise ValueError("Only numbers allowed in math expressions.")
-    elif isinstance(node, ast.Name):
-        if node.id in env:
-            return float(env[node.id])
-        if node.id in _ALLOWED_FUNCS:
-            raise ValueError(f"Function {node.id} must be called, not referenced.")
-        raise ValueError(f"Unknown variable: {node.id}")
-    elif isinstance(node, ast.BinOp):
-        left = _safe_eval_ast(node.left, env)
-        right = _safe_eval_ast(node.right, env)
-        bin_op = _ALLOWED_BIN_OPS.get(type(node.op))
-        if bin_op:
-            return float(bin_op(left, right))
-    elif isinstance(node, ast.UnaryOp):
-        operand = _safe_eval_ast(node.operand, env)
-        un_op = _ALLOWED_UNARY_OPS.get(type(node.op))
-        if un_op:
-            return float(un_op(operand))
-    elif isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS:
-            func = _ALLOWED_FUNCS[node.func.id]
-            args =[_safe_eval_ast(arg, env) for arg in node.args]
-            return float(func(*args))
-    raise ValueError(f"Unsupported math operation: {type(node)}")
+class _NewSentinel:
+    """Explicit marker to indicate an attribute must be generated from scratch."""
+    pass
 
 
-def cast_callable_unary(op: Any) -> Callable[[Any], Any]:
-    """Helper to appease mypy for unary operators."""
-    return op  # type: ignore
+new = _NewSentinel()
 
 
 # ==========================================
-# DIRECT CASTERS (Usage in conv_dict: {'key': to_bool})
+# COMMON CALC() FUNCTIONS (Built-ins)
 # ==========================================
-def to_bool(value: Any) -> bool:
-    """Safely converts strings ('true', '1', 'yes') to booleans. Returns False if empty."""
-    if isinstance(value, bool):
-        return value
+def sum_attributes(*args: Any) -> float:
+    """Example built-in calc function: Safely sums multiple attributes."""
+    return sum(float(x) for x in args if x is not None and str(x).replace('.','',1).isdigit())
+
+def split_and_get(delimiter: str = '/', index: int = -1, cast_type: Optional[Callable[[Any], Any]] = None) -> Callable[
+    [Any], Any]:
+    def _splitter(value: Any) -> Any:
+        if not value: return None
+        try:
+            result = str(value).strip(delimiter).split(delimiter)[index]
+            return cast_type(result) if cast_type else result
+        except (IndexError, ValueError, TypeError):
+            return None
+
+    return _splitter
+
+# ==========================================
+# 2. COLUMNAR ETL MARKERS (Context-Aware)
+# ==========================================
+class CalcOp:
+    """Marker indicating an operation that requires multiple values from the current row."""
+    __slots__ = ('func', 'default', 'target_type', 'input_list')
+
+    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]):
+        self.func = func
+        self.default = default
+        self.target_type = target_type
+        self.input_list = input_list
+
+
+class CalcAllOp:
+    """Marker indicating an operation that requires full array processing down the column."""
+    __slots__ = ('func', 'default', 'target_type', 'input_list')
+
+    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]):
+        self.func = func
+        self.default = default
+        self.target_type = target_type
+        self.input_list = input_list
+
+
+def calc(
+        func: Callable[..., Any],
+        marker: Any = None,
+        *,
+        default: Any = None,
+        type: Any = None,
+        input_list: Optional[List[str]] = None
+) -> CalcOp:
+    """Creates a multi-input row calculation."""
+    return CalcOp(func, default, type, input_list or [])
+
+
+def calc_all(
+        func: Callable[..., Any],
+        marker: Any = None,
+        *,
+        default: Any = None,
+        type: Any = None,
+        input_list: Optional[List[str]] = None
+) -> CalcAllOp:
+    """Creates a batch/array calculation down an entire column."""
+    return CalcAllOp(func, default, type, input_list or [])
+
+
+# ==========================================
+# 3. RANKED FALLBACK STRATEGIES
+# ==========================================
+def _fallback_bool(value: Any) -> bool:
     if not value:
         return False
-
     truthy_values = {'true', '1', 'yes', 'y', 't', 'on'}
     return str(value).strip().lower() in truthy_values
 
 
-def to_date(value: Any) -> Optional[datetime]:
-    """Parses standard ISO-8601 and various common date strings into datetime objects."""
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value
-
+def _fallback_date(value: Any) -> datetime:
     safe_str = str(value).strip().replace('Z', '+00:00')
-
-    try:
-        return datetime.fromisoformat(safe_str)
-    except ValueError:
-        pass
-
-    fallback_formats =[
-        "%B %d, %Y",                 # Long: December 2, 2013
-        "%Y-%m-%d %H:%M:%S",         # SQL Timestamps: 2026-04-22 23:59:59
-        "%m/%d/%Y",                  # US Short: 04/22/2026
-        "%d/%m/%Y",                  # EU Short: 22/04/2026
-        "%Y/%m/%d",                  # Asian Short: 2026/04/22
-        "%d %b %Y",                  # 22 Apr 2026
-        "%b %d, %Y",                 # Apr 22, 2026
-        "%Y-%m-%dT%H:%M:%S.%f",      # ISO with truncated timezone
-        "%a, %d %b %Y %H:%M:%S %Z",  # RFC 2822 / HTTP headers
+    fallback_formats = [
+        "%B %d, %Y", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y", "%d/%m/%Y",
+        "%Y/%m/%d", "%d %b %Y", "%b %d, %Y", "%Y-%m-%dT%H:%M:%S.%f",
+        "%a, %d %b %Y %H:%M:%S %Z",
     ]
-
     for fmt in fallback_formats:
         try:
             return datetime.strptime(safe_str, fmt)
         except ValueError:
             continue
+    raise ValueError(f"All date fallbacks failed for '{value}'.")
 
-    raise ValueError(f"Could not parse '{value}' into a datetime object.")
 
-
-def to_int(
-        value: Any = "__INCORP_FACTORY__",
-        *,
-        math: Optional[str] = None,
-        default: Optional[int] = None
-) -> Any:
-    """Safely converts strings/floats to ints, supporting AST-based math scaling."""
-    # DSA OPTIMIZATION: Compile AST once at factory init
-    math_ast = ast.parse(math, mode="eval") if math else None
-
-    if value == "__INCORP_FACTORY__":
-        def _factory(val: Any) -> Optional[int]:
-            if val is None or val == "":
-                return default
-
-            clean_val = str(val).strip().lower() if isinstance(val, str) else val
-            if isinstance(clean_val, str):
-                if clean_val in {"unknown", "n/a", "none", "null", "undefined"}:
-                    return default
-                clean_val = clean_val.replace(",", "")
-
-            try:
-                result = float(clean_val)
-                if math_ast:
-                    result = _safe_eval_ast(math_ast, {"x": result})
-                return int(result)
-            except Exception:
-                return default
-
-        return _factory
-
-    # Direct Execution
-    if value is None or value == "":
-        return default
-
+def _fallback_int(value: Any) -> int:
     clean_val = str(value).strip().lower() if isinstance(value, str) else value
     if isinstance(clean_val, str):
         if clean_val in {"unknown", "n/a", "none", "null", "undefined"}:
-            return default
+            raise ValueError("Null-equivalent string encountered.")
         clean_val = clean_val.replace(",", "")
-
-    try:
-        result = float(clean_val)
-        if math_ast:
-            result = _safe_eval_ast(math_ast, {"x": result})
-        return int(result)
-    except Exception:
-        return default
+    return int(float(clean_val))
 
 
-def to_float(
-        value: Any = "__INCORP_FACTORY__",
-        *,
-        math: Optional[str] = None,
-        default: Optional[float] = None
-) -> Any:
-    """Safely converts strings to floats, supporting AST-based math scaling."""
-    math_ast = ast.parse(math, mode="eval") if math else None
-
-    if value == "__INCORP_FACTORY__":
-        def _factory(val: Any) -> Optional[float]:
-            if val is None or val == "":
-                return default
-
-            clean_val = str(val).strip().lower() if isinstance(val, str) else val
-            if isinstance(clean_val, str):
-                if clean_val in {"unknown", "n/a", "none", "null", "undefined"}:
-                    return default
-                clean_val = clean_val.replace(",", "")
-
-            try:
-                result = float(clean_val)
-                if math_ast:
-                    result = _safe_eval_ast(math_ast, {"x": result})
-                return result
-            except Exception:
-                return default
-
-        return _factory
-
-    # Direct Execution
-    if value is None or value == "":
-        return default
-
+def _fallback_float(value: Any) -> float:
     clean_val = str(value).strip().lower() if isinstance(value, str) else value
     if isinstance(clean_val, str):
         if clean_val in {"unknown", "n/a", "none", "null", "undefined"}:
-            return default
+            raise ValueError("Null-equivalent string encountered.")
         clean_val = clean_val.replace(",", "")
+    return float(clean_val)
 
+
+# The Global Ranked Dictionary Engine
+RANKED_CONVERTERS: Dict[Any, List[Callable[[Any], Any]]] = {
+    bool: [TypeAdapter(bool).validate_python, _fallback_bool],
+    datetime: [TypeAdapter(datetime).validate_python, _fallback_date],
+    int: [TypeAdapter(int).validate_python, _fallback_int],
+    float: [TypeAdapter(float).validate_python, _fallback_float],
+    str: [TypeAdapter(str).validate_python, str],
+}
+
+
+# ==========================================
+# THE INC() FACTORY
+# ==========================================
+
+def inc(target_type: Any) -> Callable[[Any], Any]:
+    """
+    Returns a Context-Aware, Type-Ranked validation closure.
+    """
+    # 1. The 'new' mapping: If 'new', accept ANY valid Python type.
+    actual_type = Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type
+
+    # 2. Instantiate the adapter EXACTLY ONCE
     try:
-        result = float(clean_val)
-        if math_ast:
-            result = _safe_eval_ast(math_ast, {"x": result})
-        return result
+        adapter: Optional[TypeAdapter[Any]] = TypeAdapter(actual_type)
     except Exception:
-        return default
+        adapter = None
+
+    ranks = RANKED_CONVERTERS.get(actual_type, [])
+    if adapter:
+        ranks = [adapter.validate_python] + [r for r in ranks if r != adapter.validate_python]
+
+    if not ranks:
+        ranks = [lambda x: x]  # Failsafe pass-through
+
+    def _ranked_converter(val: Any) -> Any:
+        if val is None or val == "":
+            return None
+
+        last_error = None
+        for func in ranks:
+            try:
+                return func(val)
+            except Exception as e:
+                last_error = e
+                continue
+
+        logger.warning(
+            f"Incorporator Type Engine: Failed to convert '{val}' into {actual_type}. "
+            f"Last error: {last_error}"
+        )
+        return None
+
+    return _ranked_converter
 
 
 # ==========================================
-# WRAPPERS (Usage in conv_dict: {'key': split_and_get('/')})
+# 5. GRAPH & EXTRACTORS
 # ==========================================
-
-def split_and_get(
-        delimiter: str = '/',
-        index: int = -1,
-        cast_type: Optional[Callable[[Any], Any]] = None
-) -> Callable[[Any], Any]:
-    def _splitter(value: Any) -> Any:
-        if not value:
-            return None
-        try:
-            result = str(value).strip(delimiter).split(delimiter)[index]
-            return cast_type(result) if cast_type is not None else result
-        except (IndexError, ValueError, TypeError):
-            return None
-    return _splitter
-
-
-def cast_list_items(cast_type: Callable[[Any], Any]) -> Callable[[Any], List[Any]]:
-    def _caster(lst: Any) -> List[Any]:
-        if not lst:
-            return []
-        if not isinstance(lst, list):
-            return[cast_type(lst)]
-        return[cast_type(item) for item in lst if item is not None and item != ""]
-    return _caster
-
-
-def default_if_null(default_value: Any) -> Callable[[Any], Any]:
-    def _defaulter(value: Any) -> Any:
-        return default_value if value is None or value == "" else value
-    return _defaulter
-
 
 def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
-    if isinstance(dataset, list):
-        registry: Mapping[Any, Any] = {
-            getattr(item, 'inc_code'): item
-            for item in dataset
-            if getattr(item, 'inc_code', None) is not None
-        }
-    else:
-        registry = getattr(dataset, "codeDict", {})
+    """Maps relational data using a rock-solid internal dictionary cache."""
 
-    if not isinstance(registry, collections.abc.Mapping):
-        registry = {}
+    # 1. Build a hyper-resilient strong dictionary using the physical list items
+    registry: Dict[Any, Any] = {}
+
+    if isinstance(dataset, list):
+        for item in dataset:
+            # Grab the ID directly off the living object!
+            code = getattr(item, 'inc_code', None)
+            if code is not None:
+                registry[code] = item
+                registry[str(code)] = item  # Shadow string map to prevent Type Splintering!
+    else:
+        # Failsafe for single objects
+        reg = getattr(dataset, "inc_dict", {})
+        if isinstance(reg, collections.abc.Mapping):
+            registry = {**reg, **{str(k): v for k, v in reg.items()}}
 
     def _mapper(val: Any) -> Any:
         key = extractor(val) if extractor is not None else val
         if key is None:
             return None
+
+        # O(1) Instant Lookup using our guaranteed strong registry
         if key in registry:
             return registry[key]
-        try:
-            return registry.get(int(key))
-        except (ValueError, TypeError):
-            return None
+
+        # Ultimate Type-Splinter defense
+        if str(key) in registry:
+            return registry[str(key)]
+
+        return None
 
     return _mapper
-
 
 
 def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], List[Any]]:
     base_linker = link_to(dataset, extractor)
+
     def _mapper(val_list: Any) -> List[Any]:
-        if not isinstance(val_list, list):
-            return []
-        return[obj for v in val_list if (obj := base_linker(v)) is not None]
+        if not isinstance(val_list, list): return []
+        return [obj for v in val_list if (obj := base_linker(v)) is not None]
+
     return _mapper
-
-
-# ==========================================
-# URL & NESTED DATA TOOLS
-# ==========================================
-
-def json_path_extractor(*keys: str) -> Callable[[str], Optional[str]]:
-    def _extractor(raw_json_str: str) -> Optional[str]:
-        try:
-            data = json.loads(raw_json_str)
-            for key in keys:
-                if isinstance(data, dict):
-                    data = data.get(key)
-                else:
-                    return None
-            return str(data) if data else None
-        except Exception:
-            return None
-    return _extractor
 
 
 def extract_url_id(cast_type: Callable[[Any], Any] = int) -> Callable[[Any], Any]:
     def _extractor(url_str: Any) -> Any:
-        if not isinstance(url_str, str) or not url_str:
-            return None
+        if not isinstance(url_str, str) or not url_str: return None
         try:
-            clean_str = url_str.strip('/')
-            result = clean_str.split('/')[-1]
-            return cast_type(result) if cast_type is not None else result
+            return cast_type(url_str.strip('/').split('/')[-1])
         except (ValueError, TypeError, IndexError):
             return None
+
     return _extractor
 
 
 def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
     def _plucker(val: Any) -> Any:
         extracted = val.get(key) if isinstance(val, dict) else val
-        if chain:
-            return chain(extracted)
-        return extracted
+        return chain(extracted) if chain else extracted
+
     return _plucker

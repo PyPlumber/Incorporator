@@ -8,7 +8,8 @@ from typing import Any
 import httpx
 import pytest
 
-from incorporator import Incorporator, to_date, to_int, link_to
+from incorporator import Incorporator, link_to
+from incorporator.methods.converters import calc, inc, datetime
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -75,11 +76,16 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
     cup_races = await Race.incorp(
         inc_url=f"{BASE}/2026/race_list_basic.json", rec_path="series_1",
         inc_code="race_id", inc_name="race_name",
-        conv_dict={'track_id': link_to(tracks), 'pole_winner_driver_id': link_to(drivers), 'date_scheduled': to_date},
+        conv_dict={'track_id': link_to(tracks), 'pole_winner_driver_id': link_to(drivers), 'date_scheduled': inc(datetime)},
         name_chg=[('track_id', 'track')]
     )
 
-    standings_conv = {'points': to_int(default=0), 'wins': to_int(default=0), 'top_10': to_int(default=0)}
+    standings_conv = {
+        'points': calc(int, default=0, type=int),
+        'wins': calc(int, default=0, type=int),
+        'top_10': calc(int, default=0, type=int)
+    }
+
     cup_st, busch_st, truck_st = await asyncio.gather(
         Standing.incorp(inc_url=f"{BASE}/1/racinginsights-points-feed.json", inc_code="driver_id",
                         inc_name="driver_name", conv_dict=standings_conv),
@@ -103,7 +109,7 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
     for team_name, roster in mock_league.items():
         total_score = 0
         for series_id, driver_id in roster:
-            standing = points_standings[series_id].codeDict.get(driver_id)
+            standing = points_standings[series_id].inc_dict.get(driver_id)
             if standing:
                 total_score += getattr(standing, "points", 0)
 

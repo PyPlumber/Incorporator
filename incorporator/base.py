@@ -13,13 +13,14 @@ import warnings
 import weakref
 from datetime import datetime, timezone
 from typing import (
-    Any, ClassVar, Dict, List, Optional, Type, TypeVar, Union, cast
+    Any, ClassVar, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 )
 
 from pydantic import BaseModel, Field
 
 from .methods import format_parsers, network, schema_builder
 from .methods.format_parsers import FormatType, infer_format
+from .methods.paginate import AsyncPaginator
 
 TIncorporator = TypeVar("TIncorporator", bound="Incorporator")
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ class IncorporatorList(list[TIncorporator]):
     A specialized list providing direct access to the dynamic class registry.
 
     When `incorp()` returns multiple items, this wrapper allows users to run
-    `dataset.codeDict.get(id)` seamlessly against the dynamically generated class.
+    `dataset.inc_dict.get(id)` seamlessly against the dynamically generated class.
     """
 
     # Exposes failed HTTP 429 URLs for programmatic Dead Letter Queue retries
@@ -47,12 +48,12 @@ class IncorporatorList(list[TIncorporator]):
     ):
         super().__init__(items)
         self._model_class = model_class
-        self.failed_sources = failed_sources if failed_sources is not None else []
+        self.failed_sources = failed_sources if failed_sources is not None else[]
 
     @property
-    def codeDict(self) -> "weakref.WeakValueDictionary[Any, TIncorporator]":
+    def inc_dict(self) -> "weakref.WeakValueDictionary[Any, TIncorporator]":
         """Provides direct access to the class-level weakref registry."""
-        return cast("weakref.WeakValueDictionary[Any, TIncorporator]", self._model_class.codeDict)
+        return cast("weakref.WeakValueDictionary[Any, TIncorporator]", self._model_class.inc_dict)
 
 
 # ==========================================
@@ -65,14 +66,14 @@ class Incorporator(BaseModel):
     """
 
     # --- Class-Level Registries & Origin Tracking ---
-    codeDict: ClassVar[weakref.WeakValueDictionary[Any, "Incorporator"]] = weakref.WeakValueDictionary()
+    inc_dict: ClassVar[weakref.WeakValueDictionary[Any, "Incorporator"]] = weakref.WeakValueDictionary()
     _auto_counter: ClassVar[int] = 1
 
     inc_url: ClassVar[Optional[str]] = None
     inc_file: ClassVar[Optional[str]] = None
 
     # --- Universal Instance Attributes ---
-    inc_code: Any = Field(default=None, description="Primary key for cls.codeDict.")
+    inc_code: Any = Field(default=None, description="Primary key for cls.inc_dict.")
     inc_name: Optional[str] = Field(default=None, description="Optional readable name.")
     last_rcd: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -94,18 +95,15 @@ class Incorporator(BaseModel):
         """
         cls = self.__class__
 
-        # 1. Assign auto-incrementing ID if none was provided by the API
         if self.inc_code is None:
             self.inc_code = cls._auto_counter
             cls._auto_counter += 1
 
-        # 2. Register the instance in its own dynamically generated Subclass registry
-        cls.codeDict[self.inc_code] = self
+        cls.inc_dict[self.inc_code] = self
 
-        # 3. Bubble up to explicitly defined parent classes (e.g. NHTSARecord.codeDict)
         for base in cls.__bases__:
             if issubclass(base, Incorporator) and base is not Incorporator:
-                base.codeDict[self.inc_code] = self
+                base.inc_dict[self.inc_code] = self
 
     # ==========================================
     # 3. INTERNAL ROUTERS & FACTORIES
@@ -116,12 +114,9 @@ class Incorporator(BaseModel):
             inc_parent: Any,
             **kwargs: Any
     ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
-        """
-        Handles HATEOAS REST architectures by extracting nested URLs
-        from parent Incorporator objects and dynamically routing them.
-        """
+        """Handles HATEOAS REST architectures by extracting nested URLs from parents."""
         parent_items = inc_parent if isinstance(inc_parent, list) else [inc_parent]
-        discovered_urls = [
+        discovered_urls =[
             url_val for item in parent_items
             if (url_val := getattr(item, 'detail_url', getattr(item, 'url', None))) and isinstance(url_val, str)
         ]
@@ -129,7 +124,6 @@ class Incorporator(BaseModel):
         if not discovered_urls:
             raise ValueError("The 'inc_parent' object did not contain a valid 'url' or 'detail_url' attribute.")
 
-        # Re-route the discovered URLs back into the main pipeline
         kwargs['inc_url'] = discovered_urls
         kwargs.pop('inc_parent', None)
         return await cls.incorp(**kwargs)
@@ -140,35 +134,37 @@ class Incorporator(BaseModel):
             parsed_data: List[Any],
             failed_sources: List[str],
             is_single: bool,
-            **kwargs: Any
+            inc_code: Optional[str] = None,
+            inc_name: Optional[str] = None,
+            excl_lst: Optional[List[str]] = None,
+            conv_dict: Optional[Dict[str, Any]] = None,
+            name_chg: Optional[List[Tuple[str, str]]] = None,
     ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
         """
-        The Factory Assembler: Applies ETL transformations to raw dictionaries,
-        compiles the dynamic Pydantic schema, and instantiates the final objects.
+        The Factory Assembler: Applies Columnar ETL transformations,
+        compiles the dynamic Pydantic schema, and instantiates final objects.
         """
-        # Warn developers if a massive concurrent batch encountered 429 Rate Limits
         if failed_sources:
             warnings.warn(
                 f"Incorporator partial data returned: {len(failed_sources)} source(s) failed with HTTP 429.",
                 UserWarning, stacklevel=2
             )
 
-        # Graceful degradation for completely empty responses
         if not parsed_data:
-            EmptyClass = cast(Type[TIncorporator], schema_builder.infer_dynamic_schema("DynamicModel", [{}], cls))
-            return IncorporatorList(EmptyClass, [], failed_sources=failed_sources)
+            EmptyClass = cast(Type[TIncorporator], schema_builder.infer_dynamic_schema("DynamicModel",[{}], cls))
+            return IncorporatorList(EmptyClass,[], failed_sources=failed_sources)
 
         if is_single and len(parsed_data) == 1:
             parsed_data = parsed_data[0]
 
-        # 1. Declarative ETL Transformation Phase
+        # 1. Declarative ETL Transformation Phase (Columnar)
         transformed_data = schema_builder.apply_etl_transformations(
             parsed_data=parsed_data,
-            code_attr=kwargs.get('inc_code'),
-            name_attr=kwargs.get('inc_name'),
-            excl_lst=kwargs.get('excl_lst'),
-            conv_dict=kwargs.get('conv_dict'),
-            name_chg=kwargs.get('name_chg')
+            code_attr=inc_code,
+            name_attr=inc_name,
+            excl_lst=excl_lst,
+            conv_dict=conv_dict,
+            name_chg=name_chg
         )
 
         # 2. Metaprogramming Compilation Phase
@@ -193,12 +189,35 @@ class Incorporator(BaseModel):
             inc_url: Optional[Union[str, List[str]]] = None,
             inc_file: Optional[Union[str, List[str]]] = None,
             inc_parent: Optional[Union[TIncorporator, "IncorporatorList[TIncorporator]"]] = None,
+            inc_code: Optional[str] = None,
+            inc_name: Optional[str] = None,
+            excl_lst: Optional[List[str]] = None,
+            conv_dict: Optional[Dict[str, Any]] = None,
+            name_chg: Optional[List[Tuple[str, str]]] = None,
+            inc_page: Optional[AsyncPaginator] = None,
             **kwargs: Any
     ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
-        """Extracts data from an API or File and returns dynamically generated Python objects."""
+        """
+        Extracts data from an API or File and returns dynamically generated Python objects.
 
-        # 1. HATEOAS Extraction Intercept
+        Args:
+            inc_url: Single URL or List of URLs to fetch concurrently.
+            inc_file: Single File path or List of file paths to parse.
+            inc_page: A Paginator instance (e.g., NextUrlPaginator(), OffsetPaginator(limit=50))
+            inc_parent: A parent Incorporator object to extract nested URLs from.
+            inc_code: The attribute name in the API to bind to the primary key (`cls.inc_dict`).
+            inc_name: The attribute name in the API to bind to the readable name.
+            excl_lst: A list of keys to completely drop from the API response before building.
+            conv_dict: Dictionary utilizing `inc()`, `calc()`, and `calc_all()` for Declarative ETL.
+            name_chg: List of tuples to rename API keys e.g., `[("old_key", "new_key")]`.
+            **kwargs: Network configurations passed to `network.py` (e.g., paginate, rec_path).
+        """
         if inc_parent is not None:
+            # Pass everything down to the child router
+            kwargs.update({
+                'inc_code': inc_code, 'inc_name': inc_name, 'excl_lst': excl_lst,
+                'conv_dict': conv_dict, 'name_chg': name_chg
+            })
             return await cls._child_incorp(inc_parent=inc_parent, **kwargs)
 
         source = inc_file if inc_file else inc_url
@@ -207,24 +226,28 @@ class Incorporator(BaseModel):
 
         is_file_mode = bool(inc_file)
         source_list = source if isinstance(source, list) else [source]
-        is_single = not isinstance(source, list) and not kwargs.get("paginate", False)
+        is_single = not isinstance(source, list) and inc_page is None
 
-        # Track the active origin class-wide for single operations
         if is_single and isinstance(source, str):
             if is_file_mode:
                 cls.inc_file = source
             else:
                 cls.inc_url = source
 
-        # 2. Concurrency & I/O Phase (Delegated to network.py)
+        # Concurrency & I/O Phase (Delegated to network.py)
         parsed_data, failed_sources = await network.fetch_concurrent_payloads(
             source_list=source_list,
             is_file_mode=is_file_mode,
+            inc_page=inc_page,
             **kwargs
         )
 
-        # 3. Metaprogramming & Instantiation Phase
-        return cls._build_instances(parsed_data, failed_sources, is_single, **kwargs)
+        # Pass Explicit ETL Parameters to the Builder
+        return cls._build_instances(
+            parsed_data, failed_sources, is_single,
+            inc_code=inc_code, inc_name=inc_name, excl_lst=excl_lst,
+            conv_dict=conv_dict, name_chg=name_chg
+        )
 
     @classmethod
     async def refresh(
@@ -232,27 +255,32 @@ class Incorporator(BaseModel):
             instance: Union[TIncorporator, List[TIncorporator]],
             new_url: Optional[Union[str, List[str]]] = None,
             new_file: Optional[Union[str, List[str]]] = None,
+            inc_code: Optional[str] = None,
+            inc_name: Optional[str] = None,
+            excl_lst: Optional[List[str]] = None,
+            conv_dict: Optional[Dict[str, Any]] = None,
+            name_chg: Optional[List[Tuple[str, str]]] = None,
+            inc_page: Optional[AsyncPaginator] = None,
             **kwargs: Any
     ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
         """Re-hydrates existing instances with fresh API data using their origin tracking."""
-
         inst_list = instance if isinstance(instance, list) else [instance]
         if not inst_list:
             raise ValueError("Cannot refresh an empty list of Incorporator instances.")
 
-        # Resolve target source (Fallback to the origin URL tracked by the instance)
         target = new_url if new_url else new_file if new_file else None
         if not target:
-            target = [getattr(inst, "inc_url", getattr(inst, "inc_file", "")) for inst in inst_list]
+            target =[getattr(inst, "inc_url", getattr(inst, "inc_file", "")) for inst in inst_list]
 
         is_file_mode = new_file is not None or (not new_url and getattr(inst_list[0], "inc_file", None) is not None)
         source_list = target if isinstance(target, list) else [target]
-        is_single = not isinstance(target, list) and not kwargs.get("paginate", False)
+        is_single = not isinstance(target, list) and inc_page is None
 
-        # 1. Concurrency & I/O Phase
+        # Concurrency & I/O Phase
         parsed_data, failed_sources = await network.fetch_concurrent_payloads(
             source_list=source_list,
             is_file_mode=is_file_mode,
+            inc_page=inc_page,
             **kwargs
         )
 
@@ -263,12 +291,22 @@ class Incorporator(BaseModel):
         if is_single and len(parsed_data) == 1:
             parsed_data = parsed_data[0]
 
-        # 2. Hydration Phase
-        if isinstance(parsed_data, list):
-            instances = [TargetClass(**cast(Dict[str, Any], item)) for item in parsed_data]
+        # Explicit ETL pipeline on refreshed data
+        transformed_data = schema_builder.apply_etl_transformations(
+            parsed_data=parsed_data,
+            code_attr=inc_code,
+            name_attr=inc_name,
+            excl_lst=excl_lst,
+            conv_dict=conv_dict,
+            name_chg=name_chg
+        )
+
+        # Hydration Phase
+        if isinstance(transformed_data, list):
+            instances =[TargetClass(**cast(Dict[str, Any], item)) for item in transformed_data]
             return IncorporatorList(TargetClass, instances, failed_sources=failed_sources)
 
-        return TargetClass(**cast(Dict[str, Any], parsed_data))
+        return TargetClass(**cast(Dict[str, Any], transformed_data))
 
     @classmethod
     async def export(
@@ -279,9 +317,7 @@ class Incorporator(BaseModel):
     ) -> None:
         """Serializes current Incorporator states out to physical JSON/CSV/XML files."""
         active_format = format_type or infer_format(file_path)
-        instances = instance if isinstance(instance, list) else [instance]
+        instances = instance if isinstance(instance, list) else[instance]
 
-        # Dump state utilizing Pydantic's optimized JSON alias tracking
-        data_dicts = [obj.model_dump(by_alias=True, mode='json') for obj in instances]
-
+        data_dicts =[obj.model_dump(by_alias=True, mode='json') for obj in instances]
         await format_parsers.write_destination_data(data_dicts, file_path, active_format)

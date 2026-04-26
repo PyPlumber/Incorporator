@@ -1,18 +1,21 @@
-"""Dynamic Pydantic model generation engine."""
+"""Dynamic Pydantic model generation and Declarative ETL engine."""
 
 import copy
 import keyword
+import logging
 import re
 import weakref
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from .exceptions import IncorporatorSchemaError
 
+logger = logging.getLogger(__name__)
+
 # Cache to prevent recompiling identical schemas during deep nesting
 SCHEMA_REGISTRY: Dict[Tuple[str, frozenset[str]], Type[BaseModel]] = {}
-MAX_REGISTRY_SIZE = 1000  # <--- NEW: Hard boundary to prevent OOM leaks
+MAX_REGISTRY_SIZE = 1000  # Hard boundary to prevent OOM leaks
 
 # The protective shield for Pydantic internals
 PYDANTIC_RESERVED = {
@@ -26,19 +29,12 @@ def sanitize_json_key(key: str) -> str:
     """Sanitizes keys to PEP 8 standards and prevents Python/Pydantic collisions."""
     clean_key = re.sub(r'[^a-zA-Z0-9_]', '_', key)
 
-    # 1. Metaprogramming Crash Defense: Catch empty strings
     if not clean_key:
         clean_key = "empty_key"
-
-    # 2. Number Prefix Defense
     if clean_key[0].isdigit():
         clean_key = f"_{clean_key}"
-
-    # 3. Dot-Notation DX Defense: Prevent Python reserved keywords
     if keyword.iskeyword(clean_key):
         clean_key = f"{clean_key}_"
-
-    # 4. Pydantic Internal Shield
     if clean_key in PYDANTIC_RESERVED:
         clean_key = f"safe_{clean_key}"
 
@@ -50,34 +46,84 @@ def apply_etl_transformations(
         code_attr: Optional[str] = None,
         name_attr: Optional[str] = None,
         excl_lst: Optional[List[str]] = None,
-        conv_dict: Optional[Dict[str, Callable[[Any], Any]]] = None,
+        conv_dict: Optional[Dict[str, Any]] = None,
         name_chg: Optional[List[Tuple[str, str]]] = None,
 ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
-    """Applies Declarative ETL rules to the raw dictionary before schema compilation."""
+    """Applies Declarative ETL rules utilizing Attribute-Based (Columnar) Processing."""
 
     items = parsed_data if isinstance(parsed_data, list) else [parsed_data]
-    for item in items:
-        if not isinstance(item, dict):
-            continue
+    if not items:
+        return parsed_data
 
-        if excl_lst:
-            for key in excl_lst:
-                item.pop(key, None)
+    # 1. FAST PASS: Row-Based Data Cleaning
+    if excl_lst:
+        for item in items:
+            if isinstance(item, dict):
+                for key in excl_lst:
+                    item.pop(key, None)
 
-        if conv_dict:
-            for key, func in conv_dict.items():
+    # 2. COLUMNAR PIVOT: Attribute-Based Execution Order
+    if conv_dict:
+        for key, operation in conv_dict.items():
+            op_type = type(operation).__name__
+
+            # --- SCENARIO A: Multi-Input Row Calculation (calc) ---
+            if "Calc" in op_type and "All" not in op_type:
+                inputs = operation.input_list if operation.input_list else [key]
+                for item in items:
+                    if not isinstance(item, dict): continue
+                    args = [item.get(dep) for dep in inputs]
+                    try:
+                        val = operation.func(*args)
+                    except Exception as e:
+                        val = operation.default
+
+                    if callable(operation.target_type):
+                        try:
+                            val = operation.target_type(val)
+                        except Exception:
+                            val = operation.default
+                    item[key] = val
+
+            # --- SCENARIO B: Batch Array Calculation (calc_all) ---
+            elif "CalcAll" in op_type:
+                inputs = operation.input_list if operation.input_list else [key]
+                col_args = [[item.get(dep) for item in items if isinstance(item, dict)] for dep in inputs]
                 try:
-                    # If the key is missing from the API, item.get() returns None.
-                    item[key] = func(item.get(key, None))
+                    results = operation.func(*col_args)
                 except Exception as e:
-                    # <--- NEW: Using framework-specific exception hierarchy
-                    raise IncorporatorSchemaError(f"conv_dict failed on key '{key}': {e}") from e
+                    results = [operation.default] * len(items)
 
+                dict_items = [i for i in items if isinstance(i, dict)]
+                for idx, item in enumerate(dict_items):
+                    try:
+                        val = results[idx]
+                    except IndexError:
+                        val = operation.default
+
+                    if callable(operation.target_type):
+                        try:
+                            val = operation.target_type(val)
+                        except Exception:
+                            val = operation.default
+                    item[key] = val
+
+            # --- SCENARIO C: Standard Extraction (inc, link_to) ---
+            else:
+                for item in items:
+                    if not isinstance(item, dict): continue
+                    try:
+                        item[key] = operation(item.get(key, None))
+                    except Exception as e:
+                        logger.warning(f"Standard conv_dict failed on key '{key}': {e}")
+
+    # 3. FAST PASS: Row-Based Structure Finalization
+    for item in items:
+        if not isinstance(item, dict): continue
         if name_chg:
             for old_key, new_key in name_chg:
                 if old_key in item:
                     item[new_key] = item.pop(old_key)
-
         if code_attr and code_attr in item:
             item['inc_code'] = item[code_attr]
         if name_attr and name_attr in item:
@@ -96,7 +142,6 @@ def infer_dynamic_schema(
     if not isinstance(sample_dict, dict):
         sample_dict = {}
 
-    # 1. Cache Check: If we've already compiled this exact nested shape, reuse it.
     cache_key = (model_name, frozenset(sample_dict.keys()))
     if cache_key in SCHEMA_REGISTRY:
         return SCHEMA_REGISTRY[cache_key]
@@ -105,9 +150,6 @@ def infer_dynamic_schema(
     for raw_key, value in sample_dict.items():
         safe_key = sanitize_json_key(raw_key)
 
-        # --- THE TYPE SHIELD ---
-        # If the attribute already exists on the base Incorporator class (like inc_code or inc_name),
-        # we skip redefining it. This preserves their permissive typing (Any) and stops serialization warnings!
         if safe_key in base_class.model_fields:
             continue
 
@@ -120,7 +162,6 @@ def infer_dynamic_schema(
         else:
             field_type: Any = type(value) if value is not None else Any
             if field_type is int:
-                # Promote integers to allow for floats to prevent validation errors on inconsistent APIs
                 field_type = Union[int, float]
             fields[safe_key] = (Optional[field_type], Field(alias=raw_key, default=None))
 
@@ -132,8 +173,6 @@ def infer_dynamic_schema(
             **fields
         )
 
-        # --- THE DEEPCOPY SHIELD ---
-        # Isolates class-level mutable attributes (like codeDict) so subclasses don't share memory
         for attr_name in dir(base_class):
             if not attr_name.startswith("__") and attr_name not in PYDANTIC_RESERVED:
                 attr_val = getattr(base_class, attr_name)
@@ -142,12 +181,9 @@ def infer_dynamic_schema(
                 elif isinstance(attr_val, weakref.WeakValueDictionary):
                     setattr(DynamicModel, attr_name, weakref.WeakValueDictionary())
 
-        # 2. Cache Registration: Only cache pure BaseModels to prevent cross-contamination of codeDicts
         if base_class is BaseModel:
-            # <--- NEW: OOM Prevention. If cache gets too large, sweep it.
             if len(SCHEMA_REGISTRY) >= MAX_REGISTRY_SIZE:
                 SCHEMA_REGISTRY.clear()
-
             SCHEMA_REGISTRY[cache_key] = DynamicModel
 
         return DynamicModel

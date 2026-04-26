@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
+from incorporator.methods.paginate import PageNumberPaginator
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -40,14 +41,16 @@ async def test_coingecko_call_lim_pagination_cutoff(monkeypatch: pytest.MonkeyPa
     """Tests that a paginating API is forcefully halted exactly at `call_lim` pages."""
 
     monkeypatch.setattr("incorporator.methods.network.execute_request", mock_infinite_coingecko_api)
+    GECKO_URL = "https://api.coingecko.com/api/v3/coins/markets"
     TARGET_LIMIT = 7
 
-    # Fetch coins, utilizing the Zero-Boilerplate heuristic paginator and call_lim!
+    # Fetch coins
     coins = await Coin.incorp(
-        inc_url="https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&page=1",
+        inc_url=GECKO_URL,
+        params={"vs_currency": "usd"},
         inc_code="id",
         inc_name="name",
-        paginate=True,
+        inc_page=PageNumberPaginator(page_param="page", start_page=1),
         call_lim=TARGET_LIMIT
     )
 

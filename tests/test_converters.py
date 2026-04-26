@@ -1,79 +1,101 @@
-"""Unit tests for built-in functional converters and URL tools."""
+"""Unit tests for the Incorporator Columnar Type Engine and URL tools."""
 
 import json
 from datetime import datetime
 from types import SimpleNamespace
-import pytest
+from typing import Any
 
-from incorporator import (
-    to_bool,
-    to_date,
-    to_int,
-    to_float,
-    split_and_get,
-    cast_list_items,
-    default_if_null,
-    link_to,
-    link_to_list,
+from incorporator.methods.converters import (
+    CalcAllOp,
+    CalcOp,
+    calc,
+    calc_all,
     extract_url_id,
+    flt,
+    inc,
+    link_to,
+    new,
     pluck,
-    json_path_extractor
+    split_and_get
 )
 
 
-def test_to_bool_null_safety() -> None:
-    """Asserts string logic and empty value fallback."""
-    assert to_bool("true") is True
-    assert to_bool("1") is True
-    assert to_bool("false") is False
-    assert to_bool("junk") is False
-    assert to_bool(None) is False
+def test_inc_type_ranked_engine_bools_and_dates() -> None:
+    """Asserts string logic, empty value fallback, and date parsing for inc()."""
+    # --- Booleans ---
+    inc_bool = inc(bool)
+    assert inc_bool("true") is True
+    assert inc_bool("1") is True
+    assert inc_bool("false") is False
+    assert inc_bool("junk") is False
+    assert inc_bool(None) is None  # Pipeline Null-Safety
+    assert inc_bool("") is None
 
-
-def test_to_date_universal_parser() -> None:
-    """Asserts ISO-8601 parsing and universal string format fallbacks."""
+    # --- Dates ---
+    inc_date = inc(datetime)
     # Standard ISO
-    dt_iso = to_date("2026-04-21T23:59:59Z")
+    dt_iso = inc_date("2026-04-21T23:59:59Z")
     assert isinstance(dt_iso, datetime) and dt_iso.year == 2026
 
     # Custom Rick & Morty format fallback
-    dt_rm = to_date("December 2, 2013")
+    dt_rm = inc_date("December 2, 2013")
     assert isinstance(dt_rm, datetime) and dt_rm.year == 2013 and dt_rm.month == 12
 
     # SQL Timestamp format fallback
-    dt_sql = to_date("2026-04-22 23:59:59")
+    dt_sql = inc_date("2026-04-22 23:59:59")
     assert isinstance(dt_sql, datetime) and dt_sql.year == 2026
 
-    assert to_date(None) is None
-
-    with pytest.raises(ValueError):
-        to_date("not-a-valid-date-format")
+    # Graceful degradation (returns None instead of crashing ETL with ValueError)
+    assert inc_date("not-a-valid-date-format") is None
 
 
-def test_to_int_and_float_dirty_data_and_math() -> None:
-    """Asserts robust string-to-number casting, dirty data cleaning, and math factories."""
+def test_inc_type_ranked_engine_numbers_and_dirty_data() -> None:
+    """Asserts robust string-to-number casting and dirty data cleaning via fallbacks."""
+    inc_int = inc(int)
+    inc_flt = inc(flt)  # Utilizing the new flt alias
 
     # 1. Direct Execution & Dirty Data Cleaning
-    assert to_int("1,500") == 1500  # Strips commas
-    assert to_float("1,500.50") == 1500.5  # Strips commas
-    assert to_int("unknown") is None  # Traps dirty strings
-    assert to_float("N/A") is None  # Traps dirty strings
-    assert to_int(None) is None
+    assert inc_int("1,500") == 1500  # Strips commas via fallback
+    assert inc_flt("1,500.50") == 1500.5
 
-    # 2. Factory Mode with Math Strings!
-    # Fahrenheit conversion: (x * 1.8) + 32
-    celsius_to_fahrenheit = to_float(math="(x * 1.8) + 32")
-    assert celsius_to_fahrenheit(0) == 32.0
-    assert celsius_to_fahrenheit("100") == 212.0
+    # 2. Trap dirty API strings gracefully
+    assert inc_int("unknown") is None
+    assert inc_flt("N/A") is None
+    assert inc_int(None) is None
 
-    # Math with defaults for missing data
-    discount_calc = to_int(math="round(x * 0.8)", default=0)
-    assert discount_calc("100") == 80
-    assert discount_calc("unknown") == 0  # Falls back to default safely!
+
+def test_inc_new_sentinel() -> None:
+    """Asserts that the 'new' sentinel safely passes any data type through."""
+    inc_any = inc(new)
+
+    assert inc_any("String") == "String"
+    assert inc_any(100) == 100
+    assert inc_any({"complex": "dict"}) == {"complex": "dict"}
+    assert inc_any(None) is None
+
+
+def test_calc_and_calc_all_markers() -> None:
+    """Asserts that calc and calc_all correctly generate Columnar Op markers."""
+
+    def dummy_math(x: float, y: float) -> float:
+        return x + y
+
+    # 1. Row-based calc
+    c_op = calc(dummy_math, default=0, type=flt, input_list=["mass", "gravity"])
+    assert isinstance(c_op, CalcOp)
+    assert c_op.default == 0
+    assert c_op.target_type is float
+    assert c_op.input_list == ["mass", "gravity"]
+
+    # 2. Batch column calc_all
+    ca_op = calc_all(dummy_math, type=int)
+    assert isinstance(ca_op, CalcAllOp)
+    assert ca_op.target_type is int
+    assert ca_op.input_list == []  # Defaults to empty list intelligently
 
 
 def test_url_toolkit() -> None:
-    """Asserts extract_url_id, pluck, and json_path_extractor function correctly."""
+    """Asserts extract_url_id and pluck function correctly."""
 
     # --- extract_url_id ---
     extractor = extract_url_id(int)
@@ -88,23 +110,16 @@ def test_url_toolkit() -> None:
     # Test flat string fallback
     assert plucker("https://api.com/planet/5/") == 5
 
-    # --- json_path_extractor ---
-    json_data = json.dumps({"info": {"next": "https://api.com/?page=2"}})
-    paginator = json_path_extractor("info", "next")
-    assert paginator(json_data) == "https://api.com/?page=2"
-    assert paginator(json.dumps({"info": {"next": None}})) is None
-
 
 def test_link_to_relational_mapping() -> None:
-    """Asserts relational mapping handles plain lists, WeakValueDictionaries, and nulls."""
+    """Asserts relational mapping handles plain lists and nulls."""
 
     # Use SimpleNamespace to mock the object-oriented structure of Pydantic models
-    # UPDATED: Use inc_code to match the newly refactored base API contract.
     mock_obj_1 = SimpleNamespace(inc_code=1, name="Daytona")
     mock_obj_2 = SimpleNamespace(inc_code="A100", name="Talladega")
 
     # Test 1: Passing a plain Python list (link_to should build the dict dynamically)
-    plain_list =[mock_obj_1, mock_obj_2]
+    plain_list = [mock_obj_1, mock_obj_2]
     mapper = link_to(plain_list)
 
     assert mapper(1) == mock_obj_1

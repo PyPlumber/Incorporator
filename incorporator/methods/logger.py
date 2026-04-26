@@ -10,7 +10,6 @@ from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, List, Type, TypeVar, Union
 
-# Import the Incorporator base class
 from incorporator.base import Incorporator, IncorporatorList
 
 TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")

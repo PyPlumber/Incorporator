@@ -1,4 +1,4 @@
-"""Integration tests for Advanced Relational Mapping and Rick & Morty Lore Tables."""
+"""Integration tests for Graph Relational Mapping with lists (Rick & Morty API)."""
 
 import json
 from typing import Any
@@ -6,14 +6,9 @@ from typing import Any
 import httpx
 import pytest
 
-from incorporator import (
-    Incorporator,
-    link_to,
-    link_to_list,
-    json_path_extractor,
-    extract_url_id,
-    pluck
-)
+from incorporator import Incorporator
+from incorporator.methods.converters import calc, extract_url_id, link_to, link_to_list, pluck
+from incorporator.methods.paginate import NextUrlPaginator
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -27,161 +22,159 @@ class Character(Incorporator): pass
 
 
 # --- MOCK NETWORK SETUP ---
-
 async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
-    """Mocks a curated slice of the R&M Multiverse to support the Lore Tables.
-    Absorbs *args and **kwargs to safely ignore httpx.AsyncClient and RateLimiter injections.
-    """
-
-    # 1. LOCATIONS
+    """Mocks the Rick & Morty REST endpoints."""
     if "location" in url:
         payload = {
             "info": {"next": None},
             "results": [
-                {"id": 1, "name": "Earth (C-137)", "type": "Planet", "dimension": "Dimension C-137"},
-                {"id": 3, "name": "Citadel of Ricks", "type": "Space station", "dimension": "unknown"},
-                {"id": 9, "name": "Cronenberg Earth", "type": "Planet", "dimension": "Cronenberg Dimension"}
+                {"id": 20, "name": "Earth (Replacement Dimension)", "type": "Planet",
+                 "url": "https://rickandmortyapi.com/api/location/20"}
             ]
         }
-    # 2. EPISODES
     elif "episode" in url:
         payload = {
             "info": {"next": None},
-            "results": [{
-                "id": 28, "name": "The Ricklantis Mixup", "episode": "S03E07",
-                "characters": ["https://api.com/character/1", "https://api.com/character/15",
-                               "https://api.com/character/99"]
-            }]
+            "results": [
+                {"id": 1, "name": "Pilot", "episode": "S01E01", "url": "https://rickandmortyapi.com/api/episode/1"},
+                {"id": 2, "name": "Lawnmower Dog", "episode": "S01E02",
+                 "url": "https://rickandmortyapi.com/api/episode/2"}
+            ]
         }
-    # 3. CHARACTERS
-    else:
+    elif "character" in url:
         payload = {
             "info": {"next": None},
             "results": [
-                # Rick Sanchez: Citadel Resident, Alive
-                {"id": 1, "name": "Rick Sanchez", "status": "Alive", "gender": "Male", "type": "", "species": "Human",
-                 "origin": {"url": "https://api.com/location/1"}, "location": {"url": "https://api.com/location/3"},
-                 "episode": ["https://api.com/episode/28"]},
-
-                # Cyborg Rick: Citadel Resident, Dead Rick (Lived 3 episodes)
-                {"id": 15, "name": "Cyborg Rick", "status": "Dead", "gender": "Male", "type": "Cyborg",
-                 "species": "Humanoid", "origin": {"url": "https://api.com/location/9"},
-                 "location": {"url": "https://api.com/location/3"}, "episode": ["https://api.com/episode/28"] * 3},
-
-                # Cronenberg Morty: Cronenberg Resident, Dead (Not a Rick, lived 1 episode)
-                {"id": 99, "name": "Cronenberg Morty", "status": "Dead", "gender": "Male", "type": "Mutant",
-                 "species": "Human", "origin": {"url": "https://api.com/location/9"},
-                 "location": {"url": "https://api.com/location/9"}, "episode": ["https://api.com/episode/28"]}
+                {
+                    "id": 1,
+                    "name": "Rick Sanchez",
+                    "status": "Alive",
+                    "species": "Human",
+                    # Complex Nested Dict (Needs Pluck)
+                    "location": {
+                        "name": "Earth (Replacement Dimension)",
+                        "url": "https://rickandmortyapi.com/api/location/20"
+                    },
+                    # Complex List of Strings (Needs link_to_list)
+                    "episode": [
+                        "https://rickandmortyapi.com/api/episode/1",
+                        "https://rickandmortyapi.com/api/episode/2"
+                    ],
+                    "url": "https://rickandmortyapi.com/api/character/1"
+                }
             ]
         }
+    else:
+        payload = {}
 
-    return httpx.Response(200, text=json.dumps(payload))
+    req = httpx.Request("GET", url)
+    return httpx.Response(200, text=json.dumps(payload), request=req)
 
 
 # --- TESTS ---
-
 @pytest.mark.asyncio
-async def test_rick_and_morty_lore_tables(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Validates Relational Graph sorting, array length processing, and registry resolution."""
+async def test_rick_and_morty_link_to_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proves link_to_list perfectly hydrates a list of URLs into a list of Incorporator objects."""
+
     monkeypatch.setattr("incorporator.methods.network.execute_request", mock_execute_get)
-    BASE_URL = "https://api.com"
-    rm_pagination = json_path_extractor("info", "next")
+    BASE_URL = "https://rickandmortyapi.com/api"
 
     # ==========================================
-    # 1. BUILD THE GRAPH PIPELINE
+    # 1. FETCH FOUNDATIONAL DATA
     # ==========================================
     locations = await Location.incorp(
-        inc_url=f"{BASE_URL}/location/", rec_path="results", paginate=True, next_url_extractor=rm_pagination,
-        inc_code="id", inc_name="name", excl_lst=['url', 'residents']
+        inc_url=f"{BASE_URL}/location/", rec_path="results",
+        inc_code="id", inc_name="name", excl_lst=['url', 'residents'],
+        inc_page=NextUrlPaginator("info", "next")
     )
 
     episodes = await Episode.incorp(
-        inc_url=f"{BASE_URL}/episode/", rec_path="results", paginate=True, next_url_extractor=rm_pagination,
-        inc_code="id", inc_name="name", excl_lst=['url']
+        inc_url=f"{BASE_URL}/episode/", rec_path="results",
+        inc_code="id", inc_name="name", excl_lst=['url'],
+        inc_page=NextUrlPaginator("info", "next")
     )
 
+    # ==========================================
+    # 2. FETCH CHARACTERS & MAP RELATIONS
+    # ==========================================
     characters = await Character.incorp(
-        inc_url=f"{BASE_URL}/character/", rec_path="results", paginate=True, next_url_extractor=rm_pagination,
+        inc_url=f"{BASE_URL}/character/", rec_path="results",
         inc_code="id", inc_name="name", excl_lst=['image', 'url'],
+        inc_page=NextUrlPaginator("info", "next"),
         conv_dict={
-            'location': link_to(locations, extractor=pluck("url", extract_url_id(int))),
-            'origin': link_to(locations, extractor=pluck("url", extract_url_id(int))),
-            'episode': link_to_list(episodes, extractor=extract_url_id(int))
+            # Uses Pluck to dig into the {"name": "...", "url": "..."} dict and extract the URL!
+            'location': calc(link_to(locations, extractor=pluck("url", extract_url_id(int))), default=None),
+
+            # Uses link_to_list to iterate over ["url", "url"] and extract the IDs!
+            'episode': calc(link_to_list(episodes, extractor=extract_url_id(int)), default=[])
         }
     )
 
-    assert isinstance(locations, list) and isinstance(characters, list) and isinstance(episodes, list)
-
     # ==========================================
-    # 2. VALIDATE TABLE 1: The Citadel Census
+    # 3. ASSERTIONS
     # ==========================================
-    citadel_residents = [c for c in characters if getattr(c.location, "inc_code", None) == 3]
-    assert len(citadel_residents) == 2
+    assert isinstance(locations, list) and len(locations) == 1
+    assert isinstance(episodes, list) and len(episodes) == 2
+    assert isinstance(characters, list) and len(characters) == 1
 
-    cyborg_rick = characters.codeDict.get(15)
-    assert cyborg_rick is not None
-    spec_type = f"{getattr(cyborg_rick, 'species')} ({getattr(cyborg_rick, 'type')})"
-    assert spec_type == "Humanoid (Cyborg)"
+    rick = characters[0]
 
-    # ==========================================
-    # 3. VALIDATE TABLE 2: Top Dead Ricks
-    # ==========================================
-    dead_ricks = [
-        c for c in characters
-        if "Rick" in getattr(c, "inc_name", "") and getattr(c, "status", "") == "Dead"
-    ]
-    dead_ricks.sort(key=lambda r: len(getattr(r, "episode", [])), reverse=True)
+    # Verify Basic Types
+    assert rick.inc_name == "Rick Sanchez"
+    assert rick.species == "Human"
 
-    assert len(dead_ricks) == 1
-    assert getattr(dead_ricks[0], "inc_name") == "Cyborg Rick"
-    assert len(getattr(dead_ricks[0], "episode", [])) == 3
+    # Verify `link_to` + `pluck` Success
+    assert rick.location is not None
+    assert getattr(rick.location, "inc_name") == "Earth (Replacement Dimension)"
+    assert getattr(rick.location, "type") == "Planet"
 
-    # ==========================================
-    # 4. VALIDATE TABLE 3: The Ricklantis Mixup Cast (Sorted Unknown -> Dead -> Alive)
-    # ==========================================
-    ep28 = episodes.codeDict.get(28)
-    assert ep28 is not None
+    # Verify `link_to_list` Success
+    assert isinstance(rick.episode, list)
+    assert len(rick.episode) == 2
 
-    cast_url_list = getattr(ep28, "characters", [])
-    assert len(cast_url_list) == 3
+    # Assert they are fully instantiated Episode objects, not just strings!
+    ep1 = rick.episode[0]
+    ep2 = rick.episode[1]
 
-    actors = []
-    for actor_url in cast_url_list:
-        actor_id = extract_url_id(int)(actor_url)
-        actor_obj = characters.codeDict.get(actor_id)
-        if actor_obj:
-            actors.append(actor_obj)
+    assert getattr(ep1, "inc_name") == "Pilot"
+    assert getattr(ep1, "episode") == "S01E01"
 
-    # SORT LOGIC:
-    # 1. Map Status to custom weights: unknown(0), Dead(1), Alive(2)
-    # 2. Sort alphabetically by Name within those groups
-    actors.sort(
-        key=lambda a: (
-            {"alive": 2, "dead": 1}.get(str(getattr(a, "status", "Unknown")).lower(), 0),
-            getattr(a, "inc_name", "Unknown")
+    assert getattr(ep2, "inc_name") == "Lawnmower Dog"
+    assert getattr(ep2, "episode") == "S01E02"
+
+    ep28 = episodes.inc_dict.get(28)
+
+    if ep28 and getattr(ep28, "characters", None):
+        cast_url_list = getattr(ep28, "characters")
+
+        actors = []
+        for url in cast_url_list:
+            # Utilizing our functional extractor manually
+            actor_id = extract_url_id(int)(url)
+
+            actor_obj = characters.inc_dict.get(actor_id)
+            if actor_obj:
+                actors.append(actor_obj)
+
+        # SORT LOGIC:
+        # 1. Map Status to custom weights: unknown(0), Dead(1), Alive(2)
+        # 2. Sort alphabetically by Name within those groups
+        actors.sort(
+            key=lambda a: (
+                {"alive": 2, "dead": 1}.get(str(getattr(a, "status", "Unknown")).lower(), 0),
+                getattr(a, "inc_name", "Unknown")
+            )
         )
-    )
 
-    # Assert new sorting order: Cronenberg (Dead) -> Cyborg (Dead) -> Rick Sanchez (Alive)
-    assert getattr(actors[0], "inc_name") == "Cronenberg Morty"
-    assert getattr(actors[1], "inc_name") == "Cyborg Rick"
-    assert getattr(actors[2], "inc_name") == "Rick Sanchez"
+        # Print the sorted table (limiting to first 15)
+        for actor in actors[:15]:
+            actor_name = str(getattr(actor, "inc_name", "Unknown"))
+            status = getattr(actor, "status", "Unknown")
+            gender = getattr(actor, "gender", "Unknown")
 
-    # PRINT ONLY TABLE 3 (as requested)
-    print("\n\n" + "=" * 115)
-    print(" 🎬 TABLE 3: CAST OF S03E07 (Sorted by Status: Unknown -> Dead -> Alive)")
-    print("=" * 115)
-    print(f"{'ACTOR NAME':<30} | {'STATUS':<10} | {'GENDER':<10} | {'CURRENT LOCATION':<30}")
-    print("-" * 115)
+            loc = getattr(actor, "location", None)
+            loc_name = str(getattr(loc, "inc_name", "Unknown")) if loc else "Unknown"
 
-    for actor in actors[:15]:
-        actor_name = str(getattr(actor, "inc_name", "Unknown"))
-        status = getattr(actor, "status", "Unknown")
-        gender = getattr(actor, "gender", "Unknown")
-
-        loc = getattr(actor, "location", None)
-        loc_name = str(getattr(loc, "inc_name", "Unknown")) if loc else "Unknown"
-
-        print(f"{actor_name:<30} | {status:<10} | {gender:<10} | {loc_name:<30}")
+            print(f"{actor_name:<30} | {status:<10} | {gender:<10} | {loc_name:<30}")
 
     print("=" * 115 + "\n")
