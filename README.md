@@ -73,18 +73,9 @@ Isolated OOP strategies to gracefully handle pagination without infinite loops. 
 Turn disconnected flat APIs into deeply nested, traversable object graphs using `link_to` and `link_to_list`.
 
 ```python
-import asyncio
-
-from incorporator import Incorporator
-from incorporator.methods.converters import calc, extract_url_id, flt, link_to, link_to_list
-from methods.paginate import NextUrlPaginator
-
-
 class Planet(Incorporator): pass
 
-
 class Film(Incorporator): pass
-
 
 class Person(Incorporator): pass
 
@@ -120,10 +111,15 @@ async def get_luke():
         name_chg=[("url", "id")]
     )
 
-    # Deep Dot-Notation Navigation!
-    luke = people[0]
-    print(luke.homeworld.inc_name)  # "Tatooine"
-    print(luke.films[0].inc_name)  # "A New Hope"
+    # Yoda, you seek yoda with instant list access
+    for person in people[17:22]:
+        person.display()            #<class, inc_code (key), inc_name, lact_rcd>
+    print('\n')
+
+    # Find Boba, I'd say you have with ( O(1) speed with graph already built )
+    boba_fett = people.inc_dict[22]
+    print(boba_fett.homeworld.inc_name)  # "Kamino"
+    print(boba_fett.films[0].inc_name)  # "The Empire Strikes Back"
 
 asyncio.run(get_luke())
 ```
