@@ -182,6 +182,5 @@ instance.log_api("Web traffic trace") # Routes to isolated api.log
 
 ## 🤝 Contributing
 1. Let's go!
-4. Check typing: `mypy --strict incorporator`.
 
 *Built for data engineers who want to sleep at night.*
