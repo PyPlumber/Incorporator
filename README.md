@@ -73,35 +73,59 @@ Isolated OOP strategies to gracefully handle pagination without infinite loops. 
 Turn disconnected flat APIs into deeply nested, traversable object graphs using `link_to` and `link_to_list`.
 
 ```python
+import asyncio
+
 from incorporator import Incorporator
 from incorporator.methods.converters import calc, extract_url_id, flt, link_to, link_to_list
+from methods.paginate import NextUrlPaginator
+
 
 class Planet(Incorporator): pass
+
+
 class Film(Incorporator): pass
+
+
 class Person(Incorporator): pass
 
-# 1. Build the foundational Graph Nodes
-planets = await Planet.incorp(inc_url="https://swapi.dev/api/planets/", inc_code="url")
-films = await Film.incorp(inc_url="https://swapi.dev/api/films/", inc_code="url")
+async def get_luke():
+    BASE_URL = "https://swapi.dev/api"
+    # 1. Build the foundational Graph Nodes
+    planets = await Planet.incorp(
+        inc_url=f"{BASE_URL}/planets/", rec_path="results",
+        inc_code="id", inc_name="name",
+        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
+        conv_dict={"url": extract_url_id(int)},
+        name_chg=[("url", "id")]
+    )
 
-# 2. Fetch People and map relations natively
-people = await Person.incorp(
-    inc_url="https://swapi.dev/api/people/", 
-    inc_code="url",
-    conv_dict={
-        # Safely cast string numbers to floats
-        "height": calc(float, default=0.0, target_type=flt),
-        
-        # Instantly link URL strings to our in-memory Planet and Film objects!
-        "homeworld": calc(link_to(planets), default=None),
-        "films": calc(link_to_list(films), default=[])
-    }
-)
+    films = await Film.incorp(
+        inc_url=f"{BASE_URL}/films/", rec_path="results",
+        inc_code="id", inc_name="title",
+        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
+        conv_dict={"url": extract_url_id(int)},
+        name_chg=[("url", "id")]
+    )
 
-# Deep Dot-Notation Navigation!
-luke = people[0]
-print(luke.homeworld.inc_name) # "Tatooine"
-print(luke.films[0].inc_name)  # "A New Hope"
+    # 2. Fetch People and map relations natively
+    people = await Person.incorp(
+        inc_url=f"{BASE_URL}/people/", rec_path="results",
+        inc_code="id", inc_name="name",
+        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
+        conv_dict={
+            "url": extract_url_id(int),
+            "homeworld": calc(link_to(planets, extractor=extract_url_id(int)), default=None),
+            "films": calc(link_to_list(films, extractor=extract_url_id(int)), default=[])
+        },
+        name_chg=[("url", "id")]
+    )
+
+    # Deep Dot-Notation Navigation!
+    luke = people[0]
+    print(luke.homeworld.inc_name)  # "Tatooine"
+    print(luke.films[0].inc_name)  # "A New Hope"
+
+asyncio.run(get_luke())
 ```
 
 ### Showcase 2: Parent-Based Enrichment (PokéAPI)
