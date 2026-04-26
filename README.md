@@ -1,5 +1,5 @@
 ```markdown
-# 🌌 Incorporator (v1.0.0)
+## 🌌 Incorporator (v1.0.0)
 **The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway.**
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
