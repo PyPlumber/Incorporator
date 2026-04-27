@@ -7,7 +7,7 @@ and Metadata pagination patterns with built-in Exception logging.
 
 import logging
 import re
-from typing import Any, AsyncGenerator, Callable, Dict, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, Optional, Awaitable
 from urllib.parse import urljoin
 
 import httpx
@@ -16,11 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncPaginator:
-    """Base paginator with shared request execution."""
-
     def __init__(self) -> None:
         self.call_lim: Optional[int] = None
-        self.fetch_func: Optional[Callable[..., Any]] = None
+        # FIX: Tell Mypy this function returns an awaited httpx.Response
+        self.fetch_func: Optional[Callable[..., Awaitable[httpx.Response]]] = None
 
     async def _fetch(self, url: str, params: Optional[Dict[str, Any]] = None) -> httpx.Response:
         """Executes the network request."""

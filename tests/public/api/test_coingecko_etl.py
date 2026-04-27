@@ -1,4 +1,4 @@
-"""Integration test for testing the call_lim boundary logic and auto-pagination (CoinGecko API style)."""
+"""Integration test for basic root-array API fetching (CoinGecko)."""
 
 import json
 from typing import Any
@@ -7,7 +7,6 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
-from incorporator.methods.paginate import PageNumberPaginator
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -15,53 +14,88 @@ class Coin(Incorporator): pass
 
 
 # --- MOCK NETWORK SETUP ---
-async def mock_infinite_coingecko_api(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
-    """Mocks an infinitely paginating CoinGecko markets endpoint without Link headers."""
+async def mock_coingecko_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+    """Mocks the CoinGecko /coins/markets endpoint."""
+    if "coins/markets" in url:
+        # Notice: CoinGecko returns a root-level JSON array, not an envelope like {"data":[]}
+        payload =[
+            {
+                "id": "bitcoin",
+                "symbol": "btc",
+                "name": "Bitcoin",
+                "current_price": 64000.00,
+                "market_cap": 1250000000000,
+                "total_volume": 35000000000
+            },
+            {
+                "id": "ethereum",
+                "symbol": "eth",
+                "name": "Ethereum",
+                "current_price": 3500.00,
+                "market_cap": 420000000000,
+                "total_volume": 15000000000
+            },
+            {
+                "id": "solana",
+                "symbol": "sol",
+                "name": "Solana",
+                "current_price": 145.50,
+                "market_cap": 65000000000,
+                "total_volume": 3000000000
+            }
+        ]
+    else:
+        payload =[]
 
-    # Extract the page number from the URL
-    page_str = url.split("page=")[-1] if "page=" in url else "1"
-    page = int(page_str)
-
-    # Return exactly ONE coin per page ad infinitum
-    payload = [{
-        "id": f"coin_{page}",
-        "symbol": f"C{page}",
-        "name": f"Test Coin {page}",
-        "current_price": 50000.0 / page
-    }]
-
-    # CRITICAL: We explicitly DO NOT return an RFC5988 Link header.
-    # This forces the framework to rely entirely on the new _AutoURLPaginator heuristic!
-    return httpx.Response(200, text=json.dumps(payload))
+    req = httpx.Request("GET", url)
+    return httpx.Response(200, text=json.dumps(payload), request=req)
 
 
 # --- TESTS ---
 @pytest.mark.asyncio
-async def test_coingecko_call_lim_pagination_cutoff(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tests that a paginating API is forcefully halted exactly at `call_lim` pages."""
+async def test_coingecko_zero_boilerplate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proves root-level array parsing and dynamic typing with absolute minimum boilerplate."""
 
-    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_infinite_coingecko_api)
-    GECKO_URL = "https://api.coingecko.com/api/v3/coins/markets"
-    TARGET_LIMIT = 7
+    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_coingecko_execute_get)
+    GECKO_URL = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd"
 
-    # Fetch coins
+    # ==========================================
+    # 1. FETCH DATA (The "Zero-Boilerplate" Call)
+    # ==========================================
     coins = await Coin.incorp(
         inc_url=GECKO_URL,
-        params={"vs_currency": "usd"},
         inc_code="id",
         inc_name="name",
-        inc_page=PageNumberPaginator(page_param="page", start_page=1),
-        call_lim=TARGET_LIMIT
     )
 
-    # Validate the result list length exactly matches the call limit
+    # ==========================================
+    # 2. ASSERTIONS
+    # ==========================================
     assert isinstance(coins, list)
-    assert len(coins) == TARGET_LIMIT, f"Expected exactly {TARGET_LIMIT} coins, but got {len(coins)}!"
+    assert len(coins) == 3
 
-    # Validate the internal sorting logic
-    coins.sort(key=lambda c: getattr(c, "current_price", 0.0), reverse=True)
-    assert getattr(coins[0], "current_price") == 50000.0
-    assert getattr(coins[0], "inc_name") == "Test Coin 1"
+    # Grab the first coin (Bitcoin)
+    btc = coins[0]
+
+    # Verify standard mappings
+    assert btc.inc_code == "bitcoin"
+    assert btc.inc_name == "Bitcoin"
+
+    # Verify Pydantic V2 dynamically typed the numbers as floats/ints
+    assert isinstance(btc.current_price, float)
+    assert btc.current_price == 64000.00
+    assert isinstance(btc.market_cap, int)
+    assert btc.market_cap == 1250000000000
+
+    # Verify the `inc_dict` registry works flawlessly
+    eth = coins.inc_dict.get("ethereum")
+    assert eth is not None
+    assert eth.inc_name == "Ethereum"
+    assert eth.current_price == 3500.00
+
+    sol = coins.inc_dict.get("solana")
+    assert sol is not None
+    assert sol.symbol == "sol"
 
     # Print the Distinguishable Attribute Table
     print("\n\n" + "=" * 80)

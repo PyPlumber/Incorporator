@@ -175,10 +175,10 @@ class Incorporator(BaseModel):
 
         # 3. Final Object Instantiation Phase
         if isinstance(transformed_data, list):
-            instances = [ActualClass(**cast(Dict[str, Any], item)) for item in transformed_data]
+            instances = [ActualClass(**item) for item in transformed_data]
             return IncorporatorList(ActualClass, instances, failed_sources=failed_sources)
 
-        return ActualClass(**cast(Dict[str, Any], transformed_data))
+        return ActualClass(**transformed_data)
 
     # ==========================================
     # 4. PUBLIC "HOLY TRINITY" API
@@ -303,10 +303,10 @@ class Incorporator(BaseModel):
 
         # Hydration Phase
         if isinstance(transformed_data, list):
-            instances =[TargetClass(**cast(Dict[str, Any], item)) for item in transformed_data]
+            instances = [TargetClass(**item) for item in transformed_data]
             return IncorporatorList(TargetClass, instances, failed_sources=failed_sources)
 
-        return TargetClass(**cast(Dict[str, Any], transformed_data))
+        return TargetClass(**transformed_data)
 
     @classmethod
     async def export(
