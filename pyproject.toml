@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "incorporator"
-version = "1.0.0"
+version = "1.0.1"
 description = "The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway."
 readme = "README.md"
 requires-python = ">=3.9"
