@@ -26,14 +26,11 @@ pip install incorporator
 class Crypto(Incorporator): pass
 
 async def crypto_coins():
-    # Fetch 150 coins, auto-paginate, generate Pydantic models on the fly, and rate-limit perfectly.
     coins = await Crypto.incorp(
         inc_url="https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd",
         inc_code="id",
         inc_name="name",
-        inc_page=NextUrlPaginator("next"),
-        call_lim=3
-)
+    )
 
     # Returns Dynamically created class and dictionary
     bitcoin = coins.inc_dict['bitcoin']
