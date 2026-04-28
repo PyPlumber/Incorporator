@@ -9,7 +9,7 @@
 
 Stop writing boilerplate models, manual HTTP connection loops, pagination state-trackers, and fragile data-cleaning lambda functions. 
 
-**Incorporator** is an elite Python framework that transforms raw JSON, CSV, and XML APIs into fully typed, relational Python Object Graphs in a single line of code.  Trade away pages on unrelated code for an easy prebuilt engine.
+**Incorporator** is an elite Python framework that transforms raw JSON, CSV, and XML APIs into fully typed, relational Python Object Graphs in a single line of code.  Trade away pages of unrelated code for an easy prebuilt engine.
 
 ## 🚀 Installation
 
