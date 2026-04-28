@@ -1,11 +1,13 @@
 ## 🌌 Incorporator (v1.0.0)
 **The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway.**
 
+[![PyPI version](https://img.shields.io/pypi/v/incorporator.svg)](https://pypi.org/project/incorporator/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Pydantic V2](https://img.shields.io/badge/Pydantic-V2-e92063.svg)](https://docs.pydantic.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code style: Ruff](https://img.shields.io/badge/code%20style-Ruff-261230.svg)](https://github.com/astral-sh/ruff)
 [![Typing: Strict](https://img.shields.io/badge/typing-strict-green.svg)](https://mypy.readthedocs.io/en/stable/)
+[![Code style: Ruff](https://img.shields.io/badge/code%20style-Ruff-261230.svg)](https://github.com/astral-sh/ruff)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 
 Stop writing boilerplate models, manual HTTP connection loops, pagination state-trackers, and fragile data-cleaning lambda functions. 
 
