@@ -9,7 +9,7 @@
 
 Stop writing boilerplate models, manual HTTP connection loops, pagination state-trackers, and fragile data-cleaning lambda functions. 
 
-**Incorporator** is an elite Python framework that transforms raw JSON, CSV, and XML APIs into fully typed, relational Python Object Graphs in a single line of code.
+**Incorporator** is an elite Python framework that transforms raw JSON, CSV, and XML APIs into fully typed, relational Python Object Graphs in a single line of code.  Trade away pages on unrelated code for an easy prebuilt engine.
 
 ## 🚀 Installation
 
@@ -78,7 +78,7 @@ class Film(Incorporator): pass
 
 class Person(Incorporator): pass
 
-async def get_luke():
+async def far_far_away():
     BASE_URL = "https://swapi.dev/api"
     # 1. Build the foundational Graph Nodes
     planets = await Planet.incorp(
@@ -110,17 +110,17 @@ async def get_luke():
         name_chg=[("url", "id")]
     )
 
-    # Yoda, you seek yoda with instant list access
+    # Yoda, you seek yoda with a unique key, readable name, and last known whereabouts.
     for person in people[17:22]:
         person.display()            #<class, inc_code (key), inc_name, lact_rcd>
     print('\n')
 
-    # Find Boba, I'd say you have with ( O(1) speed with graph already built )
+    # Find Boba, I'd say you have with at O(1) speed with graph mapping already built.
     boba_fett = people.inc_dict[22]
     print(boba_fett.homeworld.inc_name)  # "Kamino"
     print(boba_fett.films[0].inc_name)  # "The Empire Strikes Back"
 
-asyncio.run(get_luke())
+asyncio.run(far_far_away())
 ```
 
 ### Showcase 2: Parent-Based Enrichment (PokéAPI)
@@ -156,6 +156,7 @@ async def inc_pokedex():
         excl_lst=["sprites", "moves", "game_indices", "held_items"]
     )
 
+    # Query a parent-child pattern while building it for deep analysis.
     for pokemon in enriched_pokemon[:3]:
         print(pokemon.inc_name, pokemon.abilities[0].ability.name)
 
@@ -171,15 +172,16 @@ class JimmyInvoice(Incorporator): pass
 class NHTSARecord(Incorporator): pass
 
 async def audit_jimmys():
-    # 1. Extract nested data from a local XML file
+    # 1. Extract nested data from a local XML file into the same Pydantic engine.
     invoices = await JimmyInvoice.incorp(
         inc_file="shady_jimmy.xml",
         rec_path="Dealership.AuditFile.Invoices.Invoice"
     )
 
+    # Easy dot notation for one-line on your way to your next one line API call
     vin_batch_string = ";".join([getattr(inv.Vehicle, "VIN", "") for inv in invoices])
 
-    # 2. Hit a live JSON Bulk Endpoint using a POST payload
+    # 2. Hit a live JSON Bulk Endpoint using a POST payload using the same syntax.
     live_records = await NHTSARecord.incorp(
         inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
         method="POST",
