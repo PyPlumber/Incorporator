@@ -122,6 +122,16 @@ async def execute_request(
     # method.upper() natively supports 'POST', 'PUT', etc.
     response = await client.request(method.upper(), url, **req_kwargs)
 
+    # Intercept Post-to-Get Downgrades
+    if response.history and method.upper() in ["POST", "PUT", "PATCH"]:
+        logger.warning(
+            f"⚠️ NETWORK REDIRECT DETECTED: Your {method.upper()} request to '{url}' "
+            f"was redirected (HTTP {response.history[0].status_code}). "
+            f"Most servers drop the payload and downgrade to GET during a redirect. "
+            f"If you receive empty data, verify your URL exactness (e.g., check for a missing trailing slash '/' !)."
+        )
+
+
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as e:
@@ -245,7 +255,11 @@ async def fetch_concurrent_payloads(
             except httpx.HTTPStatusError as e:
                 # Catch valid connections that returned a bad HTTP status code
                 if e.response.status_code == 429:
-                    logger.warning(f"Request failed with status 429. Skipping: {src}")
+                    logger.warning(
+                        f"🚦 RATE LIMITED (HTTP 429) on '{src}'. Skipping. "
+                        f"Tip: Try lowering `concurrency_limit=...` or adding `delay_between_batches=...` "
+                        f"in your .incorp() call."
+                    )
                     failed_sources.append(src)
                     return []
 

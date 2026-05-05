@@ -29,10 +29,13 @@ atexit.register(_cleanup_listeners)
 
 
 def _safe_log_filename(prefix: str, suffix: str) -> str:
-    """Sanitizes strings to prevent Path Traversal when generating log file names."""
-    clean_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', prefix)
-    return f"{clean_prefix}_{suffix}"
+    """Sanitizes strings and routes all files to a dedicated 'logs/' directory."""
+    # Ensure logs directory exists
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
 
+    clean_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', prefix)
+    return str(log_dir / f"{clean_prefix}_{suffix}")
 
 class JSONFormatter(logging.Formatter):
     """Formats log records as JSON Lines for easy dynamic parsing."""
@@ -196,7 +199,6 @@ class LoggingMixin:
     def log_api(self, msg: str) -> None:
         self._get_logger().info(msg, extra={'meta': self.log_meta(), 'is_api': True})
 
-
 class LoggedIncorporator(LoggingMixin, Incorporator):
     """The Incorporator Logging Wrapper Subclass."""
 
@@ -208,13 +210,18 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             **kwargs: Any
     ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
         """Declarative factory that sets up class-specific logging before generation."""
+
+        # Set up the logger BEFORE execution so closures and payload_builders can use it
+        if enable_logging:
+            setup_class_logger(cls)
+
         result = await super().incorp(*args, **kwargs)
 
+        # Also set up the dynamic subclass logger if it differs from the base class
         if enable_logging:
-            if isinstance(result, list):
-                if result:
-                    setup_class_logger(result[0].__class__)
-            else:
+            if isinstance(result, list) and result:
+                setup_class_logger(result[0].__class__)
+            elif not isinstance(result, list):
                 setup_class_logger(result.__class__)
 
         return result

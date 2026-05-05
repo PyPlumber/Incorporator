@@ -34,9 +34,10 @@ async def test_multiplex_file_routing(monkeypatch: pytest.MonkeyPatch, tmp_path:
     # EXPLICIT THREAD FLUSH: Stop the listener to synchronously flush the queue to the disk
     _ACTIVE_LISTENERS["MockAPIEndpoint1"].stop()
 
-    debug_file = tmp_path / "MockAPIEndpoint1_debug.log"
-    error_file = tmp_path / "MockAPIEndpoint1_error.log"
-    api_file = tmp_path / "MockAPIEndpoint1_api.log"
+    # Path assertions updated to look inside the dedicated 'logs/' directory
+    debug_file = tmp_path / "logs" / "MockAPIEndpoint1_debug.log"
+    error_file = tmp_path / "logs" / "MockAPIEndpoint1_error.log"
+    api_file = tmp_path / "logs" / "MockAPIEndpoint1_api.log"
 
     assert debug_file.exists()
     assert error_file.exists()

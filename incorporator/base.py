@@ -50,6 +50,17 @@ class IncorporatorList(list[TIncorporator]):
         self._model_class = model_class
         self.failed_sources = failed_sources if failed_sources is not None else []
 
+    def __del__(self) -> None:
+        """Alert on immediate Garbage Collection."""
+        if not self: return  # Ignore empty lists
+
+        # If this list is destroyed almost immediately after creation, warn the user!
+        if getattr(self, '_warn_on_gc', False):
+            logger.debug(
+                "🧹 INCORPORATOR GC ALERT: A built list was just garbage collected. "
+                "Ensure you assign `.incorp()` to a variable if you need to use `.inc_dict`!"
+            )
+
     @property
     def inc_dict(self) -> "weakref.WeakValueDictionary[Any, TIncorporator]":
         """Provides direct access to the class-level weakref registry."""
@@ -162,6 +173,11 @@ class Incorporator(BaseModel):
             )
 
         if not parsed_data:
+            # Warn on empty valid payloads
+            logger.info(
+                f"ℹ️ INCORPORATOR INFO: The source returned a valid payload, but 0 records were found. "
+                f"If this is unexpected, verify your API keys, form-data casing, or `rec_path` routing."
+            )
             EmptyClass = cast(Type[TIncorporator], schema_builder.infer_dynamic_schema("DynamicModel", [{}], cls))
             return IncorporatorList(EmptyClass, [], failed_sources=failed_sources)
 

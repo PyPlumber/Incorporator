@@ -211,9 +211,11 @@ async def parse_source_data(raw_data: str, format_type: FormatType) -> Union[Dic
 
     except Exception as e:
         # Log the failure without interrupting the program.
+        snippet = str(raw_data).strip()[:60].replace('\n', ' ')
         logger.warning(
-            f"Parse failed for format '{format_type}'. Payload may be malformed (e.g., HTML firewall). "
-            f"Skipping. Error: {e}"
+            f"⚠️ PARSE FAILED for format '{format_type}'. "
+            f"The payload may be malformed (e.g., corrupted file or HTML firewall). "
+            f"\n   Error: {e}\n   Received snippet: {snippet!r}..."
         )
 
         # Return an empty dict so the pipeline treats it as an empty source and moves on

@@ -47,6 +47,6 @@ async def test_incorporator_warns_and_skips_on_bad_json(broken_json_file: str, c
     assert len(results) == 0
 
     # 3. Assert the warning message contains our helpful fault-tolerance context
-    assert "Parse failed for format" in caplog.text
-    assert "Payload may be malformed" in caplog.text
-    assert "Invalid JSON" in caplog.text  # Verifies the underlying error was captured in the log
+    assert "PARSE FAILED for format" in caplog.text
+    assert "The payload may be malformed" in caplog.text
+    assert "Invalid JSON" in caplog.text
