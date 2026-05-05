@@ -28,9 +28,11 @@ class _NewSentinel:
     """Explicit marker to indicate an attribute must be generated from scratch."""
     pass
 
-
 new = _NewSentinel()
 
+class _EachSentinel:
+    """Marker to distribute extracted list items across concurrent POST requests."""
+    pass
 
 # ==========================================
 # COMMON CALC() FUNCTIONS (Built-ins)
@@ -122,20 +124,12 @@ def _fallback_date(value: Any) -> datetime:
 
 
 def _fallback_int(value: Any) -> int:
-    clean_val = str(value).strip().lower() if isinstance(value, str) else value
-    if isinstance(clean_val, str):
-        if clean_val in {"unknown", "n/a", "none", "null", "undefined"}:
-            raise ValueError("Null-equivalent string encountered.")
-        clean_val = clean_val.replace(",", "")
+    clean_val = str(value).strip().replace(",", "") if isinstance(value, str) else value
     return int(float(clean_val))
 
 
 def _fallback_float(value: Any) -> float:
-    clean_val = str(value).strip().lower() if isinstance(value, str) else value
-    if isinstance(clean_val, str):
-        if clean_val in {"unknown", "n/a", "none", "null", "undefined"}:
-            raise ValueError("Null-equivalent string encountered.")
-        clean_val = clean_val.replace(",", "")
+    clean_val = str(value).strip().replace(",", "") if isinstance(value, str) else value
     return float(clean_val)
 
 
@@ -175,9 +169,11 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
         ranks =[lambda x: x]  # Failsafe pass-through
 
     def _ranked_converter(val: Any) -> Any:
-        # 🛡️ THE FIX: Intercept missing data and instantly return the default!
-        # This completely bypasses the str(None) == "None" trap!
+        # Instantly catch None, empties, and known API garbage
         if val is None or val == "":
+            return default
+
+        if isinstance(val, str) and val.strip().lower() in {"unknown", "n/a", "none", "null", "undefined", "nan"}:
             return default
 
         last_error = None
@@ -188,11 +184,13 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
                 last_error = e
                 continue
 
+        # Real anomalies (e.g. trying to cast "Apple" to a float) will still throw a helpful warning
         logger.warning(
-            f"Incorporator Type Engine: Failed to convert '{val}' into {actual_type}. "
-            f"Last error: {last_error}"
+            f"Incorporator Type Engine: Failed to cast '{val}' into {actual_type}. "
+            f"(Last error: {last_error}). "
+            f"Tip: If this is expected dirty data, use `inc({getattr(actual_type, '__name__', str(actual_type))}, default=...)` "
+            f"to silence this warning and fallback gracefully."
         )
-        # 🛡️ THE FIX: If all type-casting fails, safely fallback to the default
         return default
 
     return _ranked_converter
@@ -250,20 +248,59 @@ def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None)
     return _mapper
 
 
-def extract_url_id(cast_type: Callable[[Any], Any] = int) -> Callable[[Any], Any]:
-    def _extractor(url_str: Any) -> Any:
-        if not isinstance(url_str, str) or not url_str: return None
-        try:
-            return cast_type(url_str.strip('/').split('/')[-1])
-        except (ValueError, TypeError, IndexError):
-            return None
-
-    return _extractor
-
-
 def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
+    """
+    Extracts nested dictionary values via dot-notation drilling.
+    Supports chaining an additional converter logic (e.g., pluck('a.b', chain=int)).
+    """
+
     def _plucker(val: Any) -> Any:
-        extracted = val.get(key) if isinstance(val, dict) else val
+        # 1. Default to passing the raw value straight through
+        extracted = val
+
+        # 2. If it's a dictionary, drill down using the key
+        if isinstance(val, dict):
+            for part in key.split('.'):
+                extracted = extracted.get(part)
+                if extracted is None:
+                    break
+
+        # 3. Execute the chain.
+        # If val was a string, 'extracted' is still the raw string!
         return chain(extracted) if chain else extracted
 
     return _plucker
+
+
+# ==========================================
+# DECLARATIVE PAYLOAD TOKENS (POST/PUT)
+# ==========================================
+
+def each() -> _EachSentinel:
+    """
+    POST Token: Triggers N Concurrent Iterative Requests.
+    Maps an extracted list of parent IDs row-by-row into the payload dictionary.
+    """
+    return _EachSentinel()
+
+
+def join_all(delimiter: str = ",") -> Callable[[Any], str]:
+    """
+    POST Token: Triggers 1 Bulk Batch Request.
+    Takes a list of extracted parent IDs and joins them into a single delimited string.
+    """
+
+    def _joiner(data: Any) -> str:
+        if not isinstance(data, list):
+            return str(data)
+        return delimiter.join(str(x) for x in data if x is not None)
+
+    return _joiner
+
+
+def as_list() -> Callable[[Any], List[Any]]:
+    """
+    POST Token: Triggers 1 Bulk Batch Request.
+    Injects the raw extracted list of parent IDs directly into a JSON Array.
+    """
+    return lambda data: data if isinstance(data, list) else [data]

@@ -1,4 +1,6 @@
-## 🌌 Incorporator (v1.0.4)
+***
+
+## 🌌 Incorporator (v1.0.5)
 **The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway.**
 
 [![PyPI version](https://img.shields.io/pypi/v/incorporator.svg)](https://pypi.org/project/incorporator/)
@@ -8,12 +10,11 @@
 [![Code style: Ruff](https://img.shields.io/badge/code%20style-Ruff-261230.svg)](https://github.com/astral-sh/ruff)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-
 Stop writing boilerplate models, manual HTTP connection loops, pagination state-trackers, and fragile data-cleaning lambda functions. 
 
-**Incorporator** is an elite Python framework that transforms raw JSON, CSV, and XML APIs into fully typed, relational Python Object Graphs in a single line of code.  Trade away pages of unrelated code for an easy prebuilt engine.  
+**Incorporator** is an elite Python framework that transforms raw JSON, CSV, and XML APIs into fully typed, relational Python Object Graphs in a single line of code. Trade away pages of unrelated code for an easy, prebuilt engine.  
 
-This is a framework that handles dynamic Pydantic metaprogramming, graph relational mapping, asynchronous connection pooling, and declarative ETL in 27KB.
+This is a framework that handles dynamic Pydantic metaprogramming, graph relational mapping, asynchronous connection pooling, and declarative ETL in less than 30KB.
 
 ## 🚀 Installation
 
@@ -36,7 +37,7 @@ async def crypto_coins():
         inc_name="name",
     )
 
-    # Returns Dynamically created class and dictionary
+    # Returns a dynamically compiled Pydantic list wrapper with an O(1) memory registry!
     bitcoin = coins.inc_dict['bitcoin']
     print(bitcoin.circulating_supply)       # 20021206.0
     print(bitcoin.current_price)            # 78321
@@ -56,103 +57,92 @@ asyncio.run(crypto_coins())
 
 ### 2. Declarative ETL & Null-Safe Converters
 Data is messy. Incorporator's built-in `conv_dict` tools intercept bad data *before* Pydantic validation, shielding you from crashes with beautiful, readable syntax.
-*   **`inc(type)`**: Automatically ranks fallbacks. `inc(datetime)` will parse ISO-8601 or 10+ standard string formats natively.
+*   **`inc(type)`**: Automatically ranks fallbacks. `inc(float)` safely converts API garbage like `"unknown"` or `"n/a"` into `0.0`. 
 *   **`calc(func, *keys)`**: Multi-column row calculations. `calc(len, 'residents', default=0)`.
 *   **`link_to` & `link_to_list`**: Zero-boilerplate Graph Relational Mapping.
 
-### 3. Native Concurrency & Invisible Resilience
-Pass a list of 500 URLs or trigger a deep-drill. Incorporator automatically spins up an `asyncio.Semaphore`, shares a single `httpx.AsyncClient` pool, and batches requests. 
-*Hit a 429 Too Many Requests?* It automatically jitter-retries via `tenacity`.
-*Still 429?* It gracefully skips the failed row, logs it to `results.failed_sources`, and returns the remaining objects without crashing your pipeline.
+### 3. Native Concurrency & The State Carrier
+Pass parent objects into `inc_parent` and declare an `inc_child` path. Incorporator caches the path state, drills into the nested objects, automatically spins up an `asyncio.Semaphore`, and batches concurrent deep-drills across a single shared `httpx` pool.
 
 ### 4. Advanced Asynchronous Pagination
-Isolated OOP strategies to gracefully handle pagination without infinite loops. Includes `NextUrlPaginator`, `CursorPaginator`, `OffsetPaginator`, `PageNumberPaginator`, and `LinkHeaderPaginator`.
+Isolated OOP strategies gracefully handle pagination without infinite loops. Includes `NextUrlPaginator`, `CursorPaginator`, `OffsetPaginator`, `PageNumberPaginator`, and natively supports POST-body cursor overrides.
 
 ---
 
 ## 📖 Real-World Showcases
 
-### Showcase 1: HATEOAS & Relational Mapping (Star Wars API)
-Turn disconnected flat APIs into deeply nested, traversable object graphs using `link_to` and `link_to_list`.
+### Showcase 1: Graph Relational Mapping (Star Wars API)
+Turn disconnected flat APIs into deeply nested, traversable object graphs using `split_and_get` and `link_to`.
 
 ```python
+from incorporator.methods.converters import split_and_get, link_to, link_to_list
+
 class Planet(Incorporator): pass
-
 class Film(Incorporator): pass
-
 class Person(Incorporator): pass
 
 async def far_far_away():
     BASE_URL = "https://swapi.dev/api"
+    
+    # 0. Build a reusable, highly efficient ID extractor
+    get_id = split_and_get('/', -1, int)
+    
     # 1. Build the foundational Graph Nodes
     planets = await Planet.incorp(
         inc_url=f"{BASE_URL}/planets/", rec_path="results",
-        inc_code="id", inc_name="name",
-        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
-        conv_dict={"url": extract_url_id(int)},
-        name_chg=[("url", "id")]
+        inc_code="id", inc_name="name", inc_page=NextUrlPaginator("next"),
+        conv_dict={"url": get_id}, name_chg=[("url", "id")]
     )
 
     films = await Film.incorp(
         inc_url=f"{BASE_URL}/films/", rec_path="results",
-        inc_code="id", inc_name="title",
-        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
-        conv_dict={"url": extract_url_id(int)},
-        name_chg=[("url", "id")]
+        inc_code="id", inc_name="title", inc_page=NextUrlPaginator("next"),
+        conv_dict={"url": get_id}, name_chg=[("url", "id")]
     )
 
     # 2. Fetch People and map relations natively
     people = await Person.incorp(
         inc_url=f"{BASE_URL}/people/", rec_path="results",
-        inc_code="id", inc_name="name",
-        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
+        inc_code="id", inc_name="name", inc_page=NextUrlPaginator("next"),
         conv_dict={
-            "url": extract_url_id(int),
-            "homeworld": calc(link_to(planets, extractor=extract_url_id(int)), default=None),
-            "films": calc(link_to_list(films, extractor=extract_url_id(int)), default=[])
+            "url": get_id,
+            "homeworld": link_to(planets, extractor=get_id),
+            "films": link_to_list(films, extractor=get_id)
         },
         name_chg=[("url", "id")]
     )
 
-    # Yoda, you seek yoda with a unique key, readable name, and last known whereabouts.
-    for person in people[17:22]:
-        person.display()            #<class, inc_code (key), inc_name, lact_rcd>
-    print('\n')
-
-    # Find Boba, I'd say you have with at O(1) speed with graph mapping already built.
-    boba_fett = people.inc_dict[22]
+    # Find Boba Fett at O(1) speed with graph mapping already built natively!
+    boba_fett = people.inc_dict.get(22)
     print(boba_fett.homeworld.inc_name)  # "Kamino"
-    print(boba_fett.films[0].inc_name)  # "The Empire Strikes Back"
+    print(boba_fett.films[0].inc_name)   # "The Empire Strikes Back"
 
 asyncio.run(far_far_away())
 ```
 
-### Showcase 2: Parent-Based Enrichment (PokéAPI)
-Pass shallow objects into `inc_parent` to trigger automatic concurrent bulk detail scraping.
+### Showcase 2: Explicit Parent-Based Enrichment (PokéAPI)
+Pass shallow objects into `inc_parent` and explicitly declare `inc_child` to trigger automatic concurrent bulk scraping. No `for` loops required.
 
 ```python
 class Nav(Incorporator): pass
-
 class Pokemon(Incorporator): pass
 
 async def inc_pokedex():
     BASE_URL = "https://pokeapi.co/api/v2"
 
-    # 1. SHALLOW DISCOVERY: Fetch 150 navigation URLs
+    # 1. SHALLOW DISCOVERY: Fetch 150 navigation objects.
+    # We explicitly tell the framework that the next URLs live in the "url" key.
     pokemon_nav = await Nav.incorp(
         inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
         rec_path="results",
         inc_name="name",
-        name_chg=[('url', 'detail_url')],
+        inc_child="url",  # <--- The State Carrier saves this path!
         inc_page=NextUrlPaginator("next"),
-        call_lim=3  # 3 pages * 50 = 150 Pokemon
+        call_lim=3
     )
 
-    def calculate_bst(stats: list) -> int:
-        return sum(s.get("base_stat", 0) for s in stats if isinstance(s, dict))
-
-    # 2. DEEP ENRICHMENT: Pass the parent objects. The framework tears out 'detail_url',
-    # fires 150 concurrent requests, and builds deep objects automatically.
+    # 2. DEEP ENRICHMENT: The framework reads the cached state from Phase 1,
+    # drills into the 150 objects, extracts the URLs, and fires 150 concurrent requests!
     enriched_pokemon = await Pokemon.incorp(
         inc_parent=pokemon_nav,
         inc_code="id",
@@ -160,46 +150,52 @@ async def inc_pokedex():
         excl_lst=["sprites", "moves", "game_indices", "held_items"]
     )
 
-    # Query a parent-child pattern while building it for deep analysis.
+    # Deep objects are fully built.
     for pokemon in enriched_pokemon[:3]:
         print(pokemon.inc_name, pokemon.abilities[0].ability.name)
 
 asyncio.run(inc_pokedex())
 ```
 
-### Showcase 3: Local XML to Live JSON Bulk POST (NHTSA API)
-Seamlessly bridge deep local XML data with live JSON REST APIs.
+### Showcase 3: XML Parsing to Live Bulk POSTs (NHTSA API)
+Seamlessly bridge deep local XML data with live JSON REST APIs using Declarative POST tokens.
 
 ```python
-class JimmyInvoice(Incorporator): pass
+from incorporator.methods.converters import join_all
 
+class JimmyInvoice(Incorporator): pass
 class NHTSARecord(Incorporator): pass
 
 async def audit_jimmys():
-    # 1. Extract nested data from a local XML file into the same Pydantic engine.
+    # 1. Extract nested data from a local XML file into the Pydantic engine.
+    # We set `inc_child` to cache the dot-notation path to the VINs.
     invoices = await JimmyInvoice.incorp(
         inc_file="shady_jimmy.xml",
-        rec_path="Dealership.AuditFile.Invoices.Invoice"
+        rec_path="Dealership.AuditFile.Invoices.Invoice",
+        inc_child="Vehicle.VIN" 
     )
 
-    # Easy dot notation for one-line on your way to your next one line API call
-    vin_batch_string = ";".join([getattr(inv.Vehicle, "VIN", "") for inv in invoices])
-
-    # 2. Hit a live JSON Bulk Endpoint using a POST payload using the same syntax.
+    # 2. Hit a live JSON Bulk Endpoint using a Declarative POST payload.
+    # The `join_all` token automatically extracts the VINs and joins them 
+    # into a single, highly-optimized Batch POST Request!
     live_records = await NHTSARecord.incorp(
         inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
+        inc_parent=invoices,
         method="POST",
-        form_payload={"format": "json", "DATA": vin_batch_string},
+        payload_type="form",
+        form_payload={
+            "format": "json", 
+            "data": join_all(";") # <--- Zero-boilerplate batching!
+        },
         rec_path="Results",
-        inc_code="VIN",
-        conv_dict={"ModelYear": inc(int)}  # Force string years to integers
+        inc_code="VIN"
     )
 
     # 3. Audit instantly via the memory-safe registry
     for inv in invoices:
         vin = inv.Vehicle.VIN
         actual_car = live_records.inc_dict.get(vin)
-        if actual_car.ModelYear != int(inv.Vehicle.Year):
+        if actual_car and actual_car.ModelYear != int(inv.Vehicle.Year):
             print("Fraud Detected!", inv.inc_code, inv.Vehicle.Model)
 
 asyncio.run(audit_jimmys())

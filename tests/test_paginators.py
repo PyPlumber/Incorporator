@@ -85,3 +85,23 @@ async def test_explicit_next_url_paginator(monkeypatch: pytest.MonkeyPatch) -> N
     assert len(page_items) == 2
     assert getattr(page_items[0], "name") == "NextUrl Item A"
     assert getattr(page_items[1], "name") == "NextUrl Item B"
+
+
+def test_get_url_injection() -> None:
+    """Verifies that GET requests natively inject IDs into {} templates."""
+    extracted_ids = ["alpha", "beta"]
+
+    # Scenario: User provides a template URL
+    source_urls = ["https://api.com/users/{}/profile"]
+
+    kwargs = Incorporator._resolve_declarative_routing(
+        extracted_data=extracted_ids,
+        source_urls=source_urls,
+        method="GET"
+    )
+
+    # It should generate N unique URLs
+    assert kwargs["inc_url"] == [
+        "https://api.com/users/alpha/profile",
+        "https://api.com/users/beta/profile"
+    ]

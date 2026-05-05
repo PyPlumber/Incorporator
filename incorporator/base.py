@@ -13,12 +13,13 @@ import warnings
 import weakref
 from datetime import datetime, timezone
 from typing import (
-    Any, Callable, ClassVar, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
+    Any, ClassVar, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 )
 
 from pydantic import BaseModel, Field
 
 from .methods import format_parsers, network, schema_builder
+from .methods.converters import _EachSentinel
 from .methods.format_parsers import FormatType, infer_format
 from .methods.paginate import AsyncPaginator
 
@@ -49,6 +50,9 @@ class IncorporatorList(list[TIncorporator]):
         super().__init__(items)
         self._model_class = model_class
         self.failed_sources = failed_sources if failed_sources is not None else []
+
+        # Protects schema_builder.py's cache from concurrent cross-contamination.
+        self.inc_child_path: Optional[str] = None
 
     def __del__(self) -> None:
         """Alert on immediate Garbage Collection."""
@@ -120,35 +124,143 @@ class Incorporator(BaseModel):
     # 3. INTERNAL ROUTERS & FACTORIES
     # ==========================================
     @classmethod
+    def _resolve_declarative_routing(
+            cls,
+            extracted_data: List[Any],
+            source_urls: List[str],
+            **kwargs: Any
+    ) -> Dict[str, Any]:
+        """Unified resolver for {} GET injections and Declarative POST tokens."""
+        method = kwargs.get('http_method', 'GET')
+        if method in ("POST", "PUT", "PATCH"):
+            target_payload = kwargs.get('form_payload') or kwargs.get('json_payload')
+
+            if target_payload and isinstance(target_payload, dict):
+                is_iterative = any(isinstance(v, _EachSentinel) for v in target_payload.values())
+
+                if is_iterative:
+                    payload_list = []
+                    for item in extracted_data:
+                        p = {}
+                        for k, v in target_payload.items():
+                            p[k] = item if isinstance(v, _EachSentinel) else v
+                        payload_list.append(p)
+                    kwargs['payload_list'] = payload_list
+
+                    if len(source_urls) == 1:
+                        kwargs['inc_url'] = source_urls * len(extracted_data)
+                else:
+                    built_payload = {}
+                    for k, v in target_payload.items():
+                        built_payload[k] = v(extracted_data) if callable(v) else v
+
+                    if source_urls:
+                        kwargs['payload_list'] = [built_payload] * len(source_urls)
+                    else:
+                        raise ValueError(
+                            f"[{cls.__name__}] Missing Target URL. "
+                            f"You must explicitly provide `inc_url='...'` when executing a POST request "
+                            f"via `inc_parent` and declarative tokens."
+                        )
+            else:
+                if source_urls:
+                    kwargs['inc_url'] = source_urls
+
+        elif method == "GET":
+            extracted_strs = [str(x) for x in extracted_data if x is not None]
+
+            if len(source_urls) == 1 and "{}" in source_urls[0]:
+                base_url = source_urls[0]
+                kwargs['inc_url'] = [base_url.format(x) for x in extracted_strs]
+            else:
+                valid_urls = [x for x in extracted_strs if x.startswith("http") or x.startswith("/")]
+                if valid_urls:
+                    kwargs['inc_url'] = source_urls + valid_urls
+                elif not source_urls:
+                    valid_items = [
+                        item for item in extracted_data
+                        if isinstance(getattr(item, 'detail_url', getattr(item, 'url', None)), str)
+                    ]
+                    legacy_urls = [getattr(item, 'detail_url', getattr(item, 'url', None)) for item in valid_items]
+
+                    if legacy_urls:
+                        logger.warning(
+                            f"[{cls.__name__}] Deprecation Warning: Relying on implicit '.url' or '.detail_url' "
+                            f"attributes for HATEOAS routing is deprecated. "
+                            f"Tip: Explicitly pass `inc_child='url'` (or your target JSON key) to your .incorp() call."
+                        )
+                        kwargs['inc_url'] = legacy_urls
+                    else:
+                        raise ValueError("inc_parent extraction yielded no valid URLs.")
+
+        return kwargs
+
+    @classmethod
+    def _extract_parent_data(cls, parents: Any, child_path: str) -> List[Any]:
+        """
+        Safely drills into dynamic structures, gracefully handling schema splintering (lists).
+        Extracts nested attributes via dot-notation (e.g., 'Vehicle.VIN').
+        """
+
+        def _drill(current_val: Any, parts: List[str]) -> List[Any]:
+            # Base case: we reached the end of the path
+            if not parts:
+                return [current_val] if current_val is not None else []
+
+            part = parts[0]
+
+            # Splintering Defense: If the node is a list, cascade the drill across all items
+            if isinstance(current_val, list):
+                res: List[Any] = []
+                for item in current_val:
+                    res.extend(_drill(item, parts))
+                return res
+
+            # Extract via dict lookup or object attribute lookup
+            next_val = current_val.get(part) if isinstance(current_val, dict) else getattr(current_val, part, None)
+
+            # Stop drilling if node is missing/None
+            return [] if next_val is None else _drill(next_val, parts[1:])
+
+        extracted: List[Any] = []
+        parts = child_path.split('.')
+        p_list = parents if isinstance(parents, list) else [parents]
+
+        for p in p_list:
+            extracted.extend(_drill(p, parts))
+
+        return extracted
+
+    @classmethod
     async def _child_incorp(
             cls: Type[TIncorporator],
             inc_parent: Any,
             **kwargs: Any
     ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
-        """Handles HATEOAS REST architectures by extracting nested URLs and building dynamic payloads."""
-        parent_items = inc_parent if isinstance(inc_parent, list) else [inc_parent]
+        """Unified Parent-to-Child routing supporting Declarative POSTs and GET injections."""
 
-        # 1. Isolate only the parent items that contain a valid string URL
-        valid_items = [
-            item for item in parent_items
-            if isinstance(getattr(item, 'detail_url', getattr(item, 'url', None)), str)
-        ]
+        # 1. State Extraction (Priority: Kwargs -> Wrapper State -> Class Definition)
+        child_path = kwargs.get("inc_child") or getattr(inc_parent, "inc_child_path", None)
+        if not child_path and inc_parent:
+            parent_class = inc_parent[0].__class__ if isinstance(inc_parent, list) else inc_parent.__class__
+            child_path = getattr(parent_class, "inc_child", None)
 
-        discovered_urls = [
-            getattr(item, 'detail_url', getattr(item, 'url', None)) for item in valid_items
-        ]
+        extracted_data = cls._extract_parent_data(inc_parent, child_path) if child_path else (
+            inc_parent if isinstance(inc_parent, list) else [inc_parent])
 
-        if not discovered_urls:
-            raise ValueError("The 'inc_parent' object did not contain a valid 'url' or 'detail_url' attribute.")
+        # Safely clear aliases and enforce canonical 'http_method'
+        raw_method = kwargs.pop('method', kwargs.pop('http_method', 'GET'))
+        kwargs['http_method'] = raw_method.upper() if isinstance(raw_method, str) else 'GET'
 
-        # 2. 🛡️ NEW LOGIC: Dynamic POST Payload Mapping
-        # If the user passed a `payload_builder` closure, execute it against each valid parent item!
-        payload_builder: Optional[Callable[[Any], Dict[str, Any]]] = kwargs.pop('payload_builder', None)
-        if payload_builder:
-            kwargs['payload_list'] = [payload_builder(p) for p in valid_items]
+        inc_url = kwargs.get('inc_url')
+        source_urls = [inc_url] if isinstance(inc_url, str) else (inc_url or [])
 
-        kwargs['inc_url'] = discovered_urls
+        # DELEGATE TO MODULAR ROUTER
+        if extracted_data:
+            kwargs = cls._resolve_declarative_routing(extracted_data, source_urls, **kwargs)
+
         return await cls.incorp(**kwargs)
+
 
     @classmethod
     def _build_instances(
@@ -156,6 +268,7 @@ class Incorporator(BaseModel):
             parsed_data: List[Any],
             failed_sources: List[str],
             is_single: bool,
+            target_class: Optional[Type[TIncorporator]] = None,
             inc_code: Optional[str] = None,
             inc_name: Optional[str] = None,
             excl_lst: Optional[List[str]] = None,
@@ -175,8 +288,10 @@ class Incorporator(BaseModel):
         if not parsed_data:
             # Warn on empty valid payloads
             logger.info(
-                f"ℹ️ INCORPORATOR INFO: The source returned a valid payload, but 0 records were found. "
-                f"If this is unexpected, verify your API keys, form-data casing, or `rec_path` routing."
+                f"ℹ️ INCORPORATOR INFO:[{cls.__name__}] The API returned a valid response, "
+                f"but 0 records were mapped. "
+                f"Tip: Verify your `rec_path='...'` accurately matches the nested JSON structure, "
+                f"or check your API query parameters."
             )
             EmptyClass = cast(Type[TIncorporator], schema_builder.infer_dynamic_schema("DynamicModel", [{}], cls))
             return IncorporatorList(EmptyClass, [], failed_sources=failed_sources)
@@ -185,12 +300,14 @@ class Incorporator(BaseModel):
             parsed_data = parsed_data[0]
 
         # 1. Declarative ETL Transformation Phase (Columnar)
-        transformed_data = schema_builder.apply_etl_transformations(parsed_data=parsed_data, code_attr=inc_code,
-                                                                    name_attr=inc_name, excl_lst=excl_lst,
-                                                                    conv_dict=conv_dict, name_chg=name_chg)
+        transformed_data = schema_builder.apply_etl_transformations(
+            parsed_data=parsed_data, code_attr=inc_code,
+            name_attr=inc_name, excl_lst=excl_lst,
+            conv_dict=conv_dict, name_chg=name_chg
+        )
 
         # 2. Metaprogramming Compilation Phase
-        ActualClass = cast(
+        ActualClass = target_class or cast(
             Type[TIncorporator],
             schema_builder.infer_dynamic_schema("DynamicModel", transformed_data, cls)
         )
@@ -211,6 +328,7 @@ class Incorporator(BaseModel):
             inc_url: Optional[Union[str, List[str]]] = None,
             inc_file: Optional[Union[str, List[str]]] = None,
             inc_parent: Optional[Union[TIncorporator, "IncorporatorList[TIncorporator]"]] = None,
+            inc_child: Optional[str] = None,
             inc_code: Optional[str] = None,
             inc_name: Optional[str] = None,
             excl_lst: Optional[List[str]] = None,
@@ -225,30 +343,41 @@ class Incorporator(BaseModel):
         Args:
             inc_url: Single URL or List of URLs to fetch concurrently.
             inc_file: Single File path or List of file paths to parse.
-            inc_page: A Paginator instance (e.g., NextUrlPaginator(), OffsetPaginator(limit=50))
-            inc_parent: A parent Incorporator object to extract nested URLs from.
+            inc_parent: A parent Incorporator object to setup shallow and deep enrichment.
+            inc_child: API URLs or Incorp. Unique ID to create sub-class for deep enrichment.
             inc_code: The attribute name in the API to bind to the primary key (`cls.inc_dict`).
             inc_name: The attribute name in the API to bind to the readable name.
             excl_lst: A list of keys to completely drop from the API response before building.
             conv_dict: Dictionary utilizing `inc()`, `calc()`, and `calc_all()` for Declarative ETL.
             name_chg: List of tuples to rename API keys e.g., `[("old_key", "new_key")]`.
+            inc_page: A Paginator instance (e.g., NextUrlPaginator(), OffsetPaginator(limit=50))
             **kwargs: Configs passed to `network.py` (e.g., `http_method="POST"`, `payload_builder`).
         """
         if inc_parent is not None:
-            # Pass everything down to the child router
+            # We explicitly pass inc_url, inc_file, and inc_child down
             kwargs.update({
+                'inc_url': inc_url, 'inc_file': inc_file, 'inc_child': inc_child,
                 'inc_code': inc_code, 'inc_name': inc_name,
-                'excl_lst': excl_lst,
-                'conv_dict': conv_dict, 'name_chg': name_chg
+                'excl_lst': excl_lst, 'conv_dict': conv_dict,
+                'name_chg': name_chg, 'inc_page': inc_page
             })
             return await cls._child_incorp(inc_parent=inc_parent, **kwargs)
 
         source = inc_file if inc_file else inc_url
-        if not source:
-            raise ValueError("Either 'inc_url' or 'inc_file' must be provided.")
+        if not source and not kwargs.get('payload_list'):
+            raise ValueError(
+                f"[{cls.__name__}] Either 'inc_url', 'inc_file', or a valid 'inc_parent' must be provided.")
 
         is_file_mode = bool(inc_file)
-        source_list = source if isinstance(source, list) else [source]
+        source_list: List[str] = []
+        if isinstance(source, list):
+            source_list = [str(s) for s in source if s is not None]
+        elif isinstance(source, str):
+            source_list = [source]
+        elif kwargs.get('payload_list'):
+            # Fallback constraint for dynamic payloads
+            source_list = [""] * len(cast(List[Any], kwargs['payload_list']))
+
         is_single = not isinstance(source, list) and inc_page is None
 
         if is_single and isinstance(source, str):
@@ -257,7 +386,7 @@ class Incorporator(BaseModel):
             else:
                 cls.inc_url = source
 
-        # 🛡️ NEW LOGIC: Extract parallel payload list if injected by _child_incorp
+        # Extract parallel payload list if injected by _child_incorp
         payload_list = kwargs.pop('payload_list', None)
 
         # Concurrency & I/O Phase (Delegated to network.py)
@@ -270,12 +399,16 @@ class Incorporator(BaseModel):
         )
 
         # Pass Explicit ETL Parameters to the Builder
-        return cls._build_instances(
+        result = cls._build_instances(
             parsed_data, failed_sources, is_single,
             inc_code=inc_code, inc_name=inc_name,
-            excl_lst=excl_lst,
-            conv_dict=conv_dict, name_chg=name_chg
+            excl_lst=excl_lst, conv_dict=conv_dict, name_chg=name_chg
         )
+
+        if inc_child is not None and isinstance(result, IncorporatorList):
+            result.inc_child_path = inc_child
+
+        return result
 
     @classmethod
     async def refresh(
@@ -283,6 +416,7 @@ class Incorporator(BaseModel):
             instance: Union[TIncorporator, List[TIncorporator]],
             new_url: Optional[Union[str, List[str]]] = None,
             new_file: Optional[Union[str, List[str]]] = None,
+            inc_child: Optional[str] = None,
             inc_code: Optional[str] = None,
             inc_name: Optional[str] = None,
             excl_lst: Optional[List[str]] = None,
@@ -291,48 +425,65 @@ class Incorporator(BaseModel):
             inc_page: Optional[AsyncPaginator] = None,
             **kwargs: Any
     ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
-        """Re-hydrates existing instances with fresh API data using their origin tracking."""
+
         inst_list = instance if isinstance(instance, list) else [instance]
-        if not inst_list:
-            raise ValueError("Cannot refresh an empty list of Incorporator instances.")
+        if not inst_list: raise ValueError("Cannot refresh an empty list.")
+        TargetClass = inst_list[0].__class__
 
-        target = new_url if new_url else new_file if new_file else None
-        if not target:
-            target = [getattr(inst, "inc_url", getattr(inst, "inc_file", "")) for inst in inst_list]
+        raw_method = kwargs.pop('method', kwargs.pop('http_method', 'GET'))
+        kwargs['http_method'] = raw_method.upper() if isinstance(raw_method, str) else 'GET'
 
-        is_file_mode = new_file is not None or (not new_url and getattr(inst_list[0], "inc_file", None) is not None)
-        source_list = target if isinstance(target, list) else [target]
-        is_single = not isinstance(target, list) and inc_page is None
+        child_path = inc_child or getattr(instance, "inc_child_path", None)
+        extracted_data = cls._extract_parent_data(inst_list, child_path) if child_path else inst_list
 
-        payload_list = kwargs.pop('payload_list', None)
+        target = new_url or new_file
+        source_urls: List[str] = []
+        if isinstance(target, list):
+            source_urls = [str(x) for x in target if x is not None]
+        elif isinstance(target, str):
+            source_urls = [target]
 
-        # Concurrency & I/O Phase
+        # DELEGATE TO MODULAR ROUTER
+        if not new_file and extracted_data:
+            kwargs = cls._resolve_declarative_routing(extracted_data, source_urls, **kwargs)
+            raw_url = kwargs.pop('inc_url', source_urls)
+
+            source_list: List[str] = []
+            if isinstance(raw_url, list):
+                source_list = [str(x) for x in raw_url if x is not None]
+            elif isinstance(raw_url, str):
+                source_list = [raw_url]
+
+            payload_list = kwargs.pop('payload_list', None)
+        else:
+            source_list = source_urls
+            payload_list = kwargs.pop('payload_list', None)
+
+        if not source_list and not new_file:
+            raw_sources = [getattr(inst, "inc_url", getattr(inst, "inc_file", "")) for inst in inst_list]
+            source_list = [str(u) for u in raw_sources if u]
+            if not source_list:
+                raise ValueError("Instances contain no origin URLs to refresh from, and no new_url was provided.")
+
         parsed_data, failed_sources = await network.fetch_concurrent_payloads(
             source_list=source_list,
-            is_file_mode=is_file_mode,
+            is_file_mode=bool(new_file) or (not new_url and getattr(inst_list[0], "inc_file", None) is not None),
             inc_page=inc_page,
             payload_list=payload_list,
             **kwargs
         )
 
-        TargetClass = inst_list[0].__class__
-        if failed_sources:
-            warnings.warn(f"Refresh partial data: {len(failed_sources)} source(s) failed.", UserWarning, stacklevel=2)
+        # DELEGATE TO MODULAR BUILDER
+        result = cls._build_instances(
+            parsed_data, failed_sources, is_single=(len(source_list) <= 1 and inc_page is None),
+            target_class=TargetClass, inc_code=inc_code, inc_name=inc_name,
+            excl_lst=excl_lst, conv_dict=conv_dict, name_chg=name_chg
+        )
 
-        if is_single and len(parsed_data) == 1:
-            parsed_data = parsed_data[0]
+        if inc_child is not None and isinstance(result, IncorporatorList):
+            result.inc_child_path = inc_child
 
-        # Explicit ETL pipeline on refreshed data
-        transformed_data = schema_builder.apply_etl_transformations(parsed_data=parsed_data, code_attr=inc_code,
-                                                                    name_attr=inc_name, excl_lst=excl_lst,
-                                                                    conv_dict=conv_dict, name_chg=name_chg)
-
-        # Hydration Phase
-        if isinstance(transformed_data, list):
-            instances = [TargetClass(**item) for item in transformed_data]
-            return IncorporatorList(TargetClass, instances, failed_sources=failed_sources)
-
-        return TargetClass(**transformed_data)
+        return result
 
     @classmethod
     async def export(

@@ -1,20 +1,20 @@
 """
-Concurrent POST Enrichment: Auditing "Shady Jimmy"
---------------------------------------------------
+Declarative Bulk POST Enrichment: Auditing "Shady Jimmy"
+--------------------------------------------------------
 This example demonstrates how to parse a deeply nested XML file and use
-Incorporator's dynamic POST capabilities to concurrently query a federal
+Incorporator's dynamic POST capabilities to batch-query a federal
 government database (NHTSA) to verify the records.
 
 It highlights:
 1. Zero-Boilerplate XML parsing.
-2. Native URL injection via `inc()` defaults.
-3. Concurrent POST requests with dynamically built Form-Data payloads.
+2. The Explicit `inc_child` State Carrier.
+3. Declarative Bulk POST execution using the `join_all` token.
 4. O(1) Memory lookups using the internal `.inc_dict` registry.
 """
 
 import asyncio
-from typing import Any, Dict
-from incorporator import Incorporator, inc
+from incorporator import Incorporator
+from incorporator.methods.converters import join_all
 
 
 # ==========================================
@@ -23,26 +23,12 @@ from incorporator import Incorporator, inc
 class Invoice(Incorporator):
     pass
 
+
 class NHTSASpec(Incorporator):
     pass
 
 
-# ==========================================
-# 2. DYNAMIC POST PAYLOAD BUILDER
-# ==========================================
-def build_nhtsa_payload(invoice_obj: Any) -> Dict[str, Any]:
-    """Dynamically builds the POST body for NHTSA based on each invoice."""
-    vin = getattr(invoice_obj.Vehicle, "VIN", "UNKNOWN") if hasattr(invoice_obj, "Vehicle") else "UNKNOWN"
-
-    return {
-        # 1. MUST be lowercase "data" for Form-Encoded requests
-        # 2. Append a semicolon so the NHTSA batch endpoint parses it correctly
-        "data": f"{vin};",
-        "format": "json"
-    }
-
-
-async def run_audit():
+async def run_audit() -> None:
     print("📂 Parsing Shady Jimmy's Local XML Ledger...")
 
     # ==========================================
@@ -52,27 +38,25 @@ async def run_audit():
         inc_file="jimmy_ledger.xml",
         rec_path="Dealership.AuditFile.Invoices.Invoice",
         inc_code="id",
-
-        # 🛡️ Declarative Static Injection:
-        # "detail_url" doesn't exist in the XML. `inc` safely catches the missing
-        # value and injects the NHTSA URL into every single object natively!
-        conv_dict={
-            "detail_url": inc(str, default="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/")
-        }
+        inc_child="Vehicle.VIN"
     )
 
     print(f"✅ Extracted {len(invoices)} Invoices. Contacting Federal Databases...")
 
     # ==========================================
-    # PHASE 2: Concurrent POST Enrichment
+    # PHASE 2: Declarative Bulk POST Enrichment
     # ==========================================
-    # Incorporator reads the `detail_url` from the Invoices, fires concurrent POST
-    # requests to NHTSA using our payload builder, and returns the deep specs.
+    # Incorporator reads the cached `inc_child_path`, extracts every VIN,
+    # and automatically joins them with semicolons into 1 Bulk Batch Request!
     govt_specs = await NHTSASpec.incorp(
+        inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
         inc_parent=invoices,
         http_method="POST",
-        payload_type="form",                  # Tell httpx to send application/x-www-form-urlencoded
-        payload_builder=build_nhtsa_payload,  # Inject our dynamic POST body closure
+        payload_type="form",
+        form_payload={
+            "format": "json",
+            "data": join_all(";")
+        },
         rec_path="Results",
         inc_code="VIN"
     )
@@ -120,6 +104,7 @@ async def run_audit():
         print(f"🛑 AUDIT FAILED: Discovered {fraud_count} fraudulent transaction(s). Dispatching authorities.")
     else:
         print("🟢 AUDIT PASSED: Ledger matches federal records.")
+
 
 if __name__ == "__main__":
     asyncio.run(run_audit())

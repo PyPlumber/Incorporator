@@ -64,3 +64,4 @@ final_*.json
 real_*.py
 /tests/demo/
 .pypirc
+.gitignore

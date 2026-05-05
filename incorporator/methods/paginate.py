@@ -18,15 +18,15 @@ logger = logging.getLogger(__name__)
 class AsyncPaginator:
     def __init__(self) -> None:
         self.call_lim: Optional[int] = None
-        # FIX: Tell Mypy this function returns an awaited httpx.Response
         self.fetch_func: Optional[Callable[..., Awaitable[httpx.Response]]] = None
 
-    async def _fetch(self, url: str, params: Optional[Dict[str, Any]] = None) -> httpx.Response:
-        """Executes the network request."""
+    async def _fetch(self, url: str, params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        """Executes the network request, allowing dynamic POST payload overrides via kwargs."""
         if not self.fetch_func:
             raise RuntimeError("Paginator must be bound to a network client before use.")
-        # Errors will bubble up to the subclass to be handled gracefully!
-        return await self.fetch_func(url=url, request_params=params)
+
+        # Pass params AND any payload overrides down to the network engine!
+        return await self.fetch_func(url=url, request_params=params, **kwargs)
 
     async def paginate(self, start_url: str) -> AsyncGenerator[str, None]:
         """Yields raw text payloads. Must be overridden by subclasses."""

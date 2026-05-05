@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
-from incorporator.methods.converters import calc, extract_url_id, flt, link_to, link_to_list
+from incorporator.methods.converters import calc, flt, link_to, link_to_list, split_and_get, inc
 from incorporator.methods.paginate import NextUrlPaginator
 
 
@@ -80,12 +80,17 @@ async def test_swapi_relational_mapping(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr("incorporator.methods.network.execute_request", mock_swapi_execute_get)
     BASE_URL = "https://swapi.dev/api"
 
-    # 1. Fetch Graph Nodes
+    # Initialize the composable primitive once for O(1) memory reuse
+    get_id = split_and_get(delimiter='/', index=-1, cast_type=int)
+
+    # ==========================================
+    # 1. FETCH GRAPH NODES
+    # ==========================================
     planets = await Planet.incorp(
         inc_url=f"{BASE_URL}/planets/", rec_path="results",
         inc_code="id", inc_name="name",
         inc_page=NextUrlPaginator("next"), ignore_ssl=True,
-        conv_dict={"url": extract_url_id(int)},
+        conv_dict={"url": get_id},
         name_chg=[("url", "id")]
     )
 
@@ -93,21 +98,25 @@ async def test_swapi_relational_mapping(monkeypatch: pytest.MonkeyPatch) -> None
         inc_url=f"{BASE_URL}/films/", rec_path="results",
         inc_code="id", inc_name="title",
         inc_page=NextUrlPaginator("next"), ignore_ssl=True,
-        conv_dict={"url": extract_url_id(int)},
+        conv_dict={"url": get_id},
         name_chg=[("url", "id")]
     )
 
-    # 2. Fetch Graph Edges (People)
+    # ==========================================
+    # 2. FETCH GRAPH EDGES (PEOPLE)
+    # ==========================================
     people = await Person.incorp(
         inc_url=f"{BASE_URL}/people/", rec_path="results",
         inc_code="id", inc_name="name",
         inc_page=NextUrlPaginator("next"), ignore_ssl=True,
         conv_dict={
-            "url": extract_url_id(int),
-            "height": calc(float, default=0.0, target_type=flt),
-            "mass": calc(float, default=0.0, target_type=flt),
-            "homeworld": calc(link_to(planets, extractor=extract_url_id(int)), default=None),
-            "films": calc(link_to_list(films, extractor=extract_url_id(int)), default=[])
+            "url": get_id,
+
+            # If the API returns "unknown" for mass, inc() safely defaults it to 0.0
+            "height": inc(float, default=0.0),
+            "mass": inc(float, default=0.0),
+            "homeworld": link_to(planets, extractor=get_id),
+            "films": link_to_list(films, extractor=get_id)
         },
         name_chg=[("url", "id")]
     )
@@ -141,45 +150,6 @@ async def test_swapi_relational_mapping(monkeypatch: pytest.MonkeyPatch) -> None
     print("🚀 Jumping to Hyperspace... Connecting to the Star Wars API...\n")
     BASE_URL = "https://swapi.dev/api"
 
-    # ==========================================
-    # 1. FETCH FOUNDATIONAL DATA (The Graph Nodes)
-    # ==========================================
-    print("⏳ Downloading Planetary and Cinematic Archives...")
-    planets = await Planet.incorp(
-        inc_url=f"{BASE_URL}/planets/", rec_path="results",
-        inc_code="id", inc_name="name",
-        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
-        conv_dict={"url": extract_url_id(int)},
-        name_chg=[("url", "id")]
-    )
-
-    films = await Film.incorp(
-        inc_url=f"{BASE_URL}/films/", rec_path="results",
-        inc_code="id", inc_name="title",
-        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
-        conv_dict={"url": extract_url_id(int)},
-        name_chg=[("url", "id")]
-    )
-
-    # ==========================================
-    # 2. FETCH PEOPLE & MAP RELATIONS (The Graph Edges)
-    # ==========================================
-    print("⏳ Downloading Personnel Records and mapping relationships...")
-    people = await Person.incorp(
-        inc_url=f"{BASE_URL}/people/", rec_path="results",
-        inc_code="id", inc_name="name",
-        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
-        conv_dict={
-            "url": extract_url_id(int),
-            # Implicitly passes the 'height' and 'mass' strings to float()
-            "height": calc(float, default=0.0, target_type=flt),
-            "mass": calc(float, default=0.0, target_type=flt),
-            # Instantly links the URL strings to our in-memory Planet and Film objects
-            "homeworld": calc(link_to(planets, extractor=extract_url_id(int)), default=None),
-            "films": calc(link_to_list(films, extractor=extract_url_id(int)), default=[])
-        },
-        name_chg=[("url", "id")]
-    )
 
     # ==========================================
     # 3. LORE TABLES & DATA MANIPULATION

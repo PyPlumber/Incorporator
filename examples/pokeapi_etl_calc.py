@@ -44,7 +44,7 @@ async def main() -> None:
         inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
         rec_path="results",
         inc_name="name",
-        name_chg=[('url', 'detail_url')], # Standardize the URL key for `inc_parent`
+        inc_child="url",
         inc_page=NextUrlPaginator("next"),
         call_lim=3  # 3 pages * 50 = 150 Pokemon
     )
@@ -54,21 +54,22 @@ async def main() -> None:
     # ==========================================
     # 2. PHASE 2: DEEP ENRICHMENT (HATEOAS)
     # ==========================================
+    # Showcasing the State Carrier: `incorp` automatically reads the `inc_child_path`
+    # ("url") directly off the `pokemon_nav` list wrapper and concurrently fetches
+    # all 150 URLs seamlessly without throwing the Deprecation Warning!
     enriched_pokemon = await Pokemon.incorp(
-        inc_parent=pokemon_nav, # Automatically fires concurrent HTTP requests using `detail_url`
+        inc_parent=pokemon_nav,
         inc_code="id",
         inc_name="name",
-        excl_lst=["sprites", "moves", "game_indices", "held_items"], # Drop heavy payload data
+        excl_lst=["sprites", "moves", "game_indices", "held_items"],
         conv_dict={
-            # MAGIC HAPPENS HERE:
-            # Using `calc` with *input_keys syntax to target the 'stats' and 'types' JSON arrays.
-            # Instead of building sub-classes, Incorporator passes the raw JSON arrays to our functions.
             "stats": calc(calculate_bst, "stats", default=0, target_type=int),
             "types": calc(format_typing, "types", default="Unknown", target_type=str)
         },
-        # Rename the resulting calculated 'stats' key to 'base_stat_total' for clean dot-notation
         name_chg=[("stats", "base_stat_total")]
     )
+
+    print(f"✅ Enrichment Complete. Loaded {len(enriched_pokemon)} Pokémon into memory.")
 
     # ==========================================
     # 3. LORE TABLE: The Gen 1 Power Rankings

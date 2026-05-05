@@ -6,6 +6,9 @@ from typing import Any
 import httpx
 import pytest
 
+from unittest.mock import AsyncMock, patch
+
+from incorporator.base import IncorporatorList
 from incorporator import Incorporator
 from incorporator.methods.converters import calc, flt
 
@@ -96,3 +99,30 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
 
     # PROVE THE ETL PIPELINE FIRED AGAIN (It parsed the new string into a float)
     assert stock_b.current_price == 165.5
+
+
+
+
+
+class DummyModel(Incorporator):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_incorporator_list_state_carrier() -> None:
+    """Verifies that inc_child_path persists on the returned list wrapper."""
+
+    # We mock the network engine so we only test the framework's internal state mechanism
+    with patch("incorporator.methods.network.fetch_concurrent_payloads", new_callable=AsyncMock) as mock_fetch:
+        # Mock returning 2 empty dictionaries from the network
+        mock_fetch.return_value = ([{}, {}], list())
+
+        # Execute incorp and explicitly pass our extraction path
+        result = await DummyModel.incorp(
+            inc_url="https://mock.api",
+            inc_child="Vehicle.VIN"
+        )
+
+        # Verify the wrapper caught and retained the state!
+        assert isinstance(result, IncorporatorList)
+        assert result.inc_child_path == "Vehicle.VIN"

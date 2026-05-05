@@ -8,7 +8,7 @@ For example, if you want a Pokémon's **Primary Types** (e.g., Grass / Poison) a
 
 Normally, traditional Pydantic setups force you to define strict Sub-Models for `Stat`, `StatDetail`, and `TypeInfo`, just so you can write a `@property` later to calculate the sum. 
 
-**Incorporator eliminates this memory overhead.** Using `calc()` and `inc_parent`, you can concurrently fetch deep URLs, intercept raw JSON arrays, and reduce them into clean, flattened Python properties *before* the objects are even fully instantiated.
+**Incorporator eliminates this memory overhead.** Using `calc()` and our explicit `inc_parent` / `inc_child` routing, you can concurrently fetch deep URLs, intercept raw JSON arrays, and reduce them into clean, flattened Python properties *before* the objects are even fully instantiated.
 
 ---
 
@@ -46,31 +46,45 @@ def format_typing(types_array: Any) -> str:
 
 # --- MAIN EXECUTION ---
 async def main() -> None:
-    # 1. SHALLOW DISCOVERY
+    BASE_URL = "https://pokeapi.co/api/v2"
+
+    # ==========================================
+    # 1. PHASE 1: SHALLOW DISCOVERY
+    # ==========================================
+    print("⏳ Running Phase 1: Shallow Discovery (Fetching 150 records)...")
     pokemon_nav = await Nav.incorp(
-        inc_url="https://pokeapi.co/api/v2/pokemon/?limit=50&offset=0",
+        inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
         rec_path="results",
         inc_name="name",
-        name_chg=[('url', 'detail_url')], # Standardize the nested URL key
+        # Explicitly declare where the next URLs live!
+        inc_child="url",
         inc_page=NextUrlPaginator("next"),
-        call_lim=3
+        call_lim=3  # 3 pages * 50 = 150 Pokemon
     )
 
-    # 2. DEEP ENRICHMENT & ETL
+    print(f"✅ Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
+
+    # ==========================================
+    # 2. PHASE 2: DEEP ENRICHMENT (HATEOAS)
+    # ==========================================
+    # The IncorporatorList "pokemon_nav" remembers that we set inc_child="url" in Phase 1.
+    # It passes that state directly into Phase 2, effortlessly firing 150 concurrent requests!
     enriched_pokemon = await Pokemon.incorp(
         inc_parent=pokemon_nav,
         inc_code="id",
         inc_name="name",
-        excl_lst=["sprites", "moves", "game_indices", "held_items"], 
+        excl_lst=["sprites", "moves", "game_indices", "held_items"],
         conv_dict={
             # Intercept the JSON arrays and apply our reduction functions dynamically
             "stats": calc(calculate_bst, "stats", default=0, target_type=int),
             "types": calc(format_typing, "types", default="Unknown", target_type=str)
         },
         name_chg=[("stats", "base_stat_total")]
-    )
-
+    )    
+    
+    # ==========================================
     # 3. USE THE FLATTENED DATA
+    # ==========================================
     if isinstance(enriched_pokemon, list):
         # Sort by our newly calculated integer!
         enriched_pokemon.sort(key=lambda p: getattr(p, "base_stat_total", 0), reverse=True)
@@ -86,14 +100,14 @@ if __name__ == "__main__":
 
 ## 🧠 Architecture Deep Dive: How it Works
 
-### 1. The HATEOAS Concurrency Engine (`inc_parent`)
+### 1. The Explicit Routing Engine & State Carrier (`inc_child`)
 REST APIs often use HATEOAS (Hypermedia as the Engine of Application State), meaning they return a shallow list of items, each containing a `"url"` to get more data.
 
-By passing `inc_parent=pokemon_nav` to our `Pokemon` subclass, Incorporator does the heavy lifting:
-1. It scans the `Nav` objects in memory.
-2. It extracts the `.detail_url` (or `.url`) from each one.
-3. It provisions a highly optimized, rate-limited HTTP connection pool.
-4. It fires 150 concurrent requests to fetch the deep JSON payload for every single Pokémon simultaneously.
+In older frameworks, you had to rely on implicit "magic" attributes to make this jump. Incorporator completely eliminates this via the **State Carrier** pattern:
+
+1. In Phase 1, we explicitly tell the engine `inc_child="url"`.
+2. The returned `pokemon_nav` list object securely *caches* this path state.
+3. When we pass `inc_parent=pokemon_nav` into Phase 2, Incorporator reads the cached state, gracefully drills into all 150 objects, extracts the URLs, and automatically provisions a rate-limited concurrency pool to download the deep payloads simultaneously. Zero boilerplate loops required!
 
 ### 2. The Power of `calc()`
 This is where Incorporator's ETL engine shines. Look at the raw JSON the API returns for "stats":
@@ -118,7 +132,7 @@ We intercept this using `calc`:
 * **The Reduction:** Your pure Python function iterates over the list, sums the integers, and returns a single integer (e.g., `318`).
 * **The Type Guarantee:** Because we passed `target_type=int`, Incorporator strictly validates the output. 
 
-*Memory Benefit:* The massive raw JSON array is immediately garbage-collected. Your final Python object only stores a single `int` footprint.
+*Memory Benefit:* The massive raw JSON array is immediately garbage-collected. Your final Python object only stores a single highly-efficient `int` footprint.
 
 ### 3. Cleaning the Graph with `name_chg`
 After `calc()` successfully reduces the massive `stats` array into a single integer, the attribute on your Python object is still technically named `.stats`. 
@@ -142,4 +156,4 @@ The PokéAPI returns massive base64 strings and thousand-item lists for `moves`.
 ## 🌟 Summary
 With **Incorporator**, you aren't just ingesting APIs—you are sculpting them. 
 
-Using `inc_parent` and `calc`, you can take 150 deeply nested, fractured JSON payloads and compress them into a highly optimized, flat list of native Python objects in just a fraction of a second.
+Using the explicit `inc_child` state carrier and declarative `calc` tokens, you can take 150 deeply nested, fractured JSON payloads and compress them into a highly optimized, flat list of native Python objects in just a fraction of a second.

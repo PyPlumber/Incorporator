@@ -1,10 +1,10 @@
 ***
 
-# 🚨 Concurrent POST Enrichment: Auditing "Shady Jimmy"
+# 🚨 Declarative Bulk POST Enrichment: Auditing "Shady Jimmy"
 
-REST APIs don’t just use `GET`. When querying bulk endpoints (like Government Databases or GraphQL), you often need to use `POST` and send a **dynamic payload** for every request. 
+REST APIs don’t just use `GET`. When querying bulk endpoints (like Government Databases or GraphQL), you often need to use `POST` and send a **dynamic payload** mapping multiple records. 
 
-In this tutorial, you play the role of a State Auditor. You have seized an XML ledger from **"Shady Jimmy's Used Cars"**. Your job is to extract his vehicle inventory from the local XML file and concurrently `POST` those VINs to the official **NHTSA** database to verify Jimmy isn't selling fraudulent cars.
+In this tutorial, you play the role of a State Auditor. You have seized an XML ledger from **"Shady Jimmy's Used Cars"**. Your job is to extract his vehicle inventory from the local XML file and `POST` those VINs to the official **NHTSA** batch database to verify Jimmy isn't selling fraudulent cars.
 
 ## 🗄️ The Input Data (`jimmy_ledger.xml`)
 Save the seized XML data into a local file called `jimmy_ledger.xml`. Notice how deeply nested the vehicle data is inside the dealership audit wrapper:
@@ -32,12 +32,13 @@ Save the seized XML data into a local file called `jimmy_ledger.xml`. Notice how
 
 ## 💻 The Audit Script
 
-Create a file called `audit_jimmy.py`. We are going to use Incorporator's native XML parsing to load the ledger, inject a static URL into the objects, define a dynamic `POST` payload closure, and bulk-enrich the data.
+Create a file called `audit_jimmy.py`. We are going to use Incorporator's native XML parsing to load the ledger, define our extraction path using `inc_child`, and use the `join_all` declarative token to bulk-enrich the data in a single, highly-optimized network call.
 
 ```python
 import asyncio
-from typing import Any, Dict
-from incorporator import Incorporator, inc
+from typing import Any
+from incorporator import Incorporator
+from incorporator.methods.converters import join_all
 
 # ==========================================
 # 1. DEFINE OUR OBJECTS
@@ -48,21 +49,7 @@ class Invoice(Incorporator):
 class NHTSASpec(Incorporator):
     pass
 
-# ==========================================
-# 2. DYNAMIC POST PAYLOAD BUILDER
-# ==========================================
-def build_nhtsa_payload(invoice_obj: Any) -> Dict[str, Any]:
-    """Dynamically builds the POST body for NHTSA based on each invoice."""
-    vin = getattr(invoice_obj.Vehicle, "VIN", "UNKNOWN") if hasattr(invoice_obj, "Vehicle") else "UNKNOWN"
-
-    return {
-        # 1. MUST be lowercase "data" for Form-Encoded requests
-        # 2. Append a semicolon so the NHTSA batch endpoint parses it correctly
-        "data": f"{vin};",
-        "format": "json"
-    }
-
-async def run_audit():
+async def run_audit() -> None:
     print("📂 Parsing Shady Jimmy's Local XML Ledger...")
 
     # ==========================================
@@ -72,27 +59,28 @@ async def run_audit():
         inc_file="jimmy_ledger.xml",
         rec_path="Dealership.AuditFile.Invoices.Invoice",
         inc_code="id",
-
-        # 🛡️ Declarative Static Injection:
-        # "detail_url" doesn't exist in the XML. `inc` safely catches the missing
-        # value and injects the NHTSA URL into every single object natively!
-        conv_dict={
-            "detail_url": inc(str, default="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/")
-        }
+        
+        # 🛡️ The State Carrier: We explicitly declare the child path here!
+        # The IncorporatorList will cache this state for Phase 2.
+        inc_child="Vehicle.VIN"
     )
 
     print(f"✅ Extracted {len(invoices)} Invoices. Contacting Federal Databases...")
 
     # ==========================================
-    # PHASE 2: Concurrent POST Enrichment
+    # PHASE 2: Declarative Bulk POST Enrichment
     # ==========================================
-    # Incorporator reads the `detail_url` from the Invoices, fires concurrent POST
-    # requests to NHTSA using our payload builder, and returns the deep specs.
+    # Incorporator reads the cached `inc_child_path`, extracts every VIN, 
+    # and automatically joins them with semicolons into 1 Bulk Batch Request!
     govt_specs = await NHTSASpec.incorp(
+        inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
         inc_parent=invoices,
-        http_method="POST",
-        payload_type="form",                  # Tell httpx to send application/x-www-form-urlencoded
-        payload_builder=build_nhtsa_payload,  # Inject our dynamic POST body closure
+        method="POST",
+        payload_type="form",        
+        form_payload={
+            "format": "json",
+            "data": join_all(";")  # 🛡️ Zero-boilerplate batching token!
+        },
         rec_path="Results",
         inc_code="VIN"
     )
@@ -151,15 +139,18 @@ if __name__ == "__main__":
 ### 1. Zero-Boilerplate XML Parsing
 Parsing XML in standard Python usually requires messy libraries like `xml.etree.ElementTree` and writing recursive loops. Incorporator auto-detects the `.xml` extension, drills through the `rec_path`, and dynamically builds nested Python objects (like `inv.Vehicle.VIN`) implicitly.
 
-### 2. Declarative Static Injection (`inc` Defaults)
-We need to tell the `invoices` objects *where* to route their HTTP traffic. Instead of hardcoding a Python `@property` inside the class, we use `conv_dict`. By mapping a missing key (`"detail_url"`) to `inc(str, default="...")`, Incorporator effortlessly injects the NHTSA URL into every single object as it is built.
+### 2. The Explicit State Carrier (`inc_child`)
+Instead of relying on implicitly mapped URLs or dummy strings, Incorporator v1.0.0 uses the **State Carrier** pattern. By declaring `inc_child="Vehicle.VIN"` in Phase 1, the returned `invoices` list securely memorizes that path. When passed into Phase 2, Incorporator instantly knows exactly where to drill to retrieve the primary keys for the next network request.
 
-### 3. Dynamic POST Concurrency (`payload_builder`)
-When hitting a bulk API endpoint, you can't just send an empty `POST` request. By defining a `payload_builder` closure, Incorporator:
-1. Passes the individual `Invoice` object into your function right before dispatch.
-2. Injects the resulting dictionary as the body of the request.
-3. Automatically translates it to Form-Data (`application/x-www-form-urlencoded`) via `payload_type="form"`.
-4. Fires all requests concurrently and merges the JSON results.
+### 3. Declarative Bulk POST Execution (`join_all`)
+The NHTSA endpoint is a "Batch" processor—it expects a single string of VINs separated by semicolons. Instead of forcing you to write `for` loops, extraction lambdas, or punishing the government servers with 500 individual concurrent requests, Incorporator solves this declaratively:
+```python
+form_payload={
+    "format": "json",
+    "data": join_all(";")
+}
+```
+By providing the `join_all` token, Incorporator automatically intercepts all 500 extracted VINs, joins them perfectly, and generates **one single, polite, highly-optimized network call**. It automatically translates it to Form-Data (`application/x-www-form-urlencoded`) via `payload_type="form"`.
 
 ### 4. $O(1)$ Graph Relational Lookups
 We didn't need to write a messy dictionary merge algorithm to join Jimmy's records with the Government records. Because we set `inc_code="VIN"` when parsing the NHTSA response, the data was securely cached in memory. 

@@ -1,13 +1,12 @@
 """Incorporator: The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway."""
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 
 from .base import Incorporator
 from .methods.converters import (
     inc,
     calc,
     calc_all,
-    extract_url_id,
     link_to,
     link_to_list,
     pluck,
@@ -36,7 +35,6 @@ __all__ =[
     "split_and_get",
     "link_to",
     "link_to_list",
-    "extract_url_id",
     "pluck",
     "NextUrlPaginator",
     "IncorporatorError",

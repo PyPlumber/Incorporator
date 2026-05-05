@@ -1,23 +1,27 @@
 """Unit tests for the Incorporator Columnar Type Engine and URL tools."""
 
-import json
+import pytest
+from typing import Any
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Any
 
 from incorporator.methods.converters import (
     CalcAllOp,
     CalcOp,
     calc,
     calc_all,
-    extract_url_id,
     flt,
     inc,
     link_to,
     new,
     pluck,
-    split_and_get
+    split_and_get,
+    each,
+    join_all
 )
+from incorporator.base import Incorporator
+
+
 
 
 def test_inc_type_ranked_engine_bools_and_dates() -> None:
@@ -95,19 +99,23 @@ def test_calc_and_calc_all_markers() -> None:
 
 
 def test_url_toolkit() -> None:
-    """Asserts extract_url_id and pluck function correctly."""
+    """Asserts split_and_get and pluck function correctly."""
 
-    # --- extract_url_id ---
-    extractor = extract_url_id(int)
+    # --- split_and_get ---
+    # Because .strip('/') removes the trailing slash automatically, index is ALWAYS -1
+    extractor = split_and_get(delimiter='/', index=-1, cast_type=int)
+
     assert extractor("https://api.com/user/101") == 101
-    assert extractor("https://api.com/user/101/") == 101  # Defends against trailing slashes
+    assert extractor("https://api.com/user/101/") == 101
     assert extractor(None) is None
 
     # --- pluck ---
-    plucker = pluck("url", chain=extract_url_id(int))
-    # Test dictionary pluck
-    assert plucker({"name": "Earth", "url": "https://api.com/planet/5/"}) == 5
-    # Test flat string fallback
+    plucker = pluck("homeworld", chain=split_and_get(delimiter='/', index=-1, cast_type=int))
+
+    # Test dictionary pluck (e.g. from JSON response)
+    assert plucker({"name": "Earth", "homeworld": "https://api.com/planet/5/"}) == 5
+
+    # Test flat string fallback (e.g. passing a raw string through the converter)
     assert plucker("https://api.com/planet/5/") == 5
 
 
@@ -131,3 +139,81 @@ def test_link_to_relational_mapping() -> None:
     # Test 2: Using an extractor
     extractor_mapper = link_to(plain_list, extractor=lambda x: int(x) * 1)
     assert extractor_mapper("1") == mock_obj_1
+
+
+class MockObj:
+    def __init__(self, **kwargs: Any):
+        self.__dict__.update(kwargs)
+
+def test_extract_parent_data() -> None:
+    # 1. Standard Object Drill
+    parents =[MockObj(vehicle=MockObj(vin="123")), MockObj(vehicle=MockObj(vin="456"))]
+    assert Incorporator._extract_parent_data(parents, "vehicle.vin") == ["123", "456"]
+
+    # 2. Schema Splintering (List nested inside the drill path)
+    splintered_parents =[MockObj(vehicle=[MockObj(vin="A"), MockObj(vin="B")])]
+    assert Incorporator._extract_parent_data(splintered_parents, "vehicle.vin") ==["A", "B"]
+
+    # 3. Dictionary handling and Missing Keys (Graceful degradation)
+    mixed_parents =[MockObj(vehicle={"vin": "DictVIN"}), MockObj(vehicle=None)]
+    assert Incorporator._extract_parent_data(mixed_parents, "vehicle.vin") == ["DictVIN"]
+
+    # 4. Deeply nested missing data
+    assert Incorporator._extract_parent_data(parents, "vehicle.engine.cylinders") ==[]
+
+
+def test_declarative_post_routing() -> None:
+    """Verifies that POST tokens correctly map payloads and URLs."""
+    extracted_ids = [101, 102]
+    source_urls = ["https://api.com/update"]
+
+    # 1. Test the `each()` token (N Concurrent Requests)
+    kwargs_each = Incorporator._resolve_declarative_routing(
+        extracted_data=extracted_ids,
+        source_urls=source_urls,
+        http_method="POST",  # 🛡️ THE FIX: Use canonical internal kwargs
+        json_payload={"id": each(), "static": "token"}
+    )
+
+    # Should multiply the URL by 2, and create 2 distinct payloads
+    assert kwargs_each["inc_url"] == ["https://api.com/update", "https://api.com/update"]
+    assert kwargs_each["payload_list"] == [{"id": 101, "static": "token"}, {"id": 102, "static": "token"}]
+
+    # 2. Test the `join_all()` token (1 Bulk Request)
+    kwargs_join = Incorporator._resolve_declarative_routing(
+        extracted_data=extracted_ids,
+        source_urls=source_urls,
+        http_method="POST",  # 🛡️ THE FIX
+        json_payload={"ids": join_all(",")}
+    )
+
+    # Should keep 1 URL, and create 1 payload with a joined string
+    assert kwargs_join["payload_list"] == [{"ids": "101,102"}]
+    assert len(kwargs_join["payload_list"]) == len(source_urls)
+
+    # 3. Test Missing POST URL Exception
+    with pytest.raises(ValueError, match="Missing Target URL"):
+        Incorporator._resolve_declarative_routing(
+            extracted_data=extracted_ids,
+            source_urls=[],
+            http_method="POST",  # 🛡️ THE FIX
+            json_payload={"ids": join_all(",")}
+        )
+
+
+def test_get_url_injection() -> None:
+    """Verifies that GET requests natively inject IDs into {} templates."""
+    extracted_ids = ["alpha", "beta"]
+    source_urls = ["https://api.com/users/{}/profile"]
+
+    kwargs = Incorporator._resolve_declarative_routing(
+        extracted_data=extracted_ids,
+        source_urls=source_urls,
+        http_method="GET"  # 🛡️ THE FIX
+    )
+
+    # It should generate N unique URLs
+    assert kwargs["inc_url"] == [
+        "https://api.com/users/alpha/profile",
+        "https://api.com/users/beta/profile"
+    ]

@@ -165,19 +165,27 @@ async def _process_single_source(
     accumulated: List[Any] = []
 
     # 1. Setup the Injection Wrapper
-    async def bound_fetch(url: str, request_params: Optional[Dict[str, Any]] = None) -> httpx.Response:
+    async def bound_fetch(
+            url: str,
+            request_params: Optional[Dict[str, Any]] = None,
+            **kwargs_override: Any
+    ) -> httpx.Response:
+
         if client is None:
             raise IncorporatorNetworkError("HTTP client is uninitialized during pagination.")
 
         merged_params = {**base_params, **(request_params or {})}
-
-        # Route the dynamic payload based on the requested Content-Type!
         payload_type = kwargs.get('payload_type', 'json')
 
-        j_payload = dynamic_payload if dynamic_payload is not None and payload_type == 'json' else kwargs.get(
-            'json_payload')
-        f_payload = dynamic_payload if dynamic_payload is not None and payload_type == 'form' else kwargs.get(
-            'form_payload')
+        # Check if paginate.py provided a strict override (e.g. for GraphQL POST cursors)
+        j_override = kwargs_override.get("json_payload")
+        f_override = kwargs_override.get("form_payload")
+
+        # Fallback to the dynamic_payload from base.py, then to global kwargs
+        j_payload = j_override or (
+            dynamic_payload if dynamic_payload is not None and payload_type == 'json' else kwargs.get('json_payload'))
+        f_payload = f_override or (
+            dynamic_payload if dynamic_payload is not None and payload_type == 'form' else kwargs.get('form_payload'))
 
         return await execute_request(
             url=url, client=client, method=method, params=merged_params,

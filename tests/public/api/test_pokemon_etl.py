@@ -123,7 +123,7 @@ async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) 
         inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
         rec_path="results",
         inc_name="name",
-        name_chg=[('url', 'detail_url')],
+        inc_child="url",
         inc_page=NextUrlPaginator("next"),
         call_lim=3  # 3 pages * 50 = 150 Pokemon
     )
@@ -133,20 +133,22 @@ async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) 
     # ==========================================
     # 2. PHASE 2: DEEP ENRICHMENT (HATEOAS)
     # ==========================================
-    # Showcasing `inc_parent`: Automatically extracts `detail_url` from the Nav objects
-    # and concurrently fetches all 150 detailed JSON payloads!
+    # Showcasing the State Carrier: `incorp` automatically reads the `inc_child_path`
+    # ("url") directly off the `pokemon_nav` list wrapper and concurrently fetches
+    # all 150 URLs seamlessly without throwing the Deprecation Warning!
     enriched_pokemon = await Pokemon.incorp(
         inc_parent=pokemon_nav,
         inc_code="id",
         inc_name="name",
         excl_lst=["sprites", "moves", "game_indices", "held_items"],
         conv_dict={
-            # Using the clean *input_keys syntax to target the 'stats' and 'types' JSON arrays
             "stats": calc(calculate_bst, "stats", default=0, target_type=int),
             "types": calc(format_typing, "types", default="Unknown", target_type=str)
         },
         name_chg=[("stats", "base_stat_total")]
     )
+
+    print(f"✅ Enrichment Complete. Loaded {len(enriched_pokemon)} Pokémon into memory.")
 
     # Assertions
     assert len(enriched_pokemon) == 3

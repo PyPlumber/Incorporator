@@ -10,11 +10,10 @@ import pytest
 from incorporator import Incorporator
 from incorporator.methods.converters import (
     calc,
-    extract_url_id,
     inc,
     link_to,
     link_to_list,
-    pluck
+    pluck, split_and_get
 )
 from incorporator.methods.paginate import NextUrlPaginator
 
@@ -112,6 +111,9 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr("incorporator.methods.network.execute_request", mock_execute_get)
     BASE_URL = "https://rickandmortyapi.com/api"
 
+    # 🛡️ We create a reusable ID extractor using our composable primitive
+    get_id = split_and_get(delimiter='/', index=-1, cast_type=int)
+
     # ==========================================
     # 1. FETCH FOUNDATIONAL DATA
     # ==========================================
@@ -120,7 +122,6 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
         inc_code="id", inc_name="name", excl_lst=['url'],
         inc_page=NextUrlPaginator("info", "next"),
         conv_dict={
-            # TEST: Dynamic population calculation
             'population': calc(len, 'residents', default=0)
         }
     )
@@ -130,7 +131,6 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
         inc_code="id", inc_name="name", excl_lst=['url'],
         inc_page=NextUrlPaginator("info", "next"),
         conv_dict={
-            # TEST: Automatic datetime parsing
             'air_date': inc(datetime)
         }
     )
@@ -143,8 +143,9 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
         inc_code="id", inc_name="name", excl_lst=['image', 'url'],
         inc_page=NextUrlPaginator("info", "next"),
         conv_dict={
-            'location': link_to(locations, extractor=pluck("url", extract_url_id(int))),
-            'episode': link_to_list(episodes, extractor=extract_url_id(int))
+            # pluck() and split_and_get() work together perfectly
+            'location': link_to(locations, extractor=pluck("url", chain=get_id)),
+            'episode': link_to_list(episodes, extractor=get_id)
         }
     )
 
@@ -200,41 +201,42 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
         for loc in sorted_locs[:10]:
             print(f"{loc.inc_name:<40} | {getattr(loc, 'type', 'Unknown'):<20} | {getattr(loc, 'population', 0):<15}")
 
-    # ==========================================
-    # LORE TABLE 2: The "Deadliest" Episodes
-    # ==========================================
-    print("\n" + "=" * 90)
-    print(" 💀 TABLE 2: THE DEADLIEST EPISODES (Highest Mortality Rate)")
-    print("    Showcasing: `inc(datetime)` parsing and Deep Graph Traversal.")
-    print("=" * 90)
-    print(f"{'EPISODE':<10} | {'TITLE':<35} | {'AIR DATE':<12} | {'BODY COUNT':<10}")
-    print("-" * 90)
+        # ==========================================
+        # LORE TABLE 2: The "Deadliest" Episodes
+        # ==========================================
+        print("\n" + "=" * 90)
+        print(" 💀 TABLE 2: THE DEADLIEST EPISODES (Highest Mortality Rate)")
+        print("    Showcasing: `inc(datetime)` parsing and Deep Graph Traversal.")
+        print("=" * 90)
+        print(f"{'EPISODE':<10} | {'TITLE':<35} | {'AIR DATE':<12} | {'BODY COUNT':<10}")
+        print("-" * 90)
 
-    if isinstance(episodes, list) and isinstance(characters, list):
-        ep_stats = []
-        for ep in episodes:
-            cast_urls = getattr(ep, "characters", [])
-            body_count = 0
+        if isinstance(episodes, list) and isinstance(characters, list):
+            ep_stats = []
 
-            # Traverse the graph to check the status of every character in the episode
-            for url in cast_urls:
-                char_id = extract_url_id(int)(url)
-                character = characters.inc_dict.get(char_id)
-                if character and getattr(character, "status", "") == "Dead":
-                    body_count += 1
+            for ep in episodes:
+                cast_urls = getattr(ep, "characters", [])
+                body_count = 0
 
-            ep_stats.append((ep, body_count))
+                # Traverse the graph to check the status of every character in the episode
+                for url in cast_urls:
+                    char_id = get_id(url)
+                    character = characters.inc_dict.get(char_id)
+                    if character and getattr(character, "status", "") == "Dead":
+                        body_count += 1
 
-        # Sort by highest body count
-        ep_stats.sort(key=lambda x: x[1], reverse=True)
+                ep_stats.append((ep, body_count))
 
-        for ep, count in ep_stats[:10]:
-            # Format the datetime object that inc(datetime) generated for us!
-            air_date = getattr(ep, "air_date", None)
-            date_str = air_date.strftime("%Y-%m-%d") if isinstance(air_date, datetime) else "Unknown"
-            ep_code = getattr(ep, "episode", "Unknown")
+            # Sort by highest body count
+            ep_stats.sort(key=lambda x: x[1], reverse=True)
 
-            print(f"{ep_code:<10} | {ep.inc_name:<35} | {date_str:<12} | {count:<10}")
+            for ep, count in ep_stats[:10]:
+                # Format the datetime object that inc(datetime) generated for us!
+                air_date = getattr(ep, "air_date", None)
+                date_str = air_date.strftime("%Y-%m-%d") if isinstance(air_date, datetime) else "Unknown"
+                ep_code = getattr(ep, "episode", "Unknown")
+
+                print(f"{ep_code:<10} | {ep.inc_name:<35} | {date_str:<12} | {count:<10}")
 
     # ==========================================
     # LORE TABLE 3: The Ricklantis Mixup Cast
@@ -254,7 +256,7 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
             actors = []
 
             for url in cast_url_list:
-                actor_id = extract_url_id(int)(url)
+                actor_id = get_id(url)
                 actor_obj = characters.inc_dict.get(actor_id)
                 if actor_obj:
                     actors.append(actor_obj)
