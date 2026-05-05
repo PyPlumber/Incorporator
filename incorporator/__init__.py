@@ -1,6 +1,6 @@
 """Incorporator: The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway."""
 
-__version__ = "1.0.0"
+__version__ = "1.0.3"
 
 from .base import Incorporator
 from .methods.converters import (

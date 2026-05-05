@@ -1,4 +1,4 @@
-## 🌌 Incorporator (v1.0.0)
+## 🌌 Incorporator (v1.0.3)
 **The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway.**
 
 [![PyPI version](https://img.shields.io/pypi/v/incorporator.svg)](https://pypi.org/project/incorporator/)
