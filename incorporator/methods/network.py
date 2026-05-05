@@ -87,6 +87,7 @@ def _sync_read(file_path: str) -> str:
     except OSError as e:
         raise IncorporatorNetworkError(f"Failed to read file {file_path}: {e}") from e
 
+
 async def _read_file(file_path: str) -> str:
     return await asyncio.to_thread(_sync_read, file_path)
 
@@ -101,13 +102,13 @@ async def _read_file(file_path: str) -> str:
     reraise=True
 )
 async def execute_request(
-    url: str,
-    client: httpx.AsyncClient,
-    method: str = "GET",
-    params: Optional[Dict[str, Any]] = None,
-    json_payload: Optional[Dict[str, Any]] = None,
-    form_payload: Optional[Dict[str, Any]] = None,
-    rate_limiter: Optional[RateLimiter] = None
+        url: str,
+        client: httpx.AsyncClient,
+        method: str = "GET",
+        params: Optional[Dict[str, Any]] = None,
+        json_payload: Optional[Dict[str, Any]] = None,
+        form_payload: Optional[Dict[str, Any]] = None,
+        rate_limiter: Optional[RateLimiter] = None
 ) -> httpx.Response:
     """Executes a resilient, jittered HTTP request supporting GET/POST and query strings."""
     _validate_url(url)
@@ -118,6 +119,7 @@ async def execute_request(
     if json_payload: req_kwargs["json"] = json_payload
     if form_payload: req_kwargs["data"] = form_payload
 
+    # method.upper() natively supports 'POST', 'PUT', etc.
     response = await client.request(method.upper(), url, **req_kwargs)
 
     try:
@@ -136,6 +138,7 @@ async def _process_single_source(
         is_file_mode: bool,
         client: Optional[httpx.AsyncClient],
         rate_limiter: Optional[RateLimiter],
+        dynamic_payload: Optional[Dict[str, Any]] = None,  # 🛡️ NEW: Captures the specific payload for this URL
         **kwargs: Any
 ) -> List[Any]:
     """Isolates stream processing, dynamic Paginator routing, and rec_path drill-down."""
@@ -144,7 +147,8 @@ async def _process_single_source(
     call_lim = kwargs.get('call_lim')
     rec_path = kwargs.get('rec_path')
 
-    method = kwargs.get('method', 'GET')
+    # 🛡️ NEW: Grab http_method from kwargs, defaulting to GET
+    method = kwargs.get('http_method', kwargs.get('method', 'GET'))
     base_params = kwargs.get('params', {})
 
     active_format = format_type or infer_format(source_val)
@@ -156,9 +160,18 @@ async def _process_single_source(
             raise IncorporatorNetworkError("HTTP client is uninitialized during pagination.")
 
         merged_params = {**base_params, **(request_params or {})}
+
+        # Route the dynamic payload based on the requested Content-Type!
+        payload_type = kwargs.get('payload_type', 'json')
+
+        j_payload = dynamic_payload if dynamic_payload is not None and payload_type == 'json' else kwargs.get(
+            'json_payload')
+        f_payload = dynamic_payload if dynamic_payload is not None and payload_type == 'form' else kwargs.get(
+            'form_payload')
+
         return await execute_request(
             url=url, client=client, method=method, params=merged_params,
-            json_payload=kwargs.get('json_payload'), form_payload=kwargs.get('form_payload'),
+            json_payload=j_payload, form_payload=f_payload,
             rate_limiter=rate_limiter
         )
 
@@ -196,13 +209,14 @@ async def _process_single_source(
 # 5. CONCURRENT ORCHESTRATOR
 # ==========================================
 async def fetch_concurrent_payloads(
-    source_list: List[str],
-    is_file_mode: bool,
-    **kwargs: Any
+        source_list: List[str],
+        is_file_mode: bool,
+        payload_list: Optional[List[Optional[Dict[str, Any]]]] = None,  # 🛡️ NEW: Parallel list of dynamic POST bodies
+        **kwargs: Any
 ) -> Tuple[List[Any], List[str]]:
     """Unified Orchestrator: Exclusively manages semaphores, chunks, and concurrent batching."""
     failed_sources: List[str] = []
-    all_parsed_data: List[Any] =[]
+    all_parsed_data: List[Any] = []
 
     limit = kwargs.get('concurrency_limit', 50)
     delay_between_batches = kwargs.get('delay_between_batches', 0.0)
@@ -220,21 +234,45 @@ async def fetch_concurrent_payloads(
         _rate_limiter = RateLimiter(kwargs.get('requests_per_second', 15.0))
         should_close = True
 
-    async def _task_wrapper(src: str) -> List[Any]:
+    # 🛡️ NEW: Accept dynamic payload into the task wrapper
+    async def _task_wrapper(src: str, dynamic_payload: Optional[Dict[str, Any]] = None) -> List[Any]:
         async with semaphore:
             try:
-                return await _process_single_source(src, is_file_mode, _client, _rate_limiter, **kwargs)
+                return await _process_single_source(
+                    src, is_file_mode, _client, _rate_limiter,
+                    dynamic_payload=dynamic_payload, **kwargs
+                )
             except httpx.HTTPStatusError as e:
+                # Catch valid connections that returned a bad HTTP status code
                 if e.response.status_code == 429:
                     logger.warning(f"Request failed with status 429. Skipping: {src}")
                     failed_sources.append(src)
-                    return[]
+                    return []
+
+                # OPTIONAL: You can change this to logger.warning to skip 404s/500s instead of crashing!
                 raise IncorporatorNetworkError(f"HTTP error {e.response.status_code}") from e
 
+            except httpx.RequestError as e:
+                # 🛡️ THE FIX: Catch DNS failures, Timeout drops, and Bad URLs (getaddrinfo failed)
+                logger.warning(
+                    f"Network Connection Error for '{src}': {e.__class__.__name__}. "
+                    f"The URL may be invalid or the server is unreachable. Skipping."
+                )
+                failed_sources.append(src)
+                return []
     try:
-        chunks =[source_list[i:i + limit] for i in range(0, len(source_list), limit)]
+        # 🛡️ NEW: Chunk both the source URLs and the payload bodies simultaneously
+        chunks = [source_list[i:i + limit] for i in range(0, len(source_list), limit)]
+
+        if payload_list:
+            p_chunks = [payload_list[i:i + limit] for i in range(0, len(payload_list), limit)]
+        else:
+            # Fallback to empty payloads if none provided
+            p_chunks = [[None] * len(c) for c in chunks]
+
         for i, chunk in enumerate(chunks):
-            tasks =[_task_wrapper(str(src)) for src in chunk]
+            # Zip the URL and its specific POST payload together
+            tasks = [_task_wrapper(str(src), payload) for src, payload in zip(chunk, p_chunks[i])]
             chunk_results = await asyncio.gather(*tasks)
 
             for res in chunk_results:

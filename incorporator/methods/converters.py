@@ -153,9 +153,10 @@ RANKED_CONVERTERS: Dict[Any, List[Callable[[Any], Any]]] = {
 # THE INC() FACTORY
 # ==========================================
 
-def inc(target_type: Any) -> Callable[[Any], Any]:
+def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
     """
     Returns a Context-Aware, Type-Ranked validation closure.
+    Now supports `default` fallbacks for missing data or failed conversions!
     """
     # 1. The 'new' mapping: If 'new', accept ANY valid Python type.
     actual_type = Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type
@@ -168,14 +169,16 @@ def inc(target_type: Any) -> Callable[[Any], Any]:
 
     ranks = RANKED_CONVERTERS.get(actual_type, [])
     if adapter:
-        ranks = [adapter.validate_python] + [r for r in ranks if r != adapter.validate_python]
+        ranks = [adapter.validate_python] +[r for r in ranks if r != adapter.validate_python]
 
     if not ranks:
-        ranks = [lambda x: x]  # Failsafe pass-through
+        ranks =[lambda x: x]  # Failsafe pass-through
 
     def _ranked_converter(val: Any) -> Any:
+        # 🛡️ THE FIX: Intercept missing data and instantly return the default!
+        # This completely bypasses the str(None) == "None" trap!
         if val is None or val == "":
-            return None
+            return default
 
         last_error = None
         for func in ranks:
@@ -189,10 +192,10 @@ def inc(target_type: Any) -> Callable[[Any], Any]:
             f"Incorporator Type Engine: Failed to convert '{val}' into {actual_type}. "
             f"Last error: {last_error}"
         )
-        return None
+        # 🛡️ THE FIX: If all type-casting fails, safely fallback to the default
+        return default
 
     return _ranked_converter
-
 
 # ==========================================
 # 5. GRAPH & EXTRACTORS

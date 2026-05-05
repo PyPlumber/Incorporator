@@ -13,7 +13,7 @@ import warnings
 import weakref
 from datetime import datetime, timezone
 from typing import (
-    Any, ClassVar, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
+    Any, Callable, ClassVar, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 )
 
 from pydantic import BaseModel, Field
@@ -48,7 +48,7 @@ class IncorporatorList(list[TIncorporator]):
     ):
         super().__init__(items)
         self._model_class = model_class
-        self.failed_sources = failed_sources if failed_sources is not None else[]
+        self.failed_sources = failed_sources if failed_sources is not None else []
 
     @property
     def inc_dict(self) -> "weakref.WeakValueDictionary[Any, TIncorporator]":
@@ -114,18 +114,29 @@ class Incorporator(BaseModel):
             inc_parent: Any,
             **kwargs: Any
     ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
-        """Handles HATEOAS REST architectures by extracting nested URLs from parents."""
+        """Handles HATEOAS REST architectures by extracting nested URLs and building dynamic payloads."""
         parent_items = inc_parent if isinstance(inc_parent, list) else [inc_parent]
-        discovered_urls =[
-            url_val for item in parent_items
-            if (url_val := getattr(item, 'detail_url', getattr(item, 'url', None))) and isinstance(url_val, str)
+
+        # 1. Isolate only the parent items that contain a valid string URL
+        valid_items = [
+            item for item in parent_items
+            if isinstance(getattr(item, 'detail_url', getattr(item, 'url', None)), str)
+        ]
+
+        discovered_urls = [
+            getattr(item, 'detail_url', getattr(item, 'url', None)) for item in valid_items
         ]
 
         if not discovered_urls:
             raise ValueError("The 'inc_parent' object did not contain a valid 'url' or 'detail_url' attribute.")
 
+        # 2. 🛡️ NEW LOGIC: Dynamic POST Payload Mapping
+        # If the user passed a `payload_builder` closure, execute it against each valid parent item!
+        payload_builder: Optional[Callable[[Any], Dict[str, Any]]] = kwargs.pop('payload_builder', None)
+        if payload_builder:
+            kwargs['payload_list'] = [payload_builder(p) for p in valid_items]
+
         kwargs['inc_url'] = discovered_urls
-        kwargs.pop('inc_parent', None)
         return await cls.incorp(**kwargs)
 
     @classmethod
@@ -151,21 +162,16 @@ class Incorporator(BaseModel):
             )
 
         if not parsed_data:
-            EmptyClass = cast(Type[TIncorporator], schema_builder.infer_dynamic_schema("DynamicModel",[{}], cls))
-            return IncorporatorList(EmptyClass,[], failed_sources=failed_sources)
+            EmptyClass = cast(Type[TIncorporator], schema_builder.infer_dynamic_schema("DynamicModel", [{}], cls))
+            return IncorporatorList(EmptyClass, [], failed_sources=failed_sources)
 
         if is_single and len(parsed_data) == 1:
             parsed_data = parsed_data[0]
 
         # 1. Declarative ETL Transformation Phase (Columnar)
-        transformed_data = schema_builder.apply_etl_transformations(
-            parsed_data=parsed_data,
-            code_attr=inc_code,
-            name_attr=inc_name,
-            excl_lst=excl_lst,
-            conv_dict=conv_dict,
-            name_chg=name_chg
-        )
+        transformed_data = schema_builder.apply_etl_transformations(parsed_data=parsed_data, code_attr=inc_code,
+                                                                    name_attr=inc_name, excl_lst=excl_lst,
+                                                                    conv_dict=conv_dict, name_chg=name_chg)
 
         # 2. Metaprogramming Compilation Phase
         ActualClass = cast(
@@ -210,12 +216,13 @@ class Incorporator(BaseModel):
             excl_lst: A list of keys to completely drop from the API response before building.
             conv_dict: Dictionary utilizing `inc()`, `calc()`, and `calc_all()` for Declarative ETL.
             name_chg: List of tuples to rename API keys e.g., `[("old_key", "new_key")]`.
-            **kwargs: Network configurations passed to `network.py` (e.g., paginate, rec_path).
+            **kwargs: Configs passed to `network.py` (e.g., `http_method="POST"`, `payload_builder`).
         """
         if inc_parent is not None:
             # Pass everything down to the child router
             kwargs.update({
-                'inc_code': inc_code, 'inc_name': inc_name, 'excl_lst': excl_lst,
+                'inc_code': inc_code, 'inc_name': inc_name,
+                'excl_lst': excl_lst,
                 'conv_dict': conv_dict, 'name_chg': name_chg
             })
             return await cls._child_incorp(inc_parent=inc_parent, **kwargs)
@@ -234,18 +241,23 @@ class Incorporator(BaseModel):
             else:
                 cls.inc_url = source
 
+        # 🛡️ NEW LOGIC: Extract parallel payload list if injected by _child_incorp
+        payload_list = kwargs.pop('payload_list', None)
+
         # Concurrency & I/O Phase (Delegated to network.py)
         parsed_data, failed_sources = await network.fetch_concurrent_payloads(
             source_list=source_list,
             is_file_mode=is_file_mode,
             inc_page=inc_page,
+            payload_list=payload_list,  # Passes the parallel POST bodies!
             **kwargs
         )
 
         # Pass Explicit ETL Parameters to the Builder
         return cls._build_instances(
             parsed_data, failed_sources, is_single,
-            inc_code=inc_code, inc_name=inc_name, excl_lst=excl_lst,
+            inc_code=inc_code, inc_name=inc_name,
+            excl_lst=excl_lst,
             conv_dict=conv_dict, name_chg=name_chg
         )
 
@@ -270,17 +282,20 @@ class Incorporator(BaseModel):
 
         target = new_url if new_url else new_file if new_file else None
         if not target:
-            target =[getattr(inst, "inc_url", getattr(inst, "inc_file", "")) for inst in inst_list]
+            target = [getattr(inst, "inc_url", getattr(inst, "inc_file", "")) for inst in inst_list]
 
         is_file_mode = new_file is not None or (not new_url and getattr(inst_list[0], "inc_file", None) is not None)
         source_list = target if isinstance(target, list) else [target]
         is_single = not isinstance(target, list) and inc_page is None
+
+        payload_list = kwargs.pop('payload_list', None)
 
         # Concurrency & I/O Phase
         parsed_data, failed_sources = await network.fetch_concurrent_payloads(
             source_list=source_list,
             is_file_mode=is_file_mode,
             inc_page=inc_page,
+            payload_list=payload_list,
             **kwargs
         )
 
@@ -292,14 +307,9 @@ class Incorporator(BaseModel):
             parsed_data = parsed_data[0]
 
         # Explicit ETL pipeline on refreshed data
-        transformed_data = schema_builder.apply_etl_transformations(
-            parsed_data=parsed_data,
-            code_attr=inc_code,
-            name_attr=inc_name,
-            excl_lst=excl_lst,
-            conv_dict=conv_dict,
-            name_chg=name_chg
-        )
+        transformed_data = schema_builder.apply_etl_transformations(parsed_data=parsed_data, code_attr=inc_code,
+                                                                    name_attr=inc_name, excl_lst=excl_lst,
+                                                                    conv_dict=conv_dict, name_chg=name_chg)
 
         # Hydration Phase
         if isinstance(transformed_data, list):
@@ -317,7 +327,7 @@ class Incorporator(BaseModel):
     ) -> None:
         """Serializes current Incorporator states out to physical JSON/CSV/XML files."""
         active_format = format_type or infer_format(file_path)
-        instances = instance if isinstance(instance, list) else[instance]
+        instances = instance if isinstance(instance, list) else [instance]
 
-        data_dicts =[obj.model_dump(by_alias=True, mode='json') for obj in instances]
+        data_dicts = [obj.model_dump(by_alias=True, mode='json') for obj in instances]
         await format_parsers.write_destination_data(data_dicts, file_path, active_format)

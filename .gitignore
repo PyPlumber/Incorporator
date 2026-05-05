@@ -63,3 +63,4 @@ final_*.json
 # 10. Private Developer Scripts
 real_*.py
 /tests/demo/
+.pypirc

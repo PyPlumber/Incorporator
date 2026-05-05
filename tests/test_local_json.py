@@ -1,5 +1,6 @@
 """Tests for the minimal vertical slice: Local JSON File to Incorporator Object."""
 
+import logging
 import pytest
 from typing import List
 
@@ -33,13 +34,19 @@ async def test_incorporator_reads_local_json_successfully(clean_json_file: str) 
 
 
 @pytest.mark.asyncio
-async def test_incorporator_raises_custom_error_on_bad_json(broken_json_file: str) -> None:
-    """Ensures json.JSONDecodeError is gracefully caught and converted."""
+async def test_incorporator_warns_and_skips_on_bad_json(broken_json_file: str, caplog: pytest.LogCaptureFixture) -> None:
+    """Ensures json.JSONDecodeError is gracefully caught, logged as a warning, and skipped without crashing."""
 
-    # Assert that our specific custom error is raised, protecting the user from messy tracebacks
-    with pytest.raises(IncorporatorFormatError) as exc_info:
-        # UPDATED: Use inc_file= to match the new API contract
-        await Incorporator.incorp(inc_file=broken_json_file)
+    # 1. Capture the logs at the WARNING level
+    with caplog.at_level(logging.WARNING):
+        # We no longer expect a crash! Incorporator should survive this gracefully.
+        results = await Incorporator.incorp(inc_file=broken_json_file)
 
-    # Assert the error message contains helpful context
-    assert "Invalid JSON" in str(exc_info.value)
+    # 2. Assert that the framework survived and safely returned an empty list
+    assert isinstance(results, list)
+    assert len(results) == 0
+
+    # 3. Assert the warning message contains our helpful fault-tolerance context
+    assert "Parse failed for format" in caplog.text
+    assert "Payload may be malformed" in caplog.text
+    assert "Invalid JSON" in caplog.text  # Verifies the underlying error was captured in the log

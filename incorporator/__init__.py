@@ -4,6 +4,9 @@ __version__ = "1.0.0"
 
 from .base import Incorporator
 from .methods.converters import (
+    inc,
+    calc,
+    calc_all,
     extract_url_id,
     link_to,
     link_to_list,
@@ -18,6 +21,7 @@ from .methods.exceptions import (
 )
 from .methods.format_parsers import FormatType
 from .methods.logger import LoggedIncorporator, LoggingMixin, setup_class_logger
+from .methods.paginate import NextUrlPaginator
 
 __all__ =[
     "__version__",
@@ -26,11 +30,15 @@ __all__ =[
     "LoggingMixin",
     "setup_class_logger",
     "FormatType",
+    "inc",
+    "calc",
+    "calc_all",
     "split_and_get",
     "link_to",
     "link_to_list",
     "extract_url_id",
     "pluck",
+    "NextUrlPaginator",
     "IncorporatorError",
     "IncorporatorFormatError",
     "IncorporatorNetworkError",

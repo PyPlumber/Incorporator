@@ -1,6 +1,7 @@
 """Native zero-bloat format converters and handlers for Incorporator."""
 
 import asyncio
+import logging
 import csv
 import io
 import json
@@ -13,6 +14,7 @@ from typing import Any, Dict, List, Union
 
 from .exceptions import IncorporatorFormatError
 
+logger = logging.getLogger(__name__)
 
 class FormatType(str, Enum):
     """Strict enumeration of supported data formats."""
@@ -197,15 +199,25 @@ _HANDLERS: Dict[FormatType, BaseFormatHandler] = {
     FormatType.XML: XMLHandler(),
 }
 
-
 async def parse_source_data(raw_data: str, format_type: FormatType) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
     """Asynchronously routes raw string data to the correct parser strategy."""
     handler = _HANDLERS.get(format_type)
     if not handler:
         raise IncorporatorFormatError(f"Unsupported format: '{format_type}'.")
 
-    # Offload CPU-bound parsing to a background thread to protect the event loop
-    return await asyncio.to_thread(handler.parse, raw_data)
+    try:
+        # Offload CPU-bound parsing to a background thread to protect the event loop
+        return await asyncio.to_thread(handler.parse, raw_data)
+
+    except Exception as e:
+        # Log the failure without interrupting the program.
+        logger.warning(
+            f"Parse failed for format '{format_type}'. Payload may be malformed (e.g., HTML firewall). "
+            f"Skipping. Error: {e}"
+        )
+
+        # Return an empty dict so the pipeline treats it as an empty source and moves on
+        return []
 
 
 async def write_destination_data(data: List[Dict[str, Any]], file_path: str, format_type: FormatType) -> None:
