@@ -16,10 +16,12 @@ from real.shady_jimmy import generate_xml_file
 
 
 # --- EXPLICIT SUBCLASSING ---
-class JimmyInvoice(Incorporator): pass
+class JimmyInvoice(Incorporator):
+    pass
 
 
-class NHTSARecord(Incorporator): pass
+class NHTSARecord(Incorporator):
+    pass
 
 
 # --- MOCK NETWORK SETUP ---
@@ -33,12 +35,18 @@ async def mock_nhtsa_execute_post(url: str, *args: Any, **kwargs: Any) -> httpx.
         results = []
         for vin in vins:
             if vin == "1HGCM82633A004352":  # Updated Honda VIN
-                results.append({"VIN": vin, "Make": "HONDA", "Model": "ACCORD", "ModelYear": "2003"})
+                results.append(
+                    {"VIN": vin, "Make": "HONDA", "Model": "ACCORD", "ModelYear": "2003"}
+                )
             elif vin == "2T1BR32E54C123456":  # Updated Toyota VIN
-                results.append({"VIN": vin, "Make": "TOYOTA", "Model": "COROLLA", "ModelYear": "2004"})
+                results.append(
+                    {"VIN": vin, "Make": "TOYOTA", "Model": "COROLLA", "ModelYear": "2004"}
+                )
             elif vin == "1G1RC6E45BU000003":
                 # The real car is a Chevy Volt, not a Porsche!
-                results.append({"VIN": vin, "Make": "CHEVROLET", "Model": "VOLT", "ModelYear": "2011"})
+                results.append(
+                    {"VIN": vin, "Make": "CHEVROLET", "Model": "VOLT", "ModelYear": "2011"}
+                )
 
         payload = {"Results": results}
         req = httpx.Request("POST", url)
@@ -103,8 +111,7 @@ async def test_shady_jimmy_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     # 2. Extract XML
     invoices = await JimmyInvoice.incorp(
-        inc_file=str(xml_file),
-        rec_path="Dealership.AuditFile.Invoices.Invoice"
+        inc_file=str(xml_file), rec_path="Dealership.AuditFile.Invoices.Invoice"
     )
 
     assert isinstance(invoices, list)
@@ -120,9 +127,7 @@ async def test_shady_jimmy_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         form_payload={"format": "json", "DATA": vin_batch_string},
         rec_path="Results",
         inc_code="VIN",
-        conv_dict={
-            "ModelYear": inc(int)
-        }
+        conv_dict={"ModelYear": inc(int)},
     )
 
     assert isinstance(live_records, list)
@@ -173,7 +178,7 @@ async def test_shady_jimmy_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         conv_dict={
             # The API returns years as strings, we force them to integers
             "ModelYear": inc(int)
-        }
+        },
     )
     print("   -> Background Checks Complete (1 Optimized Request).\n")
 
@@ -210,10 +215,7 @@ async def test_shady_jimmy_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         actual_year = getattr(real_car, "ModelYear", 0)
 
         # Business Logic: Check for discrepancies
-        is_fraud = (
-                claimed_make != actual_make or
-                claimed_year != actual_year
-        )
+        is_fraud = claimed_make != actual_make or claimed_year != actual_year
 
         if is_fraud:
             fraud_count += 1

@@ -24,22 +24,18 @@ async def track_launches():
         # Navigation & Targeting
         inc_url="https://ll.thespacedevs.com/2.2.0/launch/upcoming/",
         rec_path="results",  # Skip the metadata wrapper; target the launch array
-
         # Identity
         inc_code="id",  # Unique identifier for the memory registry
         inc_name="name",  # Human-readable label
-
         # Pagination & Limits
         inc_page=NextUrlPaginator("next"),  # Tell Incorporator how to find the next page
         call_lim=2,  # Limit to 1 API call (grabs the first 10 launches)
-
         # Optimization
         excl_lst=["image", "infographic", "program", "vid_urls"],  # Drop heavy, unused JSON keys
-
         # Data Transformation (ETL)
         conv_dict={
             "net": inc(datetime)  # Natively cast ISO-8601 strings to datetime objects
-        }
+        },
     )
 
     print(f"Successfully mapped {len(launches)} space launches!\n")
@@ -54,10 +50,14 @@ async def track_launches():
         # Incorporator dynamically builds nested subclasses.
         # The JSON returned {"pad": {"latitude": "...", "location": {"name": "..."}}}
         # We can traverse this using standard Python dot-notation instantly!
-        if hasattr(launch, 'pad'):
-            lat = getattr(launch.pad, 'latitude', 'Unknown')
-            lon = getattr(launch.pad, 'longitude', 'Unknown')
-            region = getattr(launch.pad.location, 'name', 'Unknown') if hasattr(launch.pad, 'location') else 'Unknown'
+        if hasattr(launch, "pad"):
+            lat = getattr(launch.pad, "latitude", "Unknown")
+            lon = getattr(launch.pad, "longitude", "Unknown")
+            region = (
+                getattr(launch.pad.location, "name", "Unknown")
+                if hasattr(launch.pad, "location")
+                else "Unknown"
+            )
 
             print(f"   📍 Region: {region}")
             print(f"   🗺️  GPS:    {lat}, {lon}")

@@ -7,7 +7,7 @@ and asynchronous connection-pooling for maximum throughput.
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Iterator
 from urllib.parse import urlparse
 
 import httpx
@@ -56,22 +56,29 @@ class HTTPClientBuilder:
 
     @staticmethod
     def build_client(
-            concurrency_limit: int = 50,
-            ignore_ssl: bool = False,
-            timeout: float = 15.0,
-            headers: Optional[Dict[str, str]] = None
+        concurrency_limit: int = 50,
+        ignore_ssl: bool = False,
+        timeout: float = 15.0,
+        headers: Optional[Dict[str, str]] = None,
     ) -> httpx.AsyncClient:
-        client_limits = httpx.Limits(max_keepalive_connections=concurrency_limit, max_connections=concurrency_limit)
+        client_limits = httpx.Limits(
+            max_keepalive_connections=concurrency_limit, max_connections=concurrency_limit
+        )
         return httpx.AsyncClient(
-            follow_redirects=True, timeout=timeout, limits=client_limits,
-            verify=not ignore_ssl, headers=headers
+            follow_redirects=True,
+            timeout=timeout,
+            limits=client_limits,
+            verify=not ignore_ssl,
+            headers=headers,
         )
 
 
 def _validate_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise IncorporatorNetworkError(f"Security Policy Violation: Unsupported scheme '{parsed.scheme}'.")
+        raise IncorporatorNetworkError(
+            f"Security Policy Violation: Unsupported scheme '{parsed.scheme}'."
+        )
 
 
 # ==========================================
@@ -99,25 +106,29 @@ async def _read_file(file_path: str) -> str:
     stop=stop_after_attempt(8),
     wait=wait_random_exponential(multiplier=1.5, min=2, max=30),
     retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
-    reraise=True
+    reraise=True,
 )
 async def execute_request(
-        url: str,
-        client: httpx.AsyncClient,
-        method: str = "GET",
-        params: Optional[Dict[str, Any]] = None,
-        json_payload: Optional[Dict[str, Any]] = None,
-        form_payload: Optional[Dict[str, Any]] = None,
-        rate_limiter: Optional[RateLimiter] = None
+    url: str,
+    client: httpx.AsyncClient,
+    method: str = "GET",
+    params: Optional[Dict[str, Any]] = None,
+    json_payload: Optional[Dict[str, Any]] = None,
+    form_payload: Optional[Dict[str, Any]] = None,
+    rate_limiter: Optional[RateLimiter] = None,
 ) -> httpx.Response:
     """Executes a resilient, jittered HTTP request supporting GET/POST and query strings."""
     _validate_url(url)
-    if rate_limiter: await rate_limiter.wait()
+    if rate_limiter:
+        await rate_limiter.wait()
 
     req_kwargs: Dict[str, Any] = {}
-    if params: req_kwargs["params"] = params
-    if json_payload: req_kwargs["json"] = json_payload
-    if form_payload: req_kwargs["data"] = form_payload
+    if params:
+        req_kwargs["params"] = params
+    if json_payload:
+        req_kwargs["json"] = json_payload
+    if form_payload:
+        req_kwargs["data"] = form_payload
 
     # method.upper() natively supports 'POST', 'PUT', etc.
     response = await client.request(method.upper(), url, **req_kwargs)
@@ -131,7 +142,6 @@ async def execute_request(
             f"If you receive empty data, verify your URL exactness (e.g., check for a missing trailing slash '/' !)."
         )
 
-
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as e:
@@ -144,38 +154,38 @@ async def execute_request(
 
 
 async def _process_single_source(
-        source_val: str,
-        is_file_mode: bool,
-        client: Optional[httpx.AsyncClient],
-        rate_limiter: Optional[RateLimiter],
-        dynamic_payload: Optional[Dict[str, Any]] = None,  # 🛡️ NEW: Captures the specific payload for this URL
-        **kwargs: Any
+    source_val: str,
+    is_file_mode: bool,
+    client: Optional[httpx.AsyncClient],
+    rate_limiter: Optional[RateLimiter],
+    dynamic_payload: Optional[
+        Dict[str, Any]
+    ] = None,  # 🛡️ NEW: Captures the specific payload for this URL
+    **kwargs: Any,
 ) -> List[Any]:
     """Isolates stream processing, dynamic Paginator routing, and rec_path drill-down."""
-    format_type = kwargs.get('format_type')
-    inc_page: Optional[AsyncPaginator] = kwargs.get('inc_page')
-    call_lim = kwargs.get('call_lim')
-    rec_path = kwargs.get('rec_path')
+    format_type = kwargs.get("format_type")
+    inc_page: Optional[AsyncPaginator] = kwargs.get("inc_page")
+    call_lim = kwargs.get("call_lim")
+    rec_path = kwargs.get("rec_path")
 
     # 🛡️ NEW: Grab http_method from kwargs, defaulting to GET
-    method = kwargs.get('http_method', kwargs.get('method', 'GET'))
-    base_params = kwargs.get('params', {})
+    method = kwargs.get("http_method", kwargs.get("method", "GET"))
+    base_params = kwargs.get("params", {})
 
     active_format = format_type or infer_format(source_val)
     accumulated: List[Any] = []
 
     # 1. Setup the Injection Wrapper
     async def bound_fetch(
-            url: str,
-            request_params: Optional[Dict[str, Any]] = None,
-            **kwargs_override: Any
+        url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs_override: Any
     ) -> httpx.Response:
 
         if client is None:
             raise IncorporatorNetworkError("HTTP client is uninitialized during pagination.")
 
         merged_params = {**base_params, **(request_params or {})}
-        payload_type = kwargs.get('payload_type', 'json')
+        payload_type = kwargs.get("payload_type", "json")
 
         # Check if paginate.py provided a strict override (e.g. for GraphQL POST cursors)
         j_override = kwargs_override.get("json_payload")
@@ -183,21 +193,31 @@ async def _process_single_source(
 
         # Fallback to the dynamic_payload from base.py, then to global kwargs
         j_payload = j_override or (
-            dynamic_payload if dynamic_payload is not None and payload_type == 'json' else kwargs.get('json_payload'))
+            dynamic_payload
+            if dynamic_payload is not None and payload_type == "json"
+            else kwargs.get("json_payload")
+        )
         f_payload = f_override or (
-            dynamic_payload if dynamic_payload is not None and payload_type == 'form' else kwargs.get('form_payload'))
+            dynamic_payload
+            if dynamic_payload is not None and payload_type == "form"
+            else kwargs.get("form_payload")
+        )
 
         return await execute_request(
-            url=url, client=client, method=method, params=merged_params,
-            json_payload=j_payload, form_payload=f_payload,
-            rate_limiter=rate_limiter
+            url=url,
+            client=client,
+            method=method,
+            params=merged_params,
+            json_payload=j_payload,
+            form_payload=f_payload,
+            rate_limiter=rate_limiter,
         )
 
     # 2. Standard Parse & Drill Action
     async def _accumulate_text(raw_text: str) -> None:
         parsed_chunk = await format_parsers.parse_source_data(raw_text, active_format)
         if rec_path:
-            for part in rec_path.split('.'):
+            for part in rec_path.split("."):
                 if isinstance(parsed_chunk, dict) and part in parsed_chunk:
                     parsed_chunk = parsed_chunk[part]
                 else:
@@ -226,84 +246,106 @@ async def _process_single_source(
 # ==========================================
 # 5. CONCURRENT ORCHESTRATOR
 # ==========================================
+
+
 async def fetch_concurrent_payloads(
-        source_list: List[str],
-        is_file_mode: bool,
-        payload_list: Optional[List[Optional[Dict[str, Any]]]] = None,  # 🛡️ NEW: Parallel list of dynamic POST bodies
-        **kwargs: Any
+    source_list: List[str],
+    is_file_mode: bool,
+    payload_list: Optional[List[Optional[Dict[str, Any]]]] = None,
+    **kwargs: Any,
 ) -> Tuple[List[Any], List[str]]:
     """Unified Orchestrator: Exclusively manages semaphores, chunks, and concurrent batching."""
+
+    def _generate_chunks(
+        sources: List[str], payloads: Optional[List[Any]], limit: int, delay: float
+    ) -> Iterator[Tuple[List[str], List[Any]]]:
+        """
+        Yields strictly sized chunks if throttling is needed,
+        otherwise yields the complete set for a sliding-window semaphore.
+        """
+        if delay > 0.0:
+            for i in range(0, len(sources), limit):
+                s_chunk = sources[i : i + limit]
+                p_chunk = payloads[i : i + limit] if payloads else [None] * len(s_chunk)
+                yield s_chunk, p_chunk
+        else:
+            # Zero Convoy Effect: Yield everything to the sliding window
+            p_chunk = payloads if payloads else [None] * len(sources)
+            yield sources, p_chunk
+
     failed_sources: List[str] = []
     all_parsed_data: List[Any] = []
 
-    limit = kwargs.get('concurrency_limit', 50)
-    delay_between_batches = kwargs.get('delay_between_batches', 0.0)
+    limit = kwargs.get("concurrency_limit", 50)
+    delay_between_batches = kwargs.get("delay_between_batches", 0.0)
     semaphore = asyncio.Semaphore(limit)
 
-    _client = kwargs.get('_client')
-    _rate_limiter = kwargs.get('_rate_limiter')
+    _client = kwargs.get("_client")
+    _rate_limiter = kwargs.get("_rate_limiter")
     should_close = False
 
     if not is_file_mode and _client is None:
         _client = HTTPClientBuilder.build_client(
-            concurrency_limit=limit, ignore_ssl=kwargs.get('ignore_ssl', False),
-            timeout=kwargs.get('timeout', 15.0), headers=kwargs.get('headers')
+            concurrency_limit=limit,
+            ignore_ssl=kwargs.get("ignore_ssl", False),
+            timeout=kwargs.get("timeout", 15.0),
+            headers=kwargs.get("headers"),
         )
-        _rate_limiter = RateLimiter(kwargs.get('requests_per_second', 15.0))
+        _rate_limiter = RateLimiter(kwargs.get("requests_per_second", 15.0))
         should_close = True
 
-    # 🛡️ NEW: Accept dynamic payload into the task wrapper
-    async def _task_wrapper(src: str, dynamic_payload: Optional[Dict[str, Any]] = None) -> List[Any]:
+    async def _task_wrapper(
+        src: str, dynamic_payload: Optional[Dict[str, Any]] = None
+    ) -> List[Any]:
         async with semaphore:
             try:
                 return await _process_single_source(
-                    src, is_file_mode, _client, _rate_limiter,
-                    dynamic_payload=dynamic_payload, **kwargs
+                    src,
+                    is_file_mode,
+                    _client,
+                    _rate_limiter,
+                    dynamic_payload=dynamic_payload,
+                    **kwargs,
                 )
             except httpx.HTTPStatusError as e:
-                # Catch valid connections that returned a bad HTTP status code
                 if e.response.status_code == 429:
                     logger.warning(
                         f"🚦 RATE LIMITED (HTTP 429) on '{src}'. Skipping. "
-                        f"Tip: Try lowering `concurrency_limit=...` or adding `delay_between_batches=...` "
-                        f"in your .incorp() call."
+                        f"Tip: Try lowering `concurrency_limit=...` or adding `delay_between_batches=...`."
                     )
                     failed_sources.append(src)
                     return []
-
-                # OPTIONAL: You can change this to logger.warning to skip 404s/500s instead of crashing!
                 raise IncorporatorNetworkError(f"HTTP error {e.response.status_code}") from e
 
             except httpx.RequestError as e:
-                # 🛡️ THE FIX: Catch DNS failures, Timeout drops, and Bad URLs (getaddrinfo failed)
                 logger.warning(
                     f"Network Connection Error for '{src}': {e.__class__.__name__}. "
                     f"The URL may be invalid or the server is unreachable. Skipping."
                 )
                 failed_sources.append(src)
                 return []
+
     try:
-        # 🛡️ NEW: Chunk both the source URLs and the payload bodies simultaneously
-        chunks = [source_list[i:i + limit] for i in range(0, len(source_list), limit)]
+        # Execute the optimized generator pipeline
+        chunk_gen = _generate_chunks(source_list, payload_list, limit, delay_between_batches)
+        is_first_batch = True
 
-        if payload_list:
-            p_chunks = [payload_list[i:i + limit] for i in range(0, len(payload_list), limit)]
-        else:
-            # Fallback to empty payloads if none provided
-            p_chunks = [[None] * len(c) for c in chunks]
+        for src_chunk, p_chunk in chunk_gen:
+            # Apply delay between chunks (skipping the very first batch)
+            if not is_first_batch and delay_between_batches > 0.0:
+                await asyncio.sleep(delay_between_batches)
+            is_first_batch = False
 
-        for i, chunk in enumerate(chunks):
-            # Zip the URL and its specific POST payload together
-            tasks = [_task_wrapper(str(src), payload) for src, payload in zip(chunk, p_chunks[i])]
+            # Zip the URLs and their specific POST payloads together
+            tasks = [_task_wrapper(str(src), payload) for src, payload in zip(src_chunk, p_chunk)]
             chunk_results = await asyncio.gather(*tasks)
 
             for res in chunk_results:
-                if res: all_parsed_data.extend(res)
-
-            if delay_between_batches > 0.0 and i < len(chunks) - 1:
-                await asyncio.sleep(delay_between_batches)
+                if res:
+                    all_parsed_data.extend(res)
 
         return all_parsed_data, failed_sources
+
     finally:
         if should_close and _client is not None:
             await _client.aclose()

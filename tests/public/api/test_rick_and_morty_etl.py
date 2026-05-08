@@ -8,24 +8,21 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
-from incorporator.methods.converters import (
-    calc,
-    inc,
-    link_to,
-    link_to_list,
-    pluck, split_and_get
-)
+from incorporator.methods.converters import calc, inc, link_to, link_to_list, pluck, split_and_get
 from incorporator.methods.paginate import NextUrlPaginator
 
 
 # --- EXPLICIT SUBCLASSING ---
-class Location(Incorporator): pass
+class Location(Incorporator):
+    pass
 
 
-class Episode(Incorporator): pass
+class Episode(Incorporator):
+    pass
 
 
-class Character(Incorporator): pass
+class Character(Incorporator):
+    pass
 
 
 # --- MOCK NETWORK SETUP ---
@@ -43,10 +40,10 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
                     # Added residents to test the `calc` population logic
                     "residents": [
                         "https://rickandmortyapi.com/api/character/1",
-                        "https://rickandmortyapi.com/api/character/2"
-                    ]
+                        "https://rickandmortyapi.com/api/character/2",
+                    ],
                 }
-            ]
+            ],
         }
     elif "episode" in url:
         payload = {
@@ -61,10 +58,10 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
                     "air_date": "December 2, 2013",
                     "characters": [
                         "https://rickandmortyapi.com/api/character/1",
-                        "https://rickandmortyapi.com/api/character/2"
-                    ]
+                        "https://rickandmortyapi.com/api/character/2",
+                    ],
                 }
-            ]
+            ],
         }
     elif "character" in url:
         payload = {
@@ -77,10 +74,10 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
                     "species": "Human",
                     "location": {
                         "name": "Earth (Replacement Dimension)",
-                        "url": "https://rickandmortyapi.com/api/location/20"
+                        "url": "https://rickandmortyapi.com/api/location/20",
                     },
                     "episode": ["https://rickandmortyapi.com/api/episode/1"],
-                    "url": "https://rickandmortyapi.com/api/character/1"
+                    "url": "https://rickandmortyapi.com/api/character/1",
                 },
                 {
                     "id": 2,
@@ -89,12 +86,12 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
                     "species": "Human",
                     "location": {
                         "name": "Earth (Replacement Dimension)",
-                        "url": "https://rickandmortyapi.com/api/location/20"
+                        "url": "https://rickandmortyapi.com/api/location/20",
                     },
                     "episode": ["https://rickandmortyapi.com/api/episode/1"],
-                    "url": "https://rickandmortyapi.com/api/character/2"
-                }
-            ]
+                    "url": "https://rickandmortyapi.com/api/character/2",
+                },
+            ],
         }
     else:
         payload = {}
@@ -112,41 +109,46 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
     BASE_URL = "https://rickandmortyapi.com/api"
 
     # 🛡️ We create a reusable ID extractor using our composable primitive
-    get_id = split_and_get(delimiter='/', index=-1, cast_type=int)
+    get_id = split_and_get(delimiter="/", index=-1, cast_type=int)
 
     # ==========================================
     # 1. FETCH FOUNDATIONAL DATA
     # ==========================================
     locations = await Location.incorp(
-        inc_url=f"{BASE_URL}/location/", rec_path="results",
-        inc_code="id", inc_name="name", excl_lst=['url'],
+        inc_url=f"{BASE_URL}/location/",
+        rec_path="results",
+        inc_code="id",
+        inc_name="name",
+        excl_lst=["url"],
         inc_page=NextUrlPaginator("info", "next"),
-        conv_dict={
-            'population': calc(len, 'residents', default=0)
-        }
+        conv_dict={"population": calc(len, "residents", default=0)},
     )
 
     episodes = await Episode.incorp(
-        inc_url=f"{BASE_URL}/episode/", rec_path="results",
-        inc_code="id", inc_name="name", excl_lst=['url'],
+        inc_url=f"{BASE_URL}/episode/",
+        rec_path="results",
+        inc_code="id",
+        inc_name="name",
+        excl_lst=["url"],
         inc_page=NextUrlPaginator("info", "next"),
-        conv_dict={
-            'air_date': inc(datetime)
-        }
+        conv_dict={"air_date": inc(datetime)},
     )
 
     # ==========================================
     # 2. FETCH CHARACTERS & MAP RELATIONS
     # ==========================================
     characters = await Character.incorp(
-        inc_url=f"{BASE_URL}/character/", rec_path="results",
-        inc_code="id", inc_name="name", excl_lst=['image', 'url'],
+        inc_url=f"{BASE_URL}/character/",
+        rec_path="results",
+        inc_code="id",
+        inc_name="name",
+        excl_lst=["image", "url"],
         inc_page=NextUrlPaginator("info", "next"),
         conv_dict={
             # pluck() and split_and_get() work together perfectly
-            'location': link_to(locations, extractor=pluck("url", chain=get_id)),
-            'episode': link_to_list(episodes, extractor=get_id)
-        }
+            "location": link_to(locations, extractor=pluck("url", chain=get_id)),
+            "episode": link_to_list(episodes, extractor=get_id),
+        },
     )
 
     # ==========================================
@@ -197,9 +199,11 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
 
     if isinstance(locations, list):
         # Sort by our dynamically calculated 'population' attribute
-        sorted_locs = sorted(locations, key=lambda x: getattr(x, 'population', 0), reverse=True)
+        sorted_locs = sorted(locations, key=lambda x: getattr(x, "population", 0), reverse=True)
         for loc in sorted_locs[:10]:
-            print(f"{loc.inc_name:<40} | {getattr(loc, 'type', 'Unknown'):<20} | {getattr(loc, 'population', 0):<15}")
+            print(
+                f"{loc.inc_name:<40} | {getattr(loc, 'type', 'Unknown'):<20} | {getattr(loc, 'population', 0):<15}"
+            )
 
         # ==========================================
         # LORE TABLE 2: The "Deadliest" Episodes
@@ -233,7 +237,9 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
             for ep, count in ep_stats[:10]:
                 # Format the datetime object that inc(datetime) generated for us!
                 air_date = getattr(ep, "air_date", None)
-                date_str = air_date.strftime("%Y-%m-%d") if isinstance(air_date, datetime) else "Unknown"
+                date_str = (
+                    air_date.strftime("%Y-%m-%d") if isinstance(air_date, datetime) else "Unknown"
+                )
                 ep_code = getattr(ep, "episode", "Unknown")
 
                 print(f"{ep_code:<10} | {ep.inc_name:<35} | {date_str:<12} | {count:<10}")
@@ -265,7 +271,7 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
             actors.sort(
                 key=lambda a: (
                     {"alive": 2, "dead": 1}.get(str(getattr(a, "status", "Unknown")).lower(), 0),
-                    getattr(a, "inc_name", "Unknown")
+                    getattr(a, "inc_name", "Unknown"),
                 )
             )
 

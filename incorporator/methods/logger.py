@@ -34,8 +34,9 @@ def _safe_log_filename(prefix: str, suffix: str) -> str:
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
 
-    clean_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', prefix)
+    clean_prefix = re.sub(r"[^a-zA-Z0-9_-]", "_", prefix)
     return str(log_dir / f"{clean_prefix}_{suffix}")
+
 
 class JSONFormatter(logging.Formatter):
     """Formats log records as JSON Lines for easy dynamic parsing."""
@@ -46,10 +47,10 @@ class JSONFormatter(logging.Formatter):
             "msg": record.getMessage(),
             "time": self.formatTime(record, self.datefmt),
         }
-        if hasattr(record, 'meta'):
-            log_obj['meta'] = getattr(record, 'meta')
+        if hasattr(record, "meta"):
+            log_obj["meta"] = getattr(record, "meta")
         if record.exc_info:
-            log_obj['exc_info'] = self.formatException(record.exc_info)
+            log_obj["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(log_obj)
 
 
@@ -57,19 +58,19 @@ class APIFilter(logging.Filter):
     """Ensures only API-tagged traffic reaches the api.log."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        return bool(getattr(record, 'is_api', False))
+        return bool(getattr(record, "is_api", False))
 
 
 class StandardFilter(logging.Filter):
     """Prevents API-tagged traffic from cluttering the main error.log."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        return not bool(getattr(record, 'is_api', False))
+        return not bool(getattr(record, "is_api", False))
 
 
 def setup_class_logger(cls: Type[Any]) -> None:
     """Configures JSON-formatted, non-blocking logging for a dynamic subclass."""
-    cls_name = getattr(cls, '__name__', 'UnknownClass')
+    cls_name = getattr(cls, "__name__", "UnknownClass")
     logger = logging.getLogger(cls_name)
 
     # Prevent duplicate handlers if the dynamic class is generated multiple times
@@ -88,7 +89,7 @@ def setup_class_logger(cls: Type[Any]) -> None:
         _safe_log_filename(cls_name, "debug.log"),
         maxBytes=max_bytes,
         backupCount=backup_count,
-        encoding='utf-8'
+        encoding="utf-8",
     )
     debug_fh.setLevel(logging.DEBUG)
     debug_fh.setFormatter(formatter)
@@ -98,7 +99,7 @@ def setup_class_logger(cls: Type[Any]) -> None:
         _safe_log_filename(cls_name, "error.log"),
         maxBytes=max_bytes,
         backupCount=backup_count,
-        encoding='utf-8'
+        encoding="utf-8",
     )
     error_fh.setLevel(logging.INFO)
     error_fh.addFilter(StandardFilter())
@@ -109,7 +110,7 @@ def setup_class_logger(cls: Type[Any]) -> None:
         _safe_log_filename(cls_name, "api.log"),
         maxBytes=max_bytes,
         backupCount=backup_count,
-        encoding='utf-8'
+        encoding="utf-8",
     )
     api_fh.setLevel(logging.INFO)
     api_fh.addFilter(APIFilter())
@@ -141,7 +142,7 @@ class LoggingMixin:
 
             errors: List[Dict[str, Any]] = []
             try:
-                with open(path, 'r', encoding='utf-8') as f:
+                with open(path, "r", encoding="utf-8") as f:
                     for line in f:
                         if line.strip():
                             try:
@@ -164,19 +165,21 @@ class LoggingMixin:
     @classmethod
     def log_cls_info(cls, msg: str) -> None:
         meta_str = f'class:"{cls.__name__}"'
-        cls._get_cls_logger().info(msg, extra={'meta': meta_str, 'is_api': False})
+        cls._get_cls_logger().info(msg, extra={"meta": meta_str, "is_api": False})
 
     @classmethod
     def log_cls_error(cls, msg: str, exc_info: bool = False) -> None:
         meta_str = f'class:"{cls.__name__}"'
-        cls._get_cls_logger().error(msg, exc_info=exc_info, extra={'meta': meta_str, 'is_api': False})
+        cls._get_cls_logger().error(
+            msg, exc_info=exc_info, extra={"meta": meta_str, "is_api": False}
+        )
 
     # --- INSTANCE-LEVEL LOGGING ---
 
     def log_meta(self) -> str:
         """Generates a meta string detailing the class origin and instance identity."""
         cls = self.__class__
-        cls_name = getattr(cls, '__name__', 'UnknownClass')
+        cls_name = getattr(cls, "__name__", "UnknownClass")
         # Updated property lookups to match the refactored base.py schema contract
         return (
             f'class:"{cls_name}", name:"{cls_name}", '
@@ -188,26 +191,26 @@ class LoggingMixin:
         return logging.getLogger(self.__class__.__name__)
 
     def log_debug(self, msg: str) -> None:
-        self._get_logger().debug(msg, extra={'meta': self.log_meta(), 'is_api': False})
+        self._get_logger().debug(msg, extra={"meta": self.log_meta(), "is_api": False})
 
     def log_info(self, msg: str) -> None:
-        self._get_logger().info(msg, extra={'meta': self.log_meta(), 'is_api': False})
+        self._get_logger().info(msg, extra={"meta": self.log_meta(), "is_api": False})
 
     def log_error(self, msg: str, exc_info: bool = False) -> None:
-        self._get_logger().error(msg, exc_info=exc_info, extra={'meta': self.log_meta(), 'is_api': False})
+        self._get_logger().error(
+            msg, exc_info=exc_info, extra={"meta": self.log_meta(), "is_api": False}
+        )
 
     def log_api(self, msg: str) -> None:
-        self._get_logger().info(msg, extra={'meta': self.log_meta(), 'is_api': True})
+        self._get_logger().info(msg, extra={"meta": self.log_meta(), "is_api": True})
+
 
 class LoggedIncorporator(LoggingMixin, Incorporator):
     """The Incorporator Logging Wrapper Subclass."""
 
     @classmethod
     async def incorp(
-            cls: Type[TLoggedIncorporator],
-            *args: Any,
-            enable_logging: bool = False,
-            **kwargs: Any
+        cls: Type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
     ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
         """Declarative factory that sets up class-specific logging before generation."""
 
@@ -228,10 +231,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
 
     @classmethod
     async def refresh(
-            cls: Type[TLoggedIncorporator],
-            *args: Any,
-            enable_logging: bool = False,
-            **kwargs: Any
+        cls: Type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
     ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
         """Hydrates an existing instance with new data, optionally enabling logs."""
         result = await super().refresh(*args, **kwargs)
@@ -246,11 +246,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         return result
 
     @classmethod
-    async def export(
-            cls: Type[TLoggedIncorporator],
-            *args: Any,
-            **kwargs: Any
-    ) -> None:
+    async def export(cls: Type[TLoggedIncorporator], *args: Any, **kwargs: Any) -> None:
         """Exports the class data, wrapping the process in observability logs."""
         setup_class_logger(cls)
 

@@ -13,20 +13,25 @@ from incorporator.methods.converters import calc, inc, datetime
 
 
 # --- EXPLICIT SUBCLASSING ---
-class Track(Incorporator): pass
+class Track(Incorporator):
+    pass
 
 
-class Driver(Incorporator): pass
+class Driver(Incorporator):
+    pass
 
 
-class Race(Incorporator): pass
+class Race(Incorporator):
+    pass
 
 
-class Standing(Incorporator): pass
+class Standing(Incorporator):
+    pass
 
 
 # Dedicated subclass for testing the React export pipeline
-class FantasyTeam(Incorporator): pass
+class FantasyTeam(Incorporator):
+    pass
 
 
 # --- MOCK NETWORK SETUP ---
@@ -36,21 +41,49 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
     elif "drivers.json" in url:
         payload = {
             "response": [
-                {"Nascar_Driver_ID": 3989, "Full_Name": "Kyle Larson", "Badge": "5", "Team": "Hendrick"},
+                {
+                    "Nascar_Driver_ID": 3989,
+                    "Full_Name": "Kyle Larson",
+                    "Badge": "5",
+                    "Team": "Hendrick",
+                },
                 {"Nascar_Driver_ID": 4441, "Full_Name": "Sammy Smith", "Badge": "8", "Team": "JRM"},
-                {"Nascar_Driver_ID": 4235, "Full_Name": "Corey Heim", "Badge": "11", "Team": "Tricon"}
+                {
+                    "Nascar_Driver_ID": 4235,
+                    "Full_Name": "Corey Heim",
+                    "Badge": "11",
+                    "Team": "Tricon",
+                },
             ]
         }
     elif "race_list_basic.json" in url:
-        payload = {"series_1": [
-            {"race_id": 5333, "race_name": "Daytona 500", "track_id": 1, "pole_winner_driver_id": 3989,
-             "date_scheduled": "2026-02-15T14:30:00Z"}]}
+        payload = {
+            "series_1": [
+                {
+                    "race_id": 5333,
+                    "race_name": "Daytona 500",
+                    "track_id": 1,
+                    "pole_winner_driver_id": 3989,
+                    "date_scheduled": "2026-02-15T14:30:00Z",
+                }
+            ]
+        }
     elif "/1/racinginsights" in url:
-        payload = [{"driver_id": 3989, "driver_name": "Kyle Larson", "points": 1050, "wins": 3, "top_10": 15}]
+        payload = [
+            {
+                "driver_id": 3989,
+                "driver_name": "Kyle Larson",
+                "points": 1050,
+                "wins": 3,
+                "top_10": 15,
+            }
+        ]
     elif "/2/racinginsights" in url:
         payload = [{"driver_id": 4441, "driver_name": "Sammy Smith", "points": 850, "top_10": 10}]
     elif "/3/racinginsights" in url:
-        payload = [{"driver_id": 4235, "driver_name": "Corey Heim", "points": 920, "wins": 4, "top_10": 12}]
+        payload = [
+            {"driver_id": 4235, "driver_name": "Corey Heim", "points": 920, "wins": 4, "top_10": 12}
+        ]
     else:
         payload = {}
     return httpx.Response(200, text=json.dumps(payload))
@@ -58,7 +91,9 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
 
 # --- TESTS ---
 @pytest.mark.asyncio
-async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_nascar_react_export_pipeline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Validates data fetching, scoring, and the complete JSON React export pipeline."""
 
     monkeypatch.setattr("incorporator.methods.network.execute_request", mock_execute_get)
@@ -68,31 +103,58 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
     # 1. FETCH DATA CONCURRENTLY
     # ==========================================
     tracks, drivers = await asyncio.gather(
-        Track.incorp(inc_url=f"{BASE}/tracks.json", rec_path="items", inc_code="track_id", inc_name="track_name"),
-        Driver.incorp(inc_url=f"{BASE}/drivers.json", rec_path="response", inc_code="Nascar_Driver_ID",
-                      inc_name="Full_Name")
+        Track.incorp(
+            inc_url=f"{BASE}/tracks.json",
+            rec_path="items",
+            inc_code="track_id",
+            inc_name="track_name",
+        ),
+        Driver.incorp(
+            inc_url=f"{BASE}/drivers.json",
+            rec_path="response",
+            inc_code="Nascar_Driver_ID",
+            inc_name="Full_Name",
+        ),
     )
 
     cup_races = await Race.incorp(
-        inc_url=f"{BASE}/2026/race_list_basic.json", rec_path="series_1",
-        inc_code="race_id", inc_name="race_name",
-        conv_dict={'track_id': link_to(tracks), 'pole_winner_driver_id': link_to(drivers), 'date_scheduled': inc(datetime)},
-        name_chg=[('track_id', 'track')]
+        inc_url=f"{BASE}/2026/race_list_basic.json",
+        rec_path="series_1",
+        inc_code="race_id",
+        inc_name="race_name",
+        conv_dict={
+            "track_id": link_to(tracks),
+            "pole_winner_driver_id": link_to(drivers),
+            "date_scheduled": inc(datetime),
+        },
+        name_chg=[("track_id", "track")],
     )
 
     standings_conv = {
-        'points': calc(int, default=0, target_type=int),
-        'wins': calc(int, default=0, target_type=int),
-        'top_10': calc(int, default=0, target_type=int)
+        "points": calc(int, default=0, target_type=int),
+        "wins": calc(int, default=0, target_type=int),
+        "top_10": calc(int, default=0, target_type=int),
     }
 
     cup_st, busch_st, truck_st = await asyncio.gather(
-        Standing.incorp(inc_url=f"{BASE}/1/racinginsights-points-feed.json", inc_code="driver_id",
-                        inc_name="driver_name", conv_dict=standings_conv),
-        Standing.incorp(inc_url=f"{BASE}/2/racinginsights-points-feed.json", inc_code="driver_id",
-                        inc_name="driver_name", conv_dict=standings_conv),
-        Standing.incorp(inc_url=f"{BASE}/3/racinginsights-points-feed.json", inc_code="driver_id",
-                        inc_name="driver_name", conv_dict=standings_conv)
+        Standing.incorp(
+            inc_url=f"{BASE}/1/racinginsights-points-feed.json",
+            inc_code="driver_id",
+            inc_name="driver_name",
+            conv_dict=standings_conv,
+        ),
+        Standing.incorp(
+            inc_url=f"{BASE}/2/racinginsights-points-feed.json",
+            inc_code="driver_id",
+            inc_name="driver_name",
+            conv_dict=standings_conv,
+        ),
+        Standing.incorp(
+            inc_url=f"{BASE}/3/racinginsights-points-feed.json",
+            inc_code="driver_id",
+            inc_name="driver_name",
+            conv_dict=standings_conv,
+        ),
     )
 
     # ==========================================
@@ -100,10 +162,7 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
     # ==========================================
     points_standings = {1: cup_st, 2: busch_st, 3: truck_st}
 
-    mock_league = {
-        "TeamAlpha": [(1, 3989), (2, 4441)],
-        "TeamBeta": [(3, 4235)]
-    }
+    mock_league = {"TeamAlpha": [(1, 3989), (2, 4441)], "TeamBeta": [(3, 4235)]}
 
     raw_react_data = []
     for team_name, roster in mock_league.items():
@@ -113,11 +172,9 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
             if standing:
                 total_score += getattr(standing, "points", 0)
 
-        raw_react_data.append({
-            "team_id": team_name,
-            "total_score": total_score,
-            "active_drivers": len(roster)
-        })
+        raw_react_data.append(
+            {"team_id": team_name, "total_score": total_score, "active_drivers": len(roster)}
+        )
 
     # ==========================================
     # 3. THE INCORPORATOR REACT PIPELINE
@@ -128,20 +185,12 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
     temp_feed.write_text(json.dumps(raw_react_data))
 
     react_teams = await FantasyTeam.incorp(
-        inc_file=str(temp_feed),
-        inc_code="team_id",
-        inc_name="team_id"
+        inc_file=str(temp_feed), inc_code="team_id", inc_name="team_id"
     )
 
-    react_teams = await FantasyTeam.refresh(
-        instance=react_teams,
-        new_file=str(temp_feed)
-    )
+    react_teams = await FantasyTeam.refresh(instance=react_teams, new_file=str(temp_feed))
 
-    await FantasyTeam.export(
-        instance=react_teams,
-        file_path=str(final_feed)
-    )
+    await FantasyTeam.export(instance=react_teams, file_path=str(final_feed))
 
     # ==========================================
     # 4. ASSERTIONS & SORTING
@@ -170,9 +219,9 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
     print("-" * 80)
     for team in react_teams:
         # FIXED: Check the actual dynamic API attribute (team_id) instead of inc_name
-        t_name = str(getattr(team, 'team_id', 'Unknown'))
-        t_score = getattr(team, 'total_score', 0)
-        t_drivers = getattr(team, 'active_drivers', 0)
+        t_name = str(getattr(team, "team_id", "Unknown"))
+        t_score = getattr(team, "total_score", 0)
+        t_drivers = getattr(team, "active_drivers", 0)
 
         print(f"{t_name:<25} | {t_score:<15} | {t_drivers}")
     print("=" * 80 + "\n")

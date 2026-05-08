@@ -16,8 +16,10 @@ from .exceptions import IncorporatorFormatError
 
 logger = logging.getLogger(__name__)
 
+
 class FormatType(str, Enum):
     """Strict enumeration of supported data formats."""
+
     JSON = "json"
     CSV = "csv"
     XML = "xml"
@@ -32,11 +34,13 @@ def infer_format(path_or_url: str) -> FormatType:
         return FormatType.XML
     return FormatType.JSON
 
+
 def _serialize_nested(val: Any) -> Any:
     """Safely serializes nested lists/dicts to JSON strings for flat format exports."""
     if isinstance(val, (dict, list)):
         return json.dumps(val)
     return val
+
 
 def _xml_to_dict(element: ET.Element) -> Dict[str, Any]:
     """Recursively converts an XML ElementTree into a Python dictionary."""
@@ -61,7 +65,7 @@ def _xml_to_dict(element: ET.Element) -> Dict[str, Any]:
         val_text = element.text.strip()
         if element.attrib:
             leaf_dict: Dict[str, Any] = dict(element.attrib)
-            leaf_dict['text'] = val_text
+            leaf_dict["text"] = val_text
             result = {element.tag: leaf_dict}
         else:
             result = {element.tag: val_text}
@@ -71,7 +75,7 @@ def _xml_to_dict(element: ET.Element) -> Dict[str, Any]:
 
 def _check_xml_security(raw_data: str) -> None:
     """Pre-flight check to block DTDs and Entities (XXE) without external dependencies."""
-    if re.search(r'<!(?:DOCTYPE|ENTITY)', raw_data, re.IGNORECASE):
+    if re.search(r"<!(?:DOCTYPE|ENTITY)", raw_data, re.IGNORECASE):
         raise IncorporatorFormatError(
             "Security Policy Violation: XML DTDs and External Entities (XXE) are strictly "
             "blocked to prevent 'Billion Laughs' memory exhaustion attacks."
@@ -103,7 +107,7 @@ class JSONHandler(BaseFormatHandler):
     def write(self, data: List[Dict[str, Any]], file_path: str) -> None:
         try:
             path = Path(file_path).resolve()
-            with open(path, 'w', encoding='utf-8') as f:
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
         except OSError as e:
             raise IncorporatorFormatError(f"JSON File IO Error on {file_path}: {e}") from e
@@ -122,10 +126,7 @@ class CSVHandler(BaseFormatHandler):
                     safe_k = str(k) if k is not None else "unknown_column"
 
                     # DSA: Replaced string method calls with O(1) index lookups for tight loop efficiency
-                    if v and (
-                            (v[0] == '{' and v[-1] == '}') or
-                            (v[0] == '[' and v[-1] == ']')
-                    ):
+                    if v and ((v[0] == "{" and v[-1] == "}") or (v[0] == "[" and v[-1] == "]")):
                         try:
                             parsed_row[safe_k] = json.loads(v)
                         except json.JSONDecodeError:
@@ -144,8 +145,15 @@ class CSVHandler(BaseFormatHandler):
 
         try:
             path = Path(file_path).resolve()
-            with open(path, 'w', encoding='utf-8', newline='') as f:
-                processed_data =[{k: _serialize_nested(v) for k, v in row.items()} for row in data]
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                # Inlined JSON serialization prevents millions of function calls
+                processed_data = [
+                    {
+                        k: (json.dumps(v) if isinstance(v, (dict, list)) else v)
+                        for k, v in row.items()
+                    }
+                    for row in data
+                ]
 
                 writer = csv.DictWriter(f, fieldnames=list(processed_data[0].keys()))
                 writer.writeheader()
@@ -164,7 +172,7 @@ class XMLHandler(BaseFormatHandler):
         except ET.ParseError:
             try:
                 # Fallback: Only duplicate memory if strict parser chokes on leading whitespace
-                root = ET.fromstring(raw_data.strip())
+                root = ET.fromstring(raw_data.strip())  # noqa: S314
                 return _xml_to_dict(root)
             except ET.ParseError as e:
                 raise IncorporatorFormatError(f"Invalid XML: {e}")
@@ -172,7 +180,7 @@ class XMLHandler(BaseFormatHandler):
     def write(self, data: List[Dict[str, Any]], file_path: str) -> None:
         try:
             path = Path(file_path).resolve()
-            with open(path, 'w', encoding='utf-8') as f:
+            with open(path, "w", encoding="utf-8") as f:
                 root = ET.Element("root")
                 for item in data:
                     item_el = ET.SubElement(root, "item")
@@ -187,7 +195,7 @@ class XMLHandler(BaseFormatHandler):
                         child.text = str(safe_val) if safe_val is not None else ""
 
                 tree = ET.ElementTree(root)
-                tree.write(f, encoding='unicode')
+                tree.write(f, encoding="unicode")
         except OSError as e:
             raise IncorporatorFormatError(f"XML File IO Error on {file_path}: {e}") from e
 
@@ -199,7 +207,10 @@ _HANDLERS: Dict[FormatType, BaseFormatHandler] = {
     FormatType.XML: XMLHandler(),
 }
 
-async def parse_source_data(raw_data: str, format_type: FormatType) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+
+async def parse_source_data(
+    raw_data: str, format_type: FormatType
+) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
     """Asynchronously routes raw string data to the correct parser strategy."""
     handler = _HANDLERS.get(format_type)
     if not handler:
@@ -211,7 +222,7 @@ async def parse_source_data(raw_data: str, format_type: FormatType) -> Union[Dic
 
     except Exception as e:
         # Log the failure without interrupting the program.
-        snippet = str(raw_data).strip()[:60].replace('\n', ' ')
+        snippet = str(raw_data).strip()[:60].replace("\n", " ")
         logger.warning(
             f"⚠️ PARSE FAILED for format '{format_type}'. "
             f"The payload may be malformed (e.g., corrupted file or HTML firewall). "
@@ -222,7 +233,9 @@ async def parse_source_data(raw_data: str, format_type: FormatType) -> Union[Dic
         return []
 
 
-async def write_destination_data(data: List[Dict[str, Any]], file_path: str, format_type: FormatType) -> None:
+async def write_destination_data(
+    data: List[Dict[str, Any]], file_path: str, format_type: FormatType
+) -> None:
     """Asynchronously routes dictionary data to the correct writer strategy."""
     handler = _HANDLERS.get(format_type)
     if not handler:

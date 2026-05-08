@@ -36,16 +36,19 @@ def make_linker(quote_currency: str):
 # ==========================================
 class BinanceStat(Incorporator):
     """Registry 1: Holds 24hr volume and price statistics."""
+
     pass
 
 
 class BinanceBook(Incorporator):
     """Registry 2: Holds real-time order book bids and asks."""
+
     pass
 
 
 class CryptoAsset(Incorporator):
     """The Base Object: Holds global CoinGecko data."""
+
     pass
 
 
@@ -59,13 +62,12 @@ async def main() -> None:
     binance_stats = await BinanceStat.incorp(
         inc_url="https://api.binance.us/api/v3/ticker/24hr",
         inc_code="symbol",
-        excl_lst=["priceChangePercent", "weightedAvgPrice", "openPrice", "prevClosePrice"]
+        excl_lst=["priceChangePercent", "weightedAvgPrice", "openPrice", "prevClosePrice"],
     )
 
     print("⏳ Fetching Live Order Book Bids/Asks...")
     binance_books = await BinanceBook.incorp(
-        inc_url="https://api.binance.us/api/v3/ticker/bookTicker",
-        inc_code="symbol"
+        inc_url="https://api.binance.us/api/v3/ticker/bookTicker", inc_code="symbol"
     )
 
     print(f"✅ Loaded {len(binance_stats)} Stats and {len(binance_books)} Order Books into memory.")
@@ -84,10 +86,9 @@ async def main() -> None:
             # It maps the USDT and USDC pairings to both the Stats AND the Order Books.
             "stats_usdt": calc(link_to(binance_stats, extractor=make_linker("USDT")), "symbol"),
             "book_usdt": calc(link_to(binance_books, extractor=make_linker("USDT")), "symbol"),
-
             "stats_usdc": calc(link_to(binance_stats, extractor=make_linker("USDC")), "symbol"),
             "book_usdc": calc(link_to(binance_books, extractor=make_linker("USDC")), "symbol"),
-        }
+        },
     )
 
     print(f"✅ Fused {len(assets)} assets. Commencing Unified Readout...\n")
@@ -97,7 +98,8 @@ async def main() -> None:
     # ==========================================
     print("=" * 115)
     print(
-        f"{'ASSET':<18} | {'GLOBAL PRICE':<14} | {'USDT VOLUME':<16} | {'USDT BEST BID':<14} | {'USDC VOLUME':<16} | {'USDC BEST BID'}")
+        f"{'ASSET':<18} | {'GLOBAL PRICE':<14} | {'USDT VOLUME':<16} | {'USDT BEST BID':<14} | {'USDC VOLUME':<16} | {'USDC BEST BID'}"
+    )
     print("=" * 115)
 
     def extract_market_data(stats_obj, book_obj):
@@ -110,7 +112,7 @@ async def main() -> None:
 
     # We sort descending (reverse=True) based on the 'current_price' attribute.
     # getattr ensures it defaults to 0 if the API is missing the price.
-    assets.sort(key=lambda a: getattr(a, "current_price", 0), reverse=True)
+    assets.sort(key=lambda a: getattr(a, "market_cap_rank", 0))
 
     for asset in assets:
         name = str(getattr(asset, "inc_name", "Unknown"))
@@ -118,13 +120,20 @@ async def main() -> None:
         global_price = f"${getattr(asset, 'current_price', 0):,.2f}"
 
         # Safely traverse the 4 linked Binance objects!
-        vol_usdt, bid_usdt = extract_market_data(getattr(asset, "stats_usdt", None), getattr(asset, "book_usdt", None))
-        vol_usdc, bid_usdc = extract_market_data(getattr(asset, "stats_usdc", None), getattr(asset, "book_usdc", None))
+        vol_usdt, bid_usdt = extract_market_data(
+            getattr(asset, "stats_usdt", None), getattr(asset, "book_usdt", None)
+        )
+        vol_usdc, bid_usdc = extract_market_data(
+            getattr(asset, "stats_usdc", None), getattr(asset, "book_usdc", None)
+        )
 
         asset_label = f"{name} ({symbol})"
-        print(f"{asset_label:<18} | {global_price:<14} | {vol_usdt:<16} | {bid_usdt:<14} | {vol_usdc:<16} | {bid_usdc}")
+        print(
+            f"{asset_label:<18} | {global_price:<14} | {vol_usdt:<16} | {bid_usdt:<14} | {vol_usdc:<16} | {bid_usdc}"
+        )
 
     print("=" * 115)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

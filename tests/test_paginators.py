@@ -10,7 +10,8 @@ from incorporator import Incorporator
 from incorporator.methods.paginate import NextUrlPaginator, OffsetPaginator
 
 
-class PaginatedItem(Incorporator): pass
+class PaginatedItem(Incorporator):
+    pass
 
 
 async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
@@ -40,12 +41,12 @@ async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Res
     if "page=2" in url:
         payload = {
             "results": [{"id": 2, "name": "NextUrl Item B"}],
-            "next": None  # Stop condition
+            "next": None,  # Stop condition
         }
     else:
         payload = {
             "results": [{"id": 1, "name": "NextUrl Item A"}],
-            "next": "https://api.com/items?page=2"
+            "next": "https://api.com/items?page=2",
         }
 
     return httpx.Response(200, text=json.dumps(payload), request=httpx.Request("GET", url))
@@ -60,7 +61,7 @@ async def test_explicit_offset_paginator(monkeypatch: pytest.MonkeyPatch) -> Non
         inc_url="https://api.com/items",
         rec_path="results",
         # NEW SYNTAX: Explicit Strategy Pattern
-        inc_page=OffsetPaginator(limit=5)
+        inc_page=OffsetPaginator(limit=5),
     )
 
     assert isinstance(offset_items, list)
@@ -78,7 +79,7 @@ async def test_explicit_next_url_paginator(monkeypatch: pytest.MonkeyPatch) -> N
         inc_url="https://api.com/items",
         rec_path="results",
         # NEW SYNTAX: Explicit Strategy Pattern
-        inc_page=NextUrlPaginator()
+        inc_page=NextUrlPaginator(),
     )
 
     assert isinstance(page_items, list)
@@ -95,13 +96,11 @@ def test_get_url_injection() -> None:
     source_urls = ["https://api.com/users/{}/profile"]
 
     kwargs = Incorporator._resolve_declarative_routing(
-        extracted_data=extracted_ids,
-        source_urls=source_urls,
-        method="GET"
+        extracted_data=extracted_ids, source_urls=source_urls, method="GET"
     )
 
     # It should generate N unique URLs
     assert kwargs["inc_url"] == [
         "https://api.com/users/alpha/profile",
-        "https://api.com/users/beta/profile"
+        "https://api.com/users/beta/profile",
     ]

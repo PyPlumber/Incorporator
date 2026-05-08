@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "incorporator"
-version = "1.0.5"
-description = "The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway."
+version = "1.0.6"
+description = "A schema-free data mapper that turns JSON, XML, or CSV into a unified Python object graph with dot-notation and access-at-runtime."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }

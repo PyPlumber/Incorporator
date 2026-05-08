@@ -17,11 +17,9 @@ from incorporator.methods.converters import (
     pluck,
     split_and_get,
     each,
-    join_all
+    join_all,
 )
 from incorporator.base import Incorporator
-
-
 
 
 def test_inc_type_ranked_engine_bools_and_dates() -> None:
@@ -103,14 +101,14 @@ def test_url_toolkit() -> None:
 
     # --- split_and_get ---
     # Because .strip('/') removes the trailing slash automatically, index is ALWAYS -1
-    extractor = split_and_get(delimiter='/', index=-1, cast_type=int)
+    extractor = split_and_get(delimiter="/", index=-1, cast_type=int)
 
     assert extractor("https://api.com/user/101") == 101
     assert extractor("https://api.com/user/101/") == 101
     assert extractor(None) is None
 
     # --- pluck ---
-    plucker = pluck("homeworld", chain=split_and_get(delimiter='/', index=-1, cast_type=int))
+    plucker = pluck("homeworld", chain=split_and_get(delimiter="/", index=-1, cast_type=int))
 
     # Test dictionary pluck (e.g. from JSON response)
     assert plucker({"name": "Earth", "homeworld": "https://api.com/planet/5/"}) == 5
@@ -145,21 +143,22 @@ class MockObj:
     def __init__(self, **kwargs: Any):
         self.__dict__.update(kwargs)
 
+
 def test_extract_parent_data() -> None:
     # 1. Standard Object Drill
-    parents =[MockObj(vehicle=MockObj(vin="123")), MockObj(vehicle=MockObj(vin="456"))]
+    parents = [MockObj(vehicle=MockObj(vin="123")), MockObj(vehicle=MockObj(vin="456"))]
     assert Incorporator._extract_parent_data(parents, "vehicle.vin") == ["123", "456"]
 
     # 2. Schema Splintering (List nested inside the drill path)
-    splintered_parents =[MockObj(vehicle=[MockObj(vin="A"), MockObj(vin="B")])]
-    assert Incorporator._extract_parent_data(splintered_parents, "vehicle.vin") ==["A", "B"]
+    splintered_parents = [MockObj(vehicle=[MockObj(vin="A"), MockObj(vin="B")])]
+    assert Incorporator._extract_parent_data(splintered_parents, "vehicle.vin") == ["A", "B"]
 
     # 3. Dictionary handling and Missing Keys (Graceful degradation)
-    mixed_parents =[MockObj(vehicle={"vin": "DictVIN"}), MockObj(vehicle=None)]
+    mixed_parents = [MockObj(vehicle={"vin": "DictVIN"}), MockObj(vehicle=None)]
     assert Incorporator._extract_parent_data(mixed_parents, "vehicle.vin") == ["DictVIN"]
 
     # 4. Deeply nested missing data
-    assert Incorporator._extract_parent_data(parents, "vehicle.engine.cylinders") ==[]
+    assert Incorporator._extract_parent_data(parents, "vehicle.engine.cylinders") == []
 
 
 def test_declarative_post_routing() -> None:
@@ -172,19 +171,22 @@ def test_declarative_post_routing() -> None:
         extracted_data=extracted_ids,
         source_urls=source_urls,
         http_method="POST",  # 🛡️ THE FIX: Use canonical internal kwargs
-        json_payload={"id": each(), "static": "token"}
+        json_payload={"id": each(), "static": "token"},
     )
 
     # Should multiply the URL by 2, and create 2 distinct payloads
     assert kwargs_each["inc_url"] == ["https://api.com/update", "https://api.com/update"]
-    assert kwargs_each["payload_list"] == [{"id": 101, "static": "token"}, {"id": 102, "static": "token"}]
+    assert kwargs_each["payload_list"] == [
+        {"id": 101, "static": "token"},
+        {"id": 102, "static": "token"},
+    ]
 
     # 2. Test the `join_all()` token (1 Bulk Request)
     kwargs_join = Incorporator._resolve_declarative_routing(
         extracted_data=extracted_ids,
         source_urls=source_urls,
         http_method="POST",  # 🛡️ THE FIX
-        json_payload={"ids": join_all(",")}
+        json_payload={"ids": join_all(",")},
     )
 
     # Should keep 1 URL, and create 1 payload with a joined string
@@ -197,7 +199,7 @@ def test_declarative_post_routing() -> None:
             extracted_data=extracted_ids,
             source_urls=[],
             http_method="POST",  # 🛡️ THE FIX
-            json_payload={"ids": join_all(",")}
+            json_payload={"ids": join_all(",")},
         )
 
 
@@ -209,11 +211,11 @@ def test_get_url_injection() -> None:
     kwargs = Incorporator._resolve_declarative_routing(
         extracted_data=extracted_ids,
         source_urls=source_urls,
-        http_method="GET"  # 🛡️ THE FIX
+        http_method="GET",  # 🛡️ THE FIX
     )
 
     # It should generate N unique URLs
     assert kwargs["inc_url"] == [
         "https://api.com/users/alpha/profile",
-        "https://api.com/users/beta/profile"
+        "https://api.com/users/beta/profile",
     ]

@@ -10,7 +10,8 @@ from incorporator import Incorporator
 
 
 # --- EXPLICIT SUBCLASSING ---
-class Coin(Incorporator): pass
+class Coin(Incorporator):
+    pass
 
 
 # --- MOCK NETWORK SETUP ---
@@ -18,14 +19,14 @@ async def mock_coingecko_execute_get(url: str, *args: Any, **kwargs: Any) -> htt
     """Mocks the CoinGecko /coins/markets endpoint."""
     if "coins/markets" in url:
         # Notice: CoinGecko returns a root-level JSON array, not an envelope like {"data":[]}
-        payload =[
+        payload = [
             {
                 "id": "bitcoin",
                 "symbol": "btc",
                 "name": "Bitcoin",
                 "current_price": 64000.00,
                 "market_cap": 1250000000000,
-                "total_volume": 35000000000
+                "total_volume": 35000000000,
             },
             {
                 "id": "ethereum",
@@ -33,7 +34,7 @@ async def mock_coingecko_execute_get(url: str, *args: Any, **kwargs: Any) -> htt
                 "name": "Ethereum",
                 "current_price": 3500.00,
                 "market_cap": 420000000000,
-                "total_volume": 15000000000
+                "total_volume": 15000000000,
             },
             {
                 "id": "solana",
@@ -41,11 +42,11 @@ async def mock_coingecko_execute_get(url: str, *args: Any, **kwargs: Any) -> htt
                 "name": "Solana",
                 "current_price": 145.50,
                 "market_cap": 65000000000,
-                "total_volume": 3000000000
-            }
+                "total_volume": 3000000000,
+            },
         ]
     else:
-        payload =[]
+        payload = []
 
     req = httpx.Request("GET", url)
     return httpx.Response(200, text=json.dumps(payload), request=req)
@@ -105,9 +106,9 @@ async def test_coingecko_zero_boilerplate(monkeypatch: pytest.MonkeyPatch) -> No
     print("-" * 80)
 
     for c in coins:
-        name = str(getattr(c, 'inc_name', 'Unknown'))
-        symbol = str(getattr(c, 'symbol', 'N/A'))
-        price = getattr(c, 'current_price', 0)
+        name = str(getattr(c, "inc_name", "Unknown"))
+        symbol = str(getattr(c, "symbol", "N/A"))
+        price = getattr(c, "current_price", 0)
 
         print(f"{name:<20} | {symbol:<10} | ${price:,.2f}")
 

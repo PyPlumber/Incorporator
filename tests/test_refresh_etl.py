@@ -13,7 +13,8 @@ from incorporator import Incorporator
 from incorporator.methods.converters import calc, flt
 
 
-class LiveStock(Incorporator): pass
+class LiveStock(Incorporator):
+    pass
 
 
 # --- MOCK NETWORK SETUP ---
@@ -32,7 +33,7 @@ async def mock_live_ticker(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
             "symbol": "AAPL",
             "company_name": "Apple Inc.",
             "current_price": "150.00",  # String that needs parsing
-            "status": "Market Open"
+            "status": "Market Open",
         }
     else:
         # STATE B: Market Update (Price surged!)
@@ -40,7 +41,7 @@ async def mock_live_ticker(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
             "symbol": "AAPL",
             "company_name": "Apple Inc.",
             "current_price": "165.50",
-            "status": "Market Active"
+            "status": "Market Active",
         }
 
     req = httpx.Request("GET", url)
@@ -64,9 +65,7 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
         inc_url=BASE_URL,
         inc_code="symbol",
         inc_name="company_name",
-        conv_dict={
-            "current_price": calc(float, default=0.0, target_type=flt)
-        }
+        conv_dict={"current_price": calc(float, default=0.0, target_type=flt)},
     )
 
     # Framework auto-unwraps single arrays!
@@ -84,9 +83,7 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
         new_url=BASE_URL,
         inc_code="symbol",
         inc_name="company_name",
-        conv_dict={
-            "current_price": calc(float, default=0.0, target_type=flt)
-        }
+        conv_dict={"current_price": calc(float, default=0.0, target_type=flt)},
     )
 
     assert not isinstance(stock_b, list)
@@ -101,9 +98,6 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
     assert stock_b.current_price == 165.5
 
 
-
-
-
 class DummyModel(Incorporator):
     pass
 
@@ -113,15 +107,14 @@ async def test_incorporator_list_state_carrier() -> None:
     """Verifies that inc_child_path persists on the returned list wrapper."""
 
     # We mock the network engine so we only test the framework's internal state mechanism
-    with patch("incorporator.methods.network.fetch_concurrent_payloads", new_callable=AsyncMock) as mock_fetch:
+    with patch(
+        "incorporator.methods.network.fetch_concurrent_payloads", new_callable=AsyncMock
+    ) as mock_fetch:
         # Mock returning 2 empty dictionaries from the network
         mock_fetch.return_value = ([{}, {}], list())
 
         # Execute incorp and explicitly pass our extraction path
-        result = await DummyModel.incorp(
-            inc_url="https://mock.api",
-            inc_child="Vehicle.VIN"
-        )
+        result = await DummyModel.incorp(inc_url="https://mock.api", inc_child="Vehicle.VIN")
 
         # Verify the wrapper caught and retained the state!
         assert isinstance(result, IncorporatorList)

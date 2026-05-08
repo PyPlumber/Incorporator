@@ -7,27 +7,30 @@ import pytest
 
 # --- JSON FIXTURES ---
 
+
 @pytest.fixture
 def clean_json_file(tmp_path: Path) -> str:
     """Creates a temporary valid JSON file on the disk and returns its path."""
-    payload =[
+    payload = [
         {"id": 1, "name": "Bulbasaur", "weight": 69},
-        {"id": 2, "name": "Ivysaur", "weight": 130}
+        {"id": 2, "name": "Ivysaur", "weight": 130},
     ]
     file_path = tmp_path / "clean_data.json"
-    file_path.write_text(json.dumps(payload), encoding='utf-8')
+    file_path.write_text(json.dumps(payload), encoding="utf-8")
     return str(file_path)
 
 
 @pytest.fixture
 def broken_json_file(tmp_path: Path) -> str:
     """Creates a temporary malformed JSON file on the disk."""
-    payload = '{"id": 1, "name": "Missing Quotes}' # Intentionally broken
+    payload = '{"id": 1, "name": "Missing Quotes}'  # Intentionally broken
     file_path = tmp_path / "broken_data.json"
-    file_path.write_text(payload, encoding='utf-8')
+    file_path.write_text(payload, encoding="utf-8")
     return str(file_path)
 
+
 # --- CSV FIXTURES ---
+
 
 @pytest.fixture
 def csv_users_payload() -> str:
@@ -38,7 +41,9 @@ def csv_users_payload() -> str:
         "102,bob_jones,false,0.00\n"
     )
 
+
 # --- XML FIXTURES ---
+
 
 @pytest.fixture
 def xml_catalog_payload() -> str:

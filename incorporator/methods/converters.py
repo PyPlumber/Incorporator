@@ -6,17 +6,16 @@ Includes a Ranked Dictionary of fallbacks to guarantee 100% "Null-Safe" ETL pipe
 """
 
 import collections.abc
+import weakref
 import logging
 from datetime import datetime
-from typing import (
-    Any, Callable, Dict, List, Optional, TypeVar
-)
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 from pydantic import TypeAdapter
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 # ==========================================
 # 1. DX SENTINELS & ALIASES
@@ -26,25 +25,33 @@ flt = float
 
 class _NewSentinel:
     """Explicit marker to indicate an attribute must be generated from scratch."""
+
     pass
+
 
 new = _NewSentinel()
 
+
 class _EachSentinel:
     """Marker to distribute extracted list items across concurrent POST requests."""
+
     pass
+
 
 # ==========================================
 # COMMON CALC() FUNCTIONS (Built-ins)
 # ==========================================
 def sum_attributes(*args: Any) -> float:
     """Example built-in calc function: Safely sums multiple attributes."""
-    return sum(float(x) for x in args if x is not None and str(x).replace('.','',1).isdigit())
+    return sum(float(x) for x in args if x is not None and str(x).replace(".", "", 1).isdigit())
 
-def split_and_get(delimiter: str = '/', index: int = -1, cast_type: Optional[Callable[[Any], Any]] = None) -> Callable[
-    [Any], Any]:
+
+def split_and_get(
+    delimiter: str = "/", index: int = -1, cast_type: Optional[Callable[[Any], Any]] = None
+) -> Callable[[Any], Any]:
     def _splitter(value: Any) -> Any:
-        if not value: return None
+        if not value:
+            return None
         try:
             result = str(value).strip(delimiter).split(delimiter)[index]
             return cast_type(result) if cast_type else result
@@ -53,14 +60,18 @@ def split_and_get(delimiter: str = '/', index: int = -1, cast_type: Optional[Cal
 
     return _splitter
 
+
 # ==========================================
 # 2. COLUMNAR ETL MARKERS (Context-Aware)
 # ==========================================
 class CalcOp:
     """Marker indicating an operation that requires multiple values from the current row."""
-    __slots__ = ('func', 'default', 'target_type', 'input_list')
 
-    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]):
+    __slots__ = ("func", "default", "target_type", "input_list")
+
+    def __init__(
+        self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]
+    ):
         self.func = func
         self.default = default
         self.target_type = target_type
@@ -69,9 +80,12 @@ class CalcOp:
 
 class CalcAllOp:
     """Marker indicating an operation that requires full array processing down the column."""
-    __slots__ = ('func', 'default', 'target_type', 'input_list')
 
-    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]):
+    __slots__ = ("func", "default", "target_type", "input_list")
+
+    def __init__(
+        self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]
+    ):
         self.func = func
         self.default = default
         self.target_type = target_type
@@ -79,20 +93,15 @@ class CalcAllOp:
 
 
 def calc(
-        func: Callable[..., Any],
-        *input_keys: str,
-        default: Any = None,
-        target_type: Any = None
+    func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None
 ) -> CalcOp:
     """Creates a multi-input row calculation."""
     return CalcOp(func, default, target_type, list(input_keys))
 
+
 # (Apply the exact same signature change to calc_all)
 def calc_all(
-        func: Callable[..., Any],
-        *input_keys: str,
-        default: Any = None,
-        target_type: Any = None
+    func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None
 ) -> CalcAllOp:
     """Creates a batch/array calculation down an entire column."""
     return CalcAllOp(func, default, target_type, list(input_keys))
@@ -104,15 +113,21 @@ def calc_all(
 def _fallback_bool(value: Any) -> bool:
     if not value:
         return False
-    truthy_values = {'true', '1', 'yes', 'y', 't', 'on'}
+    truthy_values = {"true", "1", "yes", "y", "t", "on"}
     return str(value).strip().lower() in truthy_values
 
 
 def _fallback_date(value: Any) -> datetime:
-    safe_str = str(value).strip().replace('Z', '+00:00')
+    safe_str = str(value).strip().replace("Z", "+00:00")
     fallback_formats = [
-        "%B %d, %Y", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y", "%d/%m/%Y",
-        "%Y/%m/%d", "%d %b %Y", "%b %d, %Y", "%Y-%m-%dT%H:%M:%S.%f",
+        "%B %d, %Y",
+        "%Y-%m-%d %H:%M:%S",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+        "%Y/%m/%d",
+        "%d %b %Y",
+        "%b %d, %Y",
+        "%Y-%m-%dT%H:%M:%S.%f",
         "%a, %d %b %Y %H:%M:%S %Z",
     ]
     for fmt in fallback_formats:
@@ -147,13 +162,16 @@ RANKED_CONVERTERS: Dict[Any, List[Callable[[Any], Any]]] = {
 # THE INC() FACTORY
 # ==========================================
 
+
 def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
     """
     Returns a Context-Aware, Type-Ranked validation closure.
     Now supports `default` fallbacks for missing data or failed conversions!
     """
     # 1. The 'new' mapping: If 'new', accept ANY valid Python type.
-    actual_type = Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type
+    actual_type = (
+        Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type
+    )
 
     # 2. Instantiate the adapter EXACTLY ONCE
     try:
@@ -163,17 +181,24 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
 
     ranks = RANKED_CONVERTERS.get(actual_type, [])
     if adapter:
-        ranks = [adapter.validate_python] +[r for r in ranks if r != adapter.validate_python]
+        ranks = [adapter.validate_python] + [r for r in ranks if r != adapter.validate_python]
 
     if not ranks:
-        ranks =[lambda x: x]  # Failsafe pass-through
+        ranks = [lambda x: x]  # Failsafe pass-through
 
     def _ranked_converter(val: Any) -> Any:
         # Instantly catch None, empties, and known API garbage
         if val is None or val == "":
             return default
 
-        if isinstance(val, str) and val.strip().lower() in {"unknown", "n/a", "none", "null", "undefined", "nan"}:
+        if isinstance(val, str) and val.strip().lower() in {
+            "unknown",
+            "n/a",
+            "none",
+            "null",
+            "undefined",
+            "nan",
+        }:
             return default
 
         last_error = None
@@ -195,54 +220,76 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
 
     return _ranked_converter
 
+
 # ==========================================
 # 5. GRAPH & EXTRACTORS
 # ==========================================
 
+
 def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
-    """Maps relational data using a rock-solid internal dictionary cache."""
+    """Maps relational data using a memory-safe hybrid internal cache."""
 
-    # 1. Build a hyper-resilient strong dictionary using the physical list items
-    registry: Dict[Any, Any] = {}
+    # 1. Primary Cache: OOM-Safe for production Incorporator/Pydantic objects
+    registry: "weakref.WeakValueDictionary[Any, Any]" = weakref.WeakValueDictionary()
 
+    # 2. Fallback Cache: Strong references for tests (SimpleNamespace) or non-weakref classes
+    fallback_registry: Dict[Any, Any] = {}
+
+    def _add_to_cache(k: Any, v: Any) -> None:
+        try:
+            # Attempt to set the weakref
+            registry[k] = v
+            registry[str(k)] = v  # Shadow string map
+        except TypeError:
+            # Fallback for SimpleNamespace and other non-weakrefable objects
+            fallback_registry[k] = v
+            fallback_registry[str(k)] = v
+
+    # Build the cache
     if isinstance(dataset, list):
         for item in dataset:
-            # Grab the ID directly off the living object!
-            code = getattr(item, 'inc_code', None)
+            code = getattr(item, "inc_code", None)
             if code is not None:
-                registry[code] = item
-                registry[str(code)] = item  # Shadow string map to prevent Type Splintering!
+                _add_to_cache(code, item)
     else:
-        # Failsafe for single objects
+        # Failsafe for single objects or IncorporatorLists that already have inc_dict
         reg = getattr(dataset, "inc_dict", {})
         if isinstance(reg, collections.abc.Mapping):
-            #Create a copy to prevent GC RuntimeError during iteration
-            safe_reg = reg.copy() if hasattr(reg, 'copy') else reg
-            registry = {**safe_reg, **{str(k): v for k, v in safe_reg.items()}}
+            for k, v in reg.items():
+                _add_to_cache(k, v)
 
     def _mapper(val: Any) -> Any:
         key = extractor(val) if extractor is not None else val
         if key is None:
             return None
 
-        # O(1) Instant Lookup using our guaranteed strong registry
+        # O(1) Instant Lookup (Check Weak Registry first, then Fallback)
         if key in registry:
             return registry[key]
+        if key in fallback_registry:
+            return fallback_registry[key]
 
-        # Ultimate Type-Splinter defense
-        if str(key) in registry:
-            return registry[str(key)]
+        # Ultimate Type-Splinter defense (Strings)
+        str_key = str(key)
+        if str_key in registry:
+            return registry[str_key]
+        if str_key in fallback_registry:
+            return fallback_registry[str_key]
 
         return None
 
     return _mapper
 
 
-def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], List[Any]]:
+def link_to_list(
+    dataset: Any, extractor: Optional[Callable[[Any], Any]] = None
+) -> Callable[[Any], List[Any]]:
+    """Automatically maps a list of foreign keys to their corresponding objects."""
     base_linker = link_to(dataset, extractor)
 
     def _mapper(val_list: Any) -> List[Any]:
-        if not isinstance(val_list, list): return []
+        if not isinstance(val_list, list):
+            return []
         return [obj for v in val_list if (obj := base_linker(v)) is not None]
 
     return _mapper
@@ -253,20 +300,25 @@ def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[A
     Extracts nested dictionary values via dot-notation drilling.
     Supports chaining an additional converter logic (e.g., pluck('a.b', chain=int)).
     """
+    # Hoist the string split out of the closure.
+    parts = key.split(".")
 
     def _plucker(val: Any) -> Any:
-        # 1. Default to passing the raw value straight through
         extracted = val
 
-        # 2. If it's a dictionary, drill down using the key
+        # 2. Drill down using the pre-computed parts
         if isinstance(val, dict):
-            for part in key.split('.'):
+            for part in parts:
+                # Prevent AttributeError if a middle node isn't a dict
+                if not isinstance(extracted, dict):
+                    extracted = None
+                    break
+
                 extracted = extracted.get(part)
                 if extracted is None:
                     break
 
         # 3. Execute the chain.
-        # If val was a string, 'extracted' is still the raw string!
         return chain(extracted) if chain else extracted
 
     return _plucker
@@ -275,6 +327,7 @@ def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[A
 # ==========================================
 # DECLARATIVE PAYLOAD TOKENS (POST/PUT)
 # ==========================================
+
 
 def each() -> _EachSentinel:
     """

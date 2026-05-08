@@ -38,7 +38,7 @@ async def run_audit() -> None:
         inc_file="jimmy_ledger.xml",
         rec_path="Dealership.AuditFile.Invoices.Invoice",
         inc_code="id",
-        inc_child="Vehicle.VIN"
+        inc_child="Vehicle.VIN",
     )
 
     print(f"✅ Extracted {len(invoices)} Invoices. Contacting Federal Databases...")
@@ -53,15 +53,14 @@ async def run_audit() -> None:
         inc_parent=invoices,
         http_method="POST",
         payload_type="form",
-        form_payload={
-            "format": "json",
-            "data": join_all(";")
-        },
+        form_payload={"format": "json", "data": join_all(";")},
         rec_path="Results",
-        inc_code="VIN"
+        inc_code="VIN",
     )
 
-    print(f"✅ Government Data Received for {len(govt_specs)} vehicles. Initiating Fraud Audit...\n")
+    print(
+        f"✅ Government Data Received for {len(govt_specs)} vehicles. Initiating Fraud Audit...\n"
+    )
 
     # ==========================================
     # PHASE 3: The Fraud Audit (O(1) Lookups)
@@ -94,14 +93,18 @@ async def run_audit() -> None:
 
         # 3. Detect Discrepancies
         if jimmy_make not in federal_claim and federal_claim != "API OFFLINE / UNKNOWN":
-            print(f"🚨 {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25} <-- FRAUD!")
+            print(
+                f"🚨 {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25} <-- FRAUD!"
+            )
             fraud_count += 1
         else:
             print(f"✅ {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25}")
 
     print("=" * 85)
     if fraud_count > 0:
-        print(f"🛑 AUDIT FAILED: Discovered {fraud_count} fraudulent transaction(s). Dispatching authorities.")
+        print(
+            f"🛑 AUDIT FAILED: Discovered {fraud_count} fraudulent transaction(s). Dispatching authorities."
+        )
     else:
         print("🟢 AUDIT PASSED: Ledger matches federal records.")
 

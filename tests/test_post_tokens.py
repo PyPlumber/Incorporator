@@ -7,13 +7,16 @@ from incorporator.methods.converters import each, as_list
 # ==========================================
 # 1. DEFINE OUR OBJECTS
 # ==========================================
-class User(Incorporator): pass
+class User(Incorporator):
+    pass
 
 
-class Post(Incorporator): pass
+class Post(Incorporator):
+    pass
 
 
-class EchoMirror(Incorporator): pass
+class EchoMirror(Incorporator):
+    pass
 
 
 @pytest.mark.asyncio
@@ -24,9 +27,7 @@ async def test_live_post_tokens() -> None:
     # PHASE 1: Fetch Parent Data (10 Mock Users)
     # ------------------------------------------
     users = await User.incorp(
-        inc_url="https://jsonplaceholder.typicode.com/users",
-        inc_code="id",
-        inc_name="name"
+        inc_url="https://jsonplaceholder.typicode.com/users", inc_code="id", inc_name="name"
     )
 
     assert len(users) == 10
@@ -42,8 +43,8 @@ async def test_live_post_tokens() -> None:
         json_payload={
             "userId": each(),  # <--- THE TOKEN: Spawns 10 concurrent HTTPX calls
             "title": "Automated Incorporator Post",
-            "body": "Look at this zero-boilerplate concurrency."
-        }
+            "body": "Look at this zero-boilerplate concurrency.",
+        },
     )
 
     # We should get a list of 10 newly created Post objects back!
@@ -65,9 +66,9 @@ async def test_live_post_tokens() -> None:
         method="POST",
         json_payload={
             "framework": "Incorporator v1.0.0",
-            "batch_ids": as_list()  # <--- THE TOKEN: Injects [1,2,3,4...10] into the JSON body
+            "batch_ids": as_list(),  # <--- THE TOKEN: Injects [1,2,3,4...10] into the JSON body
         },
-        rec_path="json"  # Drill into the mirror's response to get our payload back
+        rec_path="json",  # Drill into the mirror's response to get our payload back
     )
 
     # Because it was 1 Bulk request, the framework returns a single Object (not a list)!

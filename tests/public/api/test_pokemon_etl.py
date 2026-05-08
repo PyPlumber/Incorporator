@@ -9,23 +9,26 @@ import pytest
 
 from incorporator import (
     Incorporator,
-
 )
 from incorporator.methods.converters import calc
 from incorporator.methods.paginate import NextUrlPaginator
 
 
 # --- EXPLICIT SUBCLASSING ---
-class Nav(Incorporator): pass
+class Nav(Incorporator):
+    pass
 
 
-class Habitat(Incorporator): pass
+class Habitat(Incorporator):
+    pass
 
 
-class Species(Incorporator): pass
+class Species(Incorporator):
+    pass
 
 
-class Pokemon(Incorporator): pass
+class Pokemon(Incorporator):
+    pass
 
 
 # --- MOCK NETWORK SETUP ---
@@ -43,15 +46,13 @@ async def mock_pokeapi_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx
             "next": "https://pokeapi.co/api/v2/pokemon/?limit=50&offset=50",
             "results": [
                 {"name": "bulbasaur", "url": "https://pokeapi.co/api/v2/pokemon/1/"},
-                {"name": "ivysaur", "url": "https://pokeapi.co/api/v2/pokemon/2/"}
-            ]
+                {"name": "ivysaur", "url": "https://pokeapi.co/api/v2/pokemon/2/"},
+            ],
         }
     elif "offset=50" in url:
         payload = {
             "next": None,  # End of pagination for the mock
-            "results": [
-                {"name": "mewtwo", "url": "https://pokeapi.co/api/v2/pokemon/150/"}
-            ]
+            "results": [{"name": "mewtwo", "url": "https://pokeapi.co/api/v2/pokemon/150/"}],
         }
 
     # 2. DEEP DRILL MOCKS (HATEOAS)
@@ -63,8 +64,8 @@ async def mock_pokeapi_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx
             "types": [{"type": {"name": "grass"}}, {"type": {"name": "poison"}}],
             "stats": [
                 {"base_stat": 45, "stat": {"name": "hp"}},
-                {"base_stat": 49, "stat": {"name": "attack"}}
-            ]  # BST = 94
+                {"base_stat": 49, "stat": {"name": "attack"}},
+            ],  # BST = 94
         }
     elif "/pokemon/2/" in url:
         payload = {
@@ -74,8 +75,8 @@ async def mock_pokeapi_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx
             "types": [{"type": {"name": "grass"}}, {"type": {"name": "poison"}}],
             "stats": [
                 {"base_stat": 60, "stat": {"name": "hp"}},
-                {"base_stat": 62, "stat": {"name": "attack"}}
-            ]  # BST = 122
+                {"base_stat": 62, "stat": {"name": "attack"}},
+            ],  # BST = 122
         }
     elif "/pokemon/150/" in url:
         payload = {
@@ -86,8 +87,8 @@ async def mock_pokeapi_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx
             "stats": [
                 {"base_stat": 106, "stat": {"name": "hp"}},
                 {"base_stat": 110, "stat": {"name": "attack"}},
-                {"base_stat": 154, "stat": {"name": "special-attack"}}
-            ]  # BST = 370
+                {"base_stat": 154, "stat": {"name": "special-attack"}},
+            ],  # BST = 370
         }
     else:
         payload = {}
@@ -95,18 +96,26 @@ async def mock_pokeapi_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx
     req = httpx.Request("GET", url)
     return httpx.Response(200, text=json.dumps(payload), request=req)
 
+
 # --- DECLARATIVE ETL FUNCTIONS ---
 def calculate_bst(stats_array: Any) -> int:
     """Calculates Base Stat Total by summing the 'base_stat' of all entries."""
-    if not isinstance(stats_array, list): return 0
-    return sum(stat_obj.get("base_stat", 0) for stat_obj in stats_array if isinstance(stat_obj, dict))
+    if not isinstance(stats_array, list):
+        return 0
+    return sum(
+        stat_obj.get("base_stat", 0) for stat_obj in stats_array if isinstance(stat_obj, dict)
+    )
 
 
 def format_typing(types_array: Any) -> str:
     """Formats a nested types array into a clean string (e.g., 'Grass / Poison')."""
-    if not isinstance(types_array, list): return "Unknown"
-    type_names = [t.get("type", {}).get("name", "").capitalize() for t in types_array if isinstance(t, dict)]
+    if not isinstance(types_array, list):
+        return "Unknown"
+    type_names = [
+        t.get("type", {}).get("name", "").capitalize() for t in types_array if isinstance(t, dict)
+    ]
     return " / ".join(type_names)
+
 
 # --- TESTS ---
 @pytest.mark.asyncio
@@ -125,7 +134,7 @@ async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) 
         inc_name="name",
         inc_child="url",
         inc_page=NextUrlPaginator("next"),
-        call_lim=3  # 3 pages * 50 = 150 Pokemon
+        call_lim=3,  # 3 pages * 50 = 150 Pokemon
     )
 
     print(f"✅ Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
@@ -143,9 +152,9 @@ async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) 
         excl_lst=["sprites", "moves", "game_indices", "held_items"],
         conv_dict={
             "stats": calc(calculate_bst, "stats", default=0, target_type=int),
-            "types": calc(format_typing, "types", default="Unknown", target_type=str)
+            "types": calc(format_typing, "types", default="Unknown", target_type=str),
         },
-        name_chg=[("stats", "base_stat_total")]
+        name_chg=[("stats", "base_stat_total")],
     )
 
     print(f"✅ Enrichment Complete. Loaded {len(enriched_pokemon)} Pokémon into memory.")
@@ -168,7 +177,9 @@ async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) 
         print(" 🏆 TABLE 1: KANTO POWER RANKINGS (Sorted by Base Stat Total)")
         print("    Showcasing: `inc_parent` Deep-Drill and `calc` Array Reductions.")
         print("=" * 90)
-        print(f"{'POKEMON':<20} | {'BASE STAT TOTAL':<18} | {'PRIMARY TYPING':<25} | {'WEIGHT (hg)'}")
+        print(
+            f"{'POKEMON':<20} | {'BASE STAT TOTAL':<18} | {'PRIMARY TYPING':<25} | {'WEIGHT (hg)'}"
+        )
         print("-" * 90)
 
         # Display the Top 15 strongest Pokemon

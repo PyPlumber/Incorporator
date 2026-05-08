@@ -12,13 +12,16 @@ from incorporator.methods.paginate import NextUrlPaginator
 
 
 # --- EXPLICIT SUBCLASSING ---
-class Planet(Incorporator): pass
+class Planet(Incorporator):
+    pass
 
 
-class Film(Incorporator): pass
+class Film(Incorporator):
+    pass
 
 
-class Person(Incorporator): pass
+class Person(Incorporator):
+    pass
 
 
 # --- MOCK NETWORK SETUP ---
@@ -27,26 +30,15 @@ async def mock_swapi_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.R
     if "planets" in url:
         payload = {
             "next": None,
-            "results": [
-                {
-                    "name": "Tatooine",
-                    "url": "https://swapi.dev/api/planets/1/"
-                }
-            ]
+            "results": [{"name": "Tatooine", "url": "https://swapi.dev/api/planets/1/"}],
         }
     elif "films" in url:
         payload = {
             "next": None,
             "results": [
-                {
-                    "title": "A New Hope",
-                    "url": "https://swapi.dev/api/films/1/"
-                },
-                {
-                    "title": "The Empire Strikes Back",
-                    "url": "https://swapi.dev/api/films/2/"
-                }
-            ]
+                {"title": "A New Hope", "url": "https://swapi.dev/api/films/1/"},
+                {"title": "The Empire Strikes Back", "url": "https://swapi.dev/api/films/2/"},
+            ],
         }
     elif "people" in url:
         payload = {
@@ -59,11 +51,11 @@ async def mock_swapi_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.R
                     "homeworld": "https://swapi.dev/api/planets/1/",  # Needs link_to
                     "films": [
                         "https://swapi.dev/api/films/1/",
-                        "https://swapi.dev/api/films/2/"
+                        "https://swapi.dev/api/films/2/",
                     ],  # Needs link_to_list
-                    "url": "https://swapi.dev/api/people/1/"
+                    "url": "https://swapi.dev/api/people/1/",
                 }
-            ]
+            ],
         }
     else:
         payload = {}
@@ -81,44 +73,52 @@ async def test_swapi_relational_mapping(monkeypatch: pytest.MonkeyPatch) -> None
     BASE_URL = "https://swapi.dev/api"
 
     # Initialize the composable primitive once for O(1) memory reuse
-    get_id = split_and_get(delimiter='/', index=-1, cast_type=int)
+    get_id = split_and_get(delimiter="/", index=-1, cast_type=int)
 
     # ==========================================
     # 1. FETCH GRAPH NODES
     # ==========================================
     planets = await Planet.incorp(
-        inc_url=f"{BASE_URL}/planets/", rec_path="results",
-        inc_code="id", inc_name="name",
-        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
+        inc_url=f"{BASE_URL}/planets/",
+        rec_path="results",
+        inc_code="id",
+        inc_name="name",
+        inc_page=NextUrlPaginator("next"),
+        ignore_ssl=True,
         conv_dict={"url": get_id},
-        name_chg=[("url", "id")]
+        name_chg=[("url", "id")],
     )
 
     films = await Film.incorp(
-        inc_url=f"{BASE_URL}/films/", rec_path="results",
-        inc_code="id", inc_name="title",
-        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
+        inc_url=f"{BASE_URL}/films/",
+        rec_path="results",
+        inc_code="id",
+        inc_name="title",
+        inc_page=NextUrlPaginator("next"),
+        ignore_ssl=True,
         conv_dict={"url": get_id},
-        name_chg=[("url", "id")]
+        name_chg=[("url", "id")],
     )
 
     # ==========================================
     # 2. FETCH GRAPH EDGES (PEOPLE)
     # ==========================================
     people = await Person.incorp(
-        inc_url=f"{BASE_URL}/people/", rec_path="results",
-        inc_code="id", inc_name="name",
-        inc_page=NextUrlPaginator("next"), ignore_ssl=True,
+        inc_url=f"{BASE_URL}/people/",
+        rec_path="results",
+        inc_code="id",
+        inc_name="name",
+        inc_page=NextUrlPaginator("next"),
+        ignore_ssl=True,
         conv_dict={
             "url": get_id,
-
             # If the API returns "unknown" for mass, inc() safely defaults it to 0.0
             "height": inc(float, default=0.0),
             "mass": inc(float, default=0.0),
             "homeworld": link_to(planets, extractor=get_id),
-            "films": link_to_list(films, extractor=get_id)
+            "films": link_to_list(films, extractor=get_id),
         },
-        name_chg=[("url", "id")]
+        name_chg=[("url", "id")],
     )
 
     # 3. Assertions
@@ -150,12 +150,10 @@ async def test_swapi_relational_mapping(monkeypatch: pytest.MonkeyPatch) -> None
     print("🚀 Jumping to Hyperspace... Connecting to the Star Wars API...\n")
     BASE_URL = "https://swapi.dev/api"
 
-
     # ==========================================
     # 3. LORE TABLES & DATA MANIPULATION
     # ==========================================
     if isinstance(people, list):
-
         # --- TABLE 1: THE JEDI ARCHIVES ---
         tallest_people = sorted(people, key=lambda p: getattr(p, "height", 0.0), reverse=True)
 

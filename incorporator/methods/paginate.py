@@ -7,10 +7,13 @@ and Metadata pagination patterns with built-in Exception logging.
 
 import logging
 import re
-from typing import Any, AsyncGenerator, Callable, Dict, Optional, Awaitable
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, Optional
 from urllib.parse import urljoin
 
 import httpx
+
+# IMPORT OUR FORMAT ENGINE
+from .format_parsers import infer_format, parse_source_data
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +23,18 @@ class AsyncPaginator:
         self.call_lim: Optional[int] = None
         self.fetch_func: Optional[Callable[..., Awaitable[httpx.Response]]] = None
 
-    async def _fetch(self, url: str, params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+    async def _fetch(
+        self, url: str, params: Optional[Dict[str, Any]] = None, **kwargs: Any
+    ) -> httpx.Response:
         """Executes the network request, allowing dynamic POST payload overrides via kwargs."""
         if not self.fetch_func:
             raise RuntimeError("Paginator must be bound to a network client before use.")
-
-        # Pass params AND any payload overrides down to the network engine!
         return await self.fetch_func(url=url, request_params=params, **kwargs)
+
+    async def _parse_response(self, response: httpx.Response) -> Any:
+        """Format-Agnostic Parser: Gracefully handles JSON, XML, or CSV pagination logic."""
+        fmt = infer_format(str(response.url))
+        return await parse_source_data(response.text, fmt)
 
     async def paginate(self, start_url: str) -> AsyncGenerator[str, None]:
         """Yields raw text payloads. Must be overridden by subclasses."""
@@ -48,7 +56,6 @@ class LinkHeaderPaginator(AsyncPaginator):
                 break
 
             try:
-                # PROTECTED NETWORK CALL
                 response = await self._fetch(url)
                 yield response.text
                 calls += 1
@@ -58,7 +65,7 @@ class LinkHeaderPaginator(AsyncPaginator):
                     links = response.headers["link"].split(",")
                     for link in links:
                         if 'rel="next"' in link:
-                            match = re.search(r'<(.*?)>', link)
+                            match = re.search(r"<(.*?)>", link)
                             if match:
                                 next_link = match.group(1)
 
@@ -85,12 +92,13 @@ class NextUrlPaginator(AsyncPaginator):
                 break
 
             try:
-                # PROTECTED NETWORK CALL
                 response = await self._fetch(url)
                 yield response.text
                 calls += 1
 
-                data = response.json()
+                # 🛡️ Format-Agnostic Parse
+                data = await self._parse_response(response)
+
                 for key in self.path_keys:
                     if isinstance(data, dict):
                         data = data.get(key)
@@ -123,13 +131,18 @@ class CursorPaginator(AsyncPaginator):
             params = {self.cursor_param: cursor} if cursor else {}
 
             try:
-                # PROTECTED NETWORK CALL
                 response = await self._fetch(start_url, params=params)
                 yield response.text
                 calls += 1
 
-                data = response.json()
-                cursor = data.get("meta", {}).get("next_token") or data.get("next_cursor")
+                # 🛡️ Format-Agnostic Parse
+                data = await self._parse_response(response)
+
+                if isinstance(data, dict):
+                    cursor = data.get("meta", {}).get("next_token") or data.get("next_cursor")
+                else:
+                    cursor = None
+
                 if not cursor:
                     break
             except Exception as e:
@@ -141,7 +154,9 @@ class CursorPaginator(AsyncPaginator):
 class OffsetPaginator(AsyncPaginator):
     """Example: Open Library API (offset + limit)."""
 
-    def __init__(self, limit: int = 50, offset_param: str = "offset", limit_param: str = "limit") -> None:
+    def __init__(
+        self, limit: int = 50, offset_param: str = "offset", limit_param: str = "limit"
+    ) -> None:
         super().__init__()
         self.limit = limit
         self.offset_param = offset_param
@@ -158,13 +173,18 @@ class OffsetPaginator(AsyncPaginator):
             params = {self.offset_param: offset, self.limit_param: self.limit}
 
             try:
-                # PROTECTED NETWORK CALL
                 response = await self._fetch(start_url, params=params)
                 yield response.text
                 calls += 1
 
-                data = response.json()
-                items = data.get("results") or data.get("docs", [])
+                # 🛡️ Format-Agnostic Parse
+                data = await self._parse_response(response)
+
+                if isinstance(data, dict):
+                    items = data.get("results") or data.get("docs", [])
+                else:
+                    items = data  # Failsafe for lists (like CSVs without wrappers)
+
                 if not items:
                     break
                 offset += self.limit
@@ -177,7 +197,7 @@ class OffsetPaginator(AsyncPaginator):
 class PageNumberPaginator(AsyncPaginator):
     """Example: CoinGecko or ReqRes API (page=1, page=2, ...)."""
 
-    def __init__(self, page_param: str = "page", start_page: int = 1, *items_keys: str) -> None:
+    def __init__(self, page_param: str = "page", start_page: int = 1) -> None:
         super().__init__()
         self.page_param = page_param
         self.start_page = start_page
@@ -193,12 +213,13 @@ class PageNumberPaginator(AsyncPaginator):
             params = {self.page_param: page}
 
             try:
-                # PROTECTED NETWORK CALL
                 response = await self._fetch(start_url, params=params)
                 yield response.text
                 calls += 1
 
-                data = response.json()
+                # 🛡️ Format-Agnostic Parse
+                data = await self._parse_response(response)
+
                 if not data:
                     break
                 page += 1

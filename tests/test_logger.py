@@ -43,8 +43,8 @@ async def test_multiplex_file_routing(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert error_file.exists()
     assert api_file.exists()
 
-    error_text = error_file.read_text(encoding='utf-8')
-    api_text = api_file.read_text(encoding='utf-8')
+    error_text = error_file.read_text(encoding="utf-8")
+    api_text = api_file.read_text(encoding="utf-8")
 
     assert "Standard info trace" in error_text
     assert "Standard error trace" in error_text
@@ -77,4 +77,4 @@ async def test_get_error_async_reader(monkeypatch: pytest.MonkeyPatch, tmp_path:
     last_error = errors[-1]
     assert last_error["level"] == "ERROR"
     assert last_error["msg"] == "Disk read test"
-    assert "class:\"MockAPIEndpoint2\"" in last_error["meta"]
+    assert 'class:"MockAPIEndpoint2"' in last_error["meta"]

@@ -34,7 +34,9 @@ async def test_incorporator_reads_local_json_successfully(clean_json_file: str) 
 
 
 @pytest.mark.asyncio
-async def test_incorporator_warns_and_skips_on_bad_json(broken_json_file: str, caplog: pytest.LogCaptureFixture) -> None:
+async def test_incorporator_warns_and_skips_on_bad_json(
+    broken_json_file: str, caplog: pytest.LogCaptureFixture
+) -> None:
     """Ensures json.JSONDecodeError is gracefully caught, logged as a warning, and skipped without crashing."""
 
     # 1. Capture the logs at the WARNING level

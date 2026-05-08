@@ -17,14 +17,14 @@ async def test_csv_etl_type_conversions(csv_users_payload: str, tmp_path: Path) 
     users = await Incorporator.incorp(
         inc_file=str(mock_file),
         format_type=FormatType.CSV,
-        inc_code='id',
-        inc_name='username',
-        excl_lst=['account_balance'],  # Drop financial data
+        inc_code="id",
+        inc_name="username",
+        excl_lst=["account_balance"],  # Drop financial data
         conv_dict={
             # CSV readers return strings by default. conv_dict handles the type casting.
-            'id': lambda x: int(x),
-            'is_active': lambda x: str(x).lower() == 'true'
-        }
+            "id": lambda x: int(x),
+            "is_active": lambda x: str(x).lower() == "true",
+        },
     )
 
     assert isinstance(users, list)
@@ -47,13 +47,13 @@ async def test_xml_etl_rpath_and_renaming(xml_catalog_payload: str, tmp_path: Pa
         inc_file=str(mock_file),
         format_type=FormatType.XML,
         # Drill straight through the catalog wrapper into the book array!
-        rec_path='catalog.book',
-        inc_code='id',
-        inc_name='title',
-        name_chg=[('title', 'book_title'), ('price', 'cost_usd')],  # Rename XML tags
+        rec_path="catalog.book",
+        inc_code="id",
+        inc_name="title",
+        name_chg=[("title", "book_title"), ("price", "cost_usd")],  # Rename XML tags
         conv_dict={
-            'price': lambda x: float(x)  # Convert XML text to float
-        }
+            "price": lambda x: float(x)  # Convert XML text to float
+        },
     )
 
     assert isinstance(books, list)
@@ -62,7 +62,7 @@ async def test_xml_etl_rpath_and_renaming(xml_catalog_payload: str, tmp_path: Pa
     book_1 = books[0]
 
     # Assert XML attributes (id='bk101') were extracted correctly
-    assert getattr(book_1, "id") == 'bk101'
+    assert getattr(book_1, "id") == "bk101"
     assert getattr(book_1, "author") == "Gambardella, Matthew"
 
     # Assert name_chg successfully renamed the XML nodes
