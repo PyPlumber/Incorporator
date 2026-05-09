@@ -84,19 +84,15 @@ asyncio.run(main())
 ### 🤷‍♂️ Wait, what if my data isn't JSON?
 It doesn't matter. Incorporator automatically infers the format from the URL or file extension. The syntax **never changes**.
 
-If that exact same telemetry data comes from a legacy system as XML:
-```xml
-<root>
-    <item id="NAV"><st><pos>12</pos><pos>44</pos><ok>1</ok></st></item>
-</root>
-```
-You parse it the *exact* same way:
+We natively support **JSON, NDJSON (JSON Lines), CSV, TSV, PSV, XML, and SQLite**, with optional support for binary **Apache Avro** streams.
+
+If that exact same telemetry data comes from a legacy system as XML or CSV:
 ```python
 # The syntax doesn't change for XML...
 systems_xml = await Incorporator.incorp(inc_file="telemetry.xml", inc_code="id")
-print(systems_xml.inc_dict["NAV"].st.pos) # Output:['12', '44']
+print(systems_xml.inc_dict["NAV"].st.pos) # Output: ['12', '44']
 
-# ...and it doesn't change for CSV!
+# ...and it works instantly for CSV, TSV, or streaming NDJSON logs!
 systems_csv = await Incorporator.incorp(inc_file="telemetry.csv", inc_code="id")
 ```
 
@@ -110,6 +106,13 @@ Built entirely on the standard library, Pydantic V2 metaprogramming, and HTTPX.
 pip install incorporator
 ```
 *Dependencies: `pydantic (>=2.0)`, `httpx`, `tenacity`.*
+
+For Big Data streams and ultra-fast Rust compression, use our zero-bloat extras:
+```bash
+pip install incorporator[cramjam] # Unlocks zstd, lz4, snappy, brotli
+pip install incorporator[avro]    # Unlocks Apache Avro binary streams
+pip install incorporator[all]     # Installs the complete Big Data suite
+```
 
 ---
 
@@ -242,9 +245,40 @@ govt_specs = await NHTSASpec.incorp(
 )
 ```
 
----
+### 5. The Local Database Pivot (JSON ➡️ SQLite)
+*Example: Moving a JSON API directly into a local SQL database.*
 
+Incorporator treats binary **SQLite** databases natively. You don't need to write `CREATE TABLE` schemas or loop through rows. Incorporator inspects the Python types, auto-generates the SQL schema, and executes C-speed bulk inserts instantly.
+
+```python
+# 1. Fetch JSON API data
+users = await User.incorp("https://api.domain.com/v1/users")
+
+# 2. Dump directly to a local SQLite database! 
+# Incorporator automatically creates the 'user' table and maps the schema.
+await User.export(users, "local_warehouse.db")
+
+# 3. Read it back using a native SQL query!
+active_users = await User.incorp(
+    inc_file="local_warehouse.db", 
+    sql_query="SELECT * FROM user WHERE is_active = 1"
+)
+```
+
+---
 ## 🛠 Enterprise Resilience & Features
+
+
+### 🗜️ Invisible Archiving & Compression
+Stop writing `zipfile` extraction logic for compressed API payloads. Incorporator natively detects, intercepts, and decompresses `gzip`, `bz2`, `lzma`, `zip`, and `tar` archives in the background—without changing a single line of your parsing code.
+
+```python
+# Automatically finds, extracts, and parses the JSON hidden inside the ZIP archive!
+sales = await Sales.incorp("https://api.system.com/dump/sales_2026.json.zip")
+
+# Export to a flat CSV, then seamlessly compress it to GZIP in a background thread
+await Sales.export(sales, "cleaned_sales.csv", compression="gz")
+```
 
 ### 📡 Invisible Networking & DLQs
 You never have to manage `httpx.AsyncClient` contexts. Incorporator handles shared connection pools natively. It includes exponential backoff retries via Tenacity. If a URL repeatedly fails with an HTTP 429, it gracefully skips it and places it in a **Dead Letter Queue**.

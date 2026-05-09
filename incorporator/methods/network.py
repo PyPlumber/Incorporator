@@ -7,7 +7,7 @@ and asynchronous connection-pooling for maximum throughput.
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Iterator
+from typing import Any, Dict, List, Optional, Tuple, Union, Iterator
 from urllib.parse import urlparse
 
 import httpx
@@ -15,8 +15,9 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ra
 
 from . import format_parsers
 from .exceptions import IncorporatorNetworkError
-from .format_parsers import infer_format
+from .format_parsers import FormatType, infer_format, parse_source_data
 from .paginate import AsyncPaginator
+from .compression import decompress_data, infer_compression
 
 logger = logging.getLogger(__name__)
 
@@ -153,32 +154,75 @@ async def execute_request(
     return response
 
 
+# ==========================================
+# I/O HELPER (Module Level)
+# ==========================================
+async def resolve_source_payload(
+        source_val: str,
+        is_file_mode: bool,
+        active_format: FormatType,
+        response: Optional[httpx.Response] = None,
+        archive_target: Optional[str] = None  # 🛡️ NEW KWARG
+) -> Union[str, bytes, Path]:
+    """Decoupled helper to resolve text, bytes, or physical paths."""
+
+    # BINARY BYPASS: Skip text decoding for Databases and Avro
+    if active_format in (FormatType.SQLITE, FormatType.AVRO):
+        if is_file_mode:
+            return Path(source_val)
+        if response is not None:
+            return response.read()
+
+    # TEXT/COMPRESSION PIPELINE
+    is_compressed = infer_compression(source_val) is not None
+
+    if is_file_mode:
+        if is_compressed:
+            # 🛡️ Pass strict format and target rules to the Decompression Engine
+            return await asyncio.to_thread(
+                decompress_data, source_val, source_val, active_format, archive_target
+            )
+        return await _read_file(source_val)
+
+    if response is not None:
+        if is_compressed:
+            # Pass strict format and target rules to the Decompression Engine
+            return await asyncio.to_thread(
+                decompress_data, response.read(), source_val, active_format, archive_target
+            )
+        return response.text
+
+    raise IncorporatorNetworkError("No valid response or file path provided.")
+
+
+# ==========================================
+# MAIN STREAM PROCESSOR
+# ==========================================
+
 async def _process_single_source(
-    source_val: str,
-    is_file_mode: bool,
-    client: Optional[httpx.AsyncClient],
-    rate_limiter: Optional[RateLimiter],
-    dynamic_payload: Optional[
-        Dict[str, Any]
-    ] = None,  # 🛡️ NEW: Captures the specific payload for this URL
-    **kwargs: Any,
+        source_val: str,
+        is_file_mode: bool,
+        client: Optional[httpx.AsyncClient],
+        rate_limiter: Optional[RateLimiter],
+        dynamic_payload: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
 ) -> List[Any]:
     """Isolates stream processing, dynamic Paginator routing, and rec_path drill-down."""
-    format_type = kwargs.get("format_type")
-    inc_page: Optional[AsyncPaginator] = kwargs.get("inc_page")
-    call_lim = kwargs.get("call_lim")
-    rec_path = kwargs.get("rec_path")
+    format_type = kwargs.pop("format_type", None)
+    inc_page: Optional[AsyncPaginator] = kwargs.pop("inc_page", None)
+    call_lim = kwargs.pop("call_lim", None)
+    rec_path = kwargs.pop("rec_path", None)
+    archive_target = kwargs.pop("archive_target", None)
 
-    # 🛡️ NEW: Grab http_method from kwargs, defaulting to GET
-    method = kwargs.get("http_method", kwargs.get("method", "GET"))
-    base_params = kwargs.get("params", {})
+    method = kwargs.pop("http_method", kwargs.pop("method", "GET"))
+    base_params = kwargs.pop("params", {})
 
     active_format = format_type or infer_format(source_val)
     accumulated: List[Any] = []
 
     # 1. Setup the Injection Wrapper
     async def bound_fetch(
-        url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs_override: Any
+            url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs_override: Any
     ) -> httpx.Response:
 
         if client is None:
@@ -187,20 +231,14 @@ async def _process_single_source(
         merged_params = {**base_params, **(request_params or {})}
         payload_type = kwargs.get("payload_type", "json")
 
-        # Check if paginate.py provided a strict override (e.g. for GraphQL POST cursors)
         j_override = kwargs_override.get("json_payload")
         f_override = kwargs_override.get("form_payload")
 
-        # Fallback to the dynamic_payload from base.py, then to global kwargs
         j_payload = j_override or (
-            dynamic_payload
-            if dynamic_payload is not None and payload_type == "json"
-            else kwargs.get("json_payload")
+            dynamic_payload if dynamic_payload is not None and payload_type == "json" else kwargs.get("json_payload")
         )
         f_payload = f_override or (
-            dynamic_payload
-            if dynamic_payload is not None and payload_type == "form"
-            else kwargs.get("form_payload")
+            dynamic_payload if dynamic_payload is not None and payload_type == "form" else kwargs.get("form_payload")
         )
 
         return await execute_request(
@@ -213,9 +251,13 @@ async def _process_single_source(
             rate_limiter=rate_limiter,
         )
 
-    # 2. Standard Parse & Drill Action
-    async def _accumulate_text(raw_text: str) -> None:
-        parsed_chunk = await format_parsers.parse_source_data(raw_text, active_format)
+    # 2. Pure Data Processing (Accepts Polymorphic Inputs)
+    async def _process_payload(raw_payload: Union[str, bytes, Path]) -> None:
+        # Pass **kwargs down so 'sql_query' reaches the database handler!
+        parsed_chunk = await format_parsers.parse_source_data(
+            raw_payload, active_format, **kwargs
+        )
+
         if rec_path:
             for part in rec_path.split("."):
                 if isinstance(parsed_chunk, dict) and part in parsed_chunk:
@@ -228,25 +270,32 @@ async def _process_single_source(
         else:
             accumulated.append(parsed_chunk)
 
-    # 3. Execute Route
+    # 3. Execution Routing
     if is_file_mode:
-        await _accumulate_text(await _read_file(source_val))
+        payload = await resolve_source_payload(
+            source_val, is_file_mode=True, active_format=active_format, archive_target=archive_target
+        )
+        await _process_payload(payload)
+
     elif inc_page:
         inc_page.fetch_func = bound_fetch
         inc_page.call_lim = call_lim
         async for text in inc_page.paginate(start_url=source_val):
-            await _accumulate_text(text)
+            # Paginators currently still yield text natively
+            await _process_payload(text)
+
     else:
         res = await bound_fetch(source_val)
-        await _accumulate_text(res.text)
+        payload = await resolve_source_payload(
+            source_val, is_file_mode=False, active_format=active_format, response=res, archive_target=archive_target
+        )
+        await _process_payload(payload)
 
     return accumulated
-
 
 # ==========================================
 # 5. CONCURRENT ORCHESTRATOR
 # ==========================================
-
 
 async def fetch_concurrent_payloads(
     source_list: List[str],

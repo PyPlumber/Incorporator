@@ -1,0 +1,77 @@
+***
+
+# 🗄️ Formats & Compression Cheat Sheet
+
+Incorporator is built on a **Format Agnostic Engine**. Whether you are reading from a URL (`inc_url`) or a local file (`inc_file`), the framework dynamically infers the parsing strategy and decompression algorithm entirely from the file extension.
+
+You never have to write custom extraction loops, and the API syntax *never* changes between formats.
+
+---
+
+## 📄 Supported Data Formats
+
+Incorporator natively supports flat text files, streaming logs, and binary databases.
+
+| Format | File Extensions | Installation | Notes |
+| :--- | :--- | :--- | :--- |
+| **JSON** | `.json` | *Native* | The default format. Deeply nested schemas are instantly converted to Python objects. |
+| **NDJSON** | `.ndjson`, `.jsonl` | *Native* | Newline-Delimited JSON. Excellent for parsing massive streaming logs. |
+| **CSV** | `.csv` | *Native* | Includes $O(1)$ Auto-Unflattening (safely parses JSON strings inside CSV columns). |
+| **TSV** | `.tsv` | *Native* | Tab-Separated Values. Uses the CSV engine configured for `\t`. |
+| **PSV** | `.psv` | *Native* | Pipe-Separated Values. Uses the CSV engine configured for `\|`. |
+| **XML** | `.xml` | *Native* | Natively protected against XXE (Billion Laughs) memory exhaustion attacks. |
+| **SQLite** | `.db`, `.sqlite*` | *Native* | Natively executes `SELECT` and bulk `INSERT` statements at C-speed. |
+| **Apache Avro** | `.avro` | `[avro]` | Requires `pip install incorporator[avro]`. Converts Pydantic to strict binary schemas. |
+
+---
+
+## 🗜️ Supported Compression & Archives
+
+If a URL or File ends with a recognized compression extension, Incorporator will automatically decompress the bytes in a background thread before handing them to the data parser. 
+
+*Example:* `https://api.com/dump.csv.gz` will be natively downloaded, decompressed via `gzip`, and parsed as a `csv`.
+
+| Algorithm | Extensions | Installation | Notes |
+| :--- | :--- | :--- | :--- |
+| **Gzip** | `.gz` | *Native* | Streamed decompressed securely in RAM. |
+| **Bzip2** | `.bz2` | *Native* | Highly compressed, native standard library support. |
+| **LZMA / XZ** | `.lzma`, `.xz` | *Native* | Modern compression natively supported by Python. |
+| **ZIP** | `.zip` | *Native* | Directory archive. Automatically searches for the valid data file (see below). |
+| **Tarball** | `.tar`, `.tgz` | *Native* | Directory archive. Uses $O(1)$ linear iteration for lightning-fast extraction. |
+| **Zstandard** | `.zst` | `[cramjam]` | Requires `pip install incorporator[cramjam]`. Ultra-fast Rust bindings. |
+| **LZ4** | `.lz4` | `[cramjam]` | Requires `pip install incorporator[cramjam]`. Ultra-fast Rust bindings. |
+| **Snappy** | `.snappy` | `[cramjam]` | Requires `pip install incorporator[cramjam]`. Standard for Hadoop environments. |
+| **Brotli** | `.br` | `[cramjam]` | Requires `pip install incorporator[cramjam]`. High-density web compression. |
+
+---
+
+## 🪄 How "Archive Extraction" Works
+
+Formats like `.zip` and `.tar` are not just compressed streams; they are directories containing multiple files. 
+
+If you point Incorporator to an archive (e.g., `await MyClass.incorp("data_dump_2026.zip")`), the framework performs the following magic entirely in the background:
+1. It unzips the archive in memory.
+2. It ignores system junk files (like `__MACOSX` folders or hidden `.DS_Store` files).
+3. It scans the directory tree until it finds the **very first valid data file** (ending in `.json`, `.csv`, or `.xml`).
+4. It extracts only that specific file and passes it to the format parser.
+
+This means you can hand Incorporator a 50GB ZIP file containing thousands of images and a single `data.json` file, and it will flawlessly extract and parse the JSON without you writing a single line of `zipfile` boilerplate!
+
+---
+
+## 💼 Installing Enterprise Plugins
+
+Incorporator strictly adheres to a "Zero-Bloat" philosophy. The base installation (`pip install incorporator`) is incredibly lightweight and only uses standard Python libraries.
+
+If you are a Data Engineer working with massive Kafka streams or Hadoop clusters, you can opt-in to our Big Data plugins:
+
+```bash
+# Unlocks Rust-backed Zstandard, LZ4, Snappy, and Brotli via the cramjam library
+pip install incorporator[cramjam]
+
+# Unlocks binary Apache Avro streams via the fastavro library
+pip install incorporator[avro]
+
+# Installs the complete Big Data suite
+pip install incorporator[all]
+```

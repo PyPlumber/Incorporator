@@ -1,12 +1,12 @@
 ***
 
-# 📖 `export()` Reference & Cross-Format Serialization
+# 📖 `export()` API Reference & Cross-Format Serialization
 
-The `export()` classmethod is the final pillar of Incorporator's "Holy Trinity" (`incorp`, `refresh`, `export`). 
+The `export()` classmethod is the final pillar of Incorporator's "Holy Trinity" API (`incorp`, `refresh`, `export`). 
 
-While `incorp()` handles Extraction and Transformation, `export()` is your **Load** phase. It takes your dynamically generated Python object graphs and serializes them safely to disk as clean JSON, CSV, or XML files.
+While `incorp()` handles Extraction and Transformation, `export()` is your **Load** phase. It takes your dynamically generated Python object graphs and serializes them safely to disk as clean JSON, CSV, XML, SQLite, or Apache Avro files.
 
-Because Incorporator operates asynchronously, all heavy disk I/O is automatically offloaded to background threads, guaranteeing that exporting massive datasets will **never block your asyncio event loop**.
+Because Incorporator operates asynchronously, all heavy disk I/O and compression algorithms are automatically offloaded to background threads, guaranteeing that exporting massive datasets will **never block your asyncio event loop**.
 
 ---
 
@@ -15,30 +15,63 @@ Because Incorporator operates asynchronously, all heavy disk I/O is automaticall
 When you call `await MyClass.export(instances, "output.csv")`, the framework executes the following sequence:
 
 1. **Serialization:** It safely traverses your in-memory objects and converts them back into standard Python dictionaries using Pydantic's `model_dump()`.
-2. **Format Inference:** It automatically detects the desired format based on your file extension (e.g., `.csv`, `.xml`).
-3. **Format-Specific Sanitization:** (See below) It applies specific safety measures to ensure nested graphs write cleanly to flat files like CSVs.
+2. **Format Inference:** It automatically detects the desired format based on your file extension (e.g., `.csv`, `.db`, `.avro`).
+3. **Format-Specific Sanitization:** (See below) It applies specific safety measures to ensure nested graphs write cleanly to flat files or strictly typed binary formats.
 4. **Thread-Safe I/O:** It hands the payload to `asyncio.to_thread()`, streaming the bytes to disk in the background while your main application continues executing.
+5. **Background Compression:** If a compression algorithm is requested, it seamlessly archives the flat file into a `.gz`, `.zip`, `.zst`, etc., and cleans up the original uncompressed file.
 
+---
+
+## ✍️ Supported Calling Signatures
+
+Incorporator uses intelligent overloading so you can export data however it fits your workflow best.
+
+**1. The "Active Record" Dump (Recommended):**
+Exports every living instance currently tracked in the class memory registry.
+```python
+await MyClass.export("output.csv")
+```
+**2. The Positional Subset:**
+Exports only a specific list of instances.
+```python
+await MyClass.export(my_list, "output.csv")
+```
+**3. The Explicit Kwarg Target:**
+For strict readability or legacy compatibility.
+```python
+await MyClass.export(instance=my_list, file_path="output.csv")
+```
 ---
 
 ## 🛠️ Core Parameters
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| **`instance`** | `Incorporator` \| `List` | **(Required)** The object or list of objects you want to save to disk. |
+| **`instance`** | `Incorporator` \| `List` | (Optional) A specific subset of objects. If omitted, Incorporator automatically exports every living instance currently tracked in the class's inc_dict! |
 | **`file_path`** | `str` | **(Required)** The destination file path (e.g., `"data/cleaned_users.xml"`). |
-| **`format_type`**| `str` \| `FormatType` | Optional. Explicitly declare the format (`"json"`, `"csv"`, `"xml"`). If omitted, Incorporator infers it from the `file_path` extension. |
+| **`format_type`**| `str` \| `FormatType` | Optional. Explicitly declare the format (`"json"`, `"csv"`, `"xml"`, `"sqlite"`, `"avro"`). If omitted, Incorporator infers it from the `file_path` extension. |
+| **`compression`**| `str` \| `CompressionType`| Optional. The algorithm to compress the exported file into (e.g., `"gz"`, `"zip"`, `"zst"`, `"lz4"`). |
+
+### 🗄️ Database Specific Parameters (SQLite)
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| **`sql_table`** | `str` | The target table in the SQLite database. If omitted, Incorporator infers it from your Python class name. |
+| **`if_exists`** | `str` | How to behave if the table already exists. Options: `"replace"` (Default), `"append"`, or `"fail"`. |
 
 ---
 
 ## 🎩 Format-Specific Magic (Zero-Boilerplate)
 
-Writing to CSVs or XMLs normally requires writing extensive boilerplate to flatten dictionaries or sanitize XML tags. Incorporator handles this invisibly.
+Writing to CSVs, strict databases, or XMLs normally requires writing extensive boilerplate to flatten dictionaries or sanitize schema tags. Incorporator handles this invisibly.
 
 ### 📊 CSV Auto-Flattening
 CSVs are flat grids, but Incorporator objects are deeply nested graphs. If you export an object with nested data (e.g., `user.profile.address`), Incorporator automatically intercepts the nested dictionaries/lists and serializes them into valid JSON strings *inside* the CSV cell. 
 
-This guarantees the CSV writer never crashes, and the resulting file can be instantly re-ingested by Incorporator later!
+### 🗄️ SQLite Magic Schema Generation
+You do not need to write `CREATE TABLE` statements. Incorporator analyzes the Python types of your objects (mapping `int` to `INTEGER`, `str` to `TEXT`, etc.), dynamically creates the SQL table, and uses the C-level `executemany` driver for lightning-fast, injection-safe bulk inserts.
+
+### 🐘 Avro Strict-Schema Translation
+Apache Avro requires a strict schema dictionary embedded in its binary headers. Incorporator dynamically infers this schema from your Pydantic data, mapping Python types to Avro primitives (`long`, `double`, `boolean`). It elegantly declares all columns as `["null", type]` to prevent write-crashes if your API data has missing keys!
 
 ### 📝 XML Tag Sanitization
 XML has strict naming rules (e.g., tags cannot start with a number or contain spaces). When you export to XML, Incorporator automatically sanitizes your attribute names to ensure the resulting XML document is perfectly valid.
@@ -67,38 +100,42 @@ async def fetch_and_translate():
 asyncio.run(fetch_and_translate())
 ```
 
-### Scenario B: Exporting Enriched Data
-`export()` seamlessly serializes the custom attributes you generated during the ETL phase using `calc()` or `inc()`.
+### Scenario B: Background Compression
+Need to save disk space? Pass the `compression` kwarg. Incorporator will write the flat file, compress it using C-optimized streaming, and delete the uncompressed source instantly.
 
 ```python
-# 1. Fetch data and create a new custom attribute
-pokemon = await Pokemon.incorp(
-    inc_url="https://pokeapi.co/api/v2/pokemon?limit=50",
-    conv_dict={
-        "base_stat_total": calc(calculate_bst, "stats")
-    }
-)
-
-# 2. The exported JSON will now contain your newly calculated "base_stat_total"!
-await Pokemon.export(pokemon, "enriched_pokemon.json")
+# Creates "upcoming_launches.csv.gz" seamlessly!
+await LaunchData.export(launches, "upcoming_launches.csv", compression="gz")
 ```
 
-### Scenario C: Explicit Format Targeting
-Sometimes you need to save a file without a standard extension (e.g., streaming to a generic `.dat` or `.log` file). You can bypass the auto-inference by passing the `format_type` kwarg.
+### Scenario C: The Local Data Warehouse (JSON ➡️ SQLite)
+Instantly dump an API payload into a local database for analytics without writing an ORM.
 
 ```python
-# Force Incorporator to serialize the objects as XML, 
-# even though the file extension is .dat
-await Invoice.export(
-    instance=invoices,
-    file_path="secure_ledger.dat",
-    format_type="xml"
+# 1. Fetch JSON data
+users = await User.incorp("https://api.domain.com/v1/users")
+
+# 2. Dump directly to a local SQLite database! 
+# Because we didn't pass `sql_table`, it auto-creates a table named 'user'.
+await User.export(
+    users, 
+    "local_warehouse.db", 
+    if_exists="replace"
 )
+```
+
+### Scenario D: Big Data Streaming (API ➡️ Avro)
+*(Requires `pip install incorporator[avro]`)*
+Move data directly from REST APIs into Hadoop/Kafka-ready binary streams.
+
+```python
+# Instantly translates the Pydantic models to an Avro schema and writes binary bytes
+await TelemetryEvent.export(events, "archive.avro")
 ```
 
 ---
 
-## 🗄️ Observability with `LoggedIncorporator`
+## 👁️ Observability with `LoggedIncorporator`
 
 If your base class inherits from `LoggedIncorporator` (instead of the standard `Incorporator`), calling `export()` will automatically trigger class-level logging. 
 

@@ -54,6 +54,16 @@ dev =[
     "mypy>=1.0.0",
     "ruff>=0.1.0"
 ]
+cramjam = [
+    "cramjam>=2.7.0"
+]
+avro =[
+    "fastavro>=1.8.0"
+]
+all =[
+    "cramjam>=2.7.0",
+    "fastavro>=1.8.0"
+]
 
 [tool.setuptools.packages.find]
 include = ["incorporator", "incorporator.*"]

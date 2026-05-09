@@ -7,11 +7,12 @@ This file intentionally contains NO data parsing, network looping, or schema
 compilation logic. It acts purely as a Domain-Driven orchestrator, routing
 kwargs to the `methods/` directory and assembling the resulting Pydantic objects.
 """
-
+import asyncio
 import logging
 import warnings
 import weakref
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
 from pydantic import BaseModel, Field
@@ -201,27 +202,19 @@ class Incorporator(BaseModel):
 
     @classmethod
     def _extract_parent_data(cls, parents: Any, child_path: str) -> List[Any]:
-        """
-        Safely drills into dynamic structures iteratively (Columnar BFS).
-        """
-        # 1. Start with our baseline array
+        """Iterative BFS to safely drill into dynamic structures without recursion."""
         current_layer = parents if isinstance(parents, list) else [parents]
 
-        # 2. Drill level-by-level across the ENTIRE array (Breadth-First)
-        for part in child_path.split("."):
+        for part in child_path.split('.'):
             next_layer: List[Any] = []
 
             for node in current_layer:
                 if node is None:
                     continue
 
-                # Splintering Defense: If the node itself is a list, flatten it into the layer
                 if isinstance(node, list):
-                    # We process the list items in the SAME pass
                     for item in node:
-                        val = (
-                            item.get(part) if isinstance(item, dict) else getattr(item, part, None)
-                        )
+                        val = item.get(part) if isinstance(item, dict) else getattr(item, part, None)
                         if val is not None:
                             next_layer.append(val)
                 else:
@@ -229,10 +222,7 @@ class Incorporator(BaseModel):
                     if val is not None:
                         next_layer.append(val)
 
-            # The next layer becomes the current layer for the next dot-notation part
             current_layer = next_layer
-
-            # Fast-exit: If a column drill yields absolutely nothing, stop processing.
             if not current_layer:
                 break
 
@@ -395,6 +385,14 @@ class Incorporator(BaseModel):
                 f"[{cls.__name__}] Either 'inc_url', 'inc_file', or a valid 'inc_parent' must be provided."
             )
 
+        # If reading an SQLite file, infer the table name from the class!
+        if source:
+            sample_source = source[0] if isinstance(source, list) else source
+            if infer_format(str(sample_source)) == FormatType.SQLITE:
+                if not kwargs.get("sql_query"):
+                    target_table = kwargs.get("sql_table") or cls.__name__.lower()
+                    kwargs["sql_query"] = f"SELECT * FROM {target_table}"
+
         is_file_mode = bool(inc_file)
         source_list: List[str] = []
         if isinstance(source, list):
@@ -444,44 +442,69 @@ class Incorporator(BaseModel):
 
     @classmethod
     async def refresh(
-        cls: Type[TIncorporator],
-        instance: Union[TIncorporator, List[TIncorporator]],
-        new_url: Optional[Union[str, List[str]]] = None,
-        new_file: Optional[Union[str, List[str]]] = None,
-        inc_child: Optional[str] = None,
-        inc_code: Optional[str] = None,
-        inc_name: Optional[str] = None,
-        excl_lst: Optional[List[str]] = None,
-        conv_dict: Optional[Dict[str, Any]] = None,
-        name_chg: Optional[List[Tuple[str, str]]] = None,
-        inc_page: Optional[AsyncPaginator] = None,
-        **kwargs: Any,
+            cls: Type[TIncorporator],
+            instance: Optional[Union[str, Path, TIncorporator, List[TIncorporator]]] = None,
+            new_url: Optional[Union[str, List[str]]] = None,
+            new_file: Optional[Union[str, List[str]]] = None,
+            inc_child: Optional[str] = None,
+            inc_code: Optional[str] = None,
+            inc_name: Optional[str] = None,
+            excl_lst: Optional[List[str]] = None,
+            conv_dict: Optional[Dict[str, Any]] = None,
+            name_chg: Optional[List[Tuple[str, str]]] = None,
+            inc_page: Optional[AsyncPaginator] = None,
+            **kwargs: Any
     ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
+        """Hydrates existing instances with new data, automatically handling memory registries and deduplication."""
 
-        inst_list = instance if isinstance(instance, list) else [instance]
+        # 1. THE DX OVERLOAD: Resolve what the user actually passed
+        target_url = new_url
+        target_file = new_file
+
+        if instance is None:
+            inst_list = cast(List[TIncorporator], list(cls.inc_dict.values()))
+        elif isinstance(instance, (str, Path)):
+            inst_list = cast(List[TIncorporator], list(cls.inc_dict.values()))
+            target_str = str(instance)
+            if target_str.startswith("http"):
+                target_url = target_str
+            else:
+                target_file = target_str
+        else:
+            inst_list = cast(
+                List[TIncorporator],
+                instance if isinstance(instance, list) else [instance]
+            )
+
         if not inst_list:
-            raise ValueError("Cannot refresh an empty list.")
+            logger.warning(f"[{cls.__name__}] Refresh called but no instances were found to update.")
+            return IncorporatorList(cls, [])
+
         TargetClass = inst_list[0].__class__
 
-        raw_method = kwargs.pop("method", kwargs.pop("http_method", "GET"))
-        kwargs["http_method"] = raw_method.upper() if isinstance(raw_method, str) else "GET"
+        raw_method = kwargs.pop('method', kwargs.pop('http_method', 'GET'))
+        kwargs['http_method'] = raw_method.upper() if isinstance(raw_method, str) else 'GET'
 
-        child_path = inc_child or getattr(instance, "inc_child_path", None)
-        extracted_data = (
-            cls._extract_parent_data(inst_list, child_path) if child_path else inst_list
-        )
+        # 2. HATEOAS EXTRACTION
+        child_path = inc_child or getattr(inst_list[0], "inc_child_path", None)
+        extracted_data = cls._extract_parent_data(inst_list, child_path) if child_path else inst_list
 
-        target = new_url or new_file
+        # DSA OPTIMIZATION (THE FIX): Deduplicate extracted child paths to prevent N+1 Network Spam
+        if child_path and extracted_data:
+            hashable_data = [x for x in extracted_data if isinstance(x, (str, int, float, bool))]
+            extracted_data = list(dict.fromkeys(hashable_data))
+
+        target = target_url or target_file
         source_urls: List[str] = []
         if isinstance(target, list):
             source_urls = [str(x) for x in target if x is not None]
         elif isinstance(target, str):
             source_urls = [target]
 
-        # DELEGATE TO MODULAR ROUTER
-        if not new_file and extracted_data:
+        # 3. DELEGATE TO MODULAR ROUTER
+        if not target_file and extracted_data:
             kwargs = cls._resolve_declarative_routing(extracted_data, source_urls, **kwargs)
-            raw_url = kwargs.pop("inc_url", source_urls)
+            raw_url = kwargs.pop('inc_url', source_urls)
 
             source_list: List[str] = []
             if isinstance(raw_url, list):
@@ -489,46 +512,38 @@ class Incorporator(BaseModel):
             elif isinstance(raw_url, str):
                 source_list = [raw_url]
 
-            payload_list = kwargs.pop("payload_list", None)
+            payload_list = kwargs.pop('payload_list', None)
         else:
             source_list = source_urls
-            payload_list = kwargs.pop("payload_list", None)
+            payload_list = kwargs.pop('payload_list', None)
 
-        if not source_list and not new_file:
-            raw_sources = [
-                getattr(inst, "inc_url", getattr(inst, "inc_file", "")) for inst in inst_list
-            ]
+        # 4. ORIGIN RESOLUTION & DEDUPLICATION
+        if not source_list and not target_file:
+            raw_sources = [getattr(inst, "inc_url", getattr(inst, "inc_file", "")) for inst in inst_list]
             source_list = [str(u) for u in raw_sources if u]
 
-            # Deduplicate refresh URLs
+            # Deduplicate origin URLs so 10,000 objects from 1 URL only triggers 1 HTTP request!
             if source_list:
                 source_list = list(dict.fromkeys(source_list))
 
             if not source_list:
                 raise ValueError(
-                    "Instances contain no origin URLs to refresh from, and no new_url was provided."
-                )
+                    f"[{cls.__name__}] Instances contain no origin URLs to refresh from, and no new target was provided.")
 
+        # 5. ASYNC EVENT-LOOP SAFE EXECUTION
         parsed_data, failed_sources = await network.fetch_concurrent_payloads(
             source_list=source_list,
-            is_file_mode=bool(new_file)
-            or (not new_url and getattr(inst_list[0], "inc_file", None) is not None),
+            is_file_mode=bool(target_file) or (not target_url and getattr(inst_list[0], "inc_file", None) is not None),
             inc_page=inc_page,
             payload_list=payload_list,
-            **kwargs,
+            **kwargs
         )
 
         # DELEGATE TO MODULAR BUILDER
         result = cls._build_instances(
-            parsed_data,
-            failed_sources,
-            is_single=(len(source_list) <= 1 and inc_page is None),
-            target_class=TargetClass,
-            inc_code=inc_code,
-            inc_name=inc_name,
-            excl_lst=excl_lst,
-            conv_dict=conv_dict,
-            name_chg=name_chg,
+            parsed_data, failed_sources, is_single=(len(source_list) <= 1 and inc_page is None),
+            target_class=TargetClass, inc_code=inc_code, inc_name=inc_name,
+            excl_lst=excl_lst, conv_dict=conv_dict, name_chg=name_chg
         )
 
         if inc_child is not None and isinstance(result, IncorporatorList):
@@ -538,14 +553,51 @@ class Incorporator(BaseModel):
 
     @classmethod
     async def export(
-        cls: Type[TIncorporator],
-        instance: Union[TIncorporator, List[TIncorporator]],
-        file_path: str,
-        format_type: Optional[FormatType] = None,
+            cls: Type[TIncorporator],
+            instance: Union[str, Path, TIncorporator, List[TIncorporator]],
+            file_path: Optional[Union[str, Path]] = None,
+            format_type: Optional[FormatType] = None,
+            compression: Optional[str] = None,
+            sql_table: Optional[str] = None,
+            if_exists: str = "replace",
+            **kwargs: Any
     ) -> None:
-        """Serializes current Incorporator states out to physical JSON/CSV/XML files."""
-        active_format = format_type or infer_format(file_path)
-        instances = instance if isinstance(instance, list) else [instance]
+        """Serializes current Incorporator states out to physical JSON/CSV/XML/SQL files."""
 
-        data_dicts = [obj.model_dump(by_alias=True, mode="json") for obj in instances]
-        await format_parsers.write_destination_data(data_dicts, file_path, active_format)
+        # 1. Registry Extraction: Safe from concurrent async mutation because `list()` executes
+        if file_path is None:
+            actual_path = str(instance)
+            instances = cast(List[TIncorporator], list(cls.inc_dict.values()))
+        else:
+            actual_path = str(file_path)
+            instances = cast(
+                List[TIncorporator],
+                instance if isinstance(instance, list) else [instance]
+            )
+
+        if not instances:
+            logger.warning(f"[{cls.__name__}] Export called but no instances were found in the registry.")
+            return
+
+        active_format = format_type or infer_format(actual_path)
+
+        if active_format == FormatType.SQLITE and not sql_table:
+            sql_table = cls.__name__.lower()
+
+        kwargs["sql_table"] = sql_table
+        kwargs["if_exists"] = if_exists
+        kwargs["pydantic_schema"] = instances[0].model_json_schema()
+
+        # 2. Offload massive CPU-bound serialization to a background worker thread.
+        def _serialize_all() -> List[Dict[str, Any]]:
+            return [obj.model_dump(by_alias=True, mode='json') for obj in instances]
+
+        data_dicts = await asyncio.to_thread(_serialize_all)
+
+        # 3. Offload format writing and disk I/O to background threads
+        await format_parsers.write_destination_data(data_dicts, actual_path, active_format, **kwargs)
+
+        # 4. Offload compression to background threads
+        if compression:
+            from .methods.compression import compress_file
+            await asyncio.to_thread(compress_file, actual_path, compression)

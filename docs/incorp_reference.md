@@ -1,8 +1,8 @@
 ***
 
-# 📖 `incorp()` Reference & ETL Guide
+# 📖 `incorp()` API Reference & ETL Guide
 
-The `incorp()` classmethod is the beating heart of the Incorporator framework. It handles extraction, networking, pagination, data cleaning, and dynamic Pydantic schema compilation—all in a single asynchronous call.
+The `incorp()` classmethod is the beating heart of the Incorporator framework. It handles extraction, networking, decompression, pagination, data cleaning, and dynamic Pydantic schema compilation—all in a single asynchronous call.
 
 Because Incorporator operates entirely on keyword arguments (`**kwargs`), understanding the execution order and available parameters is key to mastering the framework.
 
@@ -12,13 +12,14 @@ Because Incorporator operates entirely on keyword arguments (`**kwargs`), unders
 
 When you call `await MyClass.incorp(...)`, the framework executes your parameters in a strict, highly optimized order:
 
-1. **Fetch:** Network/File I/O (`inc_url`, `inc_file`, `inc_parent`, `inc_page`).
-2. **Drill:** Intercept nested JSON arrays (`rec_path`).
-3. **Exclude:** Drop massive or unneeded keys before processing (`excl_lst`).
-4. **Transform:** Mutate, cast, and calculate attributes (`conv_dict`, utilizing `inc()` and `calc()`).
-5. **Rename:** Map messy API keys to clean Python attributes (`name_chg`).
-6. **Identify:** Bind Primary Keys for the O(1) memory registry (`inc_code`, `inc_name`).
-7. **Compile:** Dynamically build the Pydantic subclass and instantiate the objects.
+1. **Fetch & Decompress:** Network/File I/O (`inc_url`, `inc_file`). Automatically intercepts and decompresses `.zip`, `.gz`, `.zst`, etc., in a background thread.
+2. **Binary Bypass:** Instantly routes SQLite (`.db`) and Apache Avro (`.avro`) files directly to their binary parsers, bypassing text-decoding.
+3. **Drill:** Intercept nested arrays or dictionaries (`rec_path`).
+4. **Exclude:** Drop massive or unneeded keys before processing (`excl_lst`).
+5. **Transform:** Mutate, cast, and calculate attributes (`conv_dict`, utilizing `inc()` and `calc()`).
+6. **Rename:** Map messy API keys to clean Python attributes (`name_chg`).
+7. **Identify:** Bind Primary Keys for the O(1) memory registry (`inc_code`, `inc_name`).
+8. **Compile:** Dynamically build the Pydantic subclass and instantiate the objects.
 
 ---
 
@@ -28,13 +29,24 @@ These kwargs tell Incorporator *where* to get the data and *what* to extract.
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| **`inc_url`** | `str` \| `List[str]` | A single URL or a list of URLs to fetch concurrently. |
-| **`inc_file`** | `str` \| `List[str]` | A local file path (JSON/CSV/XML). Natively offloaded to background threads. |
-| **`rec_path`** | `str` | A dot-notation string (e.g., `"data.results"`) to drill past useless JSON wrappers and target the core array. |
-| **`inc_code`** | `str` | The JSON key to bind as the Primary Key for the O(1) memory registry (`inc_dict`). |
-| **`inc_name`** | `str` | An optional JSON key to bind as a human-readable label (`inc_name`). |
-| **`inc_parent`** | `IncorporatorList` | A previously fetched dataset. Used to trigger HATEOAS deep-routing or Bulk POSTs. |
-| **`inc_child`** | `str` | Used with `inc_parent`. The JSON key to extract from the parent objects to build the child requests (e.g., `"profile_url"` or `"user_id"`). |
+| **`inc_url`** | `str` \| `List[str]` | A single URL or a list of URLs to fetch concurrently. **(Natively auto-detects and decompresses `.gz`, `.zip`, `.zst`, etc.)** |
+| **`inc_file`** | `str` \| `List[str]` | A local file path. Natively accepts flat files (`.json`, `.csv`), binary files (`.db`, `.avro`), and archives (`.tar.gz`, `.zip`). |
+| **`rec_path`** | `str` | A dot-notation string (e.g., `"data.results"`) to drill past useless JSON/XML wrappers and target the core array. |
+| **`inc_code`** | `str` | The JSON/CSV key to bind as the Primary Key for the O(1) memory registry (`inc_dict`). |
+| **`inc_name`** | `str` | An optional key to bind as a human-readable label (`inc_name`). |
+| **`inc_parent`** | `IncorporatorList` | A previously fetched dataset. Used to trigger HATEOAS deep-routing or Declarative Bulk POSTs. |
+| **`inc_child`** | `str` | Used with `inc_parent`. The key to extract from the parent objects to build the child requests (e.g., `"profile_url"` or `"VIN"`). |
+
+---
+
+## 🗄️ Database & Format-Specific Parameters
+
+When parsing binary files like SQLite, Incorporator uses *Convention over Configuration* to eliminate boilerplate. You only need these kwargs if you want to override the magic defaults.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| **`sql_query`** | `str` | The explicit SQL query to execute when reading from a local `.db` file (e.g., `"SELECT * FROM users WHERE active = 1"`). |
+| **`sql_table`** | `str` | If `sql_query` is omitted, Incorporator magically infers the table name from your **Python Class Name** (e.g., `class User` generates `SELECT * FROM user`). Use this kwarg to explicitly override the target table. |
 
 ---
 
@@ -44,10 +56,11 @@ These kwargs tell Incorporator *where* to get the data and *what* to extract.
 | :--- | :--- | :--- |
 | **`inc_page`** | `AsyncPaginator` | An instance of a paginator (e.g., `NextUrlPaginator("next")` or `OffsetPaginator(limit=50)`). |
 | **`call_lim`** | `int` | Hard limit on the number of pages to fetch (prevents infinite API loops). |
-| **`concurrency_limit`**| `int` | Built-in `asyncio.Semaphore` limit for concurrent HTTPX connections (Default: 50). |
-| **`delay_between_batches`**| `float` | Seconds to pause between chunks to respect strict rate limits (Default: 0.0). |
+| **`concurrency_limit`**| `int` | Built-in `asyncio.Semaphore` limit for concurrent HTTPX connections (Default: `50`). |
+| **`delay_between_batches`**| `float` | Seconds to pause between chunks to respect strict rate limits (Default: `0.0`). |
 | **`http_method`**| `str` | `"GET"`, `"POST"`, `"PUT"`, etc. (Default: `"GET"`). |
-| **`json_payload`**| `Dict` | The POST body to send. Compatible with concurrent sentinels like `each()`. |
+| **`json_payload`**| `Dict` | The POST JSON body to send. Compatible with concurrent sentinels like `each()` and `join_all()`. |
+| **`form_payload`**| `Dict` | The POST Form-Data body to send. |
 
 ---
 
@@ -84,7 +97,6 @@ dataset = await MyClass.incorp(
     }
 )
 ```
-*Note: If an API sends complete garbage (like `"Apple"` for a float), `inc()` catches the exception, logs a helpful warning, and returns your `default` value gracefully.*
 
 ---
 

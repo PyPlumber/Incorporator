@@ -190,7 +190,13 @@ def infer_dynamic_schema(
                 elif isinstance(current_val, dict) and isinstance(v, dict):
                     for sub_k, sub_v in v.items():
                         if current_val.get(sub_k) is None:
-                            current_val[sub_k] = sub_v
+                            # Enforce shallow copies to prevent recursive reference loops!
+                            if isinstance(sub_v, list):
+                                current_val[sub_k] = list(sub_v)
+                            elif isinstance(sub_v, dict):
+                                current_val[sub_k] = dict(sub_v)
+                            else:
+                                current_val[sub_k] = sub_v
 
     cache_key = (model_name, frozenset(sample_dict.keys()))
     if cache_key in SCHEMA_REGISTRY:

@@ -19,11 +19,34 @@ When you call `await MyClass.refresh(instances, ...)`, the framework performs th
 
 ---
 
+## ✍️ Supported Calling Signatures
+
+`refresh()` is highly flexible and intelligently infers your targets based on what you pass.
+
+**1. The Global Polling Refresh (Recommended):**
+Hydrates every living instance in the memory registry using their original origin URLs.
+```python
+await MyClass.refresh()
+```
+**2. The Global Override:**
+Hydrates every living instance, but forces them to update from a brand-new endpoint.
+```python
+await MyClass.refresh("https://new-api.com/v2/updates")
+```
+**3. The Explicit Subset:**
+Refreshes only a specific list of instances (using either their original URLs or a new one).
+```python
+await MyClass.refresh(my_subset_list)
+# or
+await MyClass.refresh(instance=my_subset_list, new_url="https://new-api.com/v2/updates")
+```
+---
+
 ## 🛠️ Core Parameters
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| **`instance`** | `Incorporator` \| `List` | **(Required)** The existing object(s) you want to update. |
+| **`instance`** | `Incorporator` \| `List` | (Optional) The existing object(s) you want to update. If omitted, it targets all living instances in the registry. |
 | **`new_url`** | `str` \| `List[str]` | Optional. Explicitly provide a new endpoint to fetch updates from. If omitted, it defaults to the instance's original `inc_url`. |
 | **`new_file`** | `str` \| `List[str]` | Optional. Explicitly provide a new local file to read from. |
 | **`inc_child`** | `str` | Used for HATEOAS routing. Drills into the existing instances to extract a specific child URL for the refresh. |
@@ -35,6 +58,45 @@ Just like `incorp()`, `refresh()` accepts the full suite of Declarative ETL para
 *   `excl_lst`: Drop new keys.
 *   `name_chg`: Rename incoming keys.
 *   `inc_code` / `inc_name`: Re-bind the primary keys.
+
+---
+
+## 🗄️ Format Agnosticism & Databases
+
+Because `refresh()` utilizes the same core engine as `incorp()`, it natively supports all **7 data formats** (JSON, NDJSON, CSV, TSV, PSV, XML, SQLite) and seamlessly decompresses archives (`.zip`, `.gz`, `.zst`, etc.) in the background.
+
+If you are updating your memory registry from a binary database (like SQLite), `refresh()` accepts the exact same `sql_query` and `sql_table` parameters.
+
+### Example: Polling an SQLite Database
+If another microservice is constantly writing updates to a local `.db` file, you can instantly hydrate your living Python objects with the newest rows.
+
+```python
+# 1. Fetch initial state
+active_users = await User.incorp(
+    inc_file="local_warehouse.db", 
+    sql_query="SELECT * FROM users WHERE active = 1"
+)
+
+# ... Later in the application ...
+
+# 2. Refresh the living memory registry with new database data!
+# (Incorporator magically infers the `sql_table` if you don't provide a query)
+await User.refresh(
+    instance=active_users, 
+    new_file="local_warehouse.db"
+)
+```
+
+### Example: Refreshing from a Zipped CSV
+If your daily updates come from a compressed CSV dumped onto an FTP server, `refresh()` intercepts and decompresses it entirely in RAM.
+
+```python
+# Fetches the ZIP, decompresses the CSV in memory, and updates the existing objects!
+await Sales.refresh(
+    instance=daily_sales,
+    new_url="https://api.system.com/updates/daily_sales.csv.zip"
+)
+```
 
 ---
 
