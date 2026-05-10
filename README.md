@@ -1,6 +1,6 @@
 ***
 
-# 🚀 Incorporator (v1.0.6)
+# 🚀 Incorporator (v1.0.7)
 
 **A schema-free data mapper that turns JSON, XML, or CSV into a unified Python object graph with dot-notation and access-at-runtime.**
 
