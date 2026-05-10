@@ -2,7 +2,7 @@
 
 Incorporator is designed with a **"Zero-Bloat"** philosophy. The base package relies purely on the Python Standard Library, Pydantic, and HTTPX. 
 
-However, for enterprise environments processing gigabytes of data, Incorporator supports lazy-loaded **Rust and C extensions** that unlock native hyperthreading and bypass the Python Global Interpreter Lock (GIL).
+However, for enterprise environments processing data, Incorporator supports lazy-loaded **Rust and C extensions** that unlock native hyperthreading and bypass the Python Global Interpreter Lock (GIL).
 
 ---
 
