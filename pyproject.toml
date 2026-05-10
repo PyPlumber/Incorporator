@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "incorporator"
-version = "1.0.6"
+version = "1.0.7"
 description = "A schema-free data mapper that turns JSON, XML, or CSV into a unified Python object graph with dot-notation and access-at-runtime."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -54,16 +54,12 @@ dev =[
     "mypy>=1.0.0",
     "ruff>=0.1.0"
 ]
-cramjam = [
-    "cramjam>=2.7.0"
-]
-avro =[
-    "fastavro>=1.8.0"
-]
-all =[
-    "cramjam>=2.7.0",
-    "fastavro>=1.8.0"
-]
+# The GIL-releasing C/Rust upgrades
+speedups =["orjson>=3.9", "lxml>=4.9", "cramjam>=2.7"]
+# Big Data Formats
+avro =["fastavro>=1.8"]
+# The developer "install everything" flag
+all =["orjson>=3.9", "lxml>=4.9", "cramjam>=2.7", "fastavro>=1.8"]
 
 [tool.setuptools.packages.find]
 include = ["incorporator", "incorporator.*"]

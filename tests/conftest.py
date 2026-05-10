@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import sys
+from unittest.mock import patch
 import pytest
 
 # --- JSON FIXTURES ---
@@ -66,3 +68,20 @@ def xml_catalog_payload() -> str:
         "   </book>\n"
         "</catalog>"
     )
+
+
+@pytest.fixture
+def mock_no_speedups():
+    """
+    Forces Incorporator to use the Python Standard Library fallbacks
+    by pretending the Rust/C extensions are not installed.
+    """
+    hidden_modules = {
+        "orjson": None,
+        "lxml": None,
+        "cramjam": None,
+        "fastavro": None
+    }
+
+    with patch.dict(sys.modules, hidden_modules):
+        yield

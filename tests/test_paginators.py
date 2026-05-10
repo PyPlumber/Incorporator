@@ -8,6 +8,7 @@ import pytest
 
 from incorporator import Incorporator
 from incorporator.methods.paginate import NextUrlPaginator, OffsetPaginator
+from incorporator.methods import router
 
 
 class PaginatedItem(Incorporator):
@@ -95,10 +96,12 @@ def test_get_url_injection() -> None:
     # Scenario: User provides a template URL
     source_urls = ["https://api.com/users/{}/profile"]
 
-    kwargs = Incorporator._resolve_declarative_routing(
-        extracted_data=extracted_ids, source_urls=source_urls, method="GET"
+    kwargs = router.resolve_declarative_routing(
+        "Test",
+        extracted_data=extracted_ids,
+        source_urls=source_urls,
+        http_method="GET"
     )
-
     # It should generate N unique URLs
     assert kwargs["inc_url"] == [
         "https://api.com/users/alpha/profile",

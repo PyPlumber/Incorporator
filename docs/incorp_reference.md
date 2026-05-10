@@ -8,6 +8,17 @@ Because Incorporator operates entirely on keyword arguments (`**kwargs`), unders
 
 ---
 
+## 🕵️‍♂️ Before You Start: Use `.test()`
+If you do not know the exact structure of the API you are querying, do not write an `.incorp()` call blindly! Instead, use the DX Inspector wrapper:
+
+```python
+await User.test(inc_url="https://api.unknown.com/users")
+```
+
+The `.test()` method takes the exact same kwargs as `.incorp()`. It safely fetches a single page, intercepts the payload, and prints a visual tree alongside exact `incorp()` kwarg recommendations (like `rec_path`, `inc_code`, and `conv_dict` timestamps) to your terminal.
+
+---
+
 ## 🚦 The Execution Pipeline
 
 When you call `await MyClass.incorp(...)`, the framework executes your parameters in a strict, highly optimized order:
@@ -148,6 +159,16 @@ pokemon = await Pokemon.incorp(
 # You now have a clean integer instead of a list of objects!
 print(pokemon.base_stat_total) # Output: 110
 ```
+
+### Declarative POST Tokens
+When passing `inc_parent` and performing a bulk `POST`, `PUT`, or `PATCH`, you can use these tokens inside your `json_payload` or `form_payload` to control how the parent data is mapped:
+
+* **`each()`**: Triggers **N Concurrent Requests**. Maps the extracted parent list row-by-row into the payload.
+  * *Example:* `json_payload={"user_id": each(), "status": "active"}`
+* **`join_all(delimiter=",")`**: Triggers **1 Bulk Request**. Takes the extracted parent IDs and joins them into a single delimited string.
+  * *Example:* `json_payload={"vehicle_vins": join_all(";")}`
+* **`as_list()`**: Triggers **1 Bulk Request**. Injects the raw extracted parent list directly into a JSON Array.
+  * *Example:* `json_payload={"target_ids": as_list()}`
 
 ---
 

@@ -10,12 +10,13 @@ from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, List, Type, TypeVar, Union
 
-from incorporator.base import Incorporator, IncorporatorList
+from ..base import Incorporator, IncorporatorList
 
 TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
 
 # Global registry to prevent duplicate background threads if a class is dynamically rebuilt
 _ACTIVE_LISTENERS: Dict[str, QueueListener] = {}
+MAX_LOG_THREADS = 50  # Hard OS limit constraint
 
 
 def _cleanup_listeners() -> None:
@@ -30,7 +31,7 @@ atexit.register(_cleanup_listeners)
 
 def _safe_log_filename(prefix: str, suffix: str) -> str:
     """Sanitizes strings and routes all files to a dedicated 'logs/' directory."""
-    # Ensure logs directory exists
+    # Ensure logs directory exists (Works seamlessly with Pytest monkeypatch.chdir)
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
 
@@ -73,8 +74,12 @@ def setup_class_logger(cls: Type[Any]) -> None:
     cls_name = getattr(cls, "__name__", "UnknownClass")
     logger = logging.getLogger(cls_name)
 
-    # Prevent duplicate handlers if the dynamic class is generated multiple times
+    # 1. Prevent duplicate listener threads for cached classes
     if cls_name in _ACTIVE_LISTENERS:
+        return
+
+    # 2. Prevent handler stacking if the Python runtime cached the logger object internally
+    if logger.handlers:
         return
 
     logger.setLevel(logging.DEBUG)
@@ -84,45 +89,41 @@ def setup_class_logger(cls: Type[Any]) -> None:
     max_bytes = 5 * 1024 * 1024
     backup_count = 3
 
-    # 1. Debug File Handler (Captures everything)
+    # Setup Disk Handlers
     debug_fh = RotatingFileHandler(
-        _safe_log_filename(cls_name, "debug.log"),
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding="utf-8",
+        _safe_log_filename(cls_name, "debug.log"), maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
     )
     debug_fh.setLevel(logging.DEBUG)
     debug_fh.setFormatter(formatter)
 
-    # 2. Error/Main File Handler (Captures INFO and ERROR)
     error_fh = RotatingFileHandler(
-        _safe_log_filename(cls_name, "error.log"),
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding="utf-8",
+        _safe_log_filename(cls_name, "error.log"), maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
     )
     error_fh.setLevel(logging.INFO)
     error_fh.addFilter(StandardFilter())
     error_fh.setFormatter(formatter)
 
-    # 3. API File Handler (Captures only Web Traffic)
     api_fh = RotatingFileHandler(
-        _safe_log_filename(cls_name, "api.log"),
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding="utf-8",
+        _safe_log_filename(cls_name, "api.log"), maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
     )
     api_fh.setLevel(logging.INFO)
     api_fh.addFilter(APIFilter())
     api_fh.setFormatter(formatter)
 
-    # 4. Multi-Threading Queue Setup (Non-Blocking Event Loop)
-    log_queue: queue.Queue[Any] = queue.Queue(-1)
+    # 3. Multi-Threading Queue Setup (Non-Blocking Event Loop)
+    log_queue: queue.SimpleQueue[Any] = queue.SimpleQueue()
     queue_handler = QueueHandler(log_queue)
     logger.addHandler(queue_handler)
 
     listener = QueueListener(log_queue, debug_fh, error_fh, api_fh, respect_handler_level=True)
     listener.start()
+
+    # 🛡️ THE FIX: O(1) Background Thread Pool Eviction! (Prevents OS Thread Exhaustion OOMs)
+    if len(_ACTIVE_LISTENERS) >= MAX_LOG_THREADS:
+        oldest_key = next(iter(_ACTIVE_LISTENERS))
+        old_listener = _ACTIVE_LISTENERS.pop(oldest_key)
+        old_listener.stop()
+
     _ACTIVE_LISTENERS[cls_name] = listener
 
 
@@ -140,7 +141,7 @@ class LoggingMixin:
             if not path.is_file():
                 return []
 
-            errors: List[Dict[str, Any]] = []
+            errors: List[Dict[str, Any]] =[]
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
@@ -164,15 +165,17 @@ class LoggingMixin:
 
     @classmethod
     def log_cls_info(cls, msg: str) -> None:
-        meta_str = f'class:"{cls.__name__}"'
-        cls._get_cls_logger().info(msg, extra={"meta": meta_str, "is_api": False})
+        logger = cls._get_cls_logger()
+        if logger.isEnabledFor(logging.INFO):
+            meta_str = f'class:"{cls.__name__}"'
+            logger.info(msg, extra={"meta": meta_str, "is_api": False})
 
     @classmethod
     def log_cls_error(cls, msg: str, exc_info: bool = False) -> None:
-        meta_str = f'class:"{cls.__name__}"'
-        cls._get_cls_logger().error(
-            msg, exc_info=exc_info, extra={"meta": meta_str, "is_api": False}
-        )
+        logger = cls._get_cls_logger()
+        if logger.isEnabledFor(logging.ERROR):
+            meta_str = f'class:"{cls.__name__}"'
+            logger.error(msg, exc_info=exc_info, extra={"meta": meta_str, "is_api": False})
 
     # --- INSTANCE-LEVEL LOGGING ---
 
@@ -180,7 +183,6 @@ class LoggingMixin:
         """Generates a meta string detailing the class origin and instance identity."""
         cls = self.__class__
         cls_name = getattr(cls, "__name__", "UnknownClass")
-        # Updated property lookups to match the refactored base.py schema contract
         return (
             f'class:"{cls_name}", name:"{cls_name}", '
             f'self:"{getattr(self, "inc_code", None)}", name:"{getattr(self, "inc_name", None)}", '
@@ -191,18 +193,25 @@ class LoggingMixin:
         return logging.getLogger(self.__class__.__name__)
 
     def log_debug(self, msg: str) -> None:
-        self._get_logger().debug(msg, extra={"meta": self.log_meta(), "is_api": False})
+        # 🛡️ THE FIX: Short-circuit eager string execution!
+        logger = self._get_logger()
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(msg, extra={"meta": self.log_meta(), "is_api": False})
 
     def log_info(self, msg: str) -> None:
-        self._get_logger().info(msg, extra={"meta": self.log_meta(), "is_api": False})
+        logger = self._get_logger()
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(msg, extra={"meta": self.log_meta(), "is_api": False})
 
     def log_error(self, msg: str, exc_info: bool = False) -> None:
-        self._get_logger().error(
-            msg, exc_info=exc_info, extra={"meta": self.log_meta(), "is_api": False}
-        )
+        logger = self._get_logger()
+        if logger.isEnabledFor(logging.ERROR):
+            logger.error(msg, exc_info=exc_info, extra={"meta": self.log_meta(), "is_api": False})
 
     def log_api(self, msg: str) -> None:
-        self._get_logger().info(msg, extra={"meta": self.log_meta(), "is_api": True})
+        logger = self._get_logger()
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(msg, extra={"meta": self.log_meta(), "is_api": True})
 
 
 class LoggedIncorporator(LoggingMixin, Incorporator):
@@ -214,13 +223,11 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
         """Declarative factory that sets up class-specific logging before generation."""
 
-        # Set up the logger BEFORE execution so closures and payload_builders can use it
         if enable_logging:
             setup_class_logger(cls)
 
         result = await super().incorp(*args, **kwargs)
 
-        # Also set up the dynamic subclass logger if it differs from the base class
         if enable_logging:
             if isinstance(result, list) and result:
                 setup_class_logger(result[0].__class__)

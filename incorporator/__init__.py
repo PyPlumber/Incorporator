@@ -1,18 +1,19 @@
 """Incorporator: The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway."""
 
-__version__ = "1.0.6"
+__version__ = "1.0.7"
 
-from .base import Incorporator
+from .base import Incorporator, IncorporatorList
+from .methods.compression import CompressionType
 from .methods.converters import (
+    as_list,
     calc,
     calc_all,
-    each,  # Added POST token
+    each,
     inc,
-    join_all,  # Added POST token
-    as_list,  # Added POST token
+    join_all,
     link_to,
     link_to_list,
-    new,  # Added Sentinel
+    new,
     pluck,
     split_and_get,
 )
@@ -26,20 +27,22 @@ from .methods.format_parsers import FormatType
 from .methods.logger import LoggedIncorporator, LoggingMixin, setup_class_logger
 from .methods.paginate import (
     AsyncPaginator,
-    CursorPaginator,  # Added Paginator
-    LinkHeaderPaginator,  # Added Paginator
+    CursorPaginator,
+    LinkHeaderPaginator,
     NextUrlPaginator,
-    OffsetPaginator,  # Added Paginator
-    PageNumberPaginator,  # Added Paginator
+    OffsetPaginator,
+    PageNumberPaginator,
 )
 
-__all__ = [
+__all__ =[
     "__version__",
     "Incorporator",
+    "IncorporatorList",
     "LoggedIncorporator",
     "LoggingMixin",
     "setup_class_logger",
     "FormatType",
+    "CompressionType",
     "inc",
     "calc",
     "calc_all",

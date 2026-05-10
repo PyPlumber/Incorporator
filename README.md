@@ -1,3 +1,5 @@
+***
+
 # 🚀 Incorporator (v1.0.6)
 
 **A schema-free data mapper that turns JSON, XML, or CSV into a unified Python object graph with dot-notation and access-at-runtime.**
@@ -15,15 +17,16 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ### ✨ Highlights
-* **Works with unpredictable JSON APIs** without writing a single line of schema.
-* **Turns API responses into Python objects instantly**—no data models required.
-* **Handles changing JSON structures at runtime** without breaking your code or throwing validation errors.
-* **Use Pydantic and HTTPX** under the hood without defining models, managing context managers, or writing `while` loops.
+* **Works with unpredictable JSON APIs**—and effortlessly digests XML, CSV, NDJSON, and SQLite—without writing a single line of schema.
+* **Turns raw data into native Python objects instantly**, bypassing the need for manual model definitions or brittle classes.
+* **Handles changing JSON structures at runtime**, absorbing missing keys or mutating data types without throwing validation errors.
+* **Harnesses Pydantic and HTTPX** under the hood without forcing you to write data classes, connection poolers, or pagination `while` loops.
 
 ### 🎯 Use this when:
-* You are working with unpredictable or evolving APIs.
-* You don't want to maintain brittle data models.
-* You need to explore or transform deeply nested JSON quickly.
+* You are working with evolving, undocumented, or heavily nested JSON APIs.
+* You need a universal bridge to instantly map legacy XML or flat CSVs into the exact same Python object graph.
+* You are exhausted by writing boilerplate models and validation logic just to explore a new data source.
+* You need to extract deeply nested web data, transform it, and pivot it straight into a local SQL database seamlessly.
 
 ---
 
@@ -36,6 +39,7 @@
   - [2. Array Reduction & Enrichment](#2-deep-enrichment--array-reduction)
   - [3. Multi-API Graph Fusion](#3-multi-api-graph-fusion)
   - [4. Declarative Bulk POSTs](#4-xml-ingestion--declarative-bulk-posts)
+  - [5. The Local Database Pivot](#5-the-local-database-pivot-json-️-sqlite)
 - [Enterprise Resilience](#-enterprise-resilience--features)
 - [Documentation & Examples](#-documentation--examples)
 
@@ -70,7 +74,7 @@ async def main():
     )
 
     # 2. Instantly access the unified Python object graph via dot-notation
-    print(f"Navigation Position: {systems.inc_dict['NAV'].st.pos}")   # Output:[12, 44]
+    print(f"Navigation Position: {systems.inc_dict['NAV'].st.pos}")   # Output: [12, 44]
     print(f"Power Battery Level: {systems.inc_dict['PWR'].st.bat}%")  # Output: 92%
     
     # 3. Interpret and manipulate data effortlessly at runtime
@@ -90,7 +94,7 @@ If that exact same telemetry data comes from a legacy system as XML or CSV:
 ```python
 # The syntax doesn't change for XML...
 systems_xml = await Incorporator.incorp(inc_file="telemetry.xml", inc_code="id")
-print(systems_xml.inc_dict["NAV"].st.pos) # Output: ['12', '44']
+print(systems_xml.inc_dict["NAV"].st.pos) # Output:['12', '44']
 
 # ...and it works instantly for CSV, TSV, or streaming NDJSON logs!
 systems_csv = await Incorporator.incorp(inc_file="telemetry.csv", inc_code="id")
@@ -100,18 +104,19 @@ systems_csv = await Incorporator.incorp(inc_file="telemetry.csv", inc_code="id")
 
 ## 📦 Installation
 
-Built entirely on the standard library, Pydantic V2 metaprogramming, and HTTPX.
+Built entirely on the Python standard library, Pydantic V2 metaprogramming, and HTTPX.
 
 ```bash
 pip install incorporator
 ```
 *Dependencies: `pydantic (>=2.0)`, `httpx`, `tenacity`.*
 
-For Big Data streams and ultra-fast Rust compression, use our zero-bloat extras:
+For Big Data streams, GIL-free hyperthreading, and ultra-fast Rust compression, use our zero-bloat extras:
 ```bash
-pip install incorporator[cramjam] # Unlocks zstd, lz4, snappy, brotli
-pip install incorporator[avro]    # Unlocks Apache Avro binary streams
-pip install incorporator[all]     # Installs the complete Big Data suite
+pip install incorporator[speedups] # Unlocks GIL-free orjson & lxml parsing
+pip install incorporator[cramjam]  # Unlocks zstd, lz4, snappy, brotli compression
+pip install incorporator[avro]     # Unlocks Apache Avro binary streams
+pip install incorporator[all]      # Installs the complete Enterprise Big Data suite
 ```
 
 ---
@@ -120,9 +125,59 @@ pip install incorporator[all]     # Installs the complete Big Data suite
 
 Manage your entire data lifecycle with just three `@classmethod` factories. Everything Incorporator does stems from these three commands:
 
-1. **`incorp()`**: **Extract & Transform.** Fetch unknown data, clean it dynamically, and build the Python object graph.[*(Read the API Reference)*](./docs/incorp_reference.md)
-2. **`refresh()`**: **Stateful Updates.** Pass existing objects back in to seamlessly fetch live updates and hydrate your memory registries. [*(Read the API Reference)*](./docs/refresh_reference.md)
-3. **`export()`**: **Load.** Instantly serialize your deeply nested Python objects out to clean CSV, XML, or JSON files. [*(Read the API Reference)*](./docs/export_reference.md)
+1. **`incorp()`**: **Extract & Transform.** [*(Docs)*](./docs/incorp_reference.md) Fetch unknown data, clean it dynamically, and build the Python object graph.
+2. **`refresh()`**: **Stateful Updates.** [*(Docs)*](./docs/refresh_reference.md) Pass existing objects back in to seamlessly fetch live updates and hydrate your memory registries.
+3. **`export()`**: **Load.** [*(Docs)*](./docs/export_reference.md) Instantly serialize your deeply nested Python objects out to clean CSV, XML, SQLite, or JSON files.
+
+---
+
+## 🕵️‍♂️ The DX Inspector: `.test()`
+Don't know the shape of an API? Don't open Postman. Don't write a schema. Let Incorporator write your code for you.
+
+When exploring a new endpoint, simply swap `.incorp()` for `.test()` to trigger the **Just-In-Time (JIT) API Profiler**. It safely fetches a single page, analyzes the data tree using regex-based value scoring, and prints exactly what kwargs you need to write.
+
+```python
+import asyncio
+from incorporator import Incorporator
+
+class User(Incorporator): pass
+
+# 1. Hit an unknown API
+asyncio.run(User.test(inc_url="https://api.unknown.com/v1/users"))
+```
+The Console Output: Instantly, Incorporator prints a complete mapping of the API directly to your terminal:
+
+```text
+======================================================================
+🕵️‍♂️  INCORPORATOR DX INSPECTOR
+======================================================================
+
+📦 1. PAYLOAD STRUCTURE:
+   ├── metadata (dict)
+   │   ├── count: int = 1500
+   │   └── page: int = 1
+   └── results (list, len=1500)
+       ├── user_uuid: str = a1b2c3d4-e5f6...
+       ├── full_name: str = Jimmy Jenkins
+       ├── status: bool = True
+       ├── created_at: str = 2026-05-12T14:32:00Z
+       └── address (dict)
+
+   ⚠️  WARNING: The root object is a dictionary, but it contains arrays.
+   💡 SUGGESTION: You probably want to add `rec_path='results'` to your incorp() call.
+
+🔑 2. IDENTITY MAPPING:
+   Recommended kwargs for O(1) Memory Registry:
+   ✅ inc_code='user_uuid'
+   ✅ inc_name='full_name'
+
+🛠️  3. ETL / TYPE CASTING SUGGESTIONS:
+   💡 We detected string-based timestamps. Consider passing:
+      conv_dict={
+          'created_at': inc(datetime),
+      }
+======================================================================
+```
 
 ---
 
@@ -268,6 +323,8 @@ active_users = await User.incorp(
 ---
 ## 🛠 Enterprise Resilience & Features
 
+### 🚀 GIL-Free Hyperthreading
+Incorporator handles all Disk I/O and format parsing on background threads. When installed with `[speedups]`, the framework seamlessly lazy-loads Rust and C extensions (`orjson`, `lxml`) to release the Python GIL, natively mapping multi-gigabyte data sources across all available CPU cores without stalling your async event loop.
 
 ### 🗜️ Invisible Archiving & Compression
 Stop writing `zipfile` extraction logic for compressed API payloads. Incorporator natively detects, intercepts, and decompresses `gzip`, `bz2`, `lzma`, `zip`, and `tar` archives in the background—without changing a single line of your parsing code.
@@ -326,4 +383,3 @@ Check out the [`/examples`](./examples) directory for runnable code, and the lin
 Incorporator is built on strict OOP principles, non-blocking observability, and a forgiving metaprogramming shield. We trap standard library exceptions (`JSONDecodeError`, `httpx.HTTPStatusError`) and gracefully recast them as domain errors. Your event loop is safe with us.
 
 Contributions are welcome!
-```

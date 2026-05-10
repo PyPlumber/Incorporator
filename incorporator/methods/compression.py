@@ -17,6 +17,7 @@ from typing import Callable, Dict, Optional, Union, cast
 from .format_parsers import FormatType
 from .exceptions import IncorporatorFormatError
 
+
 class CompressionType(str, Enum):
     # Native Streams
     GZIP = "gz"
@@ -33,6 +34,7 @@ class CompressionType(str, Enum):
     SNAPPY = "snappy"
     BROTLI = "br"
 
+
 def infer_compression(path_or_url: str) -> Optional[CompressionType]:
     path_lower = str(path_or_url).lower()
     for comp in CompressionType:
@@ -41,20 +43,22 @@ def infer_compression(path_or_url: str) -> Optional[CompressionType]:
     return None
 
 
+def _is_binary(active_format: FormatType) -> bool:
+    """Helper to determine if the target format requires raw bytes bypass."""
+    return active_format in (FormatType.SQLITE, FormatType.AVRO)
+
+
 def _find_target_in_archive(
         names: list[str],
         active_format: FormatType,
         archive_target: Optional[str] = None
 ) -> str:
     """Finds a target file in an archive safely and predictably."""
-
-    # 1. If the user explicitly asks for a file, grab it or crash!
     if archive_target:
         if archive_target in names:
             return archive_target
         raise IncorporatorFormatError(f"Target '{archive_target}' not found in archive.")
 
-    # 2. Otherwise, look exclusively for files matching the expected format
     ext_map = {
         FormatType.JSON: (".json",),
         FormatType.NDJSON: (".ndjson", ".jsonl"),
@@ -67,13 +71,18 @@ def _find_target_in_archive(
     }
     valid_exts = ext_map.get(active_format, (".json",))
 
-    matches = [n for n in names if n.lower().endswith(valid_exts) and not n.startswith("__MACOSX")]
+    # Path traversal & MACOSX junk protection
+    matches = [
+        n for n in names
+        if n.lower().endswith(valid_exts)
+           and not n.startswith("__MACOSX")
+           and ".." not in n
+    ]
 
     if not matches:
         raise IncorporatorFormatError(f"Archive contains no files matching {active_format.value}.")
 
     if len(matches) > 1:
-        # 3. Prevent unpredictable guessing!
         raise IncorporatorFormatError(
             f"Archive contains multiple valid {active_format.value} files {matches}. "
             f"Please specify which one to extract using the 'archive_target' kwarg."
@@ -85,63 +94,72 @@ def _find_target_in_archive(
 # ==========================================
 # DECOMPRESSION STRATEGIES
 # ==========================================
-# ==========================================
-# DECOMPRESSION STRATEGIES
-# ==========================================
 
 def _decompress_native_stream(
         data: Union[str, bytes], comp_type: CompressionType, active_format: FormatType, archive_target: Optional[str]
-) -> str:
-    """Handles 1-to-1 native Python compression algorithms."""
+) -> Union[str, bytes]:
+    """Handles 1-to-1 native Python compression algorithms with Binary Bypass."""
+    is_bin = _is_binary(active_format)
+    mode = "rb" if is_bin else "rt"
+    encoding = None if is_bin else "utf-8"
+
     if isinstance(data, str):
         path = Path(data).resolve()
-        if comp_type == CompressionType.GZIP:
-            with gzip.open(path, "rt", encoding="utf-8") as gz_f:
-                return str(gz_f.read())
-        elif comp_type == CompressionType.BZ2:
-            with bz2.open(path, "rt", encoding="utf-8") as bz_f:
-                return str(bz_f.read())
-        elif comp_type in (CompressionType.XZ, CompressionType.LZMA):
-            with lzma.open(path, "rt", encoding="utf-8") as lz_f:
-                return str(lz_f.read())
+        try:
+            if comp_type == CompressionType.GZIP:
+                with gzip.open(path, mode, encoding=encoding) as gz_f:
+                    return gz_f.read()
+            elif comp_type == CompressionType.BZ2:
+                with bz2.open(path, mode, encoding=encoding) as bz_f:
+                    return bz_f.read()
+            elif comp_type in (CompressionType.XZ, CompressionType.LZMA):
+                with lzma.open(path, mode, encoding=encoding) as lz_f:
+                    return lz_f.read()
+        except Exception as e:
+            raise IncorporatorFormatError(f"Native stream extraction failed: {e}")
 
     elif isinstance(data, bytes):
         if comp_type == CompressionType.GZIP:
-            return gzip.decompress(data).decode("utf-8")
+            raw = gzip.decompress(data)
         elif comp_type == CompressionType.BZ2:
-            return bz2.decompress(data).decode("utf-8")
+            raw = bz2.decompress(data)
         elif comp_type in (CompressionType.XZ, CompressionType.LZMA):
-            return lzma.decompress(data).decode("utf-8")
+            raw = lzma.decompress(data)
+        else:
+            raise IncorporatorFormatError(f"Unsupported native stream type: {comp_type}")
 
-    raise IncorporatorFormatError(f"Unsupported native stream type: {comp_type}")
+        return raw if is_bin else raw.decode("utf-8")
+
+    raise IncorporatorFormatError("Data must be a filepath string or bytes.")
 
 
 def _decompress_archive(
         data: Union[str, bytes], comp_type: CompressionType, active_format: FormatType, archive_target: Optional[str]
-) -> str:
-    """Handles multi-file archives, seeking out the specific target data file safely."""
+) -> Union[str, bytes]:
+    """Handles multi-file archives, seeking out the specific target safely."""
+    is_bin = _is_binary(active_format)
+
     if comp_type == CompressionType.ZIP:
         file_obj = Path(data).resolve() if isinstance(data, str) else io.BytesIO(data)
         with zipfile.ZipFile(file_obj, "r") as zf:
-            # 🛡️ FIX: Pass the format and target securely down to the finder!
             zip_target = _find_target_in_archive(zf.namelist(), active_format, archive_target)
             with zf.open(zip_target) as zip_io:
-                return zip_io.read().decode("utf-8")
+                raw_bytes = zip_io.read()
+                return raw_bytes if is_bin else raw_bytes.decode("utf-8")
 
     if comp_type in (CompressionType.TAR, CompressionType.TGZ):
         file_args = {"name": Path(data).resolve()} if isinstance(data, str) else {"fileobj": io.BytesIO(data)}
         with tarfile.open(**file_args, mode="r:*") as tf:
-            # For strict safety, we must read the headers to ensure no ambiguity exists in the tarball
             members = [m for m in tf.getmembers() if m.isfile()]
             names = [m.name for m in members]
 
-            # 🛡️ FIX: Pass the format and target securely down to the finder!
             tar_target_name = _find_target_in_archive(names, active_format, archive_target)
             tar_target = next(m for m in members if m.name == tar_target_name)
 
             tar_io = tf.extractfile(tar_target)
             if tar_io:
-                return tar_io.read().decode("utf-8")
+                raw_bytes = tar_io.read()
+                return raw_bytes if is_bin else raw_bytes.decode("utf-8")
             raise IncorporatorFormatError("Failed to extract target from Tar archive.")
 
     raise IncorporatorFormatError(f"Unsupported archive: {comp_type}")
@@ -149,26 +167,25 @@ def _decompress_archive(
 
 def _decompress_cramjam(
         data: Union[str, bytes], comp_type: CompressionType, active_format: FormatType, archive_target: Optional[str]
-) -> str:
-    """Lazy-loads Cramjam Rust bindings for high-performance enterprise algorithms."""
+) -> Union[str, bytes]:
+    """Lazy-loads Cramjam Rust bindings with structural binary bypass."""
     try:
         import cramjam  # type: ignore[import-not-found]
 
-        if comp_type == CompressionType.ZSTD:
-            cj_engine = cramjam.zstd.decompress
-        elif comp_type == CompressionType.LZ4:
-            cj_engine = cramjam.lz4.decompress
-        elif comp_type == CompressionType.SNAPPY:
-            cj_engine = cramjam.snappy.decompress
-        elif comp_type == CompressionType.BROTLI:
-            cj_engine = cramjam.brotli.decompress
-        else:
+        # Map to appropriate modules dynamically
+        cj_module = getattr(cramjam, comp_type.value, None)
+        if not cj_module:
             raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
+
+        is_bin = _is_binary(active_format)
 
         if isinstance(data, str):
             with open(Path(data).resolve(), "rb") as f:
-                return cast(bytes, cj_engine(f.read())).decode("utf-8")
-        return cast(bytes, cj_engine(data)).decode("utf-8")
+                raw_bytes = cast(bytes, cj_module.decompress(f.read()))
+                return raw_bytes if is_bin else raw_bytes.decode("utf-8")
+
+        raw_bytes = cast(bytes, cj_module.decompress(data))
+        return raw_bytes if is_bin else raw_bytes.decode("utf-8")
 
     except ImportError:
         raise IncorporatorFormatError(f"{comp_type.value} requires cramjam. Run: pip install incorporator[cramjam]")
@@ -179,15 +196,16 @@ def _decompress_cramjam(
 # ==========================================
 
 def _compress_native_stream(src: Path, out_path: Path, comp_type: CompressionType) -> None:
+    """Uses shutil.copyfileobj to stream directly from disk to disk (OOM safe)."""
     if comp_type == CompressionType.GZIP:
-        with open(src, "rb") as f_in_gz, gzip.open(out_path, "wb") as f_out_gz:
-            shutil.copyfileobj(f_in_gz, f_out_gz)
+        with open(src, "rb") as f_in, gzip.open(out_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
     elif comp_type == CompressionType.BZ2:
-        with open(src, "rb") as f_in_bz, bz2.open(out_path, "wb") as f_out_bz:
-            shutil.copyfileobj(f_in_bz, f_out_bz)
+        with open(src, "rb") as f_in, bz2.open(out_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
     elif comp_type in (CompressionType.XZ, CompressionType.LZMA):
-        with open(src, "rb") as f_in_lz, lzma.open(out_path, "wb") as f_out_lz:
-            shutil.copyfileobj(f_in_lz, f_out_lz)
+        with open(src, "rb") as f_in, lzma.open(out_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
 
 
 def _compress_archive(src: Path, out_path: Path, comp_type: CompressionType) -> None:
@@ -203,23 +221,31 @@ def _compress_archive(src: Path, out_path: Path, comp_type: CompressionType) -> 
 
 
 def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> None:
+    """
+    OOM Safe Implementation: Uses 1MB chunked reading with Cramjam's streaming
+    Compressor objects if available, gracefully degrading if required.
+    """
     try:
         import cramjam
 
-        if comp_type == CompressionType.ZSTD:
-            cj_engine = cramjam.zstd.compress
-        elif comp_type == CompressionType.LZ4:
-            cj_engine = cramjam.lz4.compress
-        elif comp_type == CompressionType.SNAPPY:
-            cj_engine = cramjam.snappy.compress
-        elif comp_type == CompressionType.BROTLI:
-            cj_engine = cramjam.brotli.compress
-        else:
+        cj_module = getattr(cramjam, comp_type.value, None)
+        if not cj_module:
             raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
 
         with open(src, "rb") as f_in, open(out_path, "wb") as f_out:
-            # Cast to bytes so mypy allows the file write
-            f_out.write(cast(bytes, cj_engine(f_in.read())))
+            if hasattr(cj_module, "Compressor"):
+                compressor = cj_module.Compressor()
+                while chunk := f_in.read(1024 * 1024):  # 1MB Chunks
+                    f_out.write(compressor.compress(chunk))
+
+                # Close the stream explicitly if the binding supports it
+                if hasattr(compressor, "finish"):
+                    f_out.write(compressor.finish())
+                elif hasattr(compressor, "flush"):
+                    f_out.write(compressor.flush())
+            else:
+                # Fallback for older cramjam installations
+                f_out.write(cast(bytes, cj_module.compress(f_in.read())))
 
     except ImportError:
         raise IncorporatorFormatError(f"{comp_type.value} requires cramjam. Run: pip install incorporator[cramjam]")
@@ -229,7 +255,8 @@ def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> 
 # REGISTRY & PUBLIC API
 # ==========================================
 
-_DECOMPRESS_ROUTER: Dict[CompressionType, Callable[[Union[str, bytes], CompressionType, FormatType, Optional[str]], str]] = {
+_DECOMPRESS_ROUTER: Dict[
+    CompressionType, Callable[[Union[str, bytes], CompressionType, FormatType, Optional[str]], Union[str, bytes]]] = {
     CompressionType.GZIP: _decompress_native_stream,
     CompressionType.BZ2: _decompress_native_stream,
     CompressionType.XZ: _decompress_native_stream,
@@ -263,11 +290,13 @@ def decompress_data(
         path_hint: str,
         active_format: FormatType,
         archive_target: Optional[str] = None
-) -> str:
+) -> Union[str, bytes]:
     """Public API to transparently decompress data."""
     comp_type = infer_compression(path_hint)
 
     if not comp_type:
+        if _is_binary(active_format):
+            return data if isinstance(data, bytes) else str(data).encode("utf-8")
         return data.decode("utf-8") if isinstance(data, bytes) else str(data)
 
     try:

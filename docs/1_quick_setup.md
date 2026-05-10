@@ -24,7 +24,7 @@ Create a file called `track_launches.py` and drop in the following code:
 ```python
 import asyncio
 from datetime import datetime
-from incorporator import Incorporator, NextUrlPaginator, inc
+from incorporator import Incorporator, IncorporatorList, NextUrlPaginator, inc
 
 # 1. Define an empty class inheriting from Incorporator
 class Launch(Incorporator): 
@@ -33,8 +33,9 @@ class Launch(Incorporator):
 async def main():
     print("Fetching Upcoming Space Launches...")
 
-    # 2. Build the object graph dynamically from the API
-    launches = await Launch.incorp(
+    # 2. Type-hint IncorporatorList[T] to unlock perfect IDE autocomplete!
+    # Your editor will now natively understand the framework's magic methods.
+    launches: IncorporatorList[Launch] = await Launch.incorp(
         inc_url="https://ll.thespacedevs.com/2.2.0/launch/upcoming/",
         rec_path="results",
         inc_code="id",
@@ -66,6 +67,13 @@ async def main():
             print(f"   🗺️  GPS:    {lat}, {lon}")
             
         print("-" * 55)
+
+    # 4. The IDE provides full autocomplete for the internal Memory Registry
+    if launches:
+        first_id = launches[0].inc_code
+        # Type 'launches.' in your IDE and watch 'inc_dict' pop right up!
+        cached_launch = launches.inc_dict.get(first_id)
+        print(f"O(1) Memory Lookup Success: {cached_launch.inc_name}")
 
 if __name__ == "__main__":
     asyncio.run(main())

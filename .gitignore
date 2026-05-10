@@ -49,6 +49,7 @@ Thumbs.db
 *.sqlite3
 
 # 8. Incorporator Log Files
+/logs/
 *.log
 pip-log.txt
 pip-delete-this-directory.txt

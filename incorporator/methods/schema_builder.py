@@ -5,7 +5,7 @@ import keyword
 import logging
 import re
 import weakref
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -14,7 +14,7 @@ from .exceptions import IncorporatorSchemaError
 logger = logging.getLogger(__name__)
 
 # Cache to prevent recompiling identical schemas during deep nesting
-SCHEMA_REGISTRY: Dict[Tuple[str, frozenset[str]], Type[BaseModel]] = {}
+SCHEMA_REGISTRY: Dict[Tuple[str, FrozenSet[str]], Type[BaseModel]] = {}
 MAX_REGISTRY_SIZE = 1000  # Hard boundary to prevent OOM leaks
 
 # The protective shield for Pydantic internals
@@ -40,7 +40,7 @@ _SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_]")
 
 def sanitize_json_key(key: str) -> str:
     """Sanitizes keys to PEP 8 standards and prevents Python/Pydantic collisions."""
-    clean_key = _SANITIZE_RE.sub("_", key)
+    clean_key = _SANITIZE_RE.sub("_", str(key))
 
     if not clean_key:
         clean_key = "empty_key"
@@ -55,12 +55,12 @@ def sanitize_json_key(key: str) -> str:
 
 
 def apply_etl_transformations(
-    parsed_data: Union[Dict[str, Any], List[Dict[str, Any]]],
-    code_attr: Optional[str] = None,
-    name_attr: Optional[str] = None,
-    excl_lst: Optional[List[str]] = None,
-    conv_dict: Optional[Dict[str, Any]] = None,
-    name_chg: Optional[List[Tuple[str, str]]] = None,
+        parsed_data: Union[Dict[str, Any], List[Dict[str, Any]]],
+        code_attr: Optional[str] = None,
+        name_attr: Optional[str] = None,
+        excl_lst: Optional[List[str]] = None,
+        conv_dict: Optional[Dict[str, Any]] = None,
+        name_chg: Optional[List[Tuple[str, str]]] = None,
 ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
     """Applies Declarative ETL rules utilizing Attribute-Based (Columnar) Processing."""
 
@@ -68,8 +68,8 @@ def apply_etl_transformations(
     if not items:
         return parsed_data
 
-    # Extract guaranteed dict references once.
-    dict_items = [i for i in items if isinstance(i, dict)]
+    # Extract guaranteed dict references once to strict type validation
+    dict_items: List[Dict[str, Any]] = [i for i in items if isinstance(i, dict)]
     if not dict_items:
         return items if isinstance(parsed_data, list) else items[0]
 
@@ -154,7 +154,7 @@ def apply_etl_transformations(
 
 
 def infer_dynamic_schema(
-    model_name: str, data: Union[Dict[str, Any], List[Dict[str, Any]]], base_class: Type[BaseModel]
+        model_name: str, data: Union[Dict[str, Any], List[Dict[str, Any]]], base_class: Type[BaseModel]
 ) -> Type[BaseModel]:
     """Recursively builds a Pydantic subclass based on the data's comprehensive shape."""
 
@@ -170,7 +170,7 @@ def infer_dynamic_schema(
 
                 # Condition A: Key doesn't exist, is None, or is an empty List/Dict.
                 if current_val is None or (
-                    isinstance(current_val, (list, dict)) and not current_val
+                        isinstance(current_val, (list, dict)) and not current_val
                 ):
                     # Use shallow copies to prevent mutating the original data via reference!
                     if isinstance(v, list):
@@ -212,10 +212,13 @@ def infer_dynamic_schema(
         if isinstance(value, dict):
             nested_model: Any = infer_dynamic_schema(f"{model_name}_{safe_key}", value, BaseModel)
             fields[safe_key] = (Optional[nested_model], Field(alias=raw_key, default=None))
-        elif isinstance(value, list) and len(value) > 0 and isinstance(value[0], dict):
-            # Pass the entire combined `value` list to ensure nested sampling works!
+
+        # Robust array scanning! Prevent splintering if value[0] is None
+        elif isinstance(value, list) and value and any(isinstance(x, dict) for x in value):
+            # Pass only the dictionaries so the recursive inference succeeds
+            dict_vals = [x for x in value if isinstance(x, dict)]
             nested_model_list: Any = infer_dynamic_schema(
-                f"{model_name}_{safe_key}Item", value, BaseModel
+                f"{model_name}_{safe_key}Item", dict_vals, BaseModel
             )
             fields[safe_key] = (
                 Optional[List[nested_model_list]],
@@ -235,17 +238,21 @@ def infer_dynamic_schema(
             **fields,
         )
 
+        # Mirror necessary state into the dynamic child class
         for attr_name in dir(base_class):
             if not attr_name.startswith("__") and attr_name not in PYDANTIC_RESERVED:
                 attr_val = getattr(base_class, attr_name)
                 if isinstance(attr_val, dict):
                     setattr(DynamicModel, attr_name, copy.deepcopy(attr_val))
                 elif isinstance(attr_val, weakref.WeakValueDictionary):
-                    setattr(DynamicModel, attr_name, weakref.WeakValueDictionary())
+                    # Type mapping for strictly typed generic dicts
+                    setattr(DynamicModel, attr_name, weakref.WeakValueDictionary[Any, Any]())
 
+        # Cache the generated root-level model
         if base_class is BaseModel:
             if len(SCHEMA_REGISTRY) >= MAX_REGISTRY_SIZE:
-                SCHEMA_REGISTRY.clear()
+                # O(1) FIFO Cache Eviction! (Maintains server stability)
+                SCHEMA_REGISTRY.pop(next(iter(SCHEMA_REGISTRY)))
             SCHEMA_REGISTRY[cache_key] = DynamicModel
 
         return DynamicModel

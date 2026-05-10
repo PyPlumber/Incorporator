@@ -19,6 +19,7 @@ from incorporator.methods.converters import (
     each,
     join_all,
 )
+from incorporator.methods import router
 from incorporator.base import Incorporator
 
 
@@ -147,18 +148,18 @@ class MockObj:
 def test_extract_parent_data() -> None:
     # 1. Standard Object Drill
     parents = [MockObj(vehicle=MockObj(vin="123")), MockObj(vehicle=MockObj(vin="456"))]
-    assert Incorporator._extract_parent_data(parents, "vehicle.vin") == ["123", "456"]
+    assert router.extract_parent_data(parents, "vehicle.vin") == ["123", "456"]
 
     # 2. Schema Splintering (List nested inside the drill path)
     splintered_parents = [MockObj(vehicle=[MockObj(vin="A"), MockObj(vin="B")])]
-    assert Incorporator._extract_parent_data(splintered_parents, "vehicle.vin") == ["A", "B"]
+    assert router.extract_parent_data(splintered_parents, "vehicle.vin") == ["A", "B"]
 
     # 3. Dictionary handling and Missing Keys (Graceful degradation)
     mixed_parents = [MockObj(vehicle={"vin": "DictVIN"}), MockObj(vehicle=None)]
-    assert Incorporator._extract_parent_data(mixed_parents, "vehicle.vin") == ["DictVIN"]
+    assert router.extract_parent_data(mixed_parents, "vehicle.vin") == ["DictVIN"]
 
     # 4. Deeply nested missing data
-    assert Incorporator._extract_parent_data(parents, "vehicle.engine.cylinders") == []
+    assert router.extract_parent_data(parents, "vehicle.engine.cylinders") == []
 
 
 def test_declarative_post_routing() -> None:
@@ -167,10 +168,11 @@ def test_declarative_post_routing() -> None:
     source_urls = ["https://api.com/update"]
 
     # 1. Test the `each()` token (N Concurrent Requests)
-    kwargs_each = Incorporator._resolve_declarative_routing(
+    kwargs_each = router.resolve_declarative_routing(
+        "Test",
         extracted_data=extracted_ids,
         source_urls=source_urls,
-        http_method="POST",  # 🛡️ THE FIX: Use canonical internal kwargs
+        http_method="POST",
         json_payload={"id": each(), "static": "token"},
     )
 
@@ -182,7 +184,8 @@ def test_declarative_post_routing() -> None:
     ]
 
     # 2. Test the `join_all()` token (1 Bulk Request)
-    kwargs_join = Incorporator._resolve_declarative_routing(
+    kwargs_join = router.resolve_declarative_routing(
+        "Test",
         extracted_data=extracted_ids,
         source_urls=source_urls,
         http_method="POST",  # 🛡️ THE FIX
@@ -195,7 +198,8 @@ def test_declarative_post_routing() -> None:
 
     # 3. Test Missing POST URL Exception
     with pytest.raises(ValueError, match="Missing Target URL"):
-        Incorporator._resolve_declarative_routing(
+        router.resolve_declarative_routing(
+            "Test",
             extracted_data=extracted_ids,
             source_urls=[],
             http_method="POST",  # 🛡️ THE FIX
@@ -208,10 +212,11 @@ def test_get_url_injection() -> None:
     extracted_ids = ["alpha", "beta"]
     source_urls = ["https://api.com/users/{}/profile"]
 
-    kwargs = Incorporator._resolve_declarative_routing(
+    kwargs = router.resolve_declarative_routing(
+        "Test",
         extracted_data=extracted_ids,
         source_urls=source_urls,
-        http_method="GET",  # 🛡️ THE FIX
+        http_method="GET",
     )
 
     # It should generate N unique URLs

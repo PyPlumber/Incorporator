@@ -50,13 +50,14 @@ await MyClass.export(instance=my_list, file_path="output.csv")
 | **`instance`** | `Incorporator` \| `List` | (Optional) A specific subset of objects. If omitted, Incorporator automatically exports every living instance currently tracked in the class's inc_dict! |
 | **`file_path`** | `str` | **(Required)** The destination file path (e.g., `"data/cleaned_users.xml"`). |
 | **`format_type`**| `str` \| `FormatType` | Optional. Explicitly declare the format (`"json"`, `"csv"`, `"xml"`, `"sqlite"`, `"avro"`). If omitted, Incorporator infers it from the `file_path` extension. |
-| **`compression`**| `str` \| `CompressionType`| Optional. The algorithm to compress the exported file into (e.g., `"gz"`, `"zip"`, `"zst"`, `"lz4"`). |
 
-### 🗄️ Database Specific Parameters (SQLite)
+### Optional Keyword Arguments (**kwargs)
+
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| **`sql_table`** | `str` | The target table in the SQLite database. If omitted, Incorporator infers it from your Python class name. |
-| **`if_exists`** | `str` | How to behave if the table already exists. Options: `"replace"` (Default), `"append"`, or `"fail"`. |
+| `compression` | `str` \| `CompressionType` | Automatically compresses the exported file in a background thread. Supports `"gz"`, `"bz2"`, `"xz"`, `"zip"`, `"tar"`. (If `[cramjam]` is installed: `"zst"`, `"lz4"`, `"snappy"`). |
+| `sql_table` | `str` | **(SQLite Only)** The name of the table to generate. Defaults to the class name (e.g., `user`). |
+| `if_exists` | `str` | **(SQLite Only)** Behavior when the table exists. Options: `"replace"` (default), or `"fail"`. |
 
 ---
 
