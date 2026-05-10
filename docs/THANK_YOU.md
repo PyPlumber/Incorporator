@@ -40,6 +40,3 @@ To guarantee `--strict` typing compliance and maintain a flawless test suite, we
 
 ---
 *To the thousands of unnamed open-source contributors who maintain the Python Standard Library (`asyncio`, `sqlite3`, `csv`, `queue`): **Thank you for building the language we love.***
-```
-
----
