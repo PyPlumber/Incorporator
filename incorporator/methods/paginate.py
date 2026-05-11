@@ -355,11 +355,18 @@ class CursorPaginator(AsyncPaginator):
 
 
 class OffsetPaginator(AsyncPaginator):
-    def __init__(self, limit: int = 50, offset_param: str = "offset", limit_param: str = "limit") -> None:
+    def __init__(
+        self,
+        limit: int = 50,
+        offset_param: str = "offset",
+        limit_param: str = "limit",
+        result_key: Optional[str] = None,
+    ) -> None:
         super().__init__()
         self.limit = limit
         self.offset_param = offset_param
         self.limit_param = limit_param
+        self.result_key = result_key
         self.current_offset = 0
 
     def reset(self) -> None:
@@ -383,7 +390,22 @@ class OffsetPaginator(AsyncPaginator):
                 calls += 1
 
                 data = await self._parse_response(response)
-                items = data.get("results") or data.get("docs", []) if isinstance(data, dict) else data
+
+                if isinstance(data, dict):
+                    if self.result_key:
+                        items = data.get(self.result_key, [])
+                    else:
+                        # Auto-detect from common conventions
+                        items = (
+                                data.get("results")
+                                or data.get("data")
+                                or data.get("items")
+                                or data.get("docs")
+                                or data.get("records")
+                                or []
+                        )
+                else:
+                    items = data if isinstance(data, list) else []
 
                 if not items:
                     self.is_exhausted = True
@@ -400,11 +422,17 @@ class OffsetPaginator(AsyncPaginator):
 
 
 class PageNumberPaginator(AsyncPaginator):
-    def __init__(self, page_param: str = "page", start_page: int = 1) -> None:
+    def __init__(
+        self,
+        page_param: str = "page",
+        start_page: int = 1,
+        result_key: Optional[str] = None,
+    ) -> None:
         super().__init__()
         self.page_param = page_param
         self.start_page = start_page
         self.current_page = start_page
+        self.result_key = result_key
 
     def reset(self) -> None:
         self.is_exhausted = False
@@ -427,7 +455,23 @@ class PageNumberPaginator(AsyncPaginator):
                 calls += 1
 
                 data = await self._parse_response(response)
-                if not data:
+
+                if isinstance(data, dict):
+                    if self.result_key:
+                        items = data.get(self.result_key, [])
+                    else:
+                        items = (
+                                data.get("results")
+                                or data.get("data")
+                                or data.get("items")
+                                or data.get("docs")
+                                or data.get("records")
+                                or []
+                        )
+                else:
+                    items = data if isinstance(data, list) else []
+
+                if not items:
                     self.is_exhausted = True
                     break
                 else:
