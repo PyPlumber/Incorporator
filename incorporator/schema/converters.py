@@ -15,9 +15,8 @@ from pydantic import TypeAdapter
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# 1. DX SENTINELS & ALIASES
+# 1. DX SENTINELS
 # ==========================================
-flt = float
 
 
 class _NewSentinel:

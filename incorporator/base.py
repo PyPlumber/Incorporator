@@ -4,12 +4,13 @@ Incorporator Base Module
 The core orchestrator and declarative factory for the Incorporator framework.
 
 This file acts purely as a Domain-Driven orchestrator. It contains NO data parsing,
-network looping, or schema compilation logic. It maps Developer kwargs to the
-`methods/` directory and assembles the resulting dynamic Pydantic object graphs.
+network looping, or schema compilation logic. It delegates to `io/`, `schema/`, and
+`observability/` and assembles the resulting dynamic Pydantic object graphs.
 """
 
 import asyncio
 import logging
+import threading
 import warnings
 import weakref
 from datetime import datetime, timezone
@@ -46,6 +47,7 @@ TIncorporator = TypeVar("TIncorporator", bound="Incorporator")
 logger = logging.getLogger(__name__)
 
 _INSPECTION_LIMIT = 3
+_counter_lock = threading.Lock()
 
 
 def _deduplicate_extracted(data: List[Any]) -> List[Any]:
@@ -157,8 +159,9 @@ class Incorporator(BaseModel):
 
         # Auto-increment if the API provided no unique identifier
         if self.inc_code is None:
-            self.inc_code = cls._auto_counter
-            cls._auto_counter += 1
+            with _counter_lock:
+                self.inc_code = cls._auto_counter
+                cls._auto_counter += 1
 
         cls.inc_dict[self.inc_code] = self
 

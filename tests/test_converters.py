@@ -12,7 +12,6 @@ from incorporator.schema.converters import (
     CalcOp,
     calc,
     calc_all,
-    flt,
     inc,
     new,
 )
@@ -57,7 +56,7 @@ def test_inc_type_ranked_engine_bools_and_dates() -> None:
 def test_inc_type_ranked_engine_numbers_and_dirty_data() -> None:
     """Asserts robust string-to-number casting and dirty data cleaning via fallbacks."""
     inc_int = inc(int)
-    inc_flt = inc(flt)  # Utilizing the new flt alias
+    inc_flt = inc(float)
 
     # 1. Direct Execution & Dirty Data Cleaning
     assert inc_int("1,500") == 1500  # Strips commas via fallback
@@ -86,7 +85,7 @@ def test_calc_and_calc_all_markers() -> None:
         return x + y
 
     # 1. Row-based calc
-    c_op = calc(dummy_math, "mass", "gravity", default=0, target_type=flt)
+    c_op = calc(dummy_math, "mass", "gravity", default=0, target_type=float)
     assert isinstance(c_op, CalcOp)
     assert c_op.default == 0
     assert c_op.target_type is float

@@ -14,7 +14,7 @@ from .text import JSONHandler, NDJSONHandler, XMLHandler
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["FormatType", "infer_format", "parse_source_data", "write_destination_data"]
+__all__ = ["parse_source_data", "write_destination_data"]
 
 _HANDLERS: Dict[FormatType, BaseFormatHandler] = {
     FormatType.JSON: JSONHandler(),

@@ -9,7 +9,7 @@ import pytest
 
 from incorporator import Incorporator
 from incorporator.base import IncorporatorList
-from incorporator.schema.converters import calc, flt
+from incorporator.schema.converters import calc
 
 
 class LiveStock(Incorporator):
@@ -64,7 +64,7 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
         inc_url=BASE_URL,
         inc_code="symbol",
         inc_name="company_name",
-        conv_dict={"current_price": calc(float, default=0.0, target_type=flt)},
+        conv_dict={"current_price": calc(float, default=0.0, target_type=float)},
     )
 
     # Framework auto-unwraps single arrays!
@@ -82,7 +82,7 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
         new_url=BASE_URL,
         inc_code="symbol",
         inc_name="company_name",
-        conv_dict={"current_price": calc(float, default=0.0, target_type=flt)},
+        conv_dict={"current_price": calc(float, default=0.0, target_type=float)},
     )
 
     assert not isinstance(stock_b, list)
