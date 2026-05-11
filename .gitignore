@@ -14,6 +14,7 @@ venv/
 .venv/
 env/
 ENV/
+.env
 
 # 3. Secrets & Orchestration Configs (CRITICAL SAFETY)
 .env
@@ -45,6 +46,8 @@ build/
 dist/
 *.egg-info/
 incorporator.egg-info/
+AGENTS.md
+/.claude/
 
 # 7. OS & Database Files
 .DS_Store

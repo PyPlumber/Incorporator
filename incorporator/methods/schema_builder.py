@@ -119,7 +119,7 @@ def apply_etl_transformations(
                         val = results[idx]
                     except IndexError:
                         logger.warning(
-                            f"CalcAll operation returned fewer results than expected for key '{key}' (needed index {idx})"
+                            f"CalcAll operation returned fewer results than expected for key '{key}' (needed index {idx})"  # noqa: E501
                         )
                         val = operation.default
 
