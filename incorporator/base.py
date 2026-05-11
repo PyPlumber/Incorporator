@@ -342,20 +342,23 @@ class Incorporator(BaseModel):
             else:
                 cls.inc_url = source
 
+        # Extract control flags before network call so they don't pollute handlers
+        __inspect = kwargs.pop("__inspect", False)
+        payload_list = kwargs.pop("payload_list", None)
+
         # I/O Network Phase
         parsed_data, failed_sources = await network.fetch_concurrent_payloads(
             source_list=source_list,
             is_file_mode=is_file_mode,
             inc_page=inc_page,
-            payload_list=kwargs.pop("payload_list", None),
+            payload_list=payload_list,
+            __inspect=__inspect,
             **kwargs,
         )
 
         # Routes raw data to the Inspector if triggered
-        __inspect = kwargs.pop("__inspect", False)
         if __inspect:
             from .methods.inspector import analyze_data
-
             analyze_data(parsed_data, {"rec_path": kwargs.get("rec_path")})
 
         # Build Phase
