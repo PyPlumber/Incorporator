@@ -159,8 +159,8 @@ class LoggingMixin:
     """Provides targeted logging methods and error retrieval to instances and classes."""
 
     @classmethod
-    async def getError(cls) -> List[Dict[str, Any]]:
-        """Reads the {cls.__name__}_error.log JSON file and formats the logs."""
+    async def get_error(cls) -> List[Dict[str, Any]]:
+        """Reads the {cls.__name__}_error.log JSON file and returns parsed log records."""
 
         def _read_disk() -> List[Dict[str, Any]]:
             filename = _safe_log_filename(cls.__name__, "error.log")

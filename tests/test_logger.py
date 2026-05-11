@@ -62,7 +62,7 @@ async def test_multiplex_file_routing(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 @pytest.mark.asyncio
 async def test_get_error_async_reader(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Proves the async getError() classmethod successfully parses JSON Lines."""
+    """Proves the async get_error() classmethod successfully parses JSON Lines."""
 
     monkeypatch.chdir(tmp_path)
     if "MockAPIEndpoint2" in _ACTIVE_LISTENERS:
@@ -79,7 +79,7 @@ async def test_get_error_async_reader(monkeypatch: pytest.MonkeyPatch, tmp_path:
     # EXPLICIT THREAD FLUSH: Ensure the background thread writes to disk before we read
     _ACTIVE_LISTENERS["MockAPIEndpoint2"].stop()
 
-    errors = await MockAPIEndpoint2.getError()
+    errors = await MockAPIEndpoint2.get_error()
 
     assert isinstance(errors, list)
     assert len(errors) >= 1
