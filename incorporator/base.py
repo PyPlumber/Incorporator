@@ -318,20 +318,11 @@ class Incorporator(BaseModel):
 
         # Auto-Infer SQLite Queries
         if source:
-            sample_source = source[0] if isinstance(source, list) else source
-            if infer_format(str(sample_source)) == FormatType.SQLITE and not kwargs.get("sql_query"):
-                table_name = kwargs.get("sql_table") or cls.__name__.lower()
-                kwargs["sql_query"] = f'SELECT * FROM "{table_name}"'  # noqa: S608
+            network._inject_sqlite_query(source, kwargs.get("sql_table") or cls.__name__.lower(), kwargs)
 
-        # Unrolled for traceability (Eliminated dense one-liners)
         is_file_mode = bool(inc_file)
-        source_list: List[str] = []
-        if isinstance(source, list):
-            source_list = [str(s) for s in source if s is not None]
-        elif isinstance(source, str):
-            source_list = [source]
-        elif kwargs.get("payload_list"):
-            source_list = [""] * len(cast(List[Any], kwargs["payload_list"]))
+        payload_list_for_norm = cast(List[Any], kwargs.get("payload_list")) if kwargs.get("payload_list") else None
+        source_list: List[str] = network._normalize_source_list(source, payload_list_for_norm)
 
         is_single = not isinstance(source, list) and inc_page is None
 
@@ -431,23 +422,13 @@ class Incorporator(BaseModel):
 
         # Target Resolution
         target = target_url or target_file
-        source_urls: List[str] = []
-        if isinstance(target, list):
-            source_urls = [str(x) for x in target if x is not None]
-        elif isinstance(target, str):
-            source_urls = [target]
+        source_urls = network._normalize_source_list(target, None)
 
         if not target_file and extracted_data:
             # Use the Router to build declarative payloads
             kwargs = router.resolve_declarative_routing(cls.__name__, extracted_data, source_urls, **kwargs)
             raw_url = kwargs.pop("inc_url", source_urls)
-
-            source_list: List[str] = []
-            if isinstance(raw_url, list):
-                source_list = [str(x) for x in raw_url if x is not None]
-            elif isinstance(raw_url, str):
-                source_list = [raw_url]
-
+            source_list: List[str] = network._normalize_source_list(raw_url, None)
             payload_list = kwargs.pop("payload_list", None)
         else:
             source_list = source_urls

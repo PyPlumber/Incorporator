@@ -282,7 +282,33 @@ async def _process_single_source(
 
 
 # ==========================================
-# 5. CONCURRENT ORCHESTRATOR
+# 5. SOURCE PREPARATION HELPERS
+# ==========================================
+
+
+def _inject_sqlite_query(source: Union[str, List[str]], table_name: str, kwargs: Dict[str, Any]) -> None:
+    """Auto-injects a default SELECT query for SQLite sources when sql_query is not provided."""
+    sample = source[0] if isinstance(source, list) else source
+    if infer_format(str(sample)) == FormatType.SQLITE and not kwargs.get("sql_query"):
+        kwargs["sql_query"] = f'SELECT * FROM "{table_name}"'  # noqa: S608
+
+
+def _normalize_source_list(
+    source: Optional[Union[str, List[str]]],
+    payload_list: Optional[List[Any]],
+) -> List[str]:
+    """Normalizes a Union[str, List[str]] source into a flat List[str] for concurrent dispatch."""
+    if isinstance(source, list):
+        return [str(s) for s in source if s is not None]
+    if isinstance(source, str):
+        return [source]
+    if payload_list:
+        return [""] * len(payload_list)
+    return []
+
+
+# ==========================================
+# 6. CONCURRENT ORCHESTRATOR
 # ==========================================
 
 
