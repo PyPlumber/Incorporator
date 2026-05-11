@@ -256,6 +256,9 @@ class Incorporator(BaseModel):
         # 3. Final Instantiation Phase
         if isinstance(transformed_data, list):
             # Populate the superset schema from raw dicts before Pydantic absorbs extra keys.
+            # Guard: create a per-class dict so subclasses don't share the base-class instance.
+            if "_schema_union" not in cls.__dict__:
+                cls._schema_union = {}
             # Writes only on first-seen keys — O(1) miss per key, zero writes after stabilization.
             declared = ActualClass.model_json_schema().get("properties", {})
             for item in transformed_data:

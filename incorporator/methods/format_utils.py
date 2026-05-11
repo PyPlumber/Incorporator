@@ -26,7 +26,6 @@ class FormatType(str, Enum):
 
 
 # ── (FormatType, format-type-string) → Python type ──────────────────────
-# bool must appear before int in all lookup order — bool is a subclass of int.
 FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {
     # JSON Schema type strings
     (FormatType.JSON, "boolean"): bool,
@@ -48,6 +47,9 @@ FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {
 }
 
 # ── (FormatType, Python type) → canonical format-type-string ────────────
+# bool is a subclass of int — entries for bool must exist so type(True) hits
+# (fmt, bool) before any (fmt, int) logic. Each key is exact type(), so no
+# inheritance ambiguity in practice, but explicit entries keep intent clear.
 # Canonical Avro choice: long over int, double over float (wider range).
 PYTHON_TO_FORMAT: Dict[Tuple[FormatType, type], str] = {
     # JSON Schema
