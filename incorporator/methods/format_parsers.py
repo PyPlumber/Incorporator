@@ -176,6 +176,21 @@ class CSVHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"Delimited File IO Error on {file_path}: {e}") from e
 
 
+def _build_xml_root(data: List[Dict[str, Any]], ET: Any) -> Any:
+    """Builds an XML root element from a list of dicts using any ElementTree-compatible module."""
+    root = ET.Element("root")
+    for item in data:
+        item_el = ET.SubElement(root, "item")
+        for key, val in item.items():
+            clean_key = str(key).replace(" ", "_")
+            if clean_key and clean_key[0].isdigit():
+                clean_key = f"_{clean_key}"
+            child = ET.SubElement(item_el, clean_key)
+            safe_val = serialize_nested(val)
+            child.text = str(safe_val) if safe_val is not None else ""
+    return root
+
+
 class XMLHandler(BaseFormatHandler):
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         try:
@@ -219,38 +234,16 @@ class XMLHandler(BaseFormatHandler):
         try:
             import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
-            root = lxml_ET.Element("root")
-            for item in data:
-                item_el = lxml_ET.SubElement(root, "item")
-                for key, val in item.items():
-                    clean_key = str(key).replace(" ", "_")
-                    if clean_key and clean_key[0].isdigit():
-                        clean_key = f"_{clean_key}"
-                    child = lxml_ET.SubElement(item_el, clean_key)
-                    safe_val = serialize_nested(val)
-                    child.text = str(safe_val) if safe_val is not None else ""
-
-            tree = lxml_ET.ElementTree(root)
-            tree.write(str(path), encoding="utf-8", xml_declaration=True, pretty_print=True)
+            root = _build_xml_root(data, lxml_ET)
+            lxml_ET.ElementTree(root).write(str(path), encoding="utf-8", xml_declaration=True, pretty_print=True)
 
         except ImportError:
             import xml.etree.ElementTree as ET
 
             try:
                 with open(path, "w", encoding="utf-8") as f:
-                    root = ET.Element("root")
-                    for item in data:
-                        item_el = ET.SubElement(root, "item")
-                        for key, val in item.items():
-                            clean_key = str(key).replace(" ", "_")
-                            if clean_key and clean_key[0].isdigit():
-                                clean_key = f"_{clean_key}"
-                            child = ET.SubElement(item_el, clean_key)
-                            safe_val = serialize_nested(val)
-                            child.text = str(safe_val) if safe_val is not None else ""
-
-                    tree = ET.ElementTree(root)
-                    tree.write(f, encoding="unicode")
+                    root = _build_xml_root(data, ET)
+                    ET.ElementTree(root).write(f, encoding="unicode")
             except OSError as e:
                 raise IncorporatorFormatError(f"XML File IO Error on {file_path}: {e}") from e
 

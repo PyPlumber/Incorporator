@@ -42,6 +42,27 @@ if TYPE_CHECKING:
 TIncorporator = TypeVar("TIncorporator", bound="Incorporator")
 logger = logging.getLogger(__name__)
 
+_INSPECTION_LIMIT = 3
+
+
+def _deduplicate_extracted(data: List[Any]) -> List[Any]:
+    """Deduplicate extracted parent data preserving insertion order.
+
+    Falls back gracefully when non-hashable items (dicts, objects) are present:
+    deduplicates the hashable subset and appends non-hashable items as-is.
+    """
+    try:
+        return list(dict.fromkeys(data))
+    except TypeError:
+        hashable = [x for x in data if isinstance(x, (str, int, float, bool))]
+        non_hashable = [x for x in data if not isinstance(x, (str, int, float, bool))]
+        if non_hashable:
+            logger.warning(
+                f"extracted_data contains {len(non_hashable)} non-hashable item(s) that cannot be "
+                "deduplicated and will be included as-is. Consider extracting scalar IDs."
+            )
+        return list(dict.fromkeys(hashable)) + non_hashable
+
 
 # ==========================================
 # 1. LIST WRAPPER & REGISTRY ACCESS
@@ -161,10 +182,9 @@ class Incorporator(BaseModel):
             else (inc_parent if isinstance(inc_parent, list) else [inc_parent])
         )
 
-        # Deduplicate paths (O(N) preserve-order hash trick) to prevent duplicate HTTP requests
+        # Deduplicate paths to prevent duplicate HTTP requests
         if extracted_data and child_path:
-            hashable_data = [x for x in extracted_data if isinstance(x, (str, int, float, bool))]
-            extracted_data = list(dict.fromkeys(hashable_data))
+            extracted_data = _deduplicate_extracted(extracted_data)
 
         # Enforce REST canonical methods
         raw_method = kwargs.pop("method", kwargs.pop("http_method", "GET"))
@@ -264,12 +284,12 @@ class Incorporator(BaseModel):
             return IncorporatorList(cls, [])
 
         if isinstance(result, IncorporatorList):
-            sliced = result[:3]
+            sliced = result[:_INSPECTION_LIMIT]
             new_list = IncorporatorList(result._model_class, sliced, result.failed_sources)
             new_list.inc_child_path = result.inc_child_path
             return new_list
         elif isinstance(result, list):
-            return result[:3]
+            return result[:_INSPECTION_LIMIT]
 
         return result
 
@@ -417,8 +437,7 @@ class Incorporator(BaseModel):
         extracted_data = router.extract_parent_data(inst_list, child_path) if child_path else inst_list
 
         if child_path and extracted_data:
-            hashable_data = [x for x in extracted_data if isinstance(x, (str, int, float, bool))]
-            extracted_data = list(dict.fromkeys(hashable_data))
+            extracted_data = _deduplicate_extracted(extracted_data)
 
         # Target Resolution
         target = target_url or target_file

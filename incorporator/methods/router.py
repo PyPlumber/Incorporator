@@ -68,20 +68,16 @@ def resolve_declarative_routing(
             is_iterative = any(isinstance(v, _EachSentinel) for v in target_payload.values())
 
             if is_iterative:
-                payload_list = []
-                for item in extracted_data:
-                    p = {}
-                    for k, v in target_payload.items():
-                        p[k] = item if isinstance(v, _EachSentinel) else v
-                    payload_list.append(p)
-                kwargs["payload_list"] = payload_list
+                each_keys = {k for k, v in target_payload.items() if isinstance(v, _EachSentinel)}
+                const_items = {k: v for k, v in target_payload.items() if k not in each_keys}
+                kwargs["payload_list"] = [
+                    {**const_items, **{k: item for k in each_keys}} for item in extracted_data
+                ]
 
                 if len(source_urls) == 1:
                     kwargs["inc_url"] = source_urls * len(extracted_data)
             else:
-                built_payload = {}
-                for k, v in target_payload.items():
-                    built_payload[k] = v(extracted_data) if callable(v) else v
+                built_payload = {k: v(extracted_data) if callable(v) else v for k, v in target_payload.items()}
 
                 if source_urls:
                     kwargs["payload_list"] = [built_payload] * len(source_urls)
