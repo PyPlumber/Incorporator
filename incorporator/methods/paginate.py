@@ -118,7 +118,7 @@ class SQLitePaginator(AsyncPaginator):
 
 
 class CSVPaginator(AsyncPaginator):
-    """Yields O(1) chunks natively using a persistent SQLite cursor."""
+    """Yields O(1) chunks natively using a persistent csv.DictReader."""
 
     def __init__(self, file_path: str, chunk_size: int = 10000, delimiter: str = ",") -> None:
         super().__init__()

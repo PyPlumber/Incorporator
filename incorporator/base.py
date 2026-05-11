@@ -341,8 +341,7 @@ class Incorporator(BaseModel):
             network._inject_sqlite_query(source, kwargs.get("sql_table") or cls.__name__.lower(), kwargs)
 
         is_file_mode = bool(inc_file)
-        payload_list_for_norm = cast(List[Any], kwargs.get("payload_list")) if kwargs.get("payload_list") else None
-        source_list: List[str] = network._normalize_source_list(source, payload_list_for_norm)
+        source_list: List[str] = network._normalize_source_list(source, kwargs.get("payload_list"))
 
         is_single = not isinstance(source, list) and inc_page is None
 
