@@ -1,18 +1,16 @@
 """Integration tests for XML parsing and Bulk POST Requests (NHTSA API)."""
 
 import json
-from typing import Any
-from pathlib import Path
-
-import asyncio
 import os
+from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
+from real.shady_jimmy import generate_xml_file
 
 from incorporator import Incorporator
 from incorporator.methods.converters import inc
-from real.shady_jimmy import generate_xml_file
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -35,18 +33,12 @@ async def mock_nhtsa_execute_post(url: str, *args: Any, **kwargs: Any) -> httpx.
         results = []
         for vin in vins:
             if vin == "1HGCM82633A004352":  # Updated Honda VIN
-                results.append(
-                    {"VIN": vin, "Make": "HONDA", "Model": "ACCORD", "ModelYear": "2003"}
-                )
+                results.append({"VIN": vin, "Make": "HONDA", "Model": "ACCORD", "ModelYear": "2003"})
             elif vin == "2T1BR32E54C123456":  # Updated Toyota VIN
-                results.append(
-                    {"VIN": vin, "Make": "TOYOTA", "Model": "COROLLA", "ModelYear": "2004"}
-                )
+                results.append({"VIN": vin, "Make": "TOYOTA", "Model": "COROLLA", "ModelYear": "2004"})
             elif vin == "1G1RC6E45BU000003":
                 # The real car is a Chevy Volt, not a Porsche!
-                results.append(
-                    {"VIN": vin, "Make": "CHEVROLET", "Model": "VOLT", "ModelYear": "2011"}
-                )
+                results.append({"VIN": vin, "Make": "CHEVROLET", "Model": "VOLT", "ModelYear": "2011"})
 
         payload = {"Results": results}
         req = httpx.Request("POST", url)
@@ -110,9 +102,7 @@ async def test_shady_jimmy_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     xml_file.write_text(xml_data, encoding="utf-8")
 
     # 2. Extract XML
-    invoices = await JimmyInvoice.incorp(
-        inc_file=str(xml_file), rec_path="Dealership.AuditFile.Invoices.Invoice"
-    )
+    invoices = await JimmyInvoice.incorp(inc_file=str(xml_file), rec_path="Dealership.AuditFile.Invoices.Invoice")
 
     assert isinstance(invoices, list)
     assert len(invoices) == 3

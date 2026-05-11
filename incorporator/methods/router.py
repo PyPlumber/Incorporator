@@ -15,7 +15,7 @@ def extract_parent_data(parents: Any, child_path: str) -> List[Any]:
     """Iterative BFS to safely drill into dynamic structures without recursion."""
     current_layer = parents if isinstance(parents, list) else [parents]
 
-    for part in child_path.split('.'):
+    for part in child_path.split("."):
         next_layer: List[Any] = []
 
         for node in current_layer:
@@ -40,7 +40,7 @@ def extract_parent_data(parents: Any, child_path: str) -> List[Any]:
 
 
 def resolve_declarative_routing(
-        caller_name: str, extracted_data: List[Any], source_urls: List[str], **kwargs: Any
+    caller_name: str, extracted_data: List[Any], source_urls: List[str], **kwargs: Any
 ) -> Dict[str, Any]:
     """Unified resolver for {} GET injections and Declarative POST tokens."""
     method = kwargs.get("http_method", "GET")
@@ -91,13 +91,11 @@ def resolve_declarative_routing(
                 kwargs["inc_url"] = source_urls + valid_urls
             elif not source_urls:
                 valid_items = [
-                    item for item in extracted_data
+                    item
+                    for item in extracted_data
                     if isinstance(getattr(item, "detail_url", getattr(item, "url", None)), str)
                 ]
-                legacy_urls = [
-                    getattr(item, "detail_url", getattr(item, "url", None))
-                    for item in valid_items
-                ]
+                legacy_urls = [getattr(item, "detail_url", getattr(item, "url", None)) for item in valid_items]
 
                 if legacy_urls:
                     logger.warning(

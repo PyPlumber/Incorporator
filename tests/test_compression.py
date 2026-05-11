@@ -36,8 +36,9 @@ def test_find_target_in_archive() -> None:
 
     # Explicit Target: Find a specific file even if multiple exist!
     names_multi = ["2025.json", "2026.json"]
-    assert _find_target_in_archive(names_multi, active_format=FormatType.JSON,
-                                   archive_target="2026.json") == "2026.json"
+    assert (
+        _find_target_in_archive(names_multi, active_format=FormatType.JSON, archive_target="2026.json") == "2026.json"
+    )
 
     # Error path: Ambiguous archives crash gracefully instead of guessing!
     with pytest.raises(IncorporatorFormatError, match="multiple valid"):
@@ -52,7 +53,8 @@ def test_find_target_in_archive() -> None:
 # 2. DISK I/O ROUND-TRIP TESTS
 # ==========================================
 @pytest.mark.parametrize(
-    "comp_type", [
+    "comp_type",
+    [
         CompressionType.GZIP,
         CompressionType.BZ2,
         CompressionType.LZMA,
@@ -85,7 +87,8 @@ def test_compression_roundtrip_file(tmp_path: Path, comp_type: CompressionType) 
 # 3. MEMORY I/O ROUND-TRIP TESTS
 # ==========================================
 @pytest.mark.parametrize(
-    "comp_type", [
+    "comp_type",
+    [
         CompressionType.GZIP,
         CompressionType.BZ2,
         CompressionType.LZMA,

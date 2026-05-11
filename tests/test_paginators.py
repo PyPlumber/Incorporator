@@ -7,8 +7,8 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
-from incorporator.methods.paginate import NextUrlPaginator, OffsetPaginator
 from incorporator.methods import router
+from incorporator.methods.paginate import NextUrlPaginator, OffsetPaginator
 
 
 class PaginatedItem(Incorporator):
@@ -67,8 +67,8 @@ async def test_explicit_offset_paginator(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert isinstance(offset_items, list)
     assert len(offset_items) == 2
-    assert getattr(offset_items[0], "name") == "Offset Item A"
-    assert getattr(offset_items[1], "name") == "Offset Item B"
+    assert offset_items[0].name == "Offset Item A"
+    assert offset_items[1].name == "Offset Item B"
 
 
 @pytest.mark.asyncio
@@ -85,8 +85,8 @@ async def test_explicit_next_url_paginator(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert isinstance(page_items, list)
     assert len(page_items) == 2
-    assert getattr(page_items[0], "name") == "NextUrl Item A"
-    assert getattr(page_items[1], "name") == "NextUrl Item B"
+    assert page_items[0].name == "NextUrl Item A"
+    assert page_items[1].name == "NextUrl Item B"
 
 
 def test_get_url_injection() -> None:
@@ -97,10 +97,7 @@ def test_get_url_injection() -> None:
     source_urls = ["https://api.com/users/{}/profile"]
 
     kwargs = router.resolve_declarative_routing(
-        "Test",
-        extracted_data=extracted_ids,
-        source_urls=source_urls,
-        http_method="GET"
+        "Test", extracted_data=extracted_ids, source_urls=source_urls, http_method="GET"
     )
     # It should generate N unique URLs
     assert kwargs["inc_url"] == [

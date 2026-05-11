@@ -6,9 +6,12 @@ import json
 import logging
 import queue
 import re
+from datetime import datetime, timezone
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, List, Type, TypeVar, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Type, TypeVar, Union
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..base import Incorporator, IncorporatorList
 
@@ -17,6 +20,22 @@ TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
 # Global registry to prevent duplicate background threads if a class is dynamically rebuilt
 _ACTIVE_LISTENERS: Dict[str, QueueListener] = {}
 MAX_LOG_THREADS = 50  # Hard OS limit constraint
+
+
+class AuditResult(BaseModel):
+    """
+    Structured telemetry payload for pipeline observability.
+    Merged into the logging module to unify all non-blocking IO metrics.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    chunk_index: int = Field(..., description="Sequential index of the current chunk.")
+    operation: str = Field("stream", description="The phase: 'incorp', 'refresh', or 'export'.")
+    rows_processed: int = Field(..., description="Number of rows successfully processed.")
+    failed_sources: List[str] = Field(default_factory=list, description="Failed source URIs.")
+    processing_time_sec: float = Field(..., description="Chunk processing duration in seconds.")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 def _cleanup_listeners() -> None:
@@ -49,7 +68,7 @@ class JSONFormatter(logging.Formatter):
             "time": self.formatTime(record, self.datefmt),
         }
         if hasattr(record, "meta"):
-            log_obj["meta"] = getattr(record, "meta")
+            log_obj["meta"] = record.meta
         if record.exc_info:
             log_obj["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(log_obj)
@@ -91,20 +110,29 @@ def setup_class_logger(cls: Type[Any]) -> None:
 
     # Setup Disk Handlers
     debug_fh = RotatingFileHandler(
-        _safe_log_filename(cls_name, "debug.log"), maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+        _safe_log_filename(cls_name, "debug.log"),
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
     )
     debug_fh.setLevel(logging.DEBUG)
     debug_fh.setFormatter(formatter)
 
     error_fh = RotatingFileHandler(
-        _safe_log_filename(cls_name, "error.log"), maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+        _safe_log_filename(cls_name, "error.log"),
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
     )
     error_fh.setLevel(logging.INFO)
     error_fh.addFilter(StandardFilter())
     error_fh.setFormatter(formatter)
 
     api_fh = RotatingFileHandler(
-        _safe_log_filename(cls_name, "api.log"), maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+        _safe_log_filename(cls_name, "api.log"),
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
     )
     api_fh.setLevel(logging.INFO)
     api_fh.addFilter(APIFilter())
@@ -141,7 +169,7 @@ class LoggingMixin:
             if not path.is_file():
                 return []
 
-            errors: List[Dict[str, Any]] =[]
+            errors: List[Dict[str, Any]] = []
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
@@ -193,7 +221,6 @@ class LoggingMixin:
         return logging.getLogger(self.__class__.__name__)
 
     def log_debug(self, msg: str) -> None:
-        # 🛡️ THE FIX: Short-circuit eager string execution!
         logger = self._get_logger()
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(msg, extra={"meta": self.log_meta(), "is_api": False})
@@ -263,4 +290,60 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             cls.log_cls_info("Export process completed successfully.")
         except Exception as e:
             cls.log_cls_error(f"Export process failed: {str(e)}", exc_info=True)
+            raise
+
+    @classmethod
+    async def stream(
+        cls: Type[TLoggedIncorporator],
+        incorp_params: Dict[str, Any],
+        refresh_params: Optional[Dict[str, Any]] = None,
+        export_params: Optional[Dict[str, Any]] = None,
+        poll_interval: Optional[float] = None,
+        stateful_polling: bool = False,
+        refresh_interval: Optional[float] = None,
+        export_interval: Optional[float] = None,
+        enable_logging: bool = False,
+    ) -> AsyncGenerator[AuditResult, None]:
+        """
+        Autonomous Pipeline Runner with background Telemetry Logging.
+        Intercepts the chunk generator to push Audit metrics to non-blocking disk queues.
+        """
+        if enable_logging:
+            setup_class_logger(cls)
+            cls.log_cls_info("Initiating autonomous stream orchestration.")
+
+        try:
+            async for audit in super().stream(
+                incorp_params=incorp_params,
+                refresh_params=refresh_params,
+                export_params=export_params,
+                poll_interval=poll_interval,
+                stateful_polling=stateful_polling,
+                refresh_interval=refresh_interval,
+                export_interval=export_interval,
+            ):
+                if enable_logging:
+                    # 1. Log throughput metrics to info.log
+                    if audit.rows_processed > 0:
+                        cls.log_cls_info(
+                            f"Stream Chunk {audit.chunk_index} complete: "
+                            f"{audit.rows_processed} rows in {audit.processing_time_sec:.3f}s."
+                        )
+
+                    # 2. Route DLQ (Dead Letter Queue) candidates to error.log
+                    if audit.failed_sources:
+                        cls.log_cls_error(
+                            f"Stream Chunk {audit.chunk_index} encountered failures: {audit.failed_sources}"
+                        )
+
+                # Yield downstream to the caller natively
+                yield audit
+
+            if enable_logging:
+                cls.log_cls_info("Stream process completed gracefully.")
+
+        except Exception as e:
+            # Catch catastrophic framework failures outside the base loop
+            if enable_logging:
+                cls.log_cls_error(f"Fatal Stream Pipeline Error: {str(e)}", exc_info=True)
             raise

@@ -10,16 +10,16 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, TextIO, Union, cast
 
 from .exceptions import IncorporatorFormatError
-from .schema_builder import sanitize_json_key
 from .format_utils import (
     FormatType,
-    infer_format,
-    ensure_string,
-    serialize_nested,
+    check_xml_security,
     deserialize_nested,
+    ensure_string,
+    infer_format,
+    serialize_nested,
     xml_to_dict,
-    check_xml_security
 )
+from .schema_builder import sanitize_json_key
 
 logger = logging.getLogger(__name__)
 
@@ -56,19 +56,27 @@ class JSONHandler(BaseFormatHandler):
 
         except ImportError:
             import json
+
             raw_text = ensure_string(source)
             try:
                 return cast(Union[Dict[str, Any], List[Dict[str, Any]]], json.loads(raw_text))
             except json.JSONDecodeError as e:
-                raise IncorporatorFormatError(f"Invalid JSON: {e}")
+                raise IncorporatorFormatError(f"Invalid JSON: {e}") from e
 
     def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        if kwargs.get("if_exists") == "append":
+            raise IncorporatorFormatError(
+                "Monolithic formats (JSON/XML) do not support O(1) streaming appends. "
+                "Please stream to NDJSON, CSV, SQLite, or Avro instead."
+            )
         path = Path(file_path).resolve()
         try:
             import orjson  # type: ignore[import-untyped, import-not-found, unused-ignore]
+
             path.write_bytes(orjson.dumps(data, option=orjson.OPT_INDENT_2))
         except ImportError:
             import json
+
             try:
                 with open(path, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=4)
@@ -79,6 +87,7 @@ class JSONHandler(BaseFormatHandler):
 class NDJSONHandler(BaseFormatHandler):
     def _parse_stream(self, stream: Union[TextIO, List[str]]) -> List[Dict[str, Any]]:
         import json
+
         rows: List[Dict[str, Any]] = []
         for line_num, line in enumerate(stream, start=1):
             clean_line = line.strip()
@@ -87,7 +96,7 @@ class NDJSONHandler(BaseFormatHandler):
             try:
                 rows.append(json.loads(clean_line))
             except json.JSONDecodeError as e:
-                raise IncorporatorFormatError(f"Invalid NDJSON on line {line_num}: {e}")
+                raise IncorporatorFormatError(f"Invalid NDJSON on line {line_num}: {e}") from e
         return rows
 
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
@@ -100,22 +109,24 @@ class NDJSONHandler(BaseFormatHandler):
 
     def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         import json
+
         if not data:
             return
         try:
             path = Path(file_path).resolve()
-            with open(path, 'w', encoding='utf-8') as f:
+            mode = "a" if kwargs.get("if_exists") == "append" else "w"
+            with open(path, mode, encoding="utf-8") as f:
                 for item in data:
-                    f.write(json.dumps(item) + '\n')
+                    f.write(json.dumps(item) + "\n")
         except OSError as e:
             raise IncorporatorFormatError(f"NDJSON File IO Error on {file_path}: {e}") from e
 
 
 class CSVHandler(BaseFormatHandler):
-    def __init__(self, delimiter: str = ',') -> None:
+    def __init__(self, delimiter: str = ",") -> None:
         self.delimiter = delimiter
 
-    def _parse_stream(self, stream: Union[TextIO, io.StringIO]) -> List[Dict[str, Any]]:
+    def _parse_stream(self, stream: Union[TextIO, io.StringIO], **kwargs: Any) -> List[Dict[str, Any]]:
         try:
             reader = csv.DictReader(stream, delimiter=self.delimiter)
             rows: List[Dict[str, Any]] = []
@@ -128,29 +139,35 @@ class CSVHandler(BaseFormatHandler):
                 rows.append(parsed_row)
             return rows
         except csv.Error as e:
-            raise IncorporatorFormatError(f"Invalid Delimited Format: {e}")
+            raise IncorporatorFormatError(f"Invalid Delimited Format: {e}") from e
 
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         if isinstance(source, Path):
             with open(source, "rt", encoding="utf-8") as f:
-                return self._parse_stream(f)
+                return self._parse_stream(f, **kwargs)
         else:
             raw_data = ensure_string(source)
-            return self._parse_stream(io.StringIO(raw_data))
+            return self._parse_stream(io.StringIO(raw_data), **kwargs)
 
     def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         if not data:
             return
         try:
             path = Path(file_path).resolve()
-            with open(path, 'w', encoding='utf-8', newline='') as f:
+            is_append = kwargs.get("if_exists") == "append"
+            mode = "a" if is_append else "w"
 
-                # Using () creates a lazy generator instead of a duplicated RAM list!
+            # Only write headers if we are creating a new file
+            write_headers = not (is_append and path.exists() and path.stat().st_size > 0)
+
+            with open(path, mode, encoding="utf-8", newline="") as f:
                 processed_gen = ({k: serialize_nested(v) for k, v in row.items()} for row in data)
-
                 writer = csv.DictWriter(f, fieldnames=list(data[0].keys()), delimiter=self.delimiter)
-                writer.writeheader()
-                writer.writerows(processed_gen)  # Natively streams the generator to disk
+
+                if write_headers:
+                    writer.writeheader()
+
+                writer.writerows(processed_gen)
         except OSError as e:
             raise IncorporatorFormatError(f"Delimited File IO Error on {file_path}: {e}") from e
 
@@ -160,8 +177,13 @@ class XMLHandler(BaseFormatHandler):
         try:
             import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
-            raw_bytes = source.read_bytes() if isinstance(source, Path) else source.encode("utf-8") if isinstance(
-                source, str) else source
+            raw_bytes = (
+                source.read_bytes()
+                if isinstance(source, Path)
+                else source.encode("utf-8")
+                if isinstance(source, str)
+                else source
+            )
             parser = lxml_ET.XMLParser(resolve_entities=False, no_network=True)
 
             try:
@@ -178,16 +200,21 @@ class XMLHandler(BaseFormatHandler):
             check_xml_security(raw_str)
 
             try:
-                root = ET.fromstring(raw_str)
+                root = ET.fromstring(raw_str)  # noqa: S314
                 return xml_to_dict(root)
             except ET.ParseError:
                 try:
                     root = ET.fromstring(raw_str.strip())  # noqa: S314
                     return xml_to_dict(root)
                 except ET.ParseError as e:
-                    raise IncorporatorFormatError(f"Invalid XML: {e}")
+                    raise IncorporatorFormatError(f"Invalid XML: {e}") from e
 
     def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        if kwargs.get("if_exists") == "append":
+            raise IncorporatorFormatError(
+                "Monolithic formats (JSON/XML) do not support O(1) streaming appends. "
+                "Please stream to NDJSON, CSV, SQLite, or Avro instead."
+            )
         path = Path(file_path).resolve()
         try:
             import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]
@@ -208,6 +235,7 @@ class XMLHandler(BaseFormatHandler):
 
         except ImportError:
             import xml.etree.ElementTree as ET
+
             try:
                 with open(path, "w", encoding="utf-8") as f:
                     root = ET.Element("root")
@@ -244,7 +272,7 @@ class SQLiteHandler(BaseFormatHandler):
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(query, sql_params)
 
-                rows: List[Dict[str, Any]] =[]
+                rows: List[Dict[str, Any]] = []
                 # Iterate directly over the cursor to avoid the fetchall() memory bomb
                 for row in cursor:
                     parsed_row = dict(row)
@@ -256,7 +284,7 @@ class SQLiteHandler(BaseFormatHandler):
             finally:
                 conn.close()
         except sqlite3.Error as e:
-            raise IncorporatorFormatError(f"SQLite Read Error: {e}")
+            raise IncorporatorFormatError(f"SQLite Read Error: {e}") from e
 
     def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         if not data:
@@ -275,22 +303,27 @@ class SQLiteHandler(BaseFormatHandler):
                     if if_exists == "replace":
                         cursor.execute(f'DROP TABLE IF EXISTS "{table_name}"')
                     elif if_exists == "fail":
-                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+                        cursor.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                            (table_name,),
+                        )
                         if cursor.fetchone():
                             raise IncorporatorFormatError(f"Table '{table_name}' already exists in {path.name}.")
 
                     keys = list(data[0].keys())
-                    safe_columns =[f'"{sanitize_json_key(k)}"' for k in keys]
+                    safe_columns = [f'"{sanitize_json_key(k)}"' for k in keys]
 
                     create_stmt = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({", ".join(safe_columns)})'
                     cursor.execute(create_stmt)
 
                     placeholders = ", ".join(["?"] * len(keys))
-                    insert_stmt = f'INSERT INTO "{table_name}" VALUES ({placeholders})'
+                    insert_stmt = f'INSERT INTO "{table_name}" VALUES ({placeholders})'  # noqa: S608
 
                     # Generator expression () yields tuples 1-by-1 to the C-driver
                     processed_gen = (
-                        tuple(int(v) if isinstance(v, bool) else serialize_nested(v) for v in (row.get(k) for k in keys))
+                        tuple(
+                            int(v) if isinstance(v, bool) else serialize_nested(v) for v in (row.get(k) for k in keys)
+                        )
                         for row in data
                     )
 
@@ -298,7 +331,7 @@ class SQLiteHandler(BaseFormatHandler):
             finally:
                 conn.close()
         except sqlite3.Error as e:
-            raise IncorporatorFormatError(f"SQLite Write Error: {e}")
+            raise IncorporatorFormatError(f"SQLite Write Error: {e}") from e
 
 
 class AvroHandler(BaseFormatHandler):
@@ -306,7 +339,7 @@ class AvroHandler(BaseFormatHandler):
         try:
             import fastavro  # type: ignore[import-untyped, import-not-found, unused-ignore]
         except ImportError:
-            raise IncorporatorFormatError("fastavro not installed. Run: pip install incorporator[avro]")
+            raise IncorporatorFormatError("fastavro not installed. Run: pip install incorporator[avro]") from None
 
         try:
             rows: List[Dict[str, Any]] = []
@@ -319,6 +352,7 @@ class AvroHandler(BaseFormatHandler):
                             rows.append({k: deserialize_nested(v) for k, v in raw_row.items()})
             elif isinstance(source, bytes):
                 import io
+
                 for raw_row in fastavro.reader(io.BytesIO(source)):
                     if isinstance(raw_row, dict):
                         rows.append({k: deserialize_nested(v) for k, v in raw_row.items()})
@@ -328,7 +362,7 @@ class AvroHandler(BaseFormatHandler):
             return rows
 
         except Exception as e:
-            raise IncorporatorFormatError(f"Avro Read Error: {e}")
+            raise IncorporatorFormatError(f"Avro Read Error: {e}") from e
 
     def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         if not data:
@@ -337,7 +371,7 @@ class AvroHandler(BaseFormatHandler):
         try:
             import fastavro  # type: ignore[import-untyped, import-not-found, unused-ignore]
         except ImportError:
-            raise IncorporatorFormatError("fastavro not installed. Run: pip install incorporator[avro]")
+            raise IncorporatorFormatError("fastavro not installed. Run: pip install incorporator[avro]") from None
 
         path = Path(file_path).resolve()
         pydantic_schema = kwargs.get("pydantic_schema", {})
@@ -368,12 +402,14 @@ class AvroHandler(BaseFormatHandler):
             expected_types[safe_k] = a_type
 
         record_name = sanitize_json_key(kwargs.get("sql_table", "IncorporatorRecord"))
-        parsed_schema = fastavro.parse_schema({
-            "doc": "Auto-generated by Incorporator",
-            "name": record_name,
-            "type": "record",
-            "fields": fields
-        })
+        parsed_schema = fastavro.parse_schema(
+            {
+                "doc": "Auto-generated by Incorporator",
+                "name": record_name,
+                "type": "record",
+                "fields": fields,
+            }
+        )
 
         # Yield dicts to fastavro 1-by-1 to prevent duplicating the dataset in RAM
         def _record_generator() -> Iterator[Dict[str, Any]]:
@@ -404,18 +440,22 @@ class AvroHandler(BaseFormatHandler):
                 yield processed_row
 
         try:
-            with open(path, "wb") as f:
+            is_append = kwargs.get("if_exists") == "append"
+            # fastavro supports native appends via 'a+b' mode
+            mode = "a+b" if is_append and path.exists() else "wb"
+
+            with open(path, mode) as f:
                 fastavro.writer(f, parsed_schema, _record_generator())
         except Exception as e:
-            raise IncorporatorFormatError(f"Avro Write Error: {e}")
+            raise IncorporatorFormatError(f"Avro Write Error: {e}") from e
 
 
 _HANDLERS: Dict[FormatType, BaseFormatHandler] = {
     FormatType.JSON: JSONHandler(),
     FormatType.NDJSON: NDJSONHandler(),
-    FormatType.CSV: CSVHandler(delimiter=','),
-    FormatType.TSV: CSVHandler(delimiter='\t'),
-    FormatType.PSV: CSVHandler(delimiter='|'),
+    FormatType.CSV: CSVHandler(delimiter=","),
+    FormatType.TSV: CSVHandler(delimiter="\t"),
+    FormatType.PSV: CSVHandler(delimiter="|"),
     FormatType.XML: XMLHandler(),
     FormatType.SQLITE: SQLiteHandler(),
     FormatType.AVRO: AvroHandler(),
@@ -423,10 +463,13 @@ _HANDLERS: Dict[FormatType, BaseFormatHandler] = {
 
 
 async def parse_source_data(
-        source: Union[str, bytes, Path],
-        format_type: FormatType,
-        **kwargs: Any
+    source: Union[str, bytes, Path, List[Any], Dict[str, Any]], format_type: FormatType, **kwargs: Any
 ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    if isinstance(source, list):
+        return cast(List[Dict[str, Any]], source)
+    if isinstance(source, dict):
+        return source
+
     handler = _HANDLERS.get(format_type)
     if not handler:
         raise IncorporatorFormatError(f"Unsupported format: '{format_type}'.")
@@ -434,7 +477,7 @@ async def parse_source_data(
     try:
         return await asyncio.to_thread(handler.parse, source, **kwargs)
     except Exception as e:
-        snippet = str(source).strip()[:60].replace('\n', ' ')
+        snippet = str(source).strip()[:60].replace("\n", " ")
         logger.warning(
             f"⚠️ PARSE FAILED for format '{format_type}'. "
             f"The payload may be malformed (e.g., corrupted file or HTML firewall). "
@@ -444,10 +487,7 @@ async def parse_source_data(
 
 
 async def write_destination_data(
-        data: List[Dict[str, Any]],
-        file_path: Union[str, Path],
-        format_type: FormatType,
-        **kwargs: Any
+    data: List[Dict[str, Any]], file_path: Union[str, Path], format_type: FormatType, **kwargs: Any
 ) -> None:
     handler = _HANDLERS.get(format_type)
     if not handler:

@@ -10,6 +10,7 @@ to create a deeply interconnected, null-safe data graph.
 """
 
 import asyncio
+
 from incorporator import Incorporator, link_to
 from incorporator.methods.converters import calc
 
@@ -120,17 +121,11 @@ async def main() -> None:
         global_price = f"${getattr(asset, 'current_price', 0):,.2f}"
 
         # Safely traverse the 4 linked Binance objects!
-        vol_usdt, bid_usdt = extract_market_data(
-            getattr(asset, "stats_usdt", None), getattr(asset, "book_usdt", None)
-        )
-        vol_usdc, bid_usdc = extract_market_data(
-            getattr(asset, "stats_usdc", None), getattr(asset, "book_usdc", None)
-        )
+        vol_usdt, bid_usdt = extract_market_data(getattr(asset, "stats_usdt", None), getattr(asset, "book_usdt", None))
+        vol_usdc, bid_usdc = extract_market_data(getattr(asset, "stats_usdc", None), getattr(asset, "book_usdc", None))
 
         asset_label = f"{name} ({symbol})"
-        print(
-            f"{asset_label:<18} | {global_price:<14} | {vol_usdt:<16} | {bid_usdt:<14} | {vol_usdc:<16} | {bid_usdc}"
-        )
+        print(f"{asset_label:<18} | {global_price:<14} | {vol_usdt:<16} | {bid_usdt:<14} | {vol_usdc:<16} | {bid_usdc}")
 
     print("=" * 115)
 

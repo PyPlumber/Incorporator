@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "incorporator"
-version = "1.0.7"
-description = "A schema-free data mapper that turns JSON, XML, or CSV into a unified Python object graph with dot-notation and access-at-runtime."
+version = "1.0.8"
+description = "A Zero-Boilerplate Universal Data Gateway and Pipeline Orchestration Platform."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors =[
+authors = [
     { name = "Incorporator Maintainers" }
 ]
 keywords =[
@@ -21,7 +21,9 @@ keywords =[
     "csv",
     "xml",
     "asyncio",
-    "hateoas"
+    "hateoas",
+    "orchestration",
+    "pipeline"
 ]
 classifiers =[
     "Development Status :: 5 - Production/Stable",
@@ -43,9 +45,8 @@ dependencies =[
 ]
 
 [project.urls]
-Repository = "https://github.com/your-org/incorporator"
-"Bug Tracker" = "https://github.com/your-org/incorporator/issues"
-
+Repository = "https://github.com/PyPlumber/incorporator"
+"Bug Tracker" = "https://github.com/PyPlumber/incorporator/issues"
 [project.optional-dependencies]
 dev =[
     "pytest>=7.0",
@@ -58,8 +59,24 @@ dev =[
 speedups =["orjson>=3.9", "lxml>=4.9", "cramjam>=2.7"]
 # Big Data Formats
 avro =["fastavro>=1.8"]
+# The v2.0 Pipeline Orchestration Upgrades
+orchestrate =[
+    "typer>=0.9.0",
+    "prefect>=2.10.0"
+]
 # The developer "install everything" flag
-all =["orjson>=3.9", "lxml>=4.9", "cramjam>=2.7", "fastavro>=1.8"]
+all =[
+    "orjson>=3.9",
+    "lxml>=4.9",
+    "cramjam>=2.7",
+    "fastavro>=1.8",
+    "typer>=0.9.0",
+    "prefect>=2.10.0"
+]
+
+[project.scripts]
+# Exposes the Typer application to the terminal
+incorporator = "incorporator.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["incorporator", "incorporator.*"]
@@ -81,8 +98,17 @@ disallow_incomplete_defs = true
 check_untyped_defs = true
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py39"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "examples",
+    "tests",
+]
 
 [tool.ruff.lint]
 select =[

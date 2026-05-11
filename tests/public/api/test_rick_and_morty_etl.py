@@ -160,13 +160,13 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
 
     # --- Verify `calc` Population Logic ---
     earth = locations[0]
-    assert getattr(earth, "population") == 2
+    assert earth.population == 2
 
     # --- Verify `inc(datetime)` Logic ---
     pilot = episodes[0]
-    assert isinstance(getattr(pilot, "air_date"), datetime)
-    assert getattr(pilot, "air_date").year == 2013
-    assert getattr(pilot, "air_date").month == 12
+    assert isinstance(pilot.air_date, datetime)
+    assert pilot.air_date.year == 2013
+    assert pilot.air_date.month == 12
 
     # --- Verify Graph Relations & Data ---
     rick = characters[0]
@@ -180,12 +180,12 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
 
     # Verify `link_to` + `pluck` Success
     assert rick.location is not None
-    assert getattr(rick.location, "inc_name") == "Earth (Replacement Dimension)"
+    assert rick.location.inc_name == "Earth (Replacement Dimension)"
 
     # Verify `link_to_list` Success
     assert isinstance(rick.episode, list)
     assert len(rick.episode) == 1
-    assert getattr(rick.episode[0], "inc_name") == "Pilot"
+    assert rick.episode[0].inc_name == "Pilot"
 
     # ==========================================
     # LORE TABLE 1: The Dimensional Census
@@ -201,9 +201,7 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
         # Sort by our dynamically calculated 'population' attribute
         sorted_locs = sorted(locations, key=lambda x: getattr(x, "population", 0), reverse=True)
         for loc in sorted_locs[:10]:
-            print(
-                f"{loc.inc_name:<40} | {getattr(loc, 'type', 'Unknown'):<20} | {getattr(loc, 'population', 0):<15}"
-            )
+            print(f"{loc.inc_name:<40} | {getattr(loc, 'type', 'Unknown'):<20} | {getattr(loc, 'population', 0):<15}")
 
         # ==========================================
         # LORE TABLE 2: The "Deadliest" Episodes
@@ -237,9 +235,7 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
             for ep, count in ep_stats[:10]:
                 # Format the datetime object that inc(datetime) generated for us!
                 air_date = getattr(ep, "air_date", None)
-                date_str = (
-                    air_date.strftime("%Y-%m-%d") if isinstance(air_date, datetime) else "Unknown"
-                )
+                date_str = air_date.strftime("%Y-%m-%d") if isinstance(air_date, datetime) else "Unknown"
                 ep_code = getattr(ep, "episode", "Unknown")
 
                 print(f"{ep_code:<10} | {ep.inc_name:<35} | {date_str:<12} | {count:<10}")
@@ -258,7 +254,7 @@ async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> N
         ep28 = episodes.inc_dict.get(28)
 
         if ep28 and getattr(ep28, "characters", None):
-            cast_url_list = getattr(ep28, "characters")
+            cast_url_list = ep28.characters
             actors = []
 
             for url in cast_url_list:

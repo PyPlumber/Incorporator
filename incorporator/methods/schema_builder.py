@@ -55,12 +55,12 @@ def sanitize_json_key(key: str) -> str:
 
 
 def apply_etl_transformations(
-        parsed_data: Union[Dict[str, Any], List[Dict[str, Any]]],
-        code_attr: Optional[str] = None,
-        name_attr: Optional[str] = None,
-        excl_lst: Optional[List[str]] = None,
-        conv_dict: Optional[Dict[str, Any]] = None,
-        name_chg: Optional[List[Tuple[str, str]]] = None,
+    parsed_data: Union[Dict[str, Any], List[Dict[str, Any]]],
+    code_attr: Optional[str] = None,
+    name_attr: Optional[str] = None,
+    excl_lst: Optional[List[str]] = None,
+    conv_dict: Optional[Dict[str, Any]] = None,
+    name_chg: Optional[List[Tuple[str, str]]] = None,
 ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
     """Applies Declarative ETL rules utilizing Attribute-Based (Columnar) Processing."""
 
@@ -154,7 +154,7 @@ def apply_etl_transformations(
 
 
 def infer_dynamic_schema(
-        model_name: str, data: Union[Dict[str, Any], List[Dict[str, Any]]], base_class: Type[BaseModel]
+    model_name: str, data: Union[Dict[str, Any], List[Dict[str, Any]]], base_class: Type[BaseModel]
 ) -> Type[BaseModel]:
     """Recursively builds a Pydantic subclass based on the data's comprehensive shape."""
 
@@ -169,9 +169,7 @@ def infer_dynamic_schema(
                 current_val = sample_dict.get(k)
 
                 # Condition A: Key doesn't exist, is None, or is an empty List/Dict.
-                if current_val is None or (
-                        isinstance(current_val, (list, dict)) and not current_val
-                ):
+                if current_val is None or (isinstance(current_val, (list, dict)) and not current_val):
                     # Use shallow copies to prevent mutating the original data via reference!
                     if isinstance(v, list):
                         sample_dict[k] = list(v)
@@ -217,9 +215,7 @@ def infer_dynamic_schema(
         elif isinstance(value, list) and value and any(isinstance(x, dict) for x in value):
             # Pass only the dictionaries so the recursive inference succeeds
             dict_vals = [x for x in value if isinstance(x, dict)]
-            nested_model_list: Any = infer_dynamic_schema(
-                f"{model_name}_{safe_key}Item", dict_vals, BaseModel
-            )
+            nested_model_list: Any = infer_dynamic_schema(f"{model_name}_{safe_key}Item", dict_vals, BaseModel)
             fields[safe_key] = (
                 Optional[List[nested_model_list]],
                 Field(alias=raw_key, default_factory=list),

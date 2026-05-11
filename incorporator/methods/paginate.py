@@ -1,64 +1,264 @@
 """
-Advanced Asynchronous Pagination Engine for the Incorporator Framework.
+Advanced Stateful Pagination Engine for the Incorporator Framework.
 
-Provides isolated OOP strategies to gracefully handle Next URL, Cursor, Offset,
-and Metadata pagination patterns with built-in Exception logging.
+Unifies REST API streaming and Local File/Database chunking under a single
+O(1) Memory state tracker, perfectly integrated with the pipeline orchestrator.
 """
 
+import asyncio
+import csv
+import itertools
 import logging
 import re
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, Optional, Set, Union
+import sqlite3
+from typing import IO, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Set, Union
 from urllib.parse import urljoin
 
 import httpx
 
-# IMPORT OUR FORMAT ENGINE
 from .format_parsers import infer_format, parse_source_data
+from .format_utils import deserialize_nested
 
 logger = logging.getLogger(__name__)
 
 
+# ==========================================
+# 1. BASE CLASS
+# ==========================================
 class AsyncPaginator:
     def __init__(self) -> None:
         self.call_lim: Optional[int] = None
         self.fetch_func: Optional[Callable[..., Awaitable[httpx.Response]]] = None
         self.strict_mode: bool = False
+        self.is_exhausted: bool = False
 
-    async def _fetch(
-            self, url: str, params: Optional[Dict[str, Any]] = None, **kwargs: Any
-    ) -> httpx.Response:
-        """Executes the network request, allowing dynamic POST payload overrides via kwargs."""
+    def reset(self) -> None:
+        """Resets the paginator state for daemon polling loops."""
+        self.is_exhausted = False
+
+    async def _fetch(self, url: str, params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
         if not self.fetch_func:
             raise RuntimeError("Paginator must be bound to a network client before use.")
         return await self.fetch_func(url=url, request_params=params, **kwargs)
 
     async def _parse_response(self, response: httpx.Response) -> Any:
-        """Format-Agnostic Parser: Gracefully handles JSON, XML, or CSV pagination logic."""
         fmt = infer_format(str(response.url))
-        # Pass raw bytes to the parser so it handles decoding natively
         return await parse_source_data(response.read(), fmt)
 
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        """Yields raw byte payloads to preserve binary/compression integrity."""
+    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, List[Any], Dict[str, Any]], None]:
         if False:
             yield b""
         raise NotImplementedError
 
 
-# --- 1. Link Header Pagination ---
+# ==========================================
+# 2. LOCAL FILE & DATABASE PAGINATORS
+# ==========================================
+class SQLitePaginator(AsyncPaginator):
+    """Yields O(1) chunks natively using SQL bounds."""
+
+    def __init__(self, db_path: str, sql_query: str, chunk_size: int = 10000) -> None:
+        super().__init__()
+        self.db_path = db_path
+        self.sql_query = sql_query
+        self.chunk_size = chunk_size
+        self._conn: Optional[sqlite3.Connection] = None
+        self._cursor: Optional[sqlite3.Cursor] = None
+
+    def reset(self) -> None:
+        self.is_exhausted = False
+        if self._conn is not None:
+            self._conn.close()
+        self._conn = None
+        self._cursor = None
+
+    def __del__(self) -> None:
+        conn: Any = getattr(self, "_conn", None)
+        if conn is not None:
+            conn.close()
+
+    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, List[Any], Dict[str, Any]], None]:
+        if self.is_exhausted:
+            return
+
+        def _fetch_chunk() -> List[Dict[str, Any]]:
+            if not self._conn:
+                self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                self._conn.row_factory = sqlite3.Row
+                self._cursor = self._conn.execute(self.sql_query)
+
+            if not self._cursor:
+                return []
+
+            rows = self._cursor.fetchmany(self.chunk_size)
+
+            chunk: List[Dict[str, Any]] = []
+            for row in rows:
+                parsed_row = dict(row)
+                for k, v in parsed_row.items():
+                    parsed_row[k] = deserialize_nested(v)
+                chunk.append(parsed_row)
+
+            return chunk
+
+        chunk_data = await asyncio.to_thread(_fetch_chunk)
+        if not chunk_data:
+            self.is_exhausted = True
+            if self._conn:
+                self._conn.close()
+                self._conn = None
+            return
+
+        yield chunk_data
+
+
+class CSVPaginator(AsyncPaginator):
+    """Yields O(1) chunks natively using a persistent SQLite cursor."""
+
+    def __init__(self, file_path: str, chunk_size: int = 10000, delimiter: str = ",") -> None:
+        super().__init__()
+        self.file_path = file_path
+        self.chunk_size = chunk_size
+        self.delimiter = delimiter
+        self._file: Optional[IO[Any]] = None
+        self._reader: Optional[Any] = None
+
+    def reset(self) -> None:
+        self.is_exhausted = False
+        if self._file is not None:
+            self._file.close()
+        self._file = None
+        self._reader = None
+
+    def __del__(self) -> None:
+        file_obj: Any = getattr(self, "_file", None)
+        if file_obj is not None:
+            file_obj.close()
+
+    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, List[Any], Dict[str, Any]], None]:
+        if self.is_exhausted:
+            return
+
+        def _fetch_chunk() -> List[Dict[str, Any]]:
+            if not self._file:
+                self._file = open(self.file_path, "rt", encoding="utf-8")
+                self._reader = csv.DictReader(self._file, delimiter=self.delimiter)
+
+            if self._reader is None:
+                return []
+
+            chunk: List[Dict[str, Any]] = []
+            for row in itertools.islice(self._reader, self.chunk_size):
+                parsed_row = {}
+                for k, v in row.items():
+                    safe_k = str(k) if k is not None else "unknown_column"
+                    parsed_row[safe_k] = deserialize_nested(v)
+                chunk.append(parsed_row)
+            return chunk
+
+        chunk_data = await asyncio.to_thread(_fetch_chunk)
+        if not chunk_data:
+            self.is_exhausted = True
+            if self._file:
+                self._file.close()
+                self._file = None
+            return
+
+        yield chunk_data
+
+
+class AvroPaginator(AsyncPaginator):
+    """Yields O(1) chunks maintaining a persistent block reader."""
+
+    def __init__(self, file_path: str, chunk_size: int = 10000) -> None:
+        super().__init__()
+        self.file_path = file_path
+        self.chunk_size = chunk_size
+        self._file: Optional[IO[Any]] = None
+        self._reader: Optional[Any] = None
+
+    def reset(self) -> None:
+        self.is_exhausted = False
+        if self._file is not None:
+            self._file.close()
+        self._file = None
+        self._reader = None
+
+    def __del__(self) -> None:
+        file_obj: Any = getattr(self, "_file", None)
+        if file_obj is not None:
+            file_obj.close()
+
+    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, List[Any], Dict[str, Any]], None]:
+        if self.is_exhausted:
+            return
+
+        def _fetch_chunk() -> List[Dict[str, Any]]:
+            try:
+                import fastavro
+            except ImportError:
+                raise RuntimeError("fastavro not installed.") from None
+
+            if not self._file:
+                self._file = open(self.file_path, "rb")
+                self._reader = fastavro.reader(self._file)
+
+            if self._reader is None:
+                return []
+
+            chunk: List[Dict[str, Any]] = []
+            for raw_row in itertools.islice(self._reader, self.chunk_size):
+                if isinstance(raw_row, dict):
+                    chunk.append({k: deserialize_nested(v) for k, v in raw_row.items()})
+            return chunk
+
+        chunk_data = await asyncio.to_thread(_fetch_chunk)
+        if not chunk_data:
+            self.is_exhausted = True
+            if self._file:
+                self._file.close()
+                self._file = None
+            return
+
+        yield chunk_data
+
+
+# ==========================================
+# 3. WEB API PAGINATORS
+# ==========================================
 class LinkHeaderPaginator(AsyncPaginator):
     """Example: GitHub API (Link header with rel="next")."""
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.current_url: Optional[str] = None
+        self.is_first_call: bool = True
+
+    def reset(self) -> None:
+        """Resets state for daemon polling loops."""
+        self.is_exhausted = False
+        self.current_url = None
+        self.is_first_call = True
+
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        url: Optional[str] = start_url
+        if self.is_exhausted:
+            return
+
+        # Initialize start_url on the very first execution
+        if self.is_first_call:
+            self.current_url = start_url
+            self.is_first_call = False
+
         calls = 0
 
-        while url:
+        # The while loop allows it to work natively for non-streamed `incorp()` calls
+        while self.current_url:
+            # The stream() controller passes call_lim=1 to force O(1) memory breaks
             if self.call_lim and calls >= self.call_lim:
                 break
 
             try:
-                response = await self._fetch(url)
+                response = await self._fetch(self.current_url)
                 yield response.read()  # Yield raw bytes!
                 calls += 1
 
@@ -71,44 +271,189 @@ class LinkHeaderPaginator(AsyncPaginator):
                             if match:
                                 next_link = match.group(1)
 
-                url = urljoin(str(response.url), next_link) if next_link else None
+                self.current_url = urljoin(str(response.url), next_link) if next_link else None
+
+                # Flag exhaustion so stream() knows the pipeline is finished
+                if not self.current_url:
+                    self.is_exhausted = True
+
             except Exception as e:
+                self.is_exhausted = True
                 if self.strict_mode:
                     raise  # Let the DX Analyzer catch it!
                 logger.warning(f"LinkHeaderPaginator stopped gracefully: {e}")
                 break
 
 
-# --- 2. Next URL in Body (Deep-Drill) ---
-class NextUrlPaginator(AsyncPaginator):
-    """Example: PokéAPI (returns 'next' URL in JSON body)."""
-
-    def __init__(self, *path_keys: str) -> None:
+class CursorPaginator(AsyncPaginator):
+    def __init__(self, cursor_param: str = "cursor") -> None:
         super().__init__()
-        self.path_keys = path_keys if path_keys else ("next",)
+        self.cursor_param = cursor_param
+        self.current_cursor: Optional[str] = None
+        self.seen_cursors: Set[str] = set()
+
+    def reset(self) -> None:
+        self.is_exhausted = False
+        self.current_cursor = None
+        self.seen_cursors.clear()
 
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        url: Optional[str] = start_url
-        calls = 0
-        seen_urls: Set[str] = set()
+        if self.is_exhausted:
+            return
 
-        while url:
+        calls = 0
+        while True:
             if self.call_lim and calls >= self.call_lim:
                 break
 
-            # Infinite Loop Protection
-            if url in seen_urls:
-                logger.warning(f"Infinite loop detected! API returned previously visited URL: {url}")
-                break
-            seen_urls.add(url)
+            params = {self.cursor_param: self.current_cursor} if self.current_cursor else {}
 
             try:
-                response = await self._fetch(url)
-                yield response.read()  # Yield raw bytes!
+                response = await self._fetch(start_url, params=params)
+                yield response.read()
                 calls += 1
 
                 data = await self._parse_response(response)
+                if isinstance(data, dict):
+                    next_cursor = (
+                        data.get("meta", {}).get("next_token") or data.get("next_cursor") or data.get(self.cursor_param)
+                    )
+                else:
+                    next_cursor = None
 
+                if not next_cursor or next_cursor in self.seen_cursors:
+                    self.is_exhausted = True
+                    break
+                else:
+                    self.seen_cursors.add(next_cursor)
+                    self.current_cursor = next_cursor
+
+            except Exception as e:
+                self.is_exhausted = True
+                if self.strict_mode:
+                    raise
+                logger.warning(f"CursorPaginator stopped: {e}")
+                break
+
+
+class OffsetPaginator(AsyncPaginator):
+    def __init__(self, limit: int = 50, offset_param: str = "offset", limit_param: str = "limit") -> None:
+        super().__init__()
+        self.limit = limit
+        self.offset_param = offset_param
+        self.limit_param = limit_param
+        self.current_offset = 0
+
+    def reset(self) -> None:
+        self.is_exhausted = False
+        self.current_offset = 0
+
+    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
+        if self.is_exhausted:
+            return
+
+        calls = 0
+        while True:
+            if self.call_lim and calls >= self.call_lim:
+                break
+
+            params = {self.offset_param: self.current_offset, self.limit_param: self.limit}
+
+            try:
+                response = await self._fetch(start_url, params=params)
+                yield response.read()
+                calls += 1
+
+                data = await self._parse_response(response)
+                items = data.get("results") or data.get("docs", []) if isinstance(data, dict) else data
+
+                if not items:
+                    self.is_exhausted = True
+                    break
+                else:
+                    self.current_offset += self.limit
+
+            except Exception as e:
+                self.is_exhausted = True
+                if self.strict_mode:
+                    raise
+                logger.warning(f"OffsetPaginator stopped: {e}")
+                break
+
+
+class PageNumberPaginator(AsyncPaginator):
+    def __init__(self, page_param: str = "page", start_page: int = 1) -> None:
+        super().__init__()
+        self.page_param = page_param
+        self.start_page = start_page
+        self.current_page = start_page
+
+    def reset(self) -> None:
+        self.is_exhausted = False
+        self.current_page = self.start_page
+
+    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
+        if self.is_exhausted:
+            return
+
+        calls = 0
+        while True:
+            if self.call_lim and calls >= self.call_lim:
+                break
+
+            params = {self.page_param: self.current_page}
+
+            try:
+                response = await self._fetch(start_url, params=params)
+                yield response.read()
+                calls += 1
+
+                data = await self._parse_response(response)
+                if not data:
+                    self.is_exhausted = True
+                    break
+                else:
+                    self.current_page += 1
+
+            except Exception as e:
+                self.is_exhausted = True
+                if self.strict_mode:
+                    raise
+                logger.warning(f"PageNumberPaginator stopped: {e}")
+                break
+
+
+class NextUrlPaginator(AsyncPaginator):
+    def __init__(self, *path_keys: str) -> None:
+        super().__init__()
+        self.path_keys = path_keys if path_keys else ("next",)
+        self.current_url: Optional[str] = None
+        self.is_first_call = True
+
+    def reset(self) -> None:
+        self.is_exhausted = False
+        self.current_url = None
+        self.is_first_call = True
+
+    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
+        if self.is_exhausted:
+            return
+
+        if self.is_first_call:
+            self.current_url = start_url
+            self.is_first_call = False
+
+        calls = 0
+        while self.current_url:
+            if self.call_lim and calls >= self.call_lim:
+                break
+
+            try:
+                response = await self._fetch(self.current_url)
+                yield response.read()
+                calls += 1
+
+                data = await self._parse_response(response)
                 for key in self.path_keys:
                     if isinstance(data, dict):
                         data = data.get(key)
@@ -116,139 +461,14 @@ class NextUrlPaginator(AsyncPaginator):
                         data = None
                         break
 
-                # Robustly join relative paths to the base domain
-                url = urljoin(str(response.url), str(data)) if data else None
-            except Exception as e:
-                if self.strict_mode:
-                    raise  # Let the DX Analyzer catch it!
-                logger.warning(f"NextUrlPaginator stopped gracefully: {e}")
-                break
-
-
-# --- 3. Cursor-Based Pagination ---
-class CursorPaginator(AsyncPaginator):
-    """Example: Twitter/X API v2 (uses 'next_token' cursor)."""
-
-    def __init__(self, cursor_param: str = "cursor") -> None:
-        super().__init__()
-        self.cursor_param = cursor_param
-
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        cursor: Optional[str] = None
-        calls = 0
-        seen_cursors: Set[str] = set()
-
-        while True:
-            if self.call_lim and calls >= self.call_lim:
-                break
-
-            if cursor:
-                # Infinite Loop Protection
-                if cursor in seen_cursors:
-                    logger.warning(f"Infinite loop detected! API returned duplicate cursor: {cursor}")
+                self.current_url = urljoin(str(response.url), str(data)) if data else None
+                if not self.current_url:
+                    self.is_exhausted = True
                     break
-                seen_cursors.add(cursor)
 
-            params = {self.cursor_param: cursor} if cursor else {}
-
-            try:
-                response = await self._fetch(start_url, params=params)
-                yield response.read()  # Yield raw bytes!
-                calls += 1
-
-                data = await self._parse_response(response)
-
-                if isinstance(data, dict):
-                    # Smart fallback list looking for common cursor names, including the user's custom param
-                    cursor = data.get("meta", {}).get("next_token") or data.get("next_cursor") or data.get(
-                        self.cursor_param)
-                else:
-                    cursor = None
-
-                if not cursor:
-                    break
             except Exception as e:
+                self.is_exhausted = True
                 if self.strict_mode:
-                    raise  # Let the DX Analyzer catch it!
-                logger.warning(f"CursorPaginator stopped gracefully: {e}")
-                break
-
-
-# --- 4. Offset + Limit Pagination ---
-class OffsetPaginator(AsyncPaginator):
-    """Example: Open Library API (offset + limit)."""
-
-    def __init__(
-            self, limit: int = 50, offset_param: str = "offset", limit_param: str = "limit"
-    ) -> None:
-        super().__init__()
-        self.limit = limit
-        self.offset_param = offset_param
-        self.limit_param = limit_param
-
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        offset = 0
-        calls = 0
-
-        while True:
-            if self.call_lim and calls >= self.call_lim:
-                break
-
-            params = {self.offset_param: offset, self.limit_param: self.limit}
-
-            try:
-                response = await self._fetch(start_url, params=params)
-                yield response.read()  # Yield raw bytes!
-                calls += 1
-
-                data = await self._parse_response(response)
-
-                if isinstance(data, dict):
-                    items = data.get("results") or data.get("docs", [])
-                else:
-                    items = data
-
-                if not items:
-                    break
-                offset += self.limit
-            except Exception as e:
-                if self.strict_mode:
-                    raise  # Let the DX Analyzer catch it!
-                logger.warning(f"OffsetPaginator stopped gracefully: {e}")
-                break
-
-
-# --- 5. Page Number Pagination ---
-class PageNumberPaginator(AsyncPaginator):
-    """Example: CoinGecko or ReqRes API (page=1, page=2, ...)."""
-
-    def __init__(self, page_param: str = "page", start_page: int = 1) -> None:
-        super().__init__()
-        self.page_param = page_param
-        self.start_page = start_page
-
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        page = self.start_page
-        calls = 0
-
-        while True:
-            if self.call_lim and calls >= self.call_lim:
-                break
-
-            params = {self.page_param: page}
-
-            try:
-                response = await self._fetch(start_url, params=params)
-                yield response.read()  # Yield raw bytes!
-                calls += 1
-
-                data = await self._parse_response(response)
-
-                if not data:
-                    break
-                page += 1
-            except Exception as e:
-                if self.strict_mode:
-                    raise  # Let the DX Analyzer catch it!
-                logger.warning(f"PageNumberPaginator stopped gracefully: {e}")
+                    raise
+                logger.warning(f"NextUrlPaginator stopped: {e}")
                 break

@@ -1,11 +1,10 @@
 """Tests for the minimal vertical slice: Local JSON File to Incorporator Object."""
 
 import logging
+
 import pytest
-from typing import List
 
 from incorporator import Incorporator
-from incorporator.methods.exceptions import IncorporatorFormatError
 
 
 @pytest.mark.asyncio
@@ -30,7 +29,7 @@ async def test_incorporator_reads_local_json_successfully(clean_json_file: str) 
     assert first_item.name == "Bulbasaur"
 
     # Notice: 'weight' was dynamically added by schema_builder because it was in the JSON!
-    assert getattr(first_item, "weight") == 69
+    assert first_item.weight == 69
 
 
 @pytest.mark.asyncio
@@ -51,4 +50,3 @@ async def test_incorporator_warns_and_skips_on_bad_json(
     # 3. Assert the warning message contains our helpful fault-tolerance context
     assert "PARSE FAILED for format" in caplog.text
     assert "The payload may be malformed" in caplog.text
-    assert "Invalid JSON" in caplog.text

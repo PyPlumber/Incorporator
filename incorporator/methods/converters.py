@@ -7,8 +7,8 @@ Includes a Ranked Dictionary of fallbacks to guarantee 100% "Null-Safe" ETL pipe
 
 import collections.abc
 import functools
-import weakref
 import logging
+import weakref
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
@@ -24,6 +24,7 @@ flt = float
 
 class _NewSentinel:
     """Explicit marker to indicate an attribute must be generated from scratch."""
+
     pass
 
 
@@ -32,6 +33,7 @@ new = _NewSentinel()
 
 class _EachSentinel:
     """Marker to distribute extracted list items across concurrent POST requests."""
+
     pass
 
 
@@ -52,7 +54,7 @@ def sum_attributes(*args: Any) -> float:
 
 
 def split_and_get(
-        delimiter: str = "/", index: int = -1, cast_type: Optional[Callable[[Any], Any]] = None
+    delimiter: str = "/", index: int = -1, cast_type: Optional[Callable[[Any], Any]] = None
 ) -> Callable[[Any], Any]:
     def _splitter(value: Any) -> Any:
         if value is None or value == "":
@@ -74,9 +76,7 @@ class CalcOp:
 
     __slots__ = ("func", "default", "target_type", "input_list")
 
-    def __init__(
-            self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]
-    ):
+    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]):
         self.func = func
         self.default = default
         self.target_type = target_type
@@ -88,25 +88,19 @@ class CalcAllOp:
 
     __slots__ = ("func", "default", "target_type", "input_list")
 
-    def __init__(
-            self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]
-    ):
+    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]):
         self.func = func
         self.default = default
         self.target_type = target_type
         self.input_list = input_list
 
 
-def calc(
-        func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None
-) -> CalcOp:
+def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None) -> CalcOp:
     """Creates a multi-input row calculation."""
     return CalcOp(func, default, target_type, list(input_keys))
 
 
-def calc_all(
-        func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None
-) -> CalcAllOp:
+def calc_all(func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None) -> CalcAllOp:
     """Creates a batch/array calculation down an entire column."""
     return CalcAllOp(func, default, target_type, list(input_keys))
 
@@ -179,15 +173,14 @@ def _get_cached_adapter(actual_type: Any) -> Optional[TypeAdapter[Any]]:
     except Exception:
         return None
 
+
 def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
     """
     Returns a Context-Aware, Type-Ranked validation closure.
     Now supports `default` fallbacks for missing data or failed conversions!
     """
     # 1. The 'new' mapping: If 'new', accept ANY valid Python type.
-    actual_type = (
-        Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type
-    )
+    actual_type = Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type
 
     # 2. Instantiate the adapter EXACTLY ONCE
     adapter = _get_cached_adapter(actual_type) if actual_type is not Any else None
@@ -224,7 +217,7 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
 
         # Real anomalies (e.g. trying to cast "Apple" to a float) will still throw a helpful warning
         logger.warning(
-            f"Incorporator Type Engine: Failed to cast '{val}' into {getattr(actual_type, '__name__', str(actual_type))}. "
+            f"Incorporator Type Engine: Failed to cast '{val}' into {getattr(actual_type, '__name__', str(actual_type))}. "  # noqa: E501
             f"(Last error: {last_error}). "
             f"Tip: If this is expected dirty data, use `inc(..., default=...)` "
             f"to silence this warning and fallback gracefully."
@@ -237,6 +230,7 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
 # ==========================================
 # 5. GRAPH & EXTRACTORS
 # ==========================================
+
 
 def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
     """Maps relational data using a memory-safe hybrid internal cache."""
@@ -257,7 +251,7 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
             if not fallback_registry:
                 logger.debug(
                     "link_to: Using strong-ref fallback cache. "
-                    "Warning: Passing vast arrays of non-weakrefable objects (e.g. built-in dicts) may cause memory blowouts."
+                    "Warning: Passing vast arrays of non-weakrefable objects (e.g. built-in dicts) may cause memory blowouts."  # noqa: E501
                 )
             fallback_registry[k] = v
             fallback_registry[str(k)] = v
@@ -298,9 +292,7 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
     return _mapper
 
 
-def link_to_list(
-        dataset: Any, extractor: Optional[Callable[[Any], Any]] = None
-) -> Callable[[Any], List[Any]]:
+def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], List[Any]]:
     """Automatically maps a list of foreign keys to their corresponding objects."""
     base_linker = link_to(dataset, extractor)
 
@@ -340,6 +332,7 @@ def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[A
 # ==========================================
 # DECLARATIVE PAYLOAD TOKENS (POST/PUT)
 # ==========================================
+
 
 def each() -> _EachSentinel:
     """

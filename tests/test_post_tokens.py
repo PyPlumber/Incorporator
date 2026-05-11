@@ -1,7 +1,7 @@
 import pytest
-from typing import List
+
 from incorporator import Incorporator
-from incorporator.methods.converters import each, as_list
+from incorporator.methods.converters import as_list, each
 
 
 # ==========================================
@@ -26,9 +26,7 @@ async def test_live_post_tokens() -> None:
     # ------------------------------------------
     # PHASE 1: Fetch Parent Data (10 Mock Users)
     # ------------------------------------------
-    users = await User.incorp(
-        inc_url="https://jsonplaceholder.typicode.com/users", inc_code="id", inc_name="name"
-    )
+    users = await User.incorp(inc_url="https://jsonplaceholder.typicode.com/users", inc_code="id", inc_name="name")
 
     assert len(users) == 10
 
@@ -52,7 +50,7 @@ async def test_live_post_tokens() -> None:
     assert len(created_posts) == 10
 
     # Verify the IDs were distributed correctly
-    user_ids_used = [getattr(p, "userId") for p in created_posts]
+    user_ids_used = [p.userId for p in created_posts]
     assert 1 in user_ids_used
     assert 10 in user_ids_used
 
@@ -75,10 +73,10 @@ async def test_live_post_tokens() -> None:
     assert not isinstance(echo_response, list)
 
     # Verify the server mirrored our exact framework name
-    assert getattr(echo_response, "framework") == "Incorporator v1.0.0"
+    assert echo_response.framework == "Incorporator v1.0.0"
 
     # Verify the server mirrored a single array containing all 10 IDs!
-    mirrored_array = getattr(echo_response, "batch_ids")
+    mirrored_array = echo_response.batch_ids
     assert isinstance(mirrored_array, list)
     assert len(mirrored_array) == 10
     assert mirrored_array == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]

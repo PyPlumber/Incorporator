@@ -1,0 +1,66 @@
+# -----------------------------------
+# INCORPORATOR V2.0 DOCKER IGNORE
+# -----------------------------------
+
+# 1. Git Repository Data
+.git/
+.gitignore
+.github/
+
+# 2. Python Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# 3. Python Bytecode & Build Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 4. Testing, Linting, & Coverage Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+tests/
+
+# 5. IDE Configurations
+.idea/
+.vscode/
+
+# 6. Secrets & Credentials (CRITICAL SAFETY)
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+secrets.json
+client_secret.json
+.pypirc
+
+# 7. Local Configs & Pipeline Data
+pipeline.json
+local_*.json
+logs/
+data/
+output_data/
+*.db
+*.sqlite
+*.sqlite3
+*.csv
+*.tsv
+*.avro
+*.log
+temp_*.json
+final_*.json
+*website_feed.json
+
+# 8. Private Developer Scripts
+real_*.py

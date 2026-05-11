@@ -1,0 +1,216 @@
+"""
+Autonomous Orchestration Pipeline for the Incorporator Framework.
+Handles Dual-Engine execution (O(1) Chunking and Stateful Polling).
+"""
+
+import asyncio
+import time
+from typing import Any, AsyncGenerator, Dict, Optional
+
+from .logger import AuditResult
+
+
+async def _enrich_and_load(
+    cls: Any,
+    dataset: Any,
+    refresh_params: Optional[Dict[str, Any]],
+    export_params: Optional[Dict[str, Any]],
+    force_append: bool,
+) -> None:
+    """Atomic helper for the Enrich (Refresh) and Load (Export) phases."""
+    if refresh_params:
+        await cls.refresh(instance=dataset, **refresh_params)
+
+    if export_params:
+        params = export_params.copy() if force_append else export_params
+        if force_append:
+            params["if_exists"] = "append"
+        await cls.export(instance=dataset, **params)
+
+
+async def run_pipeline(
+    cls: Any,
+    incorp_params: Dict[str, Any],
+    refresh_params: Optional[Dict[str, Any]],
+    export_params: Optional[Dict[str, Any]],
+    poll_interval: Optional[float],
+    stateful_polling: bool,
+    refresh_interval: Optional[float] = None,
+    export_interval: Optional[float] = None,
+) -> AsyncGenerator[AuditResult, None]:
+    paginator = incorp_params.get("inc_page")
+
+    # ==========================================
+    # ENGINE 2: STATEFUL POLLING (Decoupled Schedules)
+    # ==========================================
+    if stateful_polling:
+        init_start_time = time.perf_counter()
+        dataset = await cls.incorp(**incorp_params)
+        init_elapsed = time.perf_counter() - init_start_time
+
+        if not dataset:
+            yield AuditResult(
+                chunk_index=1,
+                operation="incorp",
+                rows_processed=0,
+                failed_sources=["Initial incorp() yielded no data"],
+                processing_time_sec=init_elapsed,
+            )
+            return
+
+        r_interval = refresh_interval or poll_interval
+        e_interval = export_interval or poll_interval
+
+        # Safe async queue to funnel telemetry from concurrent tasks
+        lock = asyncio.Lock()
+        audit_queue: asyncio.Queue[Optional[AuditResult]] = asyncio.Queue()
+
+        async def _refresh_daemon() -> None:
+            loop_idx = 0
+            r_params = refresh_params or {}
+            while True:
+                loop_idx += 1
+                start_time = time.perf_counter()
+                try:
+                    async with lock:  # 🛡️ ENSURE ATOMIC MUTATION
+                        await cls.refresh(instance=dataset, **r_params)
+                    await audit_queue.put(
+                        AuditResult(
+                            chunk_index=loop_idx,
+                            operation="refresh",
+                            rows_processed=len(dataset),
+                            processing_time_sec=time.perf_counter() - start_time,
+                        )
+                    )
+                except Exception as e:
+                    await audit_queue.put(
+                        AuditResult(
+                            chunk_index=loop_idx,
+                            operation="refresh",
+                            rows_processed=0,
+                            failed_sources=[f"Refresh Error: {e}"],
+                            processing_time_sec=0.0,
+                        )
+                    )
+
+                if r_interval is None:
+                    break
+                await asyncio.sleep(r_interval)
+
+        async def _export_daemon() -> None:
+            loop_idx = 0
+            e_params = export_params or {}
+            while True:
+                loop_idx += 1
+                start_time = time.perf_counter()
+                try:
+                    async with lock:  # 🛡️ ENSURE ATOMIC READ
+                        await cls.export(instance=dataset, **e_params)
+                    await audit_queue.put(
+                        AuditResult(
+                            chunk_index=loop_idx,
+                            operation="export",
+                            rows_processed=len(dataset),
+                            processing_time_sec=time.perf_counter() - start_time,
+                        )
+                    )
+                except Exception as e:
+                    await audit_queue.put(
+                        AuditResult(
+                            chunk_index=loop_idx,
+                            operation="export",
+                            rows_processed=0,
+                            failed_sources=[f"Export Error: {e}"],
+                            processing_time_sec=0.0,
+                        )
+                    )
+
+                if e_interval is None:
+                    break
+                await asyncio.sleep(e_interval)
+
+        tasks = []
+        if refresh_params:
+            tasks.append(asyncio.create_task(_refresh_daemon()))
+        if export_params:
+            tasks.append(asyncio.create_task(_export_daemon()))
+
+        if not tasks:
+            yield AuditResult(
+                chunk_index=1,
+                operation="incorp",
+                rows_processed=len(dataset) if isinstance(dataset, list) else 1,
+                processing_time_sec=init_elapsed,
+            )
+            return
+
+        async def _waiter() -> None:
+            await asyncio.gather(*tasks)
+            await audit_queue.put(None)
+
+        asyncio.create_task(_waiter())
+
+        while True:
+            audit = await audit_queue.get()
+            if audit is None:
+                break
+            yield audit
+        return
+
+    # ==========================================
+    # ENGINE 1: O(1) CHUNKING (Sequential Sync)
+    # ==========================================
+    while True:
+        chunk_idx = 0
+        while True:
+            chunk_idx += 1
+            start_time = time.perf_counter()
+
+            params = incorp_params.copy()
+            if paginator:
+                if getattr(paginator, "is_exhausted", False):
+                    break
+                params["call_lim"] = 1
+
+            try:
+                dataset = await cls.incorp(**params)
+
+                if not dataset and not paginator:
+                    break
+                if getattr(paginator, "is_exhausted", False) and not dataset:
+                    break
+
+                rows = len(dataset) if isinstance(dataset, list) else (1 if dataset else 0)
+
+                if rows > 0:
+                    await _enrich_and_load(cls, dataset, refresh_params, export_params, force_append=True)
+
+                yield AuditResult(
+                    chunk_index=chunk_idx,
+                    operation="chunk",
+                    rows_processed=rows,
+                    processing_time_sec=time.perf_counter() - start_time,
+                )
+
+                del dataset
+                await asyncio.sleep(0)
+
+                if not paginator:
+                    break
+            except Exception as e:
+                yield AuditResult(
+                    chunk_index=chunk_idx,
+                    operation="chunk",
+                    rows_processed=0,
+                    failed_sources=[str(e)],
+                    processing_time_sec=time.perf_counter() - start_time,
+                )
+                break
+
+        if poll_interval is None:
+            break
+
+        if paginator and hasattr(paginator, "reset"):
+            paginator.reset()
+
+        await asyncio.sleep(poll_interval)

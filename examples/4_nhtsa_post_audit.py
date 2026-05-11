@@ -13,6 +13,7 @@ It highlights:
 """
 
 import asyncio
+
 from incorporator import Incorporator
 from incorporator.methods.converters import join_all
 
@@ -58,9 +59,7 @@ async def run_audit() -> None:
         inc_code="VIN",
     )
 
-    print(
-        f"✅ Government Data Received for {len(govt_specs)} vehicles. Initiating Fraud Audit...\n"
-    )
+    print(f"✅ Government Data Received for {len(govt_specs)} vehicles. Initiating Fraud Audit...\n")
 
     # ==========================================
     # PHASE 3: The Fraud Audit (O(1) Lookups)
@@ -93,18 +92,14 @@ async def run_audit() -> None:
 
         # 3. Detect Discrepancies
         if jimmy_make not in federal_claim and federal_claim != "API OFFLINE / UNKNOWN":
-            print(
-                f"🚨 {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25} <-- FRAUD!"
-            )
+            print(f"🚨 {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25} <-- FRAUD!")
             fraud_count += 1
         else:
             print(f"✅ {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25}")
 
     print("=" * 85)
     if fraud_count > 0:
-        print(
-            f"🛑 AUDIT FAILED: Discovered {fraud_count} fraudulent transaction(s). Dispatching authorities."
-        )
+        print(f"🛑 AUDIT FAILED: Discovered {fraud_count} fraudulent transaction(s). Dispatching authorities.")
     else:
         print("🟢 AUDIT PASSED: Ledger matches federal records.")
 

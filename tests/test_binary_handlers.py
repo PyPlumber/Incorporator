@@ -15,7 +15,7 @@ DUMMY_DATA: List[Dict[str, Any]] = [
         "score": 95.5,
         "is_active": True,
         "tags": ["admin", "user"],
-        "metadata": {"role": "ops", "tier": 1}
+        "metadata": {"role": "ops", "tier": 1},
     },
     {
         "id": 2,
@@ -23,8 +23,8 @@ DUMMY_DATA: List[Dict[str, Any]] = [
         "score": None,  # Testing Null/None handling
         "is_active": False,
         "tags": ["user"],
-        "metadata": {}  # Empty dict testing
-    }
+        "metadata": {},  # Empty dict testing
+    },
 ]
 
 
@@ -82,10 +82,10 @@ def test_avro_roundtrip_and_schema_generation(tmp_path: Path) -> None:
         "properties": {
             "id": {"type": "integer"},
             "name": {"type": "string"},
-            "score": {"anyOf": [{"type": "number"}, {"type": "null"}]}, # Testing null unions
+            "score": {"anyOf": [{"type": "number"}, {"type": "null"}]},  # Testing null unions
             "is_active": {"type": "boolean"},
-            "tags": {"type": "string"},       # Flattened to string
-            "metadata": {"type": "string"}    # Flattened to string
+            "tags": {"type": "string"},  # Flattened to string
+            "metadata": {"type": "string"},  # Flattened to string
         }
     }
 

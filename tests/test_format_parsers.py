@@ -1,6 +1,8 @@
 """tests/test_format_parsers.py"""
+
 import pytest
-from incorporator.methods.format_parsers import parse_source_data, FormatType
+
+from incorporator.methods.format_parsers import FormatType, parse_source_data
 
 
 @pytest.mark.asyncio

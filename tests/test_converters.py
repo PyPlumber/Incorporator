@@ -1,26 +1,26 @@
 """Unit tests for the Incorporator Columnar Type Engine and URL tools."""
 
-import pytest
-from typing import Any
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Any
 
+import pytest
+
+from incorporator.methods import router
 from incorporator.methods.converters import (
     CalcAllOp,
     CalcOp,
     calc,
     calc_all,
+    each,
     flt,
     inc,
+    join_all,
     link_to,
     new,
     pluck,
     split_and_get,
-    each,
-    join_all,
 )
-from incorporator.methods import router
-from incorporator.base import Incorporator
 
 
 def test_inc_type_ranked_engine_bools_and_dates() -> None:

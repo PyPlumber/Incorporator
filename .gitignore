@@ -13,8 +13,9 @@ __pycache__/
 venv/
 .venv/
 env/
+ENV/
 
-# 3. Secrets & Credentials (CRITICAL SAFETY)
+# 3. Secrets & Orchestration Configs (CRITICAL SAFETY)
 .env
 .env.*
 *.pem
@@ -22,6 +23,8 @@ env/
 credentials.json
 secrets.json
 client_secret.json
+pipeline.json
+local_*.json
 
 # 4. PyCharm, VSCode & IDE Settings
 .idea/
@@ -35,7 +38,7 @@ client_secret.json
 .tox/
 .coverage
 htmlcov/
-tests/public/api/real
+tests/public/api/real/
 
 # 6. Build Artifacts & Packaging
 build/
@@ -43,26 +46,31 @@ dist/
 *.egg-info/
 incorporator.egg-info/
 
-# 7. OS Specific Files
+# 7. OS & Database Files
 .DS_Store
 Thumbs.db
+*.db
+*.sqlite
 *.sqlite3
 
 # 8. Incorporator Log Files
-/logs/
+logs/
 *.log
 pip-log.txt
 pip-delete-this-directory.txt
 
-# 9. Temporary ETL Data Feeds & Output
+# 9. ETL Data Feeds & Local Outputs
+data/
+output_data/
 temp_*.json
 final_*.json
 *website_feed.json
 *.csv
+*.tsv
 *.xml
+*.avro
 
 # 10. Private Developer Scripts
 real_*.py
 /tests/demo/
 .pypirc
-.gitignore

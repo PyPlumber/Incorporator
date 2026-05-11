@@ -31,18 +31,14 @@ def calculate_bst(stats_array: Any) -> int:
     """Calculates Base Stat Total by summing the 'base_stat' of all entries."""
     if not isinstance(stats_array, list):
         return 0
-    return sum(
-        stat_obj.get("base_stat", 0) for stat_obj in stats_array if isinstance(stat_obj, dict)
-    )
+    return sum(stat_obj.get("base_stat", 0) for stat_obj in stats_array if isinstance(stat_obj, dict))
 
 
 def format_typing(types_array: Any) -> str:
     """Formats a nested types array into a clean string (e.g., 'Grass / Poison')."""
     if not isinstance(types_array, list):
         return "Unknown"
-    type_names = [
-        t.get("type", {}).get("name", "").capitalize() for t in types_array if isinstance(t, dict)
-    ]
+    type_names = [t.get("type", {}).get("name", "").capitalize() for t in types_array if isinstance(t, dict)]
     return " / ".join(type_names)
 
 
@@ -96,9 +92,7 @@ async def main() -> None:
         print(" 🏆 TABLE 1: KANTO POWER RANKINGS (Sorted by Base Stat Total)")
         print("    Showcasing: `inc_parent` Deep-Drill and `calc` Array Reductions.")
         print("=" * 90)
-        print(
-            f"{'POKEMON':<20} | {'BASE STAT TOTAL':<18} | {'PRIMARY TYPING':<25} | {'WEIGHT (hg)'}"
-        )
+        print(f"{'POKEMON':<20} | {'BASE STAT TOTAL':<18} | {'PRIMARY TYPING':<25} | {'WEIGHT (hg)'}")
         print("-" * 90)
 
         # Display the Top 15 strongest Pokemon

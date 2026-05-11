@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
-from incorporator.methods.converters import calc, flt, link_to, link_to_list, split_and_get, inc
+from incorporator.methods.converters import inc, link_to, link_to_list, split_and_get
 from incorporator.methods.paginate import NextUrlPaginator
 
 
@@ -139,13 +139,13 @@ async def test_swapi_relational_mapping(monkeypatch: pytest.MonkeyPatch) -> None
 
     # Verify `link_to` successfully mapped the homeworld URL to the Planet object
     assert luke.homeworld is not None
-    assert getattr(luke.homeworld, "inc_name") == "Tatooine"
+    assert luke.homeworld.inc_name == "Tatooine"
 
     # Verify `link_to_list` successfully mapped the film URLs to Film objects
     assert isinstance(luke.films, list)
     assert len(luke.films) == 2
-    assert getattr(luke.films[0], "inc_name") == "A New Hope"
-    assert getattr(luke.films[1], "inc_name") == "The Empire Strikes Back"
+    assert luke.films[0].inc_name == "A New Hope"
+    assert luke.films[1].inc_name == "The Empire Strikes Back"
 
     print("🚀 Jumping to Hyperspace... Connecting to the Star Wars API...\n")
     BASE_URL = "https://swapi.dev/api"

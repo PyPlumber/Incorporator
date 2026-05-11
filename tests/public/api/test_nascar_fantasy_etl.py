@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from incorporator import Incorporator, link_to
-from incorporator.methods.converters import calc, inc, datetime
+from incorporator.methods.converters import calc, datetime, inc
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -81,9 +81,7 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
     elif "/2/racinginsights" in url:
         payload = [{"driver_id": 4441, "driver_name": "Sammy Smith", "points": 850, "top_10": 10}]
     elif "/3/racinginsights" in url:
-        payload = [
-            {"driver_id": 4235, "driver_name": "Corey Heim", "points": 920, "wins": 4, "top_10": 12}
-        ]
+        payload = [{"driver_id": 4235, "driver_name": "Corey Heim", "points": 920, "wins": 4, "top_10": 12}]
     else:
         payload = {}
     return httpx.Response(200, text=json.dumps(payload))
@@ -91,9 +89,7 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
 
 # --- TESTS ---
 @pytest.mark.asyncio
-async def test_nascar_react_export_pipeline(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Validates data fetching, scoring, and the complete JSON React export pipeline."""
 
     monkeypatch.setattr("incorporator.methods.network.execute_request", mock_execute_get)
@@ -172,9 +168,7 @@ async def test_nascar_react_export_pipeline(
             if standing:
                 total_score += getattr(standing, "points", 0)
 
-        raw_react_data.append(
-            {"team_id": team_name, "total_score": total_score, "active_drivers": len(roster)}
-        )
+        raw_react_data.append({"team_id": team_name, "total_score": total_score, "active_drivers": len(roster)})
 
     # ==========================================
     # 3. THE INCORPORATOR REACT PIPELINE
@@ -184,9 +178,7 @@ async def test_nascar_react_export_pipeline(
 
     temp_feed.write_text(json.dumps(raw_react_data))
 
-    react_teams = await FantasyTeam.incorp(
-        inc_file=str(temp_feed), inc_code="team_id", inc_name="team_id"
-    )
+    react_teams = await FantasyTeam.incorp(inc_file=str(temp_feed), inc_code="team_id", inc_name="team_id")
 
     react_teams = await FantasyTeam.refresh(instance=react_teams, new_file=str(temp_feed))
 
@@ -203,11 +195,11 @@ async def test_nascar_react_export_pipeline(
     react_teams.sort(key=lambda t: getattr(t, "total_score", 0), reverse=True)
 
     # FIXED: Check the actual dynamic API attribute (team_id) instead of inc_name
-    assert getattr(react_teams[0], "team_id") == "TeamAlpha"
-    assert getattr(react_teams[0], "total_score") == 1900
+    assert react_teams[0].team_id == "TeamAlpha"
+    assert react_teams[0].total_score == 1900
 
-    assert getattr(react_teams[1], "team_id") == "TeamBeta"
-    assert getattr(react_teams[1], "total_score") == 920
+    assert react_teams[1].team_id == "TeamBeta"
+    assert react_teams[1].total_score == 920
 
     # ==========================================
     # 5. SHOWCASE TABLE

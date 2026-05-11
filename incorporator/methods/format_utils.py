@@ -14,6 +14,7 @@ from .exceptions import IncorporatorFormatError
 
 class FormatType(str, Enum):
     """Strict enumeration of supported data formats."""
+
     JSON = "json"
     NDJSON = "ndjson"
     CSV = "csv"
@@ -28,18 +29,37 @@ def infer_format(path_or_url: str) -> FormatType:
     """Helper to auto-detect format from a file extension or URL."""
     path_lower = str(path_or_url).lower()
 
-    for comp in[".gz", ".bz2", ".xz", ".lzma", ".zip", ".tar", ".tgz", ".zst", ".lz4", ".snappy", ".br"]:
+    for comp in [
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".lzma",
+        ".zip",
+        ".tar",
+        ".tgz",
+        ".zst",
+        ".lz4",
+        ".snappy",
+        ".br",
+    ]:
         if path_lower.endswith(comp):
-            path_lower = path_lower[:-len(comp)]
+            path_lower = path_lower[: -len(comp)]
             break
 
-    if path_lower.endswith((".ndjson", ".jsonl")): return FormatType.NDJSON
-    if path_lower.endswith(".tsv"): return FormatType.TSV
-    if path_lower.endswith(".psv"): return FormatType.PSV
-    if path_lower.endswith(".csv"): return FormatType.CSV
-    if path_lower.endswith(".xml"): return FormatType.XML
-    if path_lower.endswith((".db", ".sqlite", ".sqlite3")): return FormatType.SQLITE
-    if path_lower.endswith(".avro"): return FormatType.AVRO
+    if path_lower.endswith((".ndjson", ".jsonl")):
+        return FormatType.NDJSON
+    if path_lower.endswith(".tsv"):
+        return FormatType.TSV
+    if path_lower.endswith(".psv"):
+        return FormatType.PSV
+    if path_lower.endswith(".csv"):
+        return FormatType.CSV
+    if path_lower.endswith(".xml"):
+        return FormatType.XML
+    if path_lower.endswith((".db", ".sqlite", ".sqlite3")):
+        return FormatType.SQLITE
+    if path_lower.endswith(".avro"):
+        return FormatType.AVRO
     return FormatType.JSON
 
 
@@ -62,7 +82,7 @@ def serialize_nested(val: Any) -> Any:
 def deserialize_nested(val: Any) -> Any:
     """MODULAR HELPER: Shared O(1) auto-unflattening for both CSV and SQLite."""
     if isinstance(val, str) and len(val) >= 2:
-        if (val.startswith('{') and val.endswith('}')) or (val.startswith('[') and val.endswith(']')):
+        if (val.startswith("{") and val.endswith("}")) or (val.startswith("[") and val.endswith("]")):
             try:
                 return json.loads(val)
             except json.JSONDecodeError:

@@ -1,10 +1,10 @@
 """Pytest fixtures and mock data for Incorporator testing."""
 
 import json
-from pathlib import Path
-
 import sys
+from pathlib import Path
 from unittest.mock import patch
+
 import pytest
 
 # --- JSON FIXTURES ---
@@ -37,11 +37,7 @@ def broken_json_file(tmp_path: Path) -> str:
 @pytest.fixture
 def csv_users_payload() -> str:
     """Provides a standardized CSV string for testing type conversions."""
-    return (
-        "id,username,is_active,account_balance\n"
-        "101,alice_smith,true,1500.50\n"
-        "102,bob_jones,false,0.00\n"
-    )
+    return "id,username,is_active,account_balance\n101,alice_smith,true,1500.50\n102,bob_jones,false,0.00\n"
 
 
 # --- XML FIXTURES ---
@@ -76,12 +72,7 @@ def mock_no_speedups():
     Forces Incorporator to use the Python Standard Library fallbacks
     by pretending the Rust/C extensions are not installed.
     """
-    hidden_modules = {
-        "orjson": None,
-        "lxml": None,
-        "cramjam": None,
-        "fastavro": None
-    }
+    hidden_modules = {"orjson": None, "lxml": None, "cramjam": None, "fastavro": None}
 
     with patch.dict(sys.modules, hidden_modules):
         yield

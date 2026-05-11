@@ -57,14 +57,12 @@ class HTTPClientBuilder:
 
     @staticmethod
     def build_client(
-            concurrency_limit: int = 50,
-            ignore_ssl: bool = False,
-            timeout: float = 15.0,
-            headers: Optional[Dict[str, str]] = None,
+        concurrency_limit: int = 50,
+        ignore_ssl: bool = False,
+        timeout: float = 15.0,
+        headers: Optional[Dict[str, str]] = None,
     ) -> httpx.AsyncClient:
-        client_limits = httpx.Limits(
-            max_keepalive_connections=concurrency_limit, max_connections=concurrency_limit
-        )
+        client_limits = httpx.Limits(max_keepalive_connections=concurrency_limit, max_connections=concurrency_limit)
         return httpx.AsyncClient(
             follow_redirects=True,
             timeout=timeout,
@@ -77,9 +75,7 @@ class HTTPClientBuilder:
 def _validate_url(url: str) -> None:
     parsed = urlparse(url.strip())
     if parsed.scheme not in ("http", "https"):
-        raise IncorporatorNetworkError(
-            f"Security Policy Violation: Unsupported scheme '{parsed.scheme}'."
-        )
+        raise IncorporatorNetworkError(f"Security Policy Violation: Unsupported scheme '{parsed.scheme}'.")
 
 
 # ==========================================
@@ -92,13 +88,13 @@ def _validate_url(url: str) -> None:
     reraise=True,
 )
 async def execute_request(
-        url: str,
-        client: httpx.AsyncClient,
-        method: str = "GET",
-        params: Optional[Dict[str, Any]] = None,
-        json_payload: Optional[Dict[str, Any]] = None,
-        form_payload: Optional[Dict[str, Any]] = None,
-        rate_limiter: Optional[RateLimiter] = None,
+    url: str,
+    client: httpx.AsyncClient,
+    method: str = "GET",
+    params: Optional[Dict[str, Any]] = None,
+    json_payload: Optional[Dict[str, Any]] = None,
+    form_payload: Optional[Dict[str, Any]] = None,
+    rate_limiter: Optional[RateLimiter] = None,
 ) -> httpx.Response:
     """Executes a resilient, jittered HTTP request supporting GET/POST and query strings."""
     _validate_url(url)
@@ -141,11 +137,11 @@ async def execute_request(
 # I/O HELPER (Module Level)
 # ==========================================
 async def resolve_source_payload(
-        source_val: str,
-        is_file_mode: bool,
-        active_format: FormatType,
-        response: Optional[httpx.Response] = None,
-        archive_target: Optional[str] = None
+    source_val: str,
+    is_file_mode: bool,
+    active_format: FormatType,
+    response: Optional[httpx.Response] = None,
+    archive_target: Optional[str] = None,
 ) -> Union[str, bytes, Path]:
     """Decoupled helper to resolve text, bytes, or physical paths."""
 
@@ -154,9 +150,7 @@ async def resolve_source_payload(
         is_compressed = infer_compression(source_val) is not None
         if is_compressed:
             # 🛡️ Compressed files must be unpacked to RAM/Disk via the Decompression Engine
-            return await asyncio.to_thread(
-                decompress_data, source_val, source_val, active_format, archive_target
-            )
+            return await asyncio.to_thread(decompress_data, source_val, source_val, active_format, archive_target)
 
         # 🛡️ THE FIX: Do not read the entire file into RAM! Pass the physical Path down!
         path = Path(source_val).resolve()
@@ -173,9 +167,7 @@ async def resolve_source_payload(
         is_compressed = infer_compression(source_val) is not None
         if is_compressed:
             # Pass strict format and target rules to the Decompression Engine
-            return await asyncio.to_thread(
-                decompress_data, response.read(), source_val, active_format, archive_target
-            )
+            return await asyncio.to_thread(decompress_data, response.read(), source_val, active_format, archive_target)
         return response.text
 
     raise IncorporatorNetworkError("No valid response or file path provided.")
@@ -185,13 +177,14 @@ async def resolve_source_payload(
 # MAIN STREAM PROCESSOR
 # ==========================================
 
+
 async def _process_single_source(
-        source_val: str,
-        is_file_mode: bool,
-        client: Optional[httpx.AsyncClient],
-        rate_limiter: Optional[RateLimiter],
-        dynamic_payload: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
+    source_val: str,
+    is_file_mode: bool,
+    client: Optional[httpx.AsyncClient],
+    rate_limiter: Optional[RateLimiter],
+    dynamic_payload: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
 ) -> List[Any]:
     """Isolates stream processing, dynamic Paginator routing, and rec_path drill-down."""
     format_type = kwargs.pop("format_type", None)
@@ -208,7 +201,7 @@ async def _process_single_source(
 
     # 1. Setup the Injection Wrapper
     async def bound_fetch(
-            url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs_override: Any
+        url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs_override: Any
     ) -> httpx.Response:
 
         if client is None:
@@ -238,11 +231,9 @@ async def _process_single_source(
         )
 
     # 2. Pure Data Processing (Accepts Polymorphic Inputs)
-    async def _process_payload(raw_payload: Union[str, bytes, Path]) -> None:
+    async def _process_payload(raw_payload: Union[str, bytes, Path, List[Any], Dict[str, Any]]) -> None:
         # Pass **kwargs down so 'sql_query' reaches the database handler!
-        parsed_chunk = await format_parsers.parse_source_data(
-            raw_payload, active_format, **kwargs
-        )
+        parsed_chunk = await format_parsers.parse_source_data(raw_payload, active_format, **kwargs)
 
         if rec_path:
             for part in rec_path.split("."):
@@ -259,7 +250,10 @@ async def _process_single_source(
     # 3. Execution Routing
     if is_file_mode:
         payload = await resolve_source_payload(
-            source_val, is_file_mode=True, active_format=active_format, archive_target=archive_target
+            source_val,
+            is_file_mode=True,
+            active_format=active_format,
+            archive_target=archive_target,
         )
         await _process_payload(payload)
 
@@ -276,7 +270,11 @@ async def _process_single_source(
     else:
         res = await bound_fetch(source_val)
         payload = await resolve_source_payload(
-            source_val, is_file_mode=False, active_format=active_format, response=res, archive_target=archive_target
+            source_val,
+            is_file_mode=False,
+            active_format=active_format,
+            response=res,
+            archive_target=archive_target,
         )
         await _process_payload(payload)
 
@@ -287,11 +285,12 @@ async def _process_single_source(
 # 5. CONCURRENT ORCHESTRATOR
 # ==========================================
 
+
 async def fetch_concurrent_payloads(
-        source_list: List[str],
-        is_file_mode: bool,
-        payload_list: Optional[List[Optional[Dict[str, Any]]]] = None,
-        **kwargs: Any,
+    source_list: List[str],
+    is_file_mode: bool,
+    payload_list: Optional[List[Optional[Dict[str, Any]]]] = None,
+    **kwargs: Any,
 ) -> Tuple[List[Any], List[str]]:
     """Unified Orchestrator: Exclusively manages sliding windows and concurrent batching."""
 
@@ -345,15 +344,16 @@ async def fetch_concurrent_payloads(
                 if i > 0:
                     await asyncio.sleep(delay_between_batches)
 
-                s_batch = source_list[i: i + limit]
-                p_batch = p_list[i: i + limit]
+                s_batch = source_list[i : i + limit]
+                p_batch = p_list[i : i + limit]
 
                 # asyncio.gather natively preserves array ordering!
                 tasks = [_safe_execute(str(s), p) for s, p in zip(s_batch, p_batch)]
                 results = await asyncio.gather(*tasks)
 
                 for res in results:
-                    if res: all_parsed_data.extend(res)
+                    if res:
+                        all_parsed_data.extend(res)
 
         # ========================================================
         # PATH B: O(1) Memory Sliding Window (Ordered Workers)

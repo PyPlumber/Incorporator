@@ -14,8 +14,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, Optional, Union, cast
 
-from .format_parsers import FormatType
 from .exceptions import IncorporatorFormatError
+from .format_parsers import FormatType
 
 
 class CompressionType(str, Enum):
@@ -48,11 +48,7 @@ def _is_binary(active_format: FormatType) -> bool:
     return active_format in (FormatType.SQLITE, FormatType.AVRO)
 
 
-def _find_target_in_archive(
-        names: list[str],
-        active_format: FormatType,
-        archive_target: Optional[str] = None
-) -> str:
+def _find_target_in_archive(names: list[str], active_format: FormatType, archive_target: Optional[str] = None) -> str:
     """Finds a target file in an archive safely and predictably."""
     if archive_target:
         if archive_target in names:
@@ -67,17 +63,12 @@ def _find_target_in_archive(
         FormatType.PSV: (".psv",),
         FormatType.XML: (".xml",),
         FormatType.SQLITE: (".db", ".sqlite", ".sqlite3"),
-        FormatType.AVRO: (".avro",)
+        FormatType.AVRO: (".avro",),
     }
     valid_exts = ext_map.get(active_format, (".json",))
 
     # Path traversal & MACOSX junk protection
-    matches = [
-        n for n in names
-        if n.lower().endswith(valid_exts)
-           and not n.startswith("__MACOSX")
-           and ".." not in n
-    ]
+    matches = [n for n in names if n.lower().endswith(valid_exts) and not n.startswith("__MACOSX") and ".." not in n]
 
     if not matches:
         raise IncorporatorFormatError(f"Archive contains no files matching {active_format.value}.")
@@ -95,8 +86,12 @@ def _find_target_in_archive(
 # DECOMPRESSION STRATEGIES
 # ==========================================
 
+
 def _decompress_native_stream(
-        data: Union[str, bytes], comp_type: CompressionType, active_format: FormatType, archive_target: Optional[str]
+    data: Union[str, bytes],
+    comp_type: CompressionType,
+    active_format: FormatType,
+    archive_target: Optional[str],
 ) -> Union[str, bytes]:
     """Handles 1-to-1 native Python compression algorithms with Binary Bypass."""
     is_bin = _is_binary(active_format)
@@ -116,7 +111,7 @@ def _decompress_native_stream(
                 with lzma.open(path, mode, encoding=encoding) as lz_f:
                     return lz_f.read()
         except Exception as e:
-            raise IncorporatorFormatError(f"Native stream extraction failed: {e}")
+            raise IncorporatorFormatError(f"Native stream extraction failed: {e}") from e
 
     elif isinstance(data, bytes):
         if comp_type == CompressionType.GZIP:
@@ -134,7 +129,10 @@ def _decompress_native_stream(
 
 
 def _decompress_archive(
-        data: Union[str, bytes], comp_type: CompressionType, active_format: FormatType, archive_target: Optional[str]
+    data: Union[str, bytes],
+    comp_type: CompressionType,
+    active_format: FormatType,
+    archive_target: Optional[str],
 ) -> Union[str, bytes]:
     """Handles multi-file archives, seeking out the specific target safely."""
     is_bin = _is_binary(active_format)
@@ -166,7 +164,10 @@ def _decompress_archive(
 
 
 def _decompress_cramjam(
-        data: Union[str, bytes], comp_type: CompressionType, active_format: FormatType, archive_target: Optional[str]
+    data: Union[str, bytes],
+    comp_type: CompressionType,
+    active_format: FormatType,
+    archive_target: Optional[str],
 ) -> Union[str, bytes]:
     """Lazy-loads Cramjam Rust bindings with structural binary bypass."""
     try:
@@ -188,12 +189,15 @@ def _decompress_cramjam(
         return raw_bytes if is_bin else raw_bytes.decode("utf-8")
 
     except ImportError:
-        raise IncorporatorFormatError(f"{comp_type.value} requires cramjam. Run: pip install incorporator[cramjam]")
+        raise IncorporatorFormatError(
+            f"{comp_type.value} requires cramjam. Run: pip install incorporator[cramjam]"
+        ) from None
 
 
 # ==========================================
 # COMPRESSION STRATEGIES
 # ==========================================
+
 
 def _compress_native_stream(src: Path, out_path: Path, comp_type: CompressionType) -> None:
     """Uses shutil.copyfileobj to stream directly from disk to disk (OOM safe)."""
@@ -248,7 +252,9 @@ def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> 
                 f_out.write(cast(bytes, cj_module.compress(f_in.read())))
 
     except ImportError:
-        raise IncorporatorFormatError(f"{comp_type.value} requires cramjam. Run: pip install incorporator[cramjam]")
+        raise IncorporatorFormatError(
+            f"{comp_type.value} requires cramjam. Run: pip install incorporator[cramjam]"
+        ) from None
 
 
 # ==========================================
@@ -256,7 +262,9 @@ def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> 
 # ==========================================
 
 _DECOMPRESS_ROUTER: Dict[
-    CompressionType, Callable[[Union[str, bytes], CompressionType, FormatType, Optional[str]], Union[str, bytes]]] = {
+    CompressionType,
+    Callable[[Union[str, bytes], CompressionType, FormatType, Optional[str]], Union[str, bytes]],
+] = {
     CompressionType.GZIP: _decompress_native_stream,
     CompressionType.BZ2: _decompress_native_stream,
     CompressionType.XZ: _decompress_native_stream,
@@ -286,10 +294,10 @@ _COMPRESS_ROUTER: Dict[CompressionType, Callable[[Path, Path, CompressionType], 
 
 
 def decompress_data(
-        data: Union[str, bytes],
-        path_hint: str,
-        active_format: FormatType,
-        archive_target: Optional[str] = None
+    data: Union[str, bytes],
+    path_hint: str,
+    active_format: FormatType,
+    archive_target: Optional[str] = None,
 ) -> Union[str, bytes]:
     """Public API to transparently decompress data."""
     comp_type = infer_compression(path_hint)
@@ -316,7 +324,7 @@ def compress_file(source_path: str, comp_type: Union[str, CompressionType]) -> s
         try:
             comp_type = CompressionType(comp_type.lower())
         except ValueError:
-            raise IncorporatorFormatError(f"Unsupported compression type: {comp_type}")
+            raise IncorporatorFormatError(f"Unsupported compression type: {comp_type}") from None
 
     out_path = src.with_suffix(src.suffix + f".{comp_type.value}")
 
