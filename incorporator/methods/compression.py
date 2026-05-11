@@ -35,6 +35,15 @@ class CompressionType(str, Enum):
     BROTLI = "br"
 
 
+# cramjam submodule names differ from our CompressionType enum values
+_CRAMJAM_MODULE_MAP: Dict[CompressionType, str] = {
+    CompressionType.ZSTD: "zstd",
+    CompressionType.LZ4: "lz4",
+    CompressionType.SNAPPY: "snappy",
+    CompressionType.BROTLI: "brotli",
+}
+
+
 def infer_compression(path_or_url: str) -> Optional[CompressionType]:
     path_lower = str(path_or_url).lower()
     for comp in CompressionType:
@@ -110,6 +119,10 @@ def _decompress_native_stream(
             elif comp_type in (CompressionType.XZ, CompressionType.LZMA):
                 with lzma.open(path, mode, encoding=encoding) as lz_f:
                     return lz_f.read()
+            else:
+                raise IncorporatorFormatError(f"Unsupported native stream type: {comp_type}")
+        except IncorporatorFormatError:
+            raise
         except Exception as e:
             raise IncorporatorFormatError(f"Native stream extraction failed: {e}") from e
 
@@ -173,8 +186,10 @@ def _decompress_cramjam(
     try:
         import cramjam  # type: ignore[import-not-found]
 
-        # Map to appropriate modules dynamically
-        cj_module = getattr(cramjam, comp_type.value, None)
+        module_name = _CRAMJAM_MODULE_MAP.get(comp_type)
+        if not module_name:
+            raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
+        cj_module = getattr(cramjam, module_name, None)
         if not cj_module:
             raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
 
@@ -232,7 +247,10 @@ def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> 
     try:
         import cramjam
 
-        cj_module = getattr(cramjam, comp_type.value, None)
+        module_name = _CRAMJAM_MODULE_MAP.get(comp_type)
+        if not module_name:
+            raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
+        cj_module = getattr(cramjam, module_name, None)
         if not cj_module:
             raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
 
@@ -253,7 +271,8 @@ def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> 
 
     except ImportError:
         raise IncorporatorFormatError(
-            f"{comp_type.value} requires cramjam. Run: pip install incorporator[cramjam]"
+            f"{_CRAMJAM_MODULE_MAP.get(comp_type, comp_type.value)} requires cramjam. "
+            f"Run: pip install incorporator[cramjam]"
         ) from None
 
 
