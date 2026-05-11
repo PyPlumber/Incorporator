@@ -359,6 +359,7 @@ class Incorporator(BaseModel):
         # Routes raw data to the Inspector if triggered
         if __inspect:
             from .methods.inspector import analyze_data
+
             analyze_data(parsed_data, {"rec_path": kwargs.get("rec_path")})
 
         # Build Phase

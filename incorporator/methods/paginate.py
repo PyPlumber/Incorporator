@@ -101,15 +101,21 @@ class SQLitePaginator(AsyncPaginator):
 
             return chunk
 
-        chunk_data = await asyncio.to_thread(_fetch_chunk)
-        if not chunk_data:
-            self.is_exhausted = True
-            if self._conn:
-                self._conn.close()
-                self._conn = None
-            return
+        calls = 0
+        while not self.is_exhausted:
+            if self.call_lim and calls >= self.call_lim:
+                break
 
-        yield chunk_data
+            chunk_data = await asyncio.to_thread(_fetch_chunk)
+            if not chunk_data:
+                self.is_exhausted = True
+                if self._conn:
+                    self._conn.close()
+                    self._conn = None
+                break
+
+            yield chunk_data
+            calls += 1
 
 
 class CSVPaginator(AsyncPaginator):
@@ -156,15 +162,21 @@ class CSVPaginator(AsyncPaginator):
                 chunk.append(parsed_row)
             return chunk
 
-        chunk_data = await asyncio.to_thread(_fetch_chunk)
-        if not chunk_data:
-            self.is_exhausted = True
-            if self._file:
-                self._file.close()
-                self._file = None
-            return
+        calls = 0
+        while not self.is_exhausted:
+            if self.call_lim and calls >= self.call_lim:
+                break
 
-        yield chunk_data
+            chunk_data = await asyncio.to_thread(_fetch_chunk)
+            if not chunk_data:
+                self.is_exhausted = True
+                if self._file:
+                    self._file.close()
+                    self._file = None
+                break
+
+            yield chunk_data
+            calls += 1
 
 
 class AvroPaginator(AsyncPaginator):
@@ -212,15 +224,21 @@ class AvroPaginator(AsyncPaginator):
                     chunk.append({k: deserialize_nested(v) for k, v in raw_row.items()})
             return chunk
 
-        chunk_data = await asyncio.to_thread(_fetch_chunk)
-        if not chunk_data:
-            self.is_exhausted = True
-            if self._file:
-                self._file.close()
-                self._file = None
-            return
+        calls = 0
+        while not self.is_exhausted:
+            if self.call_lim and calls >= self.call_lim:
+                break
 
-        yield chunk_data
+            chunk_data = await asyncio.to_thread(_fetch_chunk)
+            if not chunk_data:
+                self.is_exhausted = True
+                if self._file:
+                    self._file.close()
+                    self._file = None
+                break
+
+            yield chunk_data
+            calls += 1
 
 
 # ==========================================
