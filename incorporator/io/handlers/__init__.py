@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Union, cast
 
 from ...exceptions import IncorporatorFormatError
-from ..formats import FormatType, infer_format
+from ..formats import FormatType
 from ._base import BaseFormatHandler
 from .binary import AvroHandler, SQLiteHandler
 from .delimited import CSVHandler
