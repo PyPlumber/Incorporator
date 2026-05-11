@@ -143,14 +143,14 @@ def setup_class_logger(cls: Type[Any]) -> None:
     queue_handler = QueueHandler(log_queue)
     logger.addHandler(queue_handler)
 
-    listener = QueueListener(log_queue, debug_fh, error_fh, api_fh, respect_handler_level=True)
-    listener.start()
-
-    # 🛡️ THE FIX: O(1) Background Thread Pool Eviction! (Prevents OS Thread Exhaustion OOMs)
+    # Evict oldest listener BEFORE starting new one to keep thread count <= MAX_LOG_THREADS
     if len(_ACTIVE_LISTENERS) >= MAX_LOG_THREADS:
         oldest_key = next(iter(_ACTIVE_LISTENERS))
         old_listener = _ACTIVE_LISTENERS.pop(oldest_key)
         old_listener.stop()
+
+    listener = QueueListener(log_queue, debug_fh, error_fh, api_fh, respect_handler_level=True)
+    listener.start()
 
     _ACTIVE_LISTENERS[cls_name] = listener
 
@@ -212,9 +212,9 @@ class LoggingMixin:
         cls = self.__class__
         cls_name = getattr(cls, "__name__", "UnknownClass")
         return (
-            f'class:"{cls_name}", name:"{cls_name}", '
-            f'self:"{getattr(self, "inc_code", None)}", name:"{getattr(self, "inc_name", None)}", '
-            f'file: "{getattr(cls, "inc_file", None)}", url: "{getattr(cls, "inc_url", None)}"'
+            f'class:"{cls_name}", '
+            f'inc_code:"{getattr(self, "inc_code", None)}", inc_name:"{getattr(self, "inc_name", None)}", '
+            f'file:"{getattr(cls, "inc_file", None)}", url:"{getattr(cls, "inc_url", None)}"'
         )
 
     def _get_logger(self) -> logging.Logger:
@@ -280,16 +280,19 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         return result
 
     @classmethod
-    async def export(cls: Type[TLoggedIncorporator], *args: Any, **kwargs: Any) -> None:
-        """Exports the class data, wrapping the process in observability logs."""
-        setup_class_logger(cls)
+    async def export(cls: Type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any) -> None:
+        """Exports the class data, optionally wrapping the process in observability logs."""
+        if enable_logging:
+            setup_class_logger(cls)
+            cls.log_cls_info(f"Initiating export process with args={args}, kwargs={kwargs}")
 
-        cls.log_cls_info(f"Initiating export process with args={args}, kwargs={kwargs}")
         try:
             await super().export(*args, **kwargs)
-            cls.log_cls_info("Export process completed successfully.")
+            if enable_logging:
+                cls.log_cls_info("Export process completed successfully.")
         except Exception as e:
-            cls.log_cls_error(f"Export process failed: {str(e)}", exc_info=True)
+            if enable_logging:
+                cls.log_cls_error(f"Export process failed: {str(e)}", exc_info=True)
             raise
 
     @classmethod

@@ -4,10 +4,13 @@ Handles Dual-Engine execution (O(1) Chunking and Stateful Polling).
 """
 
 import asyncio
+import logging
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from .logger import AuditResult
+
+logger = logging.getLogger(__name__)
 
 
 async def _enrich_and_load(
@@ -117,7 +120,7 @@ async def run_pipeline(
                 loop_idx += 1
                 start_time = time.perf_counter()
                 try:
-                    async with lock:  # 🛡️ ENSURE ATOMIC READ
+                    async with lock:  # ENSURE ATOMIC READ
                         await cls.export(instance=dataset_ref[0], **e_params)
                     rows = len(dataset_ref[0]) if isinstance(dataset_ref[0], list) else 1
                     await audit_queue.put(
@@ -177,16 +180,16 @@ async def run_pipeline(
                     break
                 yield audit
         finally:
-            # Caller stopped iterating (GeneratorExit / cancellation) — signal daemons to stop
             shutdown_event.set()
             for t in tasks:
                 if not t.done():
                     t.cancel()
-            # Wait for waiter to drain so we don't leak background tasks
             try:
                 await waiter_task
-            except (asyncio.CancelledError, Exception):
-                pass
+            except asyncio.CancelledError:
+                pass  # Expected during shutdown — daemons were cancelled
+            except Exception as exc:
+                logger.warning("Stateful polling drain raised during shutdown: %s", exc)
         return
 
     # ==========================================
