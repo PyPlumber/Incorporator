@@ -16,8 +16,8 @@ from urllib.parse import urljoin
 
 import httpx
 
-from .format_parsers import infer_format, parse_source_data
-from .format_utils import deserialize_nested
+from .format_parsers import parse_source_data
+from .format_utils import deserialize_nested, infer_format
 
 logger = logging.getLogger(__name__)
 

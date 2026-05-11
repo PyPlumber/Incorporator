@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional, Union, cast
 
 from .exceptions import IncorporatorFormatError
-from .format_parsers import FormatType
+from .format_utils import FormatType
 
 
 class CompressionType(str, Enum):

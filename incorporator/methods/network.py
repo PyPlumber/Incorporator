@@ -16,7 +16,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ra
 from . import format_parsers
 from .compression import decompress_data, infer_compression
 from .exceptions import IncorporatorNetworkError
-from .format_parsers import FormatType, infer_format
+from .format_utils import FormatType, infer_format
 from .paginate import AsyncPaginator
 
 logger = logging.getLogger(__name__)

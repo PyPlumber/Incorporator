@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Any, Dict, List
 
-from incorporator import IncorporatorFormatError, IncorporatorNetworkError
+from .exceptions import IncorporatorFormatError, IncorporatorNetworkError
 
 logger = logging.getLogger(__name__)
 

@@ -32,7 +32,7 @@ from typing import (
 from pydantic import BaseModel, Field
 
 from .methods import format_parsers, network, router, schema_builder
-from .methods.format_parsers import FormatType, infer_format
+from .methods.format_utils import FormatType, infer_format
 from .methods.paginate import AsyncPaginator
 
 if TYPE_CHECKING:
