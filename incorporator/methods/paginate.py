@@ -397,12 +397,12 @@ class OffsetPaginator(AsyncPaginator):
                     else:
                         # Auto-detect from common conventions
                         items = (
-                                data.get("results")
-                                or data.get("data")
-                                or data.get("items")
-                                or data.get("docs")
-                                or data.get("records")
-                                or []
+                            data.get("results")
+                            or data.get("data")
+                            or data.get("items")
+                            or data.get("docs")
+                            or data.get("records")
+                            or []
                         )
                 else:
                     items = data if isinstance(data, list) else []
@@ -461,12 +461,12 @@ class PageNumberPaginator(AsyncPaginator):
                         items = data.get(self.result_key, [])
                     else:
                         items = (
-                                data.get("results")
-                                or data.get("data")
-                                or data.get("items")
-                                or data.get("docs")
-                                or data.get("records")
-                                or []
+                            data.get("results")
+                            or data.get("data")
+                            or data.get("items")
+                            or data.get("docs")
+                            or data.get("records")
+                            or []
                         )
                 else:
                     items = data if isinstance(data, list) else []

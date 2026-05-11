@@ -14,7 +14,7 @@ from .exceptions import IncorporatorSchemaError
 logger = logging.getLogger(__name__)
 
 # Cache to prevent recompiling identical schemas during deep nesting
-SCHEMA_REGISTRY: Dict[Tuple[str, FrozenSet[str]], Type[BaseModel]] = {}
+SCHEMA_REGISTRY: Dict[Tuple[str, FrozenSet[Any], int], Type[BaseModel]] = {}
 MAX_REGISTRY_SIZE = 1000  # Hard boundary to prevent OOM leaks
 
 # The protective shield for Pydantic internals
@@ -196,7 +196,12 @@ def infer_dynamic_schema(
                             else:
                                 current_val[sub_k] = sub_v
 
-    cache_key = (model_name, frozenset(sample_dict.keys()))
+    # Include field names AND types to prevent cross-dataset type collisions
+    cache_key = (
+        model_name,
+        frozenset((k, type(v).__name__) for k, v in sample_dict.items()),
+        id(base_class),
+    )
     if cache_key in SCHEMA_REGISTRY:
         return SCHEMA_REGISTRY[cache_key]
 
@@ -245,11 +250,9 @@ def infer_dynamic_schema(
                     setattr(DynamicModel, attr_name, weakref.WeakValueDictionary[Any, Any]())
 
         # Cache the generated root-level model
-        if base_class is BaseModel:
-            if len(SCHEMA_REGISTRY) >= MAX_REGISTRY_SIZE:
-                # O(1) FIFO Cache Eviction! (Maintains server stability)
-                SCHEMA_REGISTRY.pop(next(iter(SCHEMA_REGISTRY)))
-            SCHEMA_REGISTRY[cache_key] = DynamicModel
+        if len(SCHEMA_REGISTRY) >= MAX_REGISTRY_SIZE:
+            SCHEMA_REGISTRY.pop(next(iter(SCHEMA_REGISTRY)))
+        SCHEMA_REGISTRY[cache_key] = DynamicModel
 
         return DynamicModel
     except Exception as e:
