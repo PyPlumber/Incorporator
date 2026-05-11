@@ -22,6 +22,10 @@ from .format_utils import deserialize_nested
 logger = logging.getLogger(__name__)
 
 
+def _deserialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {(str(k) if k is not None else "unknown_column"): deserialize_nested(v) for k, v in row.items()}
+
+
 # ==========================================
 # 1. BASE CLASS
 # ==========================================
@@ -92,12 +96,7 @@ class SQLitePaginator(AsyncPaginator):
 
             rows = self._cursor.fetchmany(self.chunk_size)
 
-            chunk: List[Dict[str, Any]] = []
-            for row in rows:
-                parsed_row = dict(row)
-                for k, v in parsed_row.items():
-                    parsed_row[k] = deserialize_nested(v)
-                chunk.append(parsed_row)
+            chunk: List[Dict[str, Any]] = [_deserialize_row(dict(row)) for row in rows]
 
             return chunk
 
@@ -153,13 +152,9 @@ class CSVPaginator(AsyncPaginator):
             if self._reader is None:
                 return []
 
-            chunk: List[Dict[str, Any]] = []
-            for row in itertools.islice(self._reader, self.chunk_size):
-                parsed_row = {}
-                for k, v in row.items():
-                    safe_k = str(k) if k is not None else "unknown_column"
-                    parsed_row[safe_k] = deserialize_nested(v)
-                chunk.append(parsed_row)
+            chunk: List[Dict[str, Any]] = [
+                _deserialize_row(dict(row)) for row in itertools.islice(self._reader, self.chunk_size)
+            ]
             return chunk
 
         calls = 0
@@ -218,10 +213,11 @@ class AvroPaginator(AsyncPaginator):
             if self._reader is None:
                 return []
 
-            chunk: List[Dict[str, Any]] = []
-            for raw_row in itertools.islice(self._reader, self.chunk_size):
-                if isinstance(raw_row, dict):
-                    chunk.append({k: deserialize_nested(v) for k, v in raw_row.items()})
+            chunk: List[Dict[str, Any]] = [
+                _deserialize_row(raw_row)
+                for raw_row in itertools.islice(self._reader, self.chunk_size)
+                if isinstance(raw_row, dict)
+            ]
             return chunk
 
         calls = 0

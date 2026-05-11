@@ -11,6 +11,9 @@ from incorporator import IncorporatorFormatError, IncorporatorNetworkError
 
 logger = logging.getLogger(__name__)
 
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+_HEX_HASH_RE = re.compile(r"^[0-9a-fA-F]{24,64}$")
+
 
 def _print_tree(data: Any, prefix: str = "", depth: int = 0, max_depth: int = 3) -> None:
     """Recursively prints a visual tree of the data dictionary."""
@@ -97,11 +100,9 @@ def analyze_data(parsed_data: List[Any], provided_kwargs: Dict[str, Any]) -> Non
         if isinstance(v, int):
             c_score += 10
         elif isinstance(v, str):
-            # Regex for UUIDs
-            if re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", v, re.I):
+            if _UUID_RE.match(v):
                 c_score += 40
-            # Regex for long hashes (MongoDB IDs, SHA256)
-            elif re.match(r"^[0-9a-fA-F]{24,64}$", v):
+            elif _HEX_HASH_RE.match(v):
                 c_score += 20
 
         if c_score > best_code_score and c_score > 0:

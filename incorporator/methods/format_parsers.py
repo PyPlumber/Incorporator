@@ -28,6 +28,14 @@ logger = logging.getLogger(__name__)
 __all__ = ["FormatType", "infer_format", "parse_source_data", "write_destination_data"]
 
 
+def _raise_if_append_unsupported(kwargs: Dict[str, Any], format_name: str) -> None:
+    if kwargs.get("if_exists") == "append":
+        raise IncorporatorFormatError(
+            f"Monolithic formats ({format_name}) do not support O(1) streaming appends. "
+            "Please stream to NDJSON, CSV, SQLite, or Avro instead."
+        )
+
+
 class BaseFormatHandler(ABC):
     """Abstract Strategy for parsing and writing different data formats."""
 
@@ -64,11 +72,7 @@ class JSONHandler(BaseFormatHandler):
                 raise IncorporatorFormatError(f"Invalid JSON: {e}") from e
 
     def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
-        if kwargs.get("if_exists") == "append":
-            raise IncorporatorFormatError(
-                "Monolithic formats (JSON/XML) do not support O(1) streaming appends. "
-                "Please stream to NDJSON, CSV, SQLite, or Avro instead."
-            )
+        _raise_if_append_unsupported(kwargs, "JSON")
         path = Path(file_path).resolve()
         try:
             import orjson  # type: ignore[import-untyped, import-not-found, unused-ignore]
@@ -210,11 +214,7 @@ class XMLHandler(BaseFormatHandler):
                     raise IncorporatorFormatError(f"Invalid XML: {e}") from e
 
     def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
-        if kwargs.get("if_exists") == "append":
-            raise IncorporatorFormatError(
-                "Monolithic formats (JSON/XML) do not support O(1) streaming appends. "
-                "Please stream to NDJSON, CSV, SQLite, or Avro instead."
-            )
+        _raise_if_append_unsupported(kwargs, "XML")
         path = Path(file_path).resolve()
         try:
             import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]

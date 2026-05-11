@@ -91,13 +91,15 @@ def apply_etl_transformations(
                     args = [d.get(dep) for dep in inputs]
                     try:
                         val = operation.func(*args)
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"Calc operation failed for key '{key}' with args {args}: {e}")
                         val = operation.default
 
                     if callable(operation.target_type):
                         try:
                             val = operation.target_type(val)
-                        except Exception:
+                        except Exception as e:
+                            logger.warning(f"Calc type coercion failed for key '{key}' value {val!r}: {e}")
                             val = operation.default
                     d[key] = val
 
@@ -108,19 +110,24 @@ def apply_etl_transformations(
                 col_args = [[d.get(dep) for d in dict_items] for dep in inputs]
                 try:
                     results = operation.func(*col_args)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"CalcAll operation failed for key '{key}': {e}")
                     results = [operation.default] * len(dict_items)
 
                 for idx, d in enumerate(dict_items):
                     try:
                         val = results[idx]
                     except IndexError:
+                        logger.warning(
+                            f"CalcAll operation returned fewer results than expected for key '{key}' (needed index {idx})"
+                        )
                         val = operation.default
 
                     if callable(operation.target_type):
                         try:
                             val = operation.target_type(val)
-                        except Exception:
+                        except Exception as e:
+                            logger.warning(f"CalcAll type coercion failed for key '{key}' value {val!r}: {e}")
                             val = operation.default
                     d[key] = val
 

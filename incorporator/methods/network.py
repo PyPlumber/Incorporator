@@ -301,20 +301,20 @@ async def fetch_concurrent_payloads(
 
     _client = kwargs.pop("_client", None)
     _rate_limiter = kwargs.pop("_rate_limiter", None)
-    kwargs.pop("ignore_ssl", None)
-    kwargs.pop("timeout", None)
-    kwargs.pop("headers", None)
-    kwargs.pop("requests_per_second", None)
+    _ignore_ssl = kwargs.pop("ignore_ssl", False)
+    _timeout = kwargs.pop("timeout", 15.0)
+    _headers = kwargs.pop("headers", None)
+    _requests_per_second = kwargs.pop("requests_per_second", 15.0)
     should_close = False
 
     if not is_file_mode and _client is None:
         _client = HTTPClientBuilder.build_client(
             concurrency_limit=limit,
-            ignore_ssl=kwargs.get("ignore_ssl", False),
-            timeout=kwargs.get("timeout", 15.0),
-            headers=kwargs.get("headers"),
+            ignore_ssl=_ignore_ssl,
+            timeout=_timeout,
+            headers=_headers,
         )
-        _rate_limiter = RateLimiter(kwargs.get("requests_per_second", 15.0))
+        _rate_limiter = RateLimiter(_requests_per_second)
         should_close = True
 
     async def _safe_execute(src: str, payload: Any) -> List[Any]:

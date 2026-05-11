@@ -13,6 +13,15 @@ from .logger import AuditResult
 logger = logging.getLogger(__name__)
 
 
+async def _interruptible_sleep(event: asyncio.Event, timeout: Optional[float]) -> bool:
+    """Sleeps for `timeout` seconds, returning True immediately if `event` fires first."""
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+        return True
+    except asyncio.TimeoutError:
+        return False
+
+
 async def _enrich_and_load(
     cls: Any,
     dataset: Any,
@@ -106,12 +115,8 @@ async def run_pipeline(
                 if r_interval is None:
                     break
 
-                # Sleep but wake immediately on shutdown
-                try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=r_interval)
-                    break  # shutdown_event fired during sleep
-                except asyncio.TimeoutError:
-                    pass  # normal interval elapsed, loop again
+                if await _interruptible_sleep(shutdown_event, r_interval):
+                    break
 
         async def _export_daemon() -> None:
             loop_idx = 0
@@ -145,11 +150,8 @@ async def run_pipeline(
                 if e_interval is None:
                     break
 
-                try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=e_interval)
+                if await _interruptible_sleep(shutdown_event, e_interval):
                     break
-                except asyncio.TimeoutError:
-                    pass
 
         tasks = []
         if refresh_params:
