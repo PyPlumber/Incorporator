@@ -1,7 +1,7 @@
 import pytest
 
 from incorporator import Incorporator
-from incorporator.methods.converters import as_list, each
+from incorporator.schema.extractors import as_list, each
 
 
 # ==========================================

@@ -13,11 +13,11 @@ from urllib.parse import urlparse
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
 
-from . import format_parsers
+from . import handlers as format_parsers
 from .compression import decompress_data, infer_compression
-from .exceptions import IncorporatorFormatError, IncorporatorNetworkError
-from .format_utils import FormatType, infer_format
-from .paginate import AsyncPaginator
+from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
+from .formats import FormatType, infer_format
+from .pagination.base import AsyncPaginator
 
 logger = logging.getLogger(__name__)
 

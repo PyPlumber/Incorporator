@@ -2,7 +2,7 @@
 
 import pytest
 
-from incorporator.methods.format_parsers import FormatType, parse_source_data
+from incorporator.io.handlers import FormatType, parse_source_data
 
 
 @pytest.mark.asyncio

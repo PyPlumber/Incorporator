@@ -10,8 +10,8 @@ from typing import Any, List
 import pytest
 
 from incorporator import FormatType, LoggedIncorporator
-from incorporator.methods.logger import AuditResult
-from incorporator.methods.paginate import CSVPaginator
+from incorporator.observability.logger import AuditResult
+from incorporator.io.pagination import CSVPaginator
 
 
 # 1. Dummy Model for Testing

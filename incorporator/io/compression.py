@@ -14,8 +14,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, Optional, Union, cast
 
-from .exceptions import IncorporatorFormatError
-from .format_utils import FormatType
+from ..exceptions import IncorporatorFormatError
+from .formats import FormatType
 
 
 class CompressionType(str, Enum):

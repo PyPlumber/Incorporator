@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from prefect.testing.utilities import prefect_test_harness
 
-from incorporator.methods.logger import AuditResult
+from incorporator.observability.logger import AuditResult
 from incorporator.prefect_nodes import run_incorporator_flow
 
 

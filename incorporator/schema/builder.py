@@ -9,7 +9,7 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
-from .exceptions import IncorporatorSchemaError
+from ..exceptions import IncorporatorSchemaError
 
 logger = logging.getLogger(__name__)
 

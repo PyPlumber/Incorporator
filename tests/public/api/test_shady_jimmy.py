@@ -10,7 +10,7 @@ import pytest
 from real.shady_jimmy import generate_xml_file
 
 from incorporator import Incorporator
-from incorporator.methods.converters import inc
+from incorporator.schema.converters import inc
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -52,7 +52,7 @@ async def mock_nhtsa_execute_post(url: str, *args: Any, **kwargs: Any) -> httpx.
 async def test_shady_jimmy_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Proves XML parsing, nested attribute extraction, and Bulk POST requests."""
 
-    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_nhtsa_execute_post)
+    monkeypatch.setattr("incorporator.io.fetch.execute_request", mock_nhtsa_execute_post)
 
     # 1. Create the mock XML file in an isolated temp directory
     xml_file = tmp_path / "shady_jimmy.xml"

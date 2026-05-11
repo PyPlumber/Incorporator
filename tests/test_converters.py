@@ -6,18 +6,20 @@ from typing import Any
 
 import pytest
 
-from incorporator.methods import router
-from incorporator.methods.converters import (
+from incorporator.schema import router
+from incorporator.schema.converters import (
     CalcAllOp,
     CalcOp,
     calc,
     calc_all,
-    each,
     flt,
     inc,
+    new,
+)
+from incorporator.schema.extractors import (
+    each,
     join_all,
     link_to,
-    new,
     pluck,
     split_and_get,
 )

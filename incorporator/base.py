@@ -31,12 +31,15 @@ from typing import (
 
 from pydantic import BaseModel, Field
 
-from .methods import format_parsers, network, router, schema_builder
-from .methods.format_utils import FormatType, infer_format
-from .methods.paginate import AsyncPaginator
+from .io import handlers as format_parsers
+from .io import fetch as network
+from .schema import router
+from .schema import builder as schema_builder
+from .io.formats import FormatType, infer_format
+from .io.pagination.base import AsyncPaginator
 
 if TYPE_CHECKING:
-    from .methods.logger import AuditResult
+    from .observability.logger import AuditResult
 
 # Type variable for strict IDE hinting on subclass generation
 TIncorporator = TypeVar("TIncorporator", bound="Incorporator")
@@ -294,7 +297,7 @@ class Incorporator(BaseModel):
 
         except Exception as e:
             # Defer DX logging to the Inspector module
-            from .methods.inspector import analyze_error
+            from .inspector import analyze_error
 
             analyze_error(e)
             return IncorporatorList(cls, [])
@@ -384,7 +387,7 @@ class Incorporator(BaseModel):
 
         # Routes raw data to the Inspector if triggered
         if __inspect:
-            from .methods.inspector import analyze_data
+            from .inspector import analyze_data
 
             analyze_data(parsed_data, {"rec_path": kwargs.get("rec_path")})
 
@@ -544,7 +547,7 @@ class Incorporator(BaseModel):
         await format_parsers.write_destination_data(data_dicts, actual_path, active_format, **kwargs)
 
         if compression:
-            from .methods.compression import compress_file
+            from .io.compression import compress_file
 
             await asyncio.to_thread(compress_file, actual_path, compression)
 
@@ -563,7 +566,7 @@ class Incorporator(BaseModel):
         Autonomous Pipeline Controller.
         Dual-Engine design supports both O(1) Memory Chunking and Stateful Graph Polling.
         """
-        from .methods.pipeline import run_pipeline
+        from .observability.pipeline import run_pipeline
 
         async for audit in run_pipeline(
             cls=cls,

@@ -12,7 +12,7 @@ to create a deeply interconnected, null-safe data graph.
 import asyncio
 
 from incorporator import Incorporator, link_to
-from incorporator.methods.converters import calc
+from incorporator.schema.converters import calc
 
 
 # ==========================================

@@ -9,7 +9,7 @@ import pytest
 
 from incorporator import Incorporator
 from incorporator.base import IncorporatorList
-from incorporator.methods.converters import calc, flt
+from incorporator.schema.converters import calc, flt
 
 
 class LiveStock(Incorporator):
@@ -54,7 +54,7 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
     global call_counter
     call_counter = 0  # Reset for test isolation
 
-    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_live_ticker)
+    monkeypatch.setattr("incorporator.io.fetch.execute_request", mock_live_ticker)
     BASE_URL = "https://finance.api.com/ticker/aapl"
 
     # ==========================================
@@ -106,7 +106,7 @@ async def test_incorporator_list_state_carrier() -> None:
     """Verifies that inc_child_path persists on the returned list wrapper."""
 
     # We mock the network engine so we only test the framework's internal state mechanism
-    with patch("incorporator.methods.network.fetch_concurrent_payloads", new_callable=AsyncMock) as mock_fetch:
+    with patch("incorporator.io.fetch.fetch_concurrent_payloads", new_callable=AsyncMock) as mock_fetch:
         # Mock returning 2 empty dictionaries from the network
         mock_fetch.return_value = ([{}, {}], list())
 

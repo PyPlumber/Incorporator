@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from incorporator import LoggedIncorporator, setup_class_logger
-from incorporator.methods.logger import _ACTIVE_LISTENERS
+from incorporator.observability.logger import _ACTIVE_LISTENERS
 
 
 # Isolate mock classes so tests don't share the global _ACTIVE_LISTENERS state

@@ -3,29 +3,31 @@
 __version__ = "1.0.8"
 
 from .base import Incorporator, IncorporatorList
-from .methods.compression import CompressionType
-from .methods.converters import (
-    as_list,
+from .io.compression import CompressionType
+from .schema.converters import (
     calc,
     calc_all,
-    each,
     inc,
+    new,
+)
+from .schema.extractors import (
+    as_list,
+    each,
     join_all,
     link_to,
     link_to_list,
-    new,
     pluck,
     split_and_get,
 )
-from .methods.exceptions import (
+from .exceptions import (
     IncorporatorError,
     IncorporatorFormatError,
     IncorporatorNetworkError,
     IncorporatorSchemaError,
 )
-from .methods.format_parsers import FormatType
-from .methods.logger import AuditResult, LoggedIncorporator, LoggingMixin, setup_class_logger
-from .methods.paginate import (
+from .io.formats import FormatType
+from .observability.logger import AuditResult, LoggedIncorporator, LoggingMixin, setup_class_logger
+from .io.pagination import (
     AsyncPaginator,
     AvroPaginator,
     CSVPaginator,

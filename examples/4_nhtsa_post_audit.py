@@ -15,7 +15,7 @@ It highlights:
 import asyncio
 
 from incorporator import Incorporator
-from incorporator.methods.converters import join_all
+from incorporator.schema.extractors import join_all
 
 
 # ==========================================

@@ -3,15 +3,15 @@ from pathlib import Path
 
 import pytest
 
-from incorporator.methods.compression import (
+from incorporator.io.compression import (
     CompressionType,
     _find_target_in_archive,
     compress_file,
     decompress_data,
     infer_compression,
 )
-from incorporator.methods.exceptions import IncorporatorFormatError
-from incorporator.methods.format_parsers import FormatType  # 🛡️ IMPORT FORMAT TYPE
+from incorporator.exceptions import IncorporatorFormatError
+from incorporator.io.formats import FormatType  # 🛡️ IMPORT FORMAT TYPE
 
 # The dummy JSON we will use to test data integrity
 DUMMY_JSON = json.dumps([{"id": "NAV", "st": {"pos": [12, 44], "ok": 1}}])

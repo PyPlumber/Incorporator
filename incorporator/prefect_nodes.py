@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, cast
 
 from incorporator import LoggedIncorporator
-from incorporator.methods.logger import AuditResult
+from incorporator.observability.logger import AuditResult
 
 # 1. ZERO-BLOAT DEPENDENCY SHIELD
 try:

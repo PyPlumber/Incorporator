@@ -7,8 +7,9 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
-from incorporator.methods.converters import inc, link_to, link_to_list, split_and_get
-from incorporator.methods.paginate import NextUrlPaginator
+from incorporator.schema.converters import inc
+from incorporator.schema.extractors import link_to, link_to_list, split_and_get
+from incorporator.io.pagination import NextUrlPaginator
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -69,7 +70,7 @@ async def mock_swapi_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.R
 async def test_swapi_relational_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
     """Proves type casting (string to float) and cross-endpoint relational mapping."""
 
-    monkeypatch.setattr("incorporator.methods.network.execute_request", mock_swapi_execute_get)
+    monkeypatch.setattr("incorporator.io.fetch.execute_request", mock_swapi_execute_get)
     BASE_URL = "https://swapi.dev/api"
 
     # Initialize the composable primitive once for O(1) memory reuse

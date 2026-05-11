@@ -13,8 +13,8 @@ import asyncio
 from typing import Any
 
 from incorporator import Incorporator
-from incorporator.methods.converters import calc
-from incorporator.methods.paginate import NextUrlPaginator
+from incorporator.schema.converters import calc
+from incorporator.io.pagination import NextUrlPaginator
 
 
 # --- EXPLICIT SUBCLASSING ---

@@ -11,7 +11,7 @@ pytest.importorskip("typer")
 from typer.testing import CliRunner
 
 from incorporator.cli import app
-from incorporator.methods.logger import AuditResult
+from incorporator.observability.logger import AuditResult
 
 runner = CliRunner()
 

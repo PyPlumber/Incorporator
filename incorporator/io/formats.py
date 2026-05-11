@@ -9,7 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Tuple, Union
 
-from .exceptions import IncorporatorFormatError
+from ..exceptions import IncorporatorFormatError
 
 
 class FormatType(str, Enum):

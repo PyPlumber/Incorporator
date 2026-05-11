@@ -4,8 +4,8 @@ from typing import Any, Dict, List
 
 import pytest
 
-from incorporator.methods.exceptions import IncorporatorFormatError
-from incorporator.methods.format_parsers import AvroHandler, SQLiteHandler
+from incorporator.exceptions import IncorporatorFormatError
+from incorporator.io.handlers.binary import AvroHandler, SQLiteHandler
 
 # 🛡️ DUMMY DATA: Features missing keys, nulls, booleans, and deeply nested graphs!
 DUMMY_DATA: List[Dict[str, Any]] = [
