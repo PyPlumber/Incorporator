@@ -54,3 +54,16 @@ If you are developing locally or running on a cloud server without strict depend
 ```bash
 pip install incorporator[all]
 ```
+<<<<<<< HEAD
+=======
+
+---
+
+## Next Steps
+Now that Incorporator is installed, head over to our [**Quick Setup Tutorial**](../examples/1_space_devs_quick_setup.py) to map your first API!
+```
+
+### Why this document works:
+1. **It builds trust:** Senior engineers hate "magic" dependencies. By explicitly stating *why* `orjson` and `lxml` are used (to release the GIL), you immediately prove that this framework is built by performance experts.
+2. **It keeps the README clean:** The README stays focused on code examples and features, while this document handles the pedantic environment-setup details.
+>>>>>>> 13991c8 (fix: pop orchestration kwargs before worker dispatch to prevent handler pollution)

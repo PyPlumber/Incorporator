@@ -1,6 +1,5 @@
 """Incorporator: The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway."""
 
-# 1. VERSION BUMP: Transitioning to the Orchestration Platform
 __version__ = "1.0.8"
 
 from .base import Incorporator, IncorporatorList

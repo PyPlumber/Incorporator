@@ -296,11 +296,15 @@ async def fetch_concurrent_payloads(
 
     failed_sources: List[str] = []
 
-    limit = kwargs.get("concurrency_limit", 50)
-    delay_between_batches = kwargs.get("delay_between_batches", 0.0)
+    limit = kwargs.pop("concurrency_limit", 50)
+    delay_between_batches = kwargs.pop("delay_between_batches", 0.0)
 
-    _client = kwargs.get("_client")
-    _rate_limiter = kwargs.get("_rate_limiter")
+    _client = kwargs.pop("_client", None)
+    _rate_limiter = kwargs.pop("_rate_limiter", None)
+    kwargs.pop("ignore_ssl", None)
+    kwargs.pop("timeout", None)
+    kwargs.pop("headers", None)
+    kwargs.pop("requests_per_second", None)
     should_close = False
 
     if not is_file_mode and _client is None:
@@ -316,7 +320,7 @@ async def fetch_concurrent_payloads(
     async def _safe_execute(src: str, payload: Any) -> List[Any]:
         try:
             return await _process_single_source(
-                src, is_file_mode, _client, _rate_limiter, dynamic_payload=payload, **kwargs
+                src, is_file_mode, _client, _rate_limiter, dynamic_payload=payload, **dict(kwargs)
             )
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
