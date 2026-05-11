@@ -5,7 +5,7 @@ Handles Dual-Engine execution (O(1) Chunking and Stateful Polling).
 
 import asyncio
 import time
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from .logger import AuditResult
 
@@ -45,10 +45,10 @@ async def run_pipeline(
     # ==========================================
     if stateful_polling:
         init_start_time = time.perf_counter()
-        dataset = await cls.incorp(**incorp_params)
+        initial_dataset = await cls.incorp(**incorp_params)
         init_elapsed = time.perf_counter() - init_start_time
 
-        if not dataset:
+        if not initial_dataset:
             yield AuditResult(
                 chunk_index=1,
                 operation="incorp",
@@ -58,27 +58,34 @@ async def run_pipeline(
             )
             return
 
+        # Mutable container so refresh() results propagate to export()
+        dataset_ref: List[Any] = [initial_dataset]
+
         r_interval = refresh_interval or poll_interval
         e_interval = export_interval or poll_interval
 
-        # Safe async queue to funnel telemetry from concurrent tasks
+        # Safe async coordination primitives
         lock = asyncio.Lock()
         audit_queue: asyncio.Queue[Optional[AuditResult]] = asyncio.Queue()
+        shutdown_event = asyncio.Event()
 
         async def _refresh_daemon() -> None:
             loop_idx = 0
             r_params = refresh_params or {}
-            while True:
+            while not shutdown_event.is_set():
                 loop_idx += 1
                 start_time = time.perf_counter()
                 try:
                     async with lock:  # 🛡️ ENSURE ATOMIC MUTATION
-                        await cls.refresh(instance=dataset, **r_params)
+                        refreshed = await cls.refresh(instance=dataset_ref[0], **r_params)
+                        if refreshed is not None:
+                            dataset_ref[0] = refreshed
+                    rows = len(dataset_ref[0]) if isinstance(dataset_ref[0], list) else 1
                     await audit_queue.put(
                         AuditResult(
                             chunk_index=loop_idx,
                             operation="refresh",
-                            rows_processed=len(dataset),
+                            rows_processed=rows,
                             processing_time_sec=time.perf_counter() - start_time,
                         )
                     )
@@ -95,22 +102,29 @@ async def run_pipeline(
 
                 if r_interval is None:
                     break
-                await asyncio.sleep(r_interval)
+
+                # Sleep but wake immediately on shutdown
+                try:
+                    await asyncio.wait_for(shutdown_event.wait(), timeout=r_interval)
+                    break  # shutdown_event fired during sleep
+                except asyncio.TimeoutError:
+                    pass  # normal interval elapsed, loop again
 
         async def _export_daemon() -> None:
             loop_idx = 0
             e_params = export_params or {}
-            while True:
+            while not shutdown_event.is_set():
                 loop_idx += 1
                 start_time = time.perf_counter()
                 try:
                     async with lock:  # 🛡️ ENSURE ATOMIC READ
-                        await cls.export(instance=dataset, **e_params)
+                        await cls.export(instance=dataset_ref[0], **e_params)
+                    rows = len(dataset_ref[0]) if isinstance(dataset_ref[0], list) else 1
                     await audit_queue.put(
                         AuditResult(
                             chunk_index=loop_idx,
                             operation="export",
-                            rows_processed=len(dataset),
+                            rows_processed=rows,
                             processing_time_sec=time.perf_counter() - start_time,
                         )
                     )
@@ -127,7 +141,12 @@ async def run_pipeline(
 
                 if e_interval is None:
                     break
-                await asyncio.sleep(e_interval)
+
+                try:
+                    await asyncio.wait_for(shutdown_event.wait(), timeout=e_interval)
+                    break
+                except asyncio.TimeoutError:
+                    pass
 
         tasks = []
         if refresh_params:
@@ -136,25 +155,38 @@ async def run_pipeline(
             tasks.append(asyncio.create_task(_export_daemon()))
 
         if not tasks:
+            rows = len(dataset_ref[0]) if isinstance(dataset_ref[0], list) else 1
             yield AuditResult(
                 chunk_index=1,
                 operation="incorp",
-                rows_processed=len(dataset) if isinstance(dataset, list) else 1,
+                rows_processed=rows,
                 processing_time_sec=init_elapsed,
             )
             return
 
         async def _waiter() -> None:
-            await asyncio.gather(*tasks)
+            await asyncio.gather(*tasks, return_exceptions=True)
             await audit_queue.put(None)
 
-        asyncio.create_task(_waiter())
+        waiter_task = asyncio.create_task(_waiter())
 
-        while True:
-            audit = await audit_queue.get()
-            if audit is None:
-                break
-            yield audit
+        try:
+            while True:
+                audit = await audit_queue.get()
+                if audit is None:
+                    break
+                yield audit
+        finally:
+            # Caller stopped iterating (GeneratorExit / cancellation) — signal daemons to stop
+            shutdown_event.set()
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            # Wait for waiter to drain so we don't leak background tasks
+            try:
+                await waiter_task
+            except (asyncio.CancelledError, Exception):
+                pass
         return
 
     # ==========================================
