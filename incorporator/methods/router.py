@@ -11,6 +11,22 @@ from .converters import _EachSentinel
 logger = logging.getLogger(__name__)
 
 
+def _get_attr(node: Any, part: str) -> Any:
+    """
+    Pydantic V2 aware attribute lookup.
+    Checks __pydantic_extra__ for dynamically-built fields before falling back to getattr.
+    Regular getattr misses dynamic fields since they live in __pydantic_extra__, not __dict__.
+    """
+    if isinstance(node, dict):
+        return node.get(part)
+    # Check Pydantic V2 extra fields first (dynamic schema fields live here)
+    pydantic_extra = getattr(node, "__pydantic_extra__", None)
+    if pydantic_extra and part in pydantic_extra:
+        return pydantic_extra[part]
+    # Fall back to declared attributes and class vars
+    return getattr(node, part, None)
+
+
 def extract_parent_data(parents: Any, child_path: str) -> List[Any]:
     """Iterative BFS to safely drill into dynamic structures without recursion."""
     current_layer = parents if isinstance(parents, list) else [parents]
@@ -24,11 +40,11 @@ def extract_parent_data(parents: Any, child_path: str) -> List[Any]:
 
             if isinstance(node, list):
                 for item in node:
-                    val = item.get(part) if isinstance(item, dict) else getattr(item, part, None)
+                    val = _get_attr(item, part)
                     if val is not None:
                         next_layer.append(val)
             else:
-                val = node.get(part) if isinstance(node, dict) else getattr(node, part, None)
+                val = _get_attr(node, part)
                 if val is not None:
                     next_layer.append(val)
 
