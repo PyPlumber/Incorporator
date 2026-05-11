@@ -14,6 +14,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import TypeAdapter
 
+from .format_utils import FormatType, to_python_type
+
 logger = logging.getLogger(__name__)
 
 # ==========================================
@@ -362,3 +364,22 @@ def as_list() -> Callable[[Any], List[Any]]:
     Injects the raw extracted list of parent IDs directly into a JSON Array.
     """
     return lambda data: data if isinstance(data, list) else [data]
+
+
+# ==========================================
+# FORMAT-AWARE VALUE COERCION
+# ==========================================
+
+
+def coerce_avro_value(val: Any, avro_type: str) -> Any:
+    """Coerce a value to the Python type expected by the given Avro type string.
+
+    Uses the FORMAT_TO_PYTHON type bridge and the ranked inc() converter
+    so coercion failures degrade gracefully to None rather than crashing.
+    """
+    if val is None:
+        return None
+    python_type = to_python_type(FormatType.AVRO, avro_type)
+    if isinstance(val, python_type):
+        return val
+    return inc(python_type, default=None)(val)

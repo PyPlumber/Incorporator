@@ -123,6 +123,11 @@ class Incorporator(BaseModel):
     inc_dict: ClassVar[weakref.WeakValueDictionary[Any, "Incorporator"]] = weakref.WeakValueDictionary()
     _auto_counter: ClassVar[int] = 1
 
+    # Superset schema: union of all field→JSON-schema-property-dicts seen across incorp() calls.
+    # Updated lazily from raw transformed_data before Pydantic absorbs extra fields.
+    # Consumed by export() for Avro (pydantic_schema) and CSV/SQLite (all_field_names).
+    _schema_union: ClassVar[Dict[str, Any]] = {}
+
     # Origin Tracking
     inc_url: ClassVar[Optional[str]] = None
     inc_file: ClassVar[Optional[str]] = None
@@ -250,6 +255,14 @@ class Incorporator(BaseModel):
 
         # 3. Final Instantiation Phase
         if isinstance(transformed_data, list):
+            # Populate the superset schema from raw dicts before Pydantic absorbs extra keys.
+            # Writes only on first-seen keys — O(1) miss per key, zero writes after stabilization.
+            declared = ActualClass.model_json_schema().get("properties", {})
+            for item in transformed_data:
+                for k in item:
+                    if k not in cls._schema_union:
+                        cls._schema_union[k] = declared.get(k, {"type": "string"})
+
             instances = [ActualClass(**item) for item in transformed_data]
             return IncorporatorList(ActualClass, instances, failed_sources=failed_sources)
 
@@ -514,7 +527,8 @@ class Incorporator(BaseModel):
             {
                 "sql_table": sql_table or (cls.__name__.lower() if active_format == FormatType.SQLITE else None),
                 "if_exists": if_exists,
-                "pydantic_schema": instances[0].model_json_schema(),
+                "pydantic_schema": {"properties": cls._schema_union},
+                "all_field_names": list(cls._schema_union.keys()) or None,
             }
         )
 

@@ -15,7 +15,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ra
 
 from . import format_parsers
 from .compression import decompress_data, infer_compression
-from .exceptions import IncorporatorNetworkError
+from .exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from .format_utils import FormatType, infer_format
 from .paginate import AsyncPaginator
 
@@ -359,6 +359,10 @@ async def fetch_concurrent_payloads(
             raise IncorporatorNetworkError(f"HTTP error {e.response.status_code}") from e
         except httpx.RequestError as e:
             logger.warning(f"Network Connection Error for '{src}': {e.__class__.__name__}. Skipping.")
+            failed_sources.append(src)
+            return []
+        except IncorporatorFormatError as e:
+            logger.warning(f"⚠️ PARSE FAILED for '{src}': {e}. Skipping.")
             failed_sources.append(src)
             return []
 

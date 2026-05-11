@@ -47,6 +47,7 @@ async def test_incorporator_warns_and_skips_on_bad_json(
     assert isinstance(results, list)
     assert len(results) == 0
 
-    # 3. Assert the warning message contains our helpful fault-tolerance context
-    assert "PARSE FAILED for format" in caplog.text
-    assert "The payload may be malformed" in caplog.text
+    # 3. Assert the warning message contains our helpful fault-tolerance context.
+    # Parse errors now surface via network._safe_execute: "⚠️ PARSE FAILED for '{src}': {error}"
+    assert "PARSE FAILED for" in caplog.text
+    assert "Invalid JSON" in caplog.text

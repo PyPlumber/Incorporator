@@ -9,10 +9,12 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, TextIO, Union, cast
 
+from .converters import coerce_avro_value
 from .exceptions import IncorporatorFormatError
 from .format_utils import (
     FormatType,
     check_xml_security,
+    convert_type,
     deserialize_nested,
     ensure_string,
     infer_format,
@@ -60,7 +62,10 @@ class JSONHandler(BaseFormatHandler):
             else:
                 raw_data = source
 
-            return cast(Union[Dict[str, Any], List[Dict[str, Any]]], orjson.loads(raw_data))
+            try:
+                return cast(Union[Dict[str, Any], List[Dict[str, Any]]], orjson.loads(raw_data))
+            except Exception as e:
+                raise IncorporatorFormatError(f"Invalid JSON: {e}") from e
 
         except ImportError:
             import json
@@ -165,8 +170,9 @@ class CSVHandler(BaseFormatHandler):
             write_headers = not (is_append and path.exists() and path.stat().st_size > 0)
 
             with open(path, mode, encoding="utf-8", newline="") as f:
+                fieldnames = kwargs.get("all_field_names") or list(dict.fromkeys(k for row in data for k in row))
                 processed_gen = ({k: serialize_nested(v) for k, v in row.items()} for row in data)
-                writer = csv.DictWriter(f, fieldnames=list(data[0].keys()), delimiter=self.delimiter)
+                writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=self.delimiter, extrasaction="ignore")
 
                 if write_headers:
                     writer.writeheader()
@@ -303,7 +309,7 @@ class SQLiteHandler(BaseFormatHandler):
                         if cursor.fetchone():
                             raise IncorporatorFormatError(f"Table '{table_name}' already exists in {path.name}.")
 
-                    keys = list(data[0].keys())
+                    keys = kwargs.get("all_field_names") or list(data[0].keys())
                     safe_columns = [f'"{sanitize_json_key(k)}"' for k in keys]
 
                     create_stmt = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({", ".join(safe_columns)})'
@@ -381,15 +387,7 @@ class AvroHandler(BaseFormatHandler):
                         json_type = sub.get("type")
                         break
 
-            if json_type == "integer":
-                a_type = "long"
-            elif json_type == "number":
-                a_type = "double"
-            elif json_type == "boolean":
-                a_type = "boolean"
-            else:
-                a_type = "string"
-
+            a_type = convert_type(json_type or "", FormatType.JSON, FormatType.AVRO)
             safe_k = sanitize_json_key(k)
             fields.append({"name": safe_k, "type": ["null", a_type]})
             expected_types[safe_k] = a_type
@@ -414,20 +412,7 @@ class AvroHandler(BaseFormatHandler):
 
                     if val is not None:
                         exp_type = expected_types.get(safe_k, "string")
-                        if exp_type == "string" and not isinstance(val, str):
-                            val = str(val)
-                        elif exp_type == "long" and not isinstance(val, int):
-                            try:
-                                val = int(val)
-                            except (ValueError, TypeError):
-                                val = None
-                        elif exp_type == "double" and not isinstance(val, float):
-                            try:
-                                val = float(val)
-                            except (ValueError, TypeError):
-                                val = None
-                        elif exp_type == "boolean" and not isinstance(val, bool):
-                            val = bool(val)
+                        val = coerce_avro_value(val, exp_type)
 
                     processed_row[safe_k] = val
                 yield processed_row
@@ -469,14 +454,15 @@ async def parse_source_data(
 
     try:
         return await asyncio.to_thread(handler.parse, source, **kwargs)
+    except IncorporatorFormatError:
+        raise
     except Exception as e:
         snippet = str(source).strip()[:60].replace("\n", " ")
-        logger.warning(
-            f"⚠️ PARSE FAILED for format '{format_type}'. "
+        raise IncorporatorFormatError(
+            f"Parse failed for format '{format_type}'. "
             f"The payload may be malformed (e.g., corrupted file or HTML firewall). "
             f"\n   Error: {e}\n   Received snippet: {snippet!r}..."
-        )
-        return []
+        ) from e
 
 
 async def write_destination_data(

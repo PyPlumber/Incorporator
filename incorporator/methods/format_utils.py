@@ -7,7 +7,7 @@ import json
 import re
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, Tuple, Union
 
 from .exceptions import IncorporatorFormatError
 
@@ -23,6 +23,73 @@ class FormatType(str, Enum):
     XML = "xml"
     SQLITE = "sqlite"
     AVRO = "avro"
+
+
+# ── (FormatType, format-type-string) → Python type ──────────────────────
+# bool must appear before int in all lookup order — bool is a subclass of int.
+FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {
+    # JSON Schema type strings
+    (FormatType.JSON, "boolean"): bool,
+    (FormatType.JSON, "integer"): int,
+    (FormatType.JSON, "number"):  float,
+    (FormatType.JSON, "string"):  str,
+    (FormatType.JSON, "array"):   list,
+    (FormatType.JSON, "object"):  dict,
+    (FormatType.JSON, "null"):    type(None),
+    # Avro type strings
+    (FormatType.AVRO, "null"):    type(None),
+    (FormatType.AVRO, "boolean"): bool,
+    (FormatType.AVRO, "int"):     int,
+    (FormatType.AVRO, "long"):    int,
+    (FormatType.AVRO, "float"):   float,
+    (FormatType.AVRO, "double"):  float,
+    (FormatType.AVRO, "bytes"):   bytes,
+    (FormatType.AVRO, "string"):  str,
+}
+
+# ── (FormatType, Python type) → canonical format-type-string ────────────
+# Canonical Avro choice: long over int, double over float (wider range).
+PYTHON_TO_FORMAT: Dict[Tuple[FormatType, type], str] = {
+    # JSON Schema
+    (FormatType.JSON, bool):       "boolean",
+    (FormatType.JSON, int):        "integer",
+    (FormatType.JSON, float):      "number",
+    (FormatType.JSON, str):        "string",
+    (FormatType.JSON, list):       "array",
+    (FormatType.JSON, dict):       "object",
+    (FormatType.JSON, type(None)): "null",
+    # Avro
+    (FormatType.AVRO, bool):       "boolean",
+    (FormatType.AVRO, int):        "long",
+    (FormatType.AVRO, float):      "double",
+    (FormatType.AVRO, str):        "string",
+    (FormatType.AVRO, bytes):      "bytes",
+    (FormatType.AVRO, list):       "string",
+    (FormatType.AVRO, dict):       "string",
+    (FormatType.AVRO, type(None)): "null",
+}
+
+
+def to_python_type(fmt: FormatType, type_str: str, default: type = str) -> type:
+    """Return the Python type for a format-specific type string."""
+    return FORMAT_TO_PYTHON.get((fmt, type_str), default)
+
+
+def to_format_type(fmt: FormatType, python_type: type, default: str = "string") -> str:
+    """Return the canonical format type string for a Python type."""
+    return PYTHON_TO_FORMAT.get((fmt, python_type), default)
+
+
+def convert_type(type_str: str, from_fmt: FormatType, to_fmt: FormatType, default: str = "string") -> str:
+    """Translate a type string between two format type systems via the Python type bridge.
+
+    Example: convert_type("integer", FormatType.JSON, FormatType.AVRO) → "long"
+    To add a new format, extend FORMAT_TO_PYTHON and PYTHON_TO_FORMAT only.
+    """
+    python_type = FORMAT_TO_PYTHON.get((from_fmt, type_str))
+    if python_type is None:
+        return default
+    return PYTHON_TO_FORMAT.get((to_fmt, python_type), default)
 
 
 def infer_format(path_or_url: str) -> FormatType:
