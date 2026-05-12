@@ -70,9 +70,7 @@ def resolve_declarative_routing(
             if is_iterative:
                 each_keys = {k for k, v in target_payload.items() if isinstance(v, _EachSentinel)}
                 const_items = {k: v for k, v in target_payload.items() if k not in each_keys}
-                kwargs["payload_list"] = [
-                    {**const_items, **{k: item for k in each_keys}} for item in extracted_data
-                ]
+                kwargs["payload_list"] = [{**const_items, **{k: item for k in each_keys}} for item in extracted_data]
 
                 if len(source_urls) == 1:
                     kwargs["inc_url"] = source_urls * len(extracted_data)
