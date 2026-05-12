@@ -85,11 +85,14 @@ include = ["incorporator", "incorporator.*"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-v --cov=incorporator --cov-report=term-missing"
+addopts = "-v --cov=incorporator --cov-report=term-missing -m 'not benchmark'"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "benchmark: performance benchmarks; opt-in only (run with -m benchmark)",
+]
 
 [tool.mypy]
 strict = true
