@@ -146,6 +146,12 @@ def setup_class_logger(cls: Type[Any]) -> None:
     # Evict oldest listener BEFORE starting new one to keep thread count <= MAX_LOG_THREADS
     if len(_ACTIVE_LISTENERS) >= MAX_LOG_THREADS:
         oldest_key = next(iter(_ACTIVE_LISTENERS))
+        logger.warning(
+            "Max log threads (%d) reached; evicting oldest listener for %r to make room for %r.",
+            MAX_LOG_THREADS,
+            oldest_key,
+            cls_name,
+        )
         old_listener = _ACTIVE_LISTENERS.pop(oldest_key)
         old_listener.stop()
 

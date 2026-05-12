@@ -245,6 +245,11 @@ class Incorporator(BaseModel):
             inst_list = cast(List[TIncorporator], instance if isinstance(instance, list) else [instance])
 
         if not inst_list:
+            logger.warning(
+                "[%s] refresh() called but no instances are loaded in inc_dict — "
+                "returning empty list. Did you forget to call incorp() first?",
+                cls.__name__,
+            )
             return IncorporatorList(cls, [])
 
         TargetClass = inst_list[0].__class__

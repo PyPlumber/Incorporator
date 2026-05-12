@@ -66,12 +66,14 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
             registry[k] = v
             registry[str(k)] = v  # Shadow string map
         except TypeError:
-            # Alert the user if they're bypassing the weakref safety net
-            if not fallback_registry:
-                logger.debug(
-                    "link_to: Using strong-ref fallback cache. "
-                    "Warning: Passing vast arrays of non-weakrefable objects (e.g. built-in dicts) may cause memory blowouts."  # noqa: E501
-                )
+            # Alert on every miss so memory pressure from large non-weakrefable datasets
+            # is visible in logs rather than silently accumulating.
+            logger.debug(
+                "link_to: strong-ref fallback cache miss for key %r — "
+                "object is not weakrefable. Large non-weakrefable datasets (e.g. built-in dicts) "
+                "will not be garbage-collected until the enclosing scope exits.",
+                k,
+            )
             fallback_registry[k] = v
             fallback_registry[str(k)] = v
 

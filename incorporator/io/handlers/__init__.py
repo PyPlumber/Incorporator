@@ -60,6 +60,11 @@ def _peek_iterable(data: Iterable[Dict[str, Any]]) -> Tuple[bool, Iterator[Dict[
     Consumes one item from the iterator and chains it back, so the caller
     receives a fully-intact iterator regardless of outcome.
     Returns (is_empty, reconstructed_iterator).
+
+    .. warning::
+        The returned iterator is **single-pass**.  Do not iterate it more than once —
+        the peeked first element is stored in memory only for the chain and will not
+        be re-emitted on a second iteration.
     """
     it = iter(data)
     try:

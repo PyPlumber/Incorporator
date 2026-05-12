@@ -1,4 +1,19 @@
-"""Incorporator: The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway."""
+"""Incorporator: The Dynamic Class Building and Zero-Boilerplate Universal Data Gateway.
+
+Key sentinels exported from this package
+-----------------------------------------
+``new``
+    Pass ``new`` as a field type when the value does not come from the source data and
+    must be generated entirely by a ``calc()`` expression or a ``code_file`` transform::
+
+        class Order(Incorporator):
+            total: float = inc(new)  # will be populated by calc()
+            margin: float = calc(lambda price, cost: price - cost, "price", "cost",
+                                 default=0.0, target_type=float)
+
+    Using ``inc(new)`` tells Incorporator to accept any Python type for that field
+    without coercion, delegating full control to the attached computation.
+"""
 
 __version__ = "1.0.8"
 

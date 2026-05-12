@@ -102,7 +102,10 @@ class SQLiteHandler(BaseFormatHandler):
                     placeholders = ", ".join(["?"] * len(explicit_keys))
                     insert_stmt = f'INSERT INTO "{table_name}" VALUES ({placeholders})'  # noqa: S608
 
-                    # Generator expression yields tuples 1-by-1 to the C-driver
+                    # Generator expression yields tuples 1-by-1 to the C-driver.
+                    # SQLite has no native BOOLEAN type: True → 1, False → 0.
+                    # Re-reading the database will return integers (1/0), not booleans.
+                    # This is documented, stable behaviour — consumers should cast explicitly.
                     processed_gen = (
                         tuple(
                             int(v) if isinstance(v, bool) else serialize_nested(v)

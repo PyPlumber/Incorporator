@@ -402,7 +402,14 @@ async def fetch_concurrent_payloads(
             ordered_results: List[List[Any]] = [[] for _ in range(len(source_list))]
 
             async def _sliding_worker() -> None:
-                # Worker grabs the index and places the result in the exact slot
+                """Consume items from the shared task_iterator and write results into ordered_results.
+
+                Thread-safety note: asyncio runs on a single thread, so the ``for`` loop over
+                ``task_iterator`` (a plain ``enumerate`` iterator) is safe without a lock —
+                cooperative multitasking guarantees no two coroutines interleave inside a
+                synchronous ``for`` body.  If this is ever migrated to a true multi-threaded
+                executor, replace ``task_iterator`` with an ``asyncio.Queue`` to restore safety.
+                """
                 for idx, (src, p) in task_iterator:
                     res = await _safe_execute(str(src), p)
                     if res:
