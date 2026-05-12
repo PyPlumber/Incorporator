@@ -2,13 +2,13 @@
 
 import logging
 import re
-from typing import Any, AsyncGenerator, Dict, Optional, Set, Union
+from typing import AsyncGenerator, Optional, Set, Union
 from urllib.parse import urljoin
 
 import httpx
 
-from .base import AsyncPaginator
 from ...exceptions import IncorporatorFormatError
+from .base import AsyncPaginator
 
 logger = logging.getLogger(__name__)
 

@@ -7,7 +7,7 @@ creating a circular dependency chain.
 
 import logging
 import weakref
-from typing import Any, Generic, List, Optional, Type, TypeVar, cast
+from typing import Any, List, Optional, Type, TypeVar, cast
 
 logger = logging.getLogger(__name__)
 

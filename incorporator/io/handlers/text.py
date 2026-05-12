@@ -4,9 +4,9 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, TextIO, Union, cast
 
-from ._base import BaseFormatHandler, _raise_if_append_unsupported
 from ...exceptions import IncorporatorFormatError
 from ..formats import check_xml_security, ensure_string, serialize_nested, xml_to_dict
+from ._base import BaseFormatHandler, _raise_if_append_unsupported
 
 logger = logging.getLogger(__name__)
 

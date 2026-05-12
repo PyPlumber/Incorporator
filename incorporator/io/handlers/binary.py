@@ -5,11 +5,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Union
 
-from ._base import BaseFormatHandler
 from ...exceptions import IncorporatorFormatError
-from ..formats import FormatType, convert_type, deserialize_nested, serialize_nested, to_python_type
 from ...schema.builder import sanitize_json_key
 from ...schema.converters import inc
+from ..formats import FormatType, convert_type, deserialize_nested, serialize_nested, to_python_type
+from ._base import BaseFormatHandler
 
 logger = logging.getLogger(__name__)
 

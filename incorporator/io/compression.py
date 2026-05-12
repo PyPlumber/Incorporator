@@ -155,9 +155,7 @@ def _validate_tar_members(members: List[Any]) -> None:
         for member in members:
             member_path = (safe_dir / member.name).resolve()
             if not str(member_path).startswith(str(safe_dir)):
-                raise IncorporatorFormatError(
-                    f"Archive path traversal blocked: {member.name!r}"
-                )
+                raise IncorporatorFormatError(f"Archive path traversal blocked: {member.name!r}")
     finally:
         # Clean up the temp directory immediately — we only needed it for resolve()
         shutil.rmtree(safe_dir, ignore_errors=True)

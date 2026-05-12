@@ -6,9 +6,9 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, TextIO, Union
 
-from ._base import BaseFormatHandler
 from ...exceptions import IncorporatorFormatError
 from ..formats import deserialize_nested, ensure_string, serialize_nested
+from ._base import BaseFormatHandler
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,9 @@ class CSVHandler(BaseFormatHandler):
 
             with open(path, mode, encoding="utf-8", newline="") as f:
                 processed_gen = ({k: serialize_nested(v) for k, v in row.items()} for row in data_iter)
-                writer = csv.DictWriter(f, fieldnames=explicit_fieldnames, delimiter=self.delimiter, extrasaction="ignore")
+                writer = csv.DictWriter(
+                    f, fieldnames=explicit_fieldnames, delimiter=self.delimiter, extrasaction="ignore"
+                )
 
                 if write_headers:
                     writer.writeheader()

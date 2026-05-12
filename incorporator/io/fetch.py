@@ -14,9 +14,9 @@ from urllib.parse import urlparse
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
 
+from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from . import handlers as format_parsers
 from .compression import decompress_data, infer_compression
-from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from .formats import FormatType, infer_format
 from .pagination.base import AsyncPaginator
 

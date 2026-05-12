@@ -30,20 +30,20 @@ FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {
     # JSON Schema type strings
     (FormatType.JSON, "boolean"): bool,
     (FormatType.JSON, "integer"): int,
-    (FormatType.JSON, "number"):  float,
-    (FormatType.JSON, "string"):  str,
-    (FormatType.JSON, "array"):   list,
-    (FormatType.JSON, "object"):  dict,
-    (FormatType.JSON, "null"):    type(None),
+    (FormatType.JSON, "number"): float,
+    (FormatType.JSON, "string"): str,
+    (FormatType.JSON, "array"): list,
+    (FormatType.JSON, "object"): dict,
+    (FormatType.JSON, "null"): type(None),
     # Avro type strings
-    (FormatType.AVRO, "null"):    type(None),
+    (FormatType.AVRO, "null"): type(None),
     (FormatType.AVRO, "boolean"): bool,
-    (FormatType.AVRO, "int"):     int,
-    (FormatType.AVRO, "long"):    int,
-    (FormatType.AVRO, "float"):   float,
-    (FormatType.AVRO, "double"):  float,
-    (FormatType.AVRO, "bytes"):   bytes,
-    (FormatType.AVRO, "string"):  str,
+    (FormatType.AVRO, "int"): int,
+    (FormatType.AVRO, "long"): int,
+    (FormatType.AVRO, "float"): float,
+    (FormatType.AVRO, "double"): float,
+    (FormatType.AVRO, "bytes"): bytes,
+    (FormatType.AVRO, "string"): str,
 }
 
 # ── (FormatType, Python type) → canonical format-type-string ────────────
@@ -53,21 +53,21 @@ FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {
 # Canonical Avro choice: long over int, double over float (wider range).
 PYTHON_TO_FORMAT: Dict[Tuple[FormatType, type], str] = {
     # JSON Schema
-    (FormatType.JSON, bool):       "boolean",
-    (FormatType.JSON, int):        "integer",
-    (FormatType.JSON, float):      "number",
-    (FormatType.JSON, str):        "string",
-    (FormatType.JSON, list):       "array",
-    (FormatType.JSON, dict):       "object",
+    (FormatType.JSON, bool): "boolean",
+    (FormatType.JSON, int): "integer",
+    (FormatType.JSON, float): "number",
+    (FormatType.JSON, str): "string",
+    (FormatType.JSON, list): "array",
+    (FormatType.JSON, dict): "object",
     (FormatType.JSON, type(None)): "null",
     # Avro
-    (FormatType.AVRO, bool):       "boolean",
-    (FormatType.AVRO, int):        "long",
-    (FormatType.AVRO, float):      "double",
-    (FormatType.AVRO, str):        "string",
-    (FormatType.AVRO, bytes):      "bytes",
-    (FormatType.AVRO, list):       "string",
-    (FormatType.AVRO, dict):       "string",
+    (FormatType.AVRO, bool): "boolean",
+    (FormatType.AVRO, int): "long",
+    (FormatType.AVRO, float): "double",
+    (FormatType.AVRO, str): "string",
+    (FormatType.AVRO, bytes): "bytes",
+    (FormatType.AVRO, list): "string",
+    (FormatType.AVRO, dict): "string",
     (FormatType.AVRO, type(None)): "null",
 }
 

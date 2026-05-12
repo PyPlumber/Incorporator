@@ -1,6 +1,5 @@
 """Base paginator class and shared utilities for the pagination engine."""
 
-import asyncio
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Union
 
 import httpx

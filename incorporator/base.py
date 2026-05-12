@@ -12,7 +12,6 @@ dynamic Pydantic object graphs.
 import asyncio
 import logging
 import threading
-import warnings
 import weakref
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,13 +33,13 @@ from typing import (
 
 from pydantic import BaseModel, Field
 
+from . import factory as _factory
 from .io import fetch as network
 from .io import handlers as format_parsers
 from .io.formats import FormatType, infer_format
 from .io.pagination.base import AsyncPaginator
-from .schema import router
 from .list import IncorporatorList, _deduplicate_extracted
-from . import factory as _factory
+from .schema import router
 
 if TYPE_CHECKING:
     from .observability.logger import AuditResult
@@ -361,8 +360,7 @@ class Incorporator(BaseModel):
         params = list(sig.parameters)
         if len(params) != 1:
             raise ValueError(
-                f"[Incorporator] transform() must accept exactly 1 parameter (instances), "
-                f"got {len(params)}: {params}"
+                f"[Incorporator] transform() must accept exactly 1 parameter (instances), got {len(params)}: {params}"
             )
 
         result = transform_fn(instances)
@@ -441,9 +439,7 @@ class Incorporator(BaseModel):
                 if isinstance(_first_row, dict):
                     code_file_field_names = list(_first_row.keys())
                 elif hasattr(_first_row, "model_dump"):
-                    code_file_field_names = list(
-                        _first_row.model_dump(by_alias=True, mode="json").keys()
-                    )
+                    code_file_field_names = list(_first_row.model_dump(by_alias=True, mode="json").keys())
                 transform_source = _itertools.chain([_first_row], _transform_iter)
 
         active_format = format_type or infer_format(actual_path)
