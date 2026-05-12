@@ -14,7 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 class LinkHeaderPaginator(AsyncPaginator):
-    """Example: GitHub API (Link header with rel="next")."""
+    """Paginator for RFC 5988 ``Link`` header–based APIs (GitHub, GitLab, etc.).
+
+    Reads the response's ``Link`` header on every page and follows the URL
+    in the entry tagged ``rel="next"``. Stops when no such entry is present.
+
+    State: ``current_url`` advances through the chain; ``is_first_call``
+    seeds it from the ``start_url`` argument exactly once.  ``reset()``
+    restores both for daemon-polling reuse in :meth:`Incorporator.stream`.
+
+    Memory: yields raw response bytes per page — the format handler
+    parses them downstream so the paginator never materialises the full
+    page list.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -73,6 +85,26 @@ class LinkHeaderPaginator(AsyncPaginator):
 
 
 class CursorPaginator(AsyncPaginator):
+    """Paginator for cursor / continuation-token APIs (Twitter, Stripe, etc.).
+
+    Reads the next cursor from one of the conventional response keys
+    (``meta.next_token``, ``next_cursor``, or the configured ``cursor_param``)
+    and forwards it as a query parameter on the next request.
+
+    Infinite-loop defence: every cursor seen is recorded in ``seen_cursors``;
+    if the API ever returns a cursor it has already issued, the paginator
+    treats it as exhaustion and stops.  This is a real production hazard
+    when upstream cursors are non-monotonic or buggy.
+
+    State: ``current_cursor`` carries the in-flight token; ``seen_cursors``
+    is a ``Set[str]`` of all tokens observed. ``reset()`` clears both for
+    daemon-polling reuse.
+
+    Args:
+        cursor_param: Query-parameter name to send the cursor on
+            (default ``"cursor"``). Set to ``"page_token"`` for Google APIs.
+    """
+
     def __init__(self, cursor_param: str = "cursor") -> None:
         super().__init__()
         self.cursor_param = cursor_param
@@ -124,6 +156,23 @@ class CursorPaginator(AsyncPaginator):
 
 
 class OffsetPaginator(AsyncPaginator):
+    """Paginator for offset/limit APIs (most SQL-backed REST endpoints).
+
+    Sends ``?offset=N&limit=M`` on every request and advances ``offset`` by
+    ``limit`` between pages. Stops when the response's results list is empty.
+
+    Results list is detected from ``result_key`` if provided; otherwise it
+    falls back through the conventional keys ``results``, ``data``,
+    ``items``, ``docs``, ``records`` in that order.
+
+    Args:
+        limit: Page size to request (default 50). Sent as ``?limit=...``.
+        offset_param: Query-parameter name for the offset (default ``"offset"``).
+        limit_param: Query-parameter name for the page size (default ``"limit"``).
+        result_key: Explicit response-payload key holding the results array.
+            ``None`` triggers auto-detection across common conventions.
+    """
+
     def __init__(
         self,
         limit: int = 50,
@@ -191,6 +240,20 @@ class OffsetPaginator(AsyncPaginator):
 
 
 class PageNumberPaginator(AsyncPaginator):
+    """Paginator for ``?page=N`` APIs (WordPress, generic CMS, many REST APIs).
+
+    Sends a single page-number query parameter and increments it after each
+    response. Stops when the response's results list is empty (auto-detected
+    the same way as :class:`OffsetPaginator`).
+
+    Args:
+        page_param: Query-parameter name for the page number (default ``"page"``).
+        start_page: First page number to request (default ``1``; some APIs
+            start at ``0``).
+        result_key: Explicit response-payload key holding the results array.
+            ``None`` triggers auto-detection.
+    """
+
     def __init__(
         self,
         page_param: str = "page",
@@ -255,6 +318,26 @@ class PageNumberPaginator(AsyncPaginator):
 
 
 class NextUrlPaginator(AsyncPaginator):
+    """Paginator for "next URL inside the JSON body" APIs (SpaceDevs, SWAPI, DRF, etc.).
+
+    Drills into the response JSON using one or more dot-notation keys to
+    find the absolute or relative URL of the next page, then re-fetches it
+    until the value is ``None`` or absent.
+
+    Example:
+        Response body ``{"results": [...], "next": "https://api/page/2"}``::
+
+            inc_page=NextUrlPaginator("next")        # single top-level key
+
+        Nested ``{"meta": {"pagination": {"next": "..."}}}``::
+
+            inc_page=NextUrlPaginator("meta", "pagination", "next")
+
+    Args:
+        *path_keys: One or more keys to drill through to find the next URL.
+            Defaults to ``("next",)`` if none provided.
+    """
+
     def __init__(self, *path_keys: str) -> None:
         super().__init__()
         self.path_keys = path_keys if path_keys else ("next",)

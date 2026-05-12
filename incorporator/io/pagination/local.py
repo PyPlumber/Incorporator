@@ -13,7 +13,22 @@ logger = logging.getLogger(__name__)
 
 
 class SQLitePaginator(AsyncPaginator):
-    """Yields O(1) chunks natively using SQL bounds."""
+    """Stream a SQLite query in O(1)-memory chunks via a persistent cursor.
+
+    Opens one connection on first ``paginate()`` call, executes ``sql_query``
+    once, then yields ``chunk_size`` rows per iteration via
+    ``cursor.fetchmany()`` — the C driver streams rows lazily so peak memory
+    stays bounded by ``chunk_size`` regardless of the total row count.
+
+    Cleanup: connection is closed on exhaustion, ``reset()``, or ``__del__``.
+    The connection uses ``check_same_thread=False`` so it survives the
+    ``asyncio.to_thread`` round-trip.
+
+    Args:
+        db_path: Filesystem path to the SQLite database.
+        sql_query: SQL ``SELECT`` to stream (typically ``"SELECT * FROM t"``).
+        chunk_size: Rows per chunk (default 10 000).
+    """
 
     def __init__(self, db_path: str, sql_query: str, chunk_size: int = 10000) -> None:
         super().__init__()
@@ -72,7 +87,22 @@ class SQLitePaginator(AsyncPaginator):
 
 
 class CSVPaginator(AsyncPaginator):
-    """Yields O(1) chunks natively using a persistent csv.DictReader."""
+    """Stream a CSV/TSV/PSV file in O(1)-memory chunks via ``csv.DictReader``.
+
+    Opens the file once on first ``paginate()`` call, then yields chunks of
+    ``chunk_size`` rows via ``itertools.islice``. Peak memory stays bounded
+    by one chunk plus the DictReader's line buffer.
+
+    Cleanup: file handle is closed on exhaustion, ``reset()``, or ``__del__``.
+    All I/O runs inside ``asyncio.to_thread`` so the event loop never blocks
+    on disk reads.
+
+    Args:
+        file_path: Filesystem path to the CSV file (must be UTF-8).
+        chunk_size: Rows per chunk (default 10 000).
+        delimiter: Field separator — ``","`` (default), ``"\\t"`` for TSV,
+            ``"|"`` for PSV, etc.
+    """
 
     def __init__(self, file_path: str, chunk_size: int = 10000, delimiter: str = ",") -> None:
         super().__init__()
@@ -129,7 +159,22 @@ class CSVPaginator(AsyncPaginator):
 
 
 class AvroPaginator(AsyncPaginator):
-    """Yields O(1) chunks maintaining a persistent block reader."""
+    """Stream an Apache Avro file in O(1)-memory chunks via ``fastavro.reader``.
+
+    Opens the binary file once on first ``paginate()`` call and yields
+    ``chunk_size`` decoded records per iteration. ``fastavro`` reads one
+    Avro block at a time, so peak memory is bounded by block size +
+    chunk size regardless of total file size.
+
+    Requires the optional ``fastavro`` extra (``pip install incorporator[avro]``).
+    A clear :class:`RuntimeError` is raised if it is missing.
+
+    Cleanup: file handle is closed on exhaustion, ``reset()``, or ``__del__``.
+
+    Args:
+        file_path: Filesystem path to the Avro file.
+        chunk_size: Records per chunk (default 10 000).
+    """
 
     def __init__(self, file_path: str, chunk_size: int = 10000) -> None:
         super().__init__()

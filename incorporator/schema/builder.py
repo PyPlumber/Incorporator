@@ -163,7 +163,37 @@ def apply_etl_transformations(
 def infer_dynamic_schema(
     model_name: str, data: Union[Dict[str, Any], List[Dict[str, Any]]], base_class: Type[BaseModel]
 ) -> Type[BaseModel]:
-    """Recursively builds a Pydantic subclass based on the data's comprehensive shape."""
+    """Recursively build a Pydantic V2 model class from a raw data sample.
+
+    Samples up to 50 records from ``data`` (Python's native list slicing
+    won't raise on shorter inputs), merges every observed key into a
+    composite ``sample_dict``, and recursively invokes itself on nested
+    dicts and lists so deeply nested schemas are fully typed.
+
+    Args:
+        model_name: Name to assign the generated class (e.g. ``"DynamicModel"``).
+        data: A single record (``dict``) or a list of records. Lists drive
+            the field-union behaviour: any key that appears in ANY record
+            becomes part of the model.
+        base_class: The :class:`Incorporator` subclass that the new model
+            should inherit from. Determines the registry the resulting
+            instances will live in.
+
+    Returns:
+        A new :class:`pydantic.BaseModel` subclass created via
+        :func:`pydantic.create_model`, inheriting from ``base_class``.
+
+        Tolerance contract — every inferred field is wrapped in
+        ``Optional[...]`` so missing keys never trigger ``ValidationError``,
+        and all numeric fields use ``Union[int, float]`` so APIs that
+        sometimes return ``42`` and sometimes ``42.0`` for the same field
+        validate cleanly.
+
+        The class is cached in :data:`SCHEMA_REGISTRY` keyed by
+        ``(model_name, frozenset((k, type(v).__name__) for k, v in sample_dict.items()), id(base_class))``
+        so re-invoking with the same shape returns the cached class
+        rather than rebuilding.
+    """
 
     sample_dict: Dict[str, Any] = {}
 
