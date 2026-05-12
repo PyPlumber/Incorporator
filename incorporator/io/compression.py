@@ -338,13 +338,15 @@ _COMPRESS_ROUTER: Dict[CompressionType, Callable[[Path, Path, CompressionType], 
 def _assert_router_coverage() -> None:
     """Validate at import time that both routers cover every CompressionType member.
 
-    Raises AssertionError on startup rather than a silent KeyError at runtime
+    Raises RuntimeError on startup rather than a silent KeyError at runtime
     when a newly added CompressionType is missing from a router.
     """
     missing_decomp = [m for m in CompressionType if m not in _DECOMPRESS_ROUTER]
     missing_comp = [m for m in CompressionType if m not in _COMPRESS_ROUTER]
-    assert not missing_decomp, f"_DECOMPRESS_ROUTER missing entries: {missing_decomp}"
-    assert not missing_comp, f"_COMPRESS_ROUTER missing entries: {missing_comp}"
+    if missing_decomp:
+        raise RuntimeError(f"_DECOMPRESS_ROUTER missing entries: {missing_decomp}")
+    if missing_comp:
+        raise RuntimeError(f"_COMPRESS_ROUTER missing entries: {missing_comp}")
 
 
 _assert_router_coverage()
