@@ -124,3 +124,50 @@ def test_avro_missing_dependency_graceful_fail(tmp_path: Path, monkeypatch: pyte
     # Test Read failure
     with pytest.raises(IncorporatorFormatError, match="fastavro not installed"):
         handler.parse(tmp_path / "fail.avro")
+
+
+# ==========================================
+# 3. EDGE CASES — if_exists, schema hints
+# ==========================================
+
+
+def test_sqlite_write_if_exists_fail_raises(tmp_path: Path) -> None:
+    """SQLiteHandler with if_exists='fail' must raise when the table already exists."""
+    db_path = tmp_path / "fail.db"
+    handler = SQLiteHandler()
+
+    # First write creates the table
+    handler.write(DUMMY_DATA, db_path, sql_table="users", if_exists="replace")
+
+    # Second write with if_exists='fail' must raise
+    with pytest.raises(IncorporatorFormatError):
+        handler.write(DUMMY_DATA, db_path, sql_table="users", if_exists="fail")
+
+
+def test_sqlite_write_append_mode_concatenates(tmp_path: Path) -> None:
+    """SQLiteHandler if_exists='append' must extend an existing table rather than replacing it."""
+    db_path = tmp_path / "append.db"
+    handler = SQLiteHandler()
+
+    handler.write(DUMMY_DATA, db_path, sql_table="users", if_exists="replace")
+    handler.write(DUMMY_DATA, db_path, sql_table="users", if_exists="append")
+
+    rows = handler.parse(db_path, sql_query="SELECT * FROM users")
+    assert len(rows) == 4  # Original 2 + appended 2
+
+
+def test_sqlite_write_with_all_field_names_hint(tmp_path: Path) -> None:
+    """Passing all_field_names explicitly must let the handler skip the full-row scan path."""
+    db_path = tmp_path / "hinted.db"
+    handler = SQLiteHandler()
+
+    # Provide an explicit field-name list — this is the memory-optimised path
+    field_names = ["id", "name", "score", "is_active", "tags", "metadata"]
+    handler.write(DUMMY_DATA, db_path, sql_table="users", all_field_names=field_names)
+
+    rows = handler.parse(db_path, sql_query="SELECT * FROM users")
+    assert len(rows) == 2
+    assert rows[0]["name"] == "Alice"
+    # Every declared column must be present in the result
+    for col in field_names:
+        assert col in rows[0]

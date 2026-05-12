@@ -131,3 +131,52 @@ def test_decompress_invalid_data() -> None:
     # 🛡️ Pass active_format!
     with pytest.raises(IncorporatorFormatError, match="Failed to decompress"):
         decompress_data(garbage_bytes, path_hint="fake.gz", active_format=FormatType.JSON)
+
+
+# ==========================================
+# 5. CRAMJAM-BACKED ROUND-TRIPS (optional [cramjam] extra)
+# ==========================================
+@pytest.mark.parametrize(
+    "comp_type",
+    [
+        CompressionType.ZSTD,
+        CompressionType.LZ4,
+        CompressionType.SNAPPY,
+        CompressionType.BROTLI,
+    ],
+)
+def test_cramjam_compression_roundtrip(tmp_path: Path, comp_type: CompressionType) -> None:
+    """Cramjam-backed compression types must round-trip cleanly when the extra is installed."""
+    pytest.importorskip("cramjam")
+
+    src_file = tmp_path / "telemetry.json"
+    src_file.write_text(DUMMY_JSON, encoding="utf-8")
+    out_path = Path(compress_file(str(src_file), comp_type))
+
+    assert out_path.exists()
+    assert out_path.name == f"telemetry.json.{comp_type.value}"
+
+    raw_bytes = out_path.read_bytes()
+    decompressed = decompress_data(raw_bytes, path_hint=str(out_path), active_format=FormatType.JSON)
+    assert decompressed == DUMMY_JSON
+
+
+# ==========================================
+# 6. ROUTER COVERAGE INVARIANT
+# ==========================================
+def test_router_coverage_invariant() -> None:
+    """_assert_router_coverage must pass at import time — every CompressionType
+    member must be present in both _DECOMPRESS_ROUTER and _COMPRESS_ROUTER.
+
+    A missing entry would have raised RuntimeError when the module loaded.
+    This test simply re-runs the check to keep the invariant visible.
+    """
+    from incorporator.io.compression import (
+        _COMPRESS_ROUTER,
+        _DECOMPRESS_ROUTER,
+        _assert_router_coverage,
+    )
+
+    _assert_router_coverage()  # must not raise
+    assert set(_DECOMPRESS_ROUTER.keys()) == set(CompressionType)
+    assert set(_COMPRESS_ROUTER.keys()) == set(CompressionType)
