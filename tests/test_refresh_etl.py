@@ -9,6 +9,7 @@ import pytest
 
 from incorporator import Incorporator
 from incorporator.base import IncorporatorList
+from incorporator.io import fetch
 from incorporator.schema.converters import calc
 
 
@@ -54,7 +55,7 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
     global call_counter
     call_counter = 0  # Reset for test isolation
 
-    monkeypatch.setattr("incorporator.io.fetch.execute_request", mock_live_ticker)
+    monkeypatch.setattr(fetch, "execute_request", mock_live_ticker)
     BASE_URL = "https://finance.api.com/ticker/aapl"
 
     # ==========================================

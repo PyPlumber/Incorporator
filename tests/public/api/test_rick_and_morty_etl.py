@@ -10,6 +10,7 @@ import pytest
 from incorporator import Incorporator
 from incorporator.schema.converters import calc, inc
 from incorporator.schema.extractors import link_to, link_to_list, pluck, split_and_get
+from incorporator.io import fetch
 from incorporator.io.pagination import NextUrlPaginator
 
 
@@ -106,7 +107,7 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
 async def test_rick_and_morty_advanced_etl(monkeypatch: pytest.MonkeyPatch) -> None:
     """Proves Declarative ETL (calc, inc) and Graph Relational Mapping (link_to)."""
 
-    monkeypatch.setattr("incorporator.io.fetch.execute_request", mock_execute_get)
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_get)
     BASE_URL = "https://rickandmortyapi.com/api"
 
     # 🛡️ We create a reusable ID extractor using our composable primitive

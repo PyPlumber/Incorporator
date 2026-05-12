@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
+from incorporator.io import fetch
 from incorporator.schema import router
 from incorporator.io.pagination import NextUrlPaginator, OffsetPaginator
 
@@ -56,7 +57,7 @@ async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Res
 @pytest.mark.asyncio
 async def test_explicit_offset_paginator(monkeypatch: pytest.MonkeyPatch) -> None:
     """Proves OffsetPaginator safely injects mathematical offsets via httpx params."""
-    monkeypatch.setattr("incorporator.io.fetch.execute_request", mock_execute_request)
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
 
     offset_items = await PaginatedItem.incorp(
         inc_url="https://api.com/items",
@@ -74,7 +75,7 @@ async def test_explicit_offset_paginator(monkeypatch: pytest.MonkeyPatch) -> Non
 @pytest.mark.asyncio
 async def test_explicit_next_url_paginator(monkeypatch: pytest.MonkeyPatch) -> None:
     """Proves NextUrlPaginator safely extracts subsequent URLs from the JSON body."""
-    monkeypatch.setattr("incorporator.io.fetch.execute_request", mock_execute_request)
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
 
     page_items = await PaginatedItem.incorp(
         inc_url="https://api.com/items",

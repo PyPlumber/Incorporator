@@ -10,6 +10,7 @@ from incorporator import (
     Incorporator,
 )
 from incorporator.schema.converters import calc
+from incorporator.io import fetch
 from incorporator.io.pagination import NextUrlPaginator
 
 
@@ -112,7 +113,7 @@ def format_typing(types_array: Any) -> str:
 # --- TESTS ---
 @pytest.mark.asyncio
 async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("incorporator.io.fetch.execute_request", mock_pokeapi_execute_get)
+    monkeypatch.setattr(fetch, "execute_request", mock_pokeapi_execute_get)
     print("🔴 Booting up the Pokedex Terminal...")
     BASE_URL = "https://pokeapi.co/api/v2"
 

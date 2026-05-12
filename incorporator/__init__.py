@@ -19,6 +19,7 @@ from .schema.extractors import (
     link_to_list,
     pluck,
     split_and_get,
+    sum_attributes,
 )
 from .exceptions import (
     IncorporatorError,
@@ -58,6 +59,7 @@ __all__ = [
     "as_list",
     "new",
     "split_and_get",
+    "sum_attributes",
     "link_to",
     "link_to_list",
     "pluck",

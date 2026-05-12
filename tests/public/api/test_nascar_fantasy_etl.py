@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from incorporator import Incorporator, link_to
+from incorporator.io import fetch
 from incorporator.schema.converters import calc, datetime, inc
 
 
@@ -92,7 +93,7 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
 async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Validates data fetching, scoring, and the complete JSON React export pipeline."""
 
-    monkeypatch.setattr("incorporator.io.fetch.execute_request", mock_execute_get)
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_get)
     BASE = "https://api.nascar.com"
 
     # ==========================================

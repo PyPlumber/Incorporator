@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
+from incorporator.io import fetch
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -57,7 +58,7 @@ async def mock_coingecko_execute_get(url: str, *args: Any, **kwargs: Any) -> htt
 async def test_coingecko_zero_boilerplate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Proves root-level array parsing and dynamic typing with absolute minimum boilerplate."""
 
-    monkeypatch.setattr("incorporator.io.fetch.execute_request", mock_coingecko_execute_get)
+    monkeypatch.setattr(fetch, "execute_request", mock_coingecko_execute_get)
     GECKO_URL = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd"
 
     # ==========================================
