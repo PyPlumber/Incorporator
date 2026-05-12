@@ -1,13 +1,11 @@
 """Integration tests for XML parsing and Bulk POST Requests (NHTSA API)."""
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
-from real.shady_jimmy import generate_xml_file
 
 from incorporator import Incorporator
 from incorporator.schema.converters import inc
@@ -142,82 +140,4 @@ async def test_shady_jimmy_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
             fraud_count += 1
 
     # INV-002 (Wrong Year) and INV-003 (Fake Porsche) are fraud!
-    assert fraud_count == 2  # <--- CHANGED FROM 1 TO 2
-
-    print("🚨 INITIATING SHADY JIMMY AUDIT 🚨\n")
-
-    xml_file = "shady_jimmy.xml"
-    generate_xml_file(xml_file)
-
-    # ==========================================
-    # STEP 2: Live Bulk Enrichment (POST Request)
-    # ==========================================
-    print("2. Contacting US Dept of Transportation (NHTSA VPIC API Bulk Endpoint)...")
-
-    # Extract all VINs and format them for the NHTSA Bulk API
-    vin_list = [getattr(inv.Vehicle, "VIN", "") for inv in invoices]
-    vin_batch_string = ";".join(vin_list)
-
-    # Showcasing method="POST" and form_payload
-    live_records = await NHTSARecord.incorp(
-        inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
-        method="POST",
-        form_payload={"format": "json", "DATA": vin_batch_string},
-        rec_path="Results",
-        inc_code="VIN",
-        conv_dict={
-            # The API returns years as strings, we force them to integers
-            "ModelYear": inc(int)
-        },
-    )
-    print("   -> Background Checks Complete (1 Optimized Request).\n")
-
-    # ==========================================
-    # STEP 3: Relational Audit
-    # ==========================================
-    print("=====================================================================")
-    print("                       OFFICIAL AUDIT REPORT                         ")
-    print("=====================================================================")
-
-    fraud_count = 0
-
-    for invoice in invoices:
-        # Safely navigate dynamic nested XML attributes
-        inv_id = getattr(invoice, "id", "UNKNOWN")
-        vin = getattr(invoice.Vehicle, "VIN", "")
-        claimed_make = getattr(invoice.Vehicle, "Make", "Unknown").title()
-        claimed_model = getattr(invoice.Vehicle, "Model", "Unknown").title()
-        claimed_year = int(getattr(invoice.Vehicle, "Year", 0))
-
-        # XML tags with attributes return as objects containing 'text'
-        price_obj = invoice.Financial.SalePrice
-        price = getattr(price_obj, "text", price_obj)
-
-        # Relational Lookup: Match XML to Live JSON instantly via class registry
-        real_car = live_records.inc_dict.get(vin)
-
-        if not real_car:
-            print(f"[ERROR] Could not retrieve NHTSA data for VIN: {vin}")
-            continue
-
-        actual_make = getattr(real_car, "Make", "Unknown").title()
-        actual_model = getattr(real_car, "Model", "Unknown").title()
-        actual_year = getattr(real_car, "ModelYear", 0)
-
-        # Business Logic: Check for discrepancies
-        is_fraud = claimed_make != actual_make or claimed_year != actual_year
-
-        if is_fraud:
-            fraud_count += 1
-            print(f"❌ FRAUD DETECTED (Invoice: {inv_id} | VIN: {vin})")
-            print(f"   Jimmy Claims : {claimed_year} {claimed_make} {claimed_model} (${price})")
-            print(f"   Actual Car   : {actual_year} {actual_make} {actual_model}")
-            print("-" * 69)
-        else:
-            print(f"✅ VERIFIED (Invoice: {inv_id}): {actual_year} {actual_make}")
-
-    print(f"\nAUDIT COMPLETE. {fraud_count} Fraudulent invoices detected.")
-
-    # Clean up the dummy file
-    if os.path.exists(xml_file):
-        os.remove(xml_file)
+    assert fraud_count == 2
