@@ -10,6 +10,40 @@ from incorporator.io.handlers.text import JSONHandler, NDJSONHandler, XMLHandler
 
 
 # ==========================================
+# 0. JSONHandler — stdlib fallback (no orjson)
+# ==========================================
+
+
+def test_json_parse_stdlib_fallback(mock_no_speedups) -> None:
+    """JSONHandler.parse must succeed through the stdlib json path when orjson absent."""
+    raw = '[{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]'
+    result = JSONHandler().parse(raw)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0]["name"] == "Alice"
+
+
+def test_json_write_stdlib_fallback(mock_no_speedups, tmp_path: Path) -> None:
+    """JSONHandler.write must produce a valid JSON array via stdlib json when orjson absent."""
+    import json
+
+    rows = [{"id": i, "val": i * 10} for i in range(3)]
+    out = tmp_path / "stdlib.json"
+    JSONHandler().write(iter(rows), out)
+
+    parsed = json.loads(out.read_text(encoding="utf-8"))
+    assert len(parsed) == 3
+    assert parsed[2]["val"] == 20
+
+
+def test_xml_parse_unrecoverable_stdlib_raises(mock_no_speedups) -> None:
+    """Stdlib path: an XML string that fails even after .strip() must raise IncorporatorFormatError."""
+    not_xml = "this is just plain text, not XML at all <<<>>>"
+    with pytest.raises(IncorporatorFormatError, match="Invalid XML"):
+        XMLHandler().parse(not_xml)
+
+
+# ==========================================
 # 1. JSONHandler — streaming write
 # ==========================================
 

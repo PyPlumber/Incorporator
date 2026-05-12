@@ -14,6 +14,8 @@ import pytest
 from incorporator.io.pagination import (
     CursorPaginator,
     LinkHeaderPaginator,
+    NextUrlPaginator,
+    OffsetPaginator,
     PageNumberPaginator,
 )
 
@@ -204,6 +206,258 @@ async def test_page_number_paginator_call_lim_caps_pages() -> None:
 
     pages = [chunk async for chunk in p.paginate("https://api.example.com/p")]
     assert len(pages) == 2
+
+
+# ==========================================
+# 4. LinkHeaderPaginator — is_exhausted + error path
+# ==========================================
+
+
+@pytest.mark.asyncio
+async def test_link_header_is_exhausted_guard_returns_immediately() -> None:
+    """paginate() on an already-exhausted LinkHeaderPaginator must yield nothing."""
+    p = LinkHeaderPaginator()
+    p.is_exhausted = True
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert chunks == []
+
+
+@pytest.mark.asyncio
+async def test_link_header_error_non_strict_stops_gracefully() -> None:
+    """An httpx error in non-strict mode must stop the paginator without propagating."""
+
+    async def raising_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        req = httpx.Request("GET", url)
+        raise httpx.HTTPStatusError("500 Server Error", request=req, response=httpx.Response(500, request=req))
+
+    p = LinkHeaderPaginator()
+    p.fetch_func = raising_fetch
+    p.strict_mode = False
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert chunks == []
+    assert p.is_exhausted is True
+
+
+@pytest.mark.asyncio
+async def test_link_header_call_lim_caps_pages() -> None:
+    """call_lim must stop the paginator after the specified number of pages."""
+
+    async def endless_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        return _make_response(url, [{"id": 1}], headers={"Link": f'<{url}>; rel="next"'})
+
+    p = LinkHeaderPaginator()
+    p.fetch_func = endless_fetch
+    p.call_lim = 2
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert len(chunks) == 2
+
+
+# ==========================================
+# 5. CursorPaginator — is_exhausted, call_lim, list response, error
+# ==========================================
+
+
+@pytest.mark.asyncio
+async def test_cursor_is_exhausted_guard_returns_immediately() -> None:
+    """paginate() on an already-exhausted CursorPaginator must yield nothing."""
+    p = CursorPaginator()
+    p.is_exhausted = True
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert chunks == []
+
+
+@pytest.mark.asyncio
+async def test_cursor_call_lim_caps_pages() -> None:
+    """call_lim must cap CursorPaginator pages even when next_cursor is always present."""
+
+    async def endless_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        return _make_response(url, {"data": [1], "next_cursor": "FOREVER"})
+
+    p = CursorPaginator()
+    p.fetch_func = endless_fetch
+    p.call_lim = 2
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert len(chunks) == 2
+
+
+@pytest.mark.asyncio
+async def test_cursor_list_response_exhausts_immediately() -> None:
+    """A list (non-dict) response gives next_cursor=None → paginator exhausts after one page."""
+
+    async def mock_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        return _make_response(url, [{"id": 1}, {"id": 2}])  # list, not dict
+
+    p = CursorPaginator()
+    p.fetch_func = mock_fetch
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert len(chunks) == 1
+    assert p.is_exhausted is True
+
+
+@pytest.mark.asyncio
+async def test_cursor_error_non_strict_stops_gracefully() -> None:
+    """httpx error in non-strict CursorPaginator must stop without propagating."""
+
+    async def raising_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        req = httpx.Request("GET", url)
+        raise httpx.RequestError("timeout", request=req)
+
+    p = CursorPaginator()
+    p.fetch_func = raising_fetch
+    p.strict_mode = False
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert chunks == []
+    assert p.is_exhausted is True
+
+
+# ==========================================
+# 6. OffsetPaginator — call_lim, list response, exhaustion, error
+# ==========================================
+
+
+@pytest.mark.asyncio
+async def test_offset_paginator_call_lim_caps_pages() -> None:
+    """call_lim must stop the OffsetPaginator after N fetches."""
+
+    async def endless_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        return _make_response(url, {"results": [{"id": 1}]})
+
+    p = OffsetPaginator(limit=10)
+    p.fetch_func = endless_fetch
+    p.call_lim = 2
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert len(chunks) == 2
+
+
+@pytest.mark.asyncio
+async def test_offset_paginator_list_response_used_as_items() -> None:
+    """A raw list response (instead of dict) is used directly as the items list."""
+    pages = [
+        _make_response("https://api.example.com", [{"id": 1}, {"id": 2}]),  # list
+        _make_response("https://api.example.com", []),  # empty list → exhaust
+    ]
+    iterator = iter(pages)
+
+    async def mock_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        return next(iterator)
+
+    p = OffsetPaginator()
+    p.fetch_func = mock_fetch
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert len(chunks) == 2
+    assert p.is_exhausted is True
+
+
+@pytest.mark.asyncio
+async def test_offset_paginator_error_non_strict_stops_gracefully() -> None:
+    """httpx error in non-strict OffsetPaginator must stop without propagating."""
+
+    async def raising_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        req = httpx.Request("GET", url)
+        raise httpx.RequestError("connection refused", request=req)
+
+    p = OffsetPaginator()
+    p.fetch_func = raising_fetch
+    p.strict_mode = False
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert chunks == []
+    assert p.is_exhausted is True
+
+
+# ==========================================
+# 7. PageNumberPaginator — error path
+# ==========================================
+
+
+@pytest.mark.asyncio
+async def test_page_number_error_non_strict_stops_gracefully() -> None:
+    """httpx error in non-strict PageNumberPaginator must stop without propagating."""
+
+    async def raising_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        req = httpx.Request("GET", url)
+        raise httpx.HTTPStatusError("403 Forbidden", request=req, response=httpx.Response(403, request=req))
+
+    p = PageNumberPaginator()
+    p.fetch_func = raising_fetch
+    p.strict_mode = False
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert chunks == []
+    assert p.is_exhausted is True
+
+
+# ==========================================
+# 8. NextUrlPaginator — is_exhausted, call_lim, error
+# ==========================================
+
+
+@pytest.mark.asyncio
+async def test_next_url_is_exhausted_guard_returns_immediately() -> None:
+    """paginate() on an already-exhausted NextUrlPaginator must yield nothing."""
+    p = NextUrlPaginator("next")
+    p.is_exhausted = True
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert chunks == []
+
+
+@pytest.mark.asyncio
+async def test_next_url_paginator_follows_next_key() -> None:
+    """NextUrlPaginator must drill into JSON body and follow 'next' URL."""
+    pages = [
+        _make_response("https://api.example.com/p1", {"results": [1], "next": "https://api.example.com/p2"}),
+        _make_response("https://api.example.com/p2", {"results": [2], "next": None}),
+    ]
+    iterator = iter(pages)
+
+    async def mock_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        return next(iterator)
+
+    p = NextUrlPaginator("next")
+    p.fetch_func = mock_fetch
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com/p1")]
+    assert len(chunks) == 2
+    assert p.is_exhausted is True
+
+
+@pytest.mark.asyncio
+async def test_next_url_call_lim_caps_pages() -> None:
+    """call_lim must stop NextUrlPaginator even when next URL is always present."""
+
+    async def endless_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        return _make_response(url, {"results": [1], "next": "https://api.example.com/forever"})
+
+    p = NextUrlPaginator("next")
+    p.fetch_func = endless_fetch
+    p.call_lim = 3
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert len(chunks) == 3
+
+
+@pytest.mark.asyncio
+async def test_next_url_error_non_strict_stops_gracefully() -> None:
+    """httpx error in non-strict NextUrlPaginator must stop without propagating."""
+
+    async def raising_fetch(url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+        req = httpx.Request("GET", url)
+        raise httpx.RequestError("DNS failure", request=req)
+
+    p = NextUrlPaginator("next")
+    p.fetch_func = raising_fetch
+    p.strict_mode = False
+
+    chunks = [chunk async for chunk in p.paginate("https://api.example.com")]
+    assert chunks == []
+    assert p.is_exhausted is True
 
 
 @pytest.mark.asyncio

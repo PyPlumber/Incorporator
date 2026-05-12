@@ -1,0 +1,188 @@
+"""Unit tests for schema/extractors.py edge cases and list.py deduplication paths."""
+
+from types import SimpleNamespace
+from typing import Any, List
+
+import pytest
+
+from incorporator.list import IncorporatorList, _deduplicate_extracted
+from incorporator.schema.extractors import (
+    as_list,
+    join_all,
+    link_to,
+    link_to_list,
+    pluck,
+    split_and_get,
+    sum_attributes,
+)
+
+
+# ==========================================
+# 1. sum_attributes edge cases
+# ==========================================
+
+
+def test_sum_attributes_skips_non_numeric_values() -> None:
+    """Non-numeric values must be silently skipped; valid ones are summed."""
+    result = sum_attributes(1.0, "not-a-number", None, 2.5, "also-bad")
+    assert result == pytest.approx(3.5)
+
+
+def test_sum_attributes_all_none_returns_zero() -> None:
+    """All-None input must return 0.0 without raising."""
+    assert sum_attributes(None, None) == 0.0
+
+
+def test_sum_attributes_skips_type_error() -> None:
+    """Values that trigger TypeError on float() must be silently skipped."""
+    result = sum_attributes(10, [], {})  # list and dict → TypeError in float()
+    assert result == pytest.approx(10.0)
+
+
+# ==========================================
+# 2. split_and_get edge cases
+# ==========================================
+
+
+def test_split_and_get_index_out_of_range_returns_none() -> None:
+    """An out-of-range index must return None without raising."""
+    splitter = split_and_get("/", index=99)
+    assert splitter("a/b/c") is None
+
+
+def test_split_and_get_none_input_returns_none() -> None:
+    """None input must return None."""
+    splitter = split_and_get("/")
+    assert splitter(None) is None
+
+
+def test_split_and_get_empty_string_returns_none() -> None:
+    """Empty string input must return None."""
+    splitter = split_and_get("/")
+    assert splitter("") is None
+
+
+def test_split_and_get_cast_type_failure_returns_none() -> None:
+    """When cast_type raises on the extracted segment, None is returned."""
+    splitter = split_and_get("/", index=0, cast_type=int)
+    assert splitter("abc/def") is None  # "abc" cannot be cast to int
+
+
+# ==========================================
+# 3. link_to — str_key fallback
+# ==========================================
+
+
+def test_link_to_string_key_coercion_lookup() -> None:
+    """link_to must fall back to str(key) lookup when integer key is not found directly."""
+    # SimpleNamespace is not weakrefable → goes into fallback_registry
+    items = [SimpleNamespace(inc_code=42, name="Alice")]
+    mapper = link_to(items)
+
+    # Look up with the string representation of the integer key
+    result = mapper("42")  # str(42) == "42" — should find the item
+    assert result is not None
+    assert result.name == "Alice"
+
+
+def test_link_to_none_key_returns_none() -> None:
+    """When the lookup key resolves to None, mapper must return None."""
+    items = [SimpleNamespace(inc_code=1, name="Alice")]
+    mapper = link_to(items)
+    assert mapper(None) is None
+
+
+def test_link_to_list_non_list_input_returns_empty() -> None:
+    """link_to_list must return [] when the value is not a list."""
+    items = [SimpleNamespace(inc_code=1, name="Alice")]
+    mapper = link_to_list(items)
+    assert mapper("not-a-list") == []
+    assert mapper(None) == []
+
+
+# ==========================================
+# 4. pluck edge cases
+# ==========================================
+
+
+def test_pluck_stops_when_intermediate_not_dict() -> None:
+    """pluck must return None and not crash when an intermediate value is not a dict."""
+    plucker = pluck("a.b.c")
+    data = {"a": "flat-string-not-a-dict"}  # "a" exists but isn't a dict → can't drill to "b"
+    result = plucker(data)
+    assert result is None
+
+
+def test_pluck_stops_when_intermediate_key_missing() -> None:
+    """pluck must return None when a key in the chain is absent."""
+    plucker = pluck("x.y.z")
+    result = plucker({"x": {"missing": True}})  # "y" not in the nested dict
+    assert result is None
+
+
+def test_pluck_non_dict_top_level_returns_value() -> None:
+    """When the top-level value is not a dict, pluck returns it unchanged."""
+    plucker = pluck("anything")
+    result = plucker("a plain string")
+    assert result == "a plain string"
+
+
+# ==========================================
+# 5. join_all edge cases
+# ==========================================
+
+
+def test_join_all_non_list_input_stringifies() -> None:
+    """join_all must stringify a non-list value directly."""
+    joiner = join_all(",")
+    assert joiner(42) == "42"
+    assert joiner("hello") == "hello"
+
+
+def test_join_all_list_filters_none() -> None:
+    """join_all must skip None entries in the list."""
+    joiner = join_all(",")
+    result = joiner([1, None, 3, None, 5])
+    assert result == "1,3,5"
+
+
+# ==========================================
+# 6. _deduplicate_extracted — non-hashable items
+# ==========================================
+
+
+def test_deduplicate_extracted_non_hashable_included_as_is() -> None:
+    """Non-hashable items (dicts) must be appended as-is after deduplicating hashables."""
+    data: List[Any] = [1, 2, 1, {"key": "val"}, {"other": True}]
+    result = _deduplicate_extracted(data)
+    # Hashable integers are deduplicated; dicts appended
+    assert 1 in result
+    assert 2 in result
+    assert result.count(1) == 1  # deduped
+    assert {"key": "val"} in result
+    assert {"other": True} in result
+
+
+def test_deduplicate_extracted_all_hashable_deduplicates() -> None:
+    """A fully hashable list must be deduplicated preserving insertion order."""
+    result = _deduplicate_extracted([3, 1, 2, 1, 3])
+    assert result == [3, 1, 2]
+
+
+# ==========================================
+# 7. IncorporatorList — GC sentinel
+# ==========================================
+
+
+def test_incorporator_list_gc_warn_on_gc_flag() -> None:
+    """Setting _warn_on_gc=True must not raise when __del__ is called on a non-empty list."""
+    from pydantic import BaseModel
+
+    class _FakeModel(BaseModel):
+        id: int = 0
+
+    obj = _FakeModel()
+    lst = IncorporatorList(_FakeModel, [obj])
+    lst._warn_on_gc = True  # type: ignore[attr-defined]
+    # Explicitly invoke __del__ — must not raise
+    lst.__del__()

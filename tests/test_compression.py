@@ -162,7 +162,32 @@ def test_cramjam_compression_roundtrip(tmp_path: Path, comp_type: CompressionTyp
 
 
 # ==========================================
-# 6. ARCHIVE BINARY TARGET (SQLite inside ZIP)
+# 6. COMPRESS_FILE WITH STRING COMP_TYPE
+# ==========================================
+
+
+def test_compress_file_accepts_string_comp_type(tmp_path: Path) -> None:
+    """compress_file must accept a plain string compression type and convert it."""
+    src = tmp_path / "input.json"
+    src.write_text(DUMMY_JSON, encoding="utf-8")
+
+    out_path = compress_file(str(src), "gz")  # string, not CompressionType enum
+
+    assert Path(out_path).exists()
+    assert out_path.endswith(".gz")
+
+
+def test_compress_file_invalid_string_comp_type(tmp_path: Path) -> None:
+    """An unrecognised string compression type must raise IncorporatorFormatError."""
+    src = tmp_path / "input.json"
+    src.write_text(DUMMY_JSON, encoding="utf-8")
+
+    with pytest.raises(IncorporatorFormatError, match="Unsupported compression type"):
+        compress_file(str(src), "rar")
+
+
+# ==========================================
+# 7. ARCHIVE BINARY TARGET (SQLite inside ZIP)
 # ==========================================
 
 

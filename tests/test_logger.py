@@ -1,11 +1,19 @@
 """Integration tests for the non-blocking QueueHandler Observability Engine."""
 
+import logging
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from incorporator import LoggedIncorporator, setup_class_logger
-from incorporator.observability.logger import _ACTIVE_LISTENERS
+from incorporator.observability.logger import (
+    JSONFormatter,
+    LoggingMixin,
+    _ACTIVE_LISTENERS,
+    _cleanup_listeners,
+)
 
 
 # Isolate mock classes so tests don't share the global _ACTIVE_LISTENERS state
@@ -54,6 +62,229 @@ async def test_multiplex_file_routing(
 
     assert "Web traffic trace" in api_text
     assert "Standard error trace" not in api_text
+
+
+@pytest.mark.asyncio
+async def test_cleanup_listeners_stops_all(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """_cleanup_listeners() must stop every active QueueListener and clear the registry."""
+    monkeypatch.chdir(tmp_path)
+
+    class CleanupTarget(LoggedIncorporator):
+        pass
+
+    setup_class_logger(CleanupTarget)
+    assert "CleanupTarget" in _ACTIVE_LISTENERS
+
+    _cleanup_listeners()
+
+    assert _ACTIVE_LISTENERS == {}
+
+
+def test_setup_class_logger_duplicate_listener_guard(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """Calling setup_class_logger twice for the same class must be a no-op on the second call."""
+    monkeypatch.chdir(tmp_path)
+
+    class DuplicateTarget(LoggedIncorporator):
+        pass
+
+    setup_class_logger(DuplicateTarget)
+    listener_before = _ACTIVE_LISTENERS["DuplicateTarget"]
+
+    setup_class_logger(DuplicateTarget)  # second call — must return early
+    assert _ACTIVE_LISTENERS["DuplicateTarget"] is listener_before  # same object
+
+
+def test_setup_class_logger_max_threads_eviction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """When MAX_LOG_THREADS is reached, the oldest listener must be evicted."""
+    import incorporator.observability.logger as logger_module
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(logger_module, "MAX_LOG_THREADS", 2)
+
+    class EvictA(LoggedIncorporator):
+        pass
+
+    class EvictB(LoggedIncorporator):
+        pass
+
+    class EvictC(LoggedIncorporator):
+        pass
+
+    setup_class_logger(EvictA)
+    setup_class_logger(EvictB)
+    # Both A and B registered — now at the limit
+    assert len(_ACTIVE_LISTENERS) >= 2
+
+    setup_class_logger(EvictC)  # must evict EvictA (the oldest)
+
+    assert "EvictC" in _ACTIVE_LISTENERS
+    assert "EvictA" not in _ACTIVE_LISTENERS
+
+
+def test_json_formatter_includes_exc_info() -> None:
+    """JSONFormatter.format must include 'exc_info' when a record carries exception info."""
+    formatter = JSONFormatter()
+    try:
+        raise ValueError("test error")
+    except ValueError:
+        import sys
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.ERROR,
+            pathname="",
+            lineno=0,
+            msg="something broke",
+            args=(),
+            exc_info=sys.exc_info(),
+        )
+
+    output = formatter.format(record)
+    import json
+
+    parsed = json.loads(output)
+    assert "exc_info" in parsed
+    assert "ValueError" in parsed["exc_info"]
+
+
+def test_log_cls_info_and_error_callable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """log_cls_info and log_cls_error must emit records when the logger is enabled."""
+    monkeypatch.chdir(tmp_path)
+
+    class CLS(LoggedIncorporator):
+        pass
+
+    setup_class_logger(CLS)
+
+    # These call through to the logger without raising
+    CLS.log_cls_info("info message from cls")
+    CLS.log_cls_error("error message from cls")
+
+    # Stop the listener to flush to disk
+    _ACTIVE_LISTENERS["CLS"].stop()
+
+    debug_log = tmp_path / "logs" / "CLS_debug.log"
+    assert debug_log.exists()
+    content = debug_log.read_text(encoding="utf-8")
+    assert "info message from cls" in content
+    assert "error message from cls" in content
+
+
+def test_log_instance_methods_callable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """log_debug, log_info, log_error, log_api must all emit records without raising."""
+    monkeypatch.chdir(tmp_path)
+
+    class InstanceLog(LoggedIncorporator):
+        pass
+
+    setup_class_logger(InstanceLog)
+    obj = InstanceLog(inc_code=1, inc_name="test")
+
+    obj.log_debug("debug msg")
+    obj.log_info("info msg")
+    obj.log_error("error msg")
+    obj.log_api("api msg")
+
+    _ACTIVE_LISTENERS["InstanceLog"].stop()
+
+    debug_log = tmp_path / "logs" / "InstanceLog_debug.log"
+    assert debug_log.exists()
+    content = debug_log.read_text(encoding="utf-8")
+    assert "debug msg" in content
+    assert "info msg" in content
+
+
+@pytest.mark.asyncio
+async def test_logged_incorp_enable_logging_registers_listener(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """LoggedIncorporator.incorp with enable_logging=True must register a QueueListener."""
+    monkeypatch.chdir(tmp_path)
+
+    class LogIncModel(LoggedIncorporator):
+        id: int = 0
+
+    data_file = tmp_path / "data.json"
+    data_file.write_text('[{"id": 1}]', encoding="utf-8")
+
+    result = await LogIncModel.incorp(inc_file=str(data_file), enable_logging=True)
+
+    assert "LogIncModel" in _ACTIVE_LISTENERS
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_logged_export_enable_logging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """LoggedIncorporator.export with enable_logging=True must log start and completion."""
+    monkeypatch.chdir(tmp_path)
+
+    class ExportLogModel(LoggedIncorporator):
+        id: int = 0
+
+    data_file = tmp_path / "data.json"
+    data_file.write_text('[{"id": 1}]', encoding="utf-8")
+    out_file = tmp_path / "out.json"
+
+    dataset = await ExportLogModel.incorp(inc_file=str(data_file))
+    await ExportLogModel.export(instance=dataset, file_path=str(out_file), enable_logging=True)
+
+    # Export must complete without error; log file created on enable_logging path
+    assert out_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_logged_stream_enable_logging_emits_audit_results(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """stream() with enable_logging=True must yield AuditResults and log chunk metrics."""
+    monkeypatch.chdir(tmp_path)
+
+    class StreamLogModel(LoggedIncorporator):
+        id: int = 0
+
+    data_file = tmp_path / "data.json"
+    data_file.write_text('[{"id": 1}, {"id": 2}]', encoding="utf-8")
+
+    results = []
+    async for audit in StreamLogModel.stream(
+        incorp_params={"inc_file": str(data_file)},
+        enable_logging=True,
+    ):
+        results.append(audit)
+
+    assert len(results) >= 1
+    assert results[0].rows_processed >= 1
+    assert "StreamLogModel" in _ACTIVE_LISTENERS
+
+
+@pytest.mark.asyncio
+async def test_logged_stream_exception_logs_and_reraises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """A fatal exception inside stream() with enable_logging=True must be re-raised."""
+    monkeypatch.chdir(tmp_path)
+
+    class StreamErrModel(LoggedIncorporator):
+        id: int = 0
+
+    with patch.object(LoggedIncorporator, "stream", side_effect=RuntimeError("pipeline crash")):
+        with pytest.raises(RuntimeError, match="pipeline crash"):
+            async for _ in LoggedIncorporator.stream(  # type: ignore[attr-defined]
+                incorp_params={}, enable_logging=True
+            ):
+                pass
 
 
 @pytest.mark.asyncio
