@@ -35,14 +35,14 @@ async def main():
     db_path = "users_warehouse.db"
 
     # Flattens nested dictionaries into JSON strings and executes C-speed bulk inserts.
-    await User.export(users, file_path=db_path, sql_table="employees", if_exists="replace")
+    await User.export(instance=users, file_path=db_path, sql_table="employees", if_exists="replace")
     print(f"   ✅ Exported natively to {db_path}")
 
     print("\n🐘 3. Pivoting to Apache Avro (Big Data Format)...")
     avro_path = "users_datalake.avro"
 
     # Translates the dynamic Pydantic schema into a strict Avro binary stream.
-    await User.export(users, file_path=avro_path, format_type=FormatType.AVRO)
+    await User.export(instance=users, file_path=avro_path, format_type=FormatType.AVRO)
     print(f"   ✅ Exported natively to {avro_path}")
 
     print("\n🔄 4. The Round Trip: Reading back from Binary Sources...")

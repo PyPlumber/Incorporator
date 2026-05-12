@@ -4,7 +4,7 @@ import csv
 import io
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, TextIO, Union
+from typing import Any, Dict, Iterable, List, TextIO, Union
 
 from ._base import BaseFormatHandler
 from ...exceptions import IncorporatorFormatError
@@ -40,9 +40,8 @@ class CSVHandler(BaseFormatHandler):
             raw_data = ensure_string(source)
             return self._parse_stream(io.StringIO(raw_data), **kwargs)
 
-    def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
-        if not data:
-            return
+    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         try:
             path = Path(file_path).resolve()
             is_append = kwargs.get("if_exists") == "append"
@@ -51,10 +50,21 @@ class CSVHandler(BaseFormatHandler):
             # Only write headers if we are creating a new file
             write_headers = not (is_append and path.exists() and path.stat().st_size > 0)
 
+            explicit_fieldnames: List[str] = kwargs.get("all_field_names") or []
+            data_iter: Iterable[Dict[str, Any]]
+
+            if not explicit_fieldnames:
+                # No schema hint available (e.g. called outside export()): must materialize
+                # the full dataset to discover all column names before writing headers.
+                rows: List[Dict[str, Any]] = list(data)
+                explicit_fieldnames = list(dict.fromkeys(k for row in rows for k in row))
+                data_iter = iter(rows)
+            else:
+                data_iter = data
+
             with open(path, mode, encoding="utf-8", newline="") as f:
-                fieldnames = kwargs.get("all_field_names") or list(dict.fromkeys(k for row in data for k in row))
-                processed_gen = ({k: serialize_nested(v) for k, v in row.items()} for row in data)
-                writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=self.delimiter, extrasaction="ignore")
+                processed_gen = ({k: serialize_nested(v) for k, v in row.items()} for row in data_iter)
+                writer = csv.DictWriter(f, fieldnames=explicit_fieldnames, delimiter=self.delimiter, extrasaction="ignore")
 
                 if write_headers:
                     writer.writeheader()

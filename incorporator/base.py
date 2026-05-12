@@ -22,6 +22,7 @@ from typing import (
     AsyncGenerator,
     ClassVar,
     Dict,
+    Iterable,
     List,
     Optional,
     Tuple,
@@ -305,29 +306,103 @@ class Incorporator(BaseModel):
 
         return result
 
+    @staticmethod
+    def _apply_code_transform(
+        instances: List[Any],
+        code_file: Union[str, Path],
+    ) -> List[Any]:
+        """Loads a Python file and calls its top-level ``transform(instances)`` function.
+
+        The file must define::
+
+            def transform(instances):
+                # filter, sort, add computed fields, etc.
+                return modified_instances
+
+        If no ``transform`` function is found, ``instances`` is returned unchanged.
+        Runs synchronously — callers should wrap in ``asyncio.to_thread`` for CPU-heavy transforms.
+
+        Args:
+            instances: The list of Incorporator objects to transform.
+            code_file: Absolute or relative path to a ``.py`` file.
+
+        Raises:
+            FileNotFoundError: If ``code_file`` does not exist.
+            ImportError: If the file cannot be loaded as a Python module.
+        """
+        import importlib.util
+
+        code_path = Path(code_file).resolve()
+        if not code_path.exists():
+            raise FileNotFoundError(f"[Incorporator] code_file not found: {code_path}")
+
+        spec = importlib.util.spec_from_file_location("_inc_code_transform", code_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"[Incorporator] Cannot load module spec from: {code_path}")
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+
+        transform_fn = getattr(module, "transform", None)
+        if transform_fn is None:
+            return instances
+
+        result = transform_fn(instances)
+        return result if result is not None else instances
+
     @classmethod
     async def export(
         cls: Type[TIncorporator],
+        *,
         instance: Union[str, Path, TIncorporator, List[TIncorporator]],
         file_path: Optional[Union[str, Path]] = None,
         format_type: Optional[FormatType] = None,
         compression: Optional[str] = None,
         sql_table: Optional[str] = None,
         if_exists: str = "replace",
+        code_file: Optional[Union[str, Path]] = None,
         **kwargs: Any,
     ) -> None:
-        """Serializes current Incorporator states out to physical files natively."""
+        """Serializes current Incorporator states out to physical files natively.
 
+        All parameters after ``cls`` are keyword-only (enforced by the bare ``*``).
+        Supports all formats registered in ``FormatType`` and scales to 10M+ rows
+        via a lazy generator: each record is serialized only when the handler
+        requests the next item.
+
+        Args:
+            instance: Either a file path (when ``file_path`` is omitted, uses
+                ``cls.inc_dict`` as data source) or a list of Incorporator instances.
+            file_path: Destination file path. When provided, ``instance`` is the
+                data source. When omitted, ``instance`` is treated as the file path.
+            format_type: Override the format inferred from the file extension.
+            compression: Optional compression to apply after writing (e.g. ``"gz"``).
+            sql_table: Table name for SQLite exports. Defaults to the class name.
+            if_exists: ``"replace"`` (default), ``"append"``, or ``"fail"``.
+            code_file: Path to a ``.py`` file defining ``transform(instances)``.
+                Called with the in-state object list before serialization; the
+                return value is exported instead. Passes through ``export_params``
+                in ``stream()`` naturally.
+            **kwargs: Forwarded to the format handler.
+        """
         # Unrolled instance resolution for DX traceability
         if file_path is None:
             actual_path = str(instance)
-            instances = cast(List[TIncorporator], list(cls.inc_dict.values()))
+            instances: List[TIncorporator] = cast(List[TIncorporator], list(cls.inc_dict.values()))
         else:
             actual_path = str(file_path)
-            instances = cast(List[TIncorporator], instance if isinstance(instance, list) else [instance])
+            instances = cast(
+                List[TIncorporator],
+                instance if isinstance(instance, list) else [instance],
+            )
 
         if not instances:
             return
+
+        # Optional code transform — runs in a thread (user code may be CPU-bound).
+        transform_source: Iterable[Any] = instances
+        if code_file is not None:
+            transform_source = await asyncio.to_thread(cls._apply_code_transform, instances, code_file)
 
         active_format = format_type or infer_format(actual_path)
         kwargs.update(
@@ -339,13 +414,19 @@ class Incorporator(BaseModel):
             }
         )
 
-        # Replaced anonymous lambda with named func for CPU Profiling visibility
-        def _dump_all_to_dict() -> List[Dict[str, Any]]:
-            return [obj.model_dump(by_alias=True, mode="json") for obj in instances]
+        # Lazy serialization generator: model_dump() is called per-object only when
+        # the handler requests the next row — no full-list copy in RAM.
+        # Handles both Incorporator objects (model_dump) and raw dicts from code_file transforms.
+        def _make_lazy_iter(source: Iterable[Any]) -> Iterable[Dict[str, Any]]:
+            for obj in source:
+                if isinstance(obj, Incorporator):
+                    yield obj.model_dump(by_alias=True, mode="json")
+                else:
+                    yield dict(obj)
 
-        data_dicts = await asyncio.to_thread(_dump_all_to_dict)
-
-        await format_parsers.write_destination_data(data_dicts, actual_path, active_format, **kwargs)
+        await format_parsers.write_destination_data(
+            _make_lazy_iter(transform_source), actual_path, active_format, **kwargs
+        )
 
         if compression:
             from .io.compression import compress_file

@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, TextIO, Union, cast
+from typing import Any, Dict, Iterable, List, TextIO, Union, cast
 
 from ._base import BaseFormatHandler, _raise_if_append_unsupported
 from ...exceptions import IncorporatorFormatError
@@ -37,19 +37,40 @@ class JSONHandler(BaseFormatHandler):
             except json.JSONDecodeError as e:
                 raise IncorporatorFormatError(f"Invalid JSON: {e}") from e
 
-    def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         _raise_if_append_unsupported(kwargs, "JSON")
         path = Path(file_path).resolve()
         try:
             import orjson  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
-            path.write_bytes(orjson.dumps(data, option=orjson.OPT_INDENT_2))
+            # Streaming JSON array: write one record at a time — no full-list materialization.
+            try:
+                with open(path, "wb") as f:
+                    f.write(b"[\n")
+                    first = True
+                    for item in data:
+                        if not first:
+                            f.write(b",\n")
+                        f.write(orjson.dumps(item, option=orjson.OPT_INDENT_2))
+                        first = False
+                    f.write(b"\n]")
+            except OSError as e:
+                raise IncorporatorFormatError(f"JSON File IO Error on {file_path}: {e}") from e
+
         except ImportError:
             import json
 
             try:
                 with open(path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=4)
+                    f.write("[\n")
+                    first = True
+                    for item in data:
+                        if not first:
+                            f.write(",\n")
+                        f.write(json.dumps(item, indent=4))
+                        first = False
+                    f.write("\n]")
             except OSError as e:
                 raise IncorporatorFormatError(f"JSON File IO Error on {file_path}: {e}") from e
 
@@ -77,11 +98,10 @@ class NDJSONHandler(BaseFormatHandler):
             raw_data = ensure_string(source)
             return self._parse_stream(raw_data.splitlines())
 
-    def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         import json
 
-        if not data:
-            return
         try:
             path = Path(file_path).resolve()
             mode = "a" if kwargs.get("if_exists") == "append" else "w"
@@ -144,13 +164,17 @@ class XMLHandler(BaseFormatHandler):
                 except ET.ParseError as e:
                     raise IncorporatorFormatError(f"Invalid XML: {e}") from e
 
-    def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         _raise_if_append_unsupported(kwargs, "XML")
+        # XML requires a full DOM in memory — intentionally materialize here.
+        # ElementTree cannot write a streaming element tree incrementally.
+        data_list: List[Dict[str, Any]] = list(data)
         path = Path(file_path).resolve()
         try:
             import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
-            root = _build_xml_root(data, lxml_ET)
+            root = _build_xml_root(data_list, lxml_ET)
             lxml_ET.ElementTree(root).write(str(path), encoding="utf-8", xml_declaration=True, pretty_print=True)
 
         except ImportError:
@@ -158,7 +182,7 @@ class XMLHandler(BaseFormatHandler):
 
             try:
                 with open(path, "w", encoding="utf-8") as f:
-                    root = _build_xml_root(data, ET)
+                    root = _build_xml_root(data_list, ET)
                     ET.ElementTree(root).write(f, encoding="unicode")
             except OSError as e:
                 raise IncorporatorFormatError(f"XML File IO Error on {file_path}: {e}") from e

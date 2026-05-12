@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, Iterable, List, Union
 
 from ...exceptions import IncorporatorFormatError
 
@@ -23,5 +23,5 @@ class BaseFormatHandler(ABC):
         pass
 
     @abstractmethod
-    def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         pass

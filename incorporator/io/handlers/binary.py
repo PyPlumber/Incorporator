@@ -3,7 +3,7 @@
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Union
+from typing import Any, Dict, Iterable, Iterator, List, Union
 
 from ._base import BaseFormatHandler
 from ...exceptions import IncorporatorFormatError
@@ -59,13 +59,25 @@ class SQLiteHandler(BaseFormatHandler):
         except sqlite3.Error as e:
             raise IncorporatorFormatError(f"SQLite Read Error: {e}") from e
 
-    def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
-        if not data:
-            return
-
+    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         table_name = sanitize_json_key(kwargs.get("sql_table", "incorporator_export"))
         if_exists = kwargs.get("if_exists", "replace")
         path = Path(file_path).resolve()
+
+        explicit_keys: List[str] = kwargs.get("all_field_names") or []
+        data_iter: Iterable[Dict[str, Any]]
+
+        if not explicit_keys:
+            # No schema hint (e.g. called outside export()): must materialize to discover columns.
+            rows_list: List[Dict[str, Any]] = list(data)
+            explicit_keys = list(rows_list[0].keys()) if rows_list else []
+            data_iter = iter(rows_list)
+        else:
+            data_iter = data
+
+        if not explicit_keys:
+            return  # truly empty even after materialization
 
         try:
             conn = sqlite3.connect(path)
@@ -83,21 +95,20 @@ class SQLiteHandler(BaseFormatHandler):
                         if cursor.fetchone():
                             raise IncorporatorFormatError(f"Table '{table_name}' already exists in {path.name}.")
 
-                    keys = kwargs.get("all_field_names") or list(data[0].keys())
-                    safe_columns = [f'"{sanitize_json_key(k)}"' for k in keys]
-
+                    safe_columns = [f'"{sanitize_json_key(k)}"' for k in explicit_keys]
                     create_stmt = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({", ".join(safe_columns)})'
                     cursor.execute(create_stmt)
 
-                    placeholders = ", ".join(["?"] * len(keys))
+                    placeholders = ", ".join(["?"] * len(explicit_keys))
                     insert_stmt = f'INSERT INTO "{table_name}" VALUES ({placeholders})'  # noqa: S608
 
-                    # Generator expression () yields tuples 1-by-1 to the C-driver
+                    # Generator expression yields tuples 1-by-1 to the C-driver
                     processed_gen = (
                         tuple(
-                            int(v) if isinstance(v, bool) else serialize_nested(v) for v in (row.get(k) for k in keys)
+                            int(v) if isinstance(v, bool) else serialize_nested(v)
+                            for v in (row.get(k) for k in explicit_keys)
                         )
-                        for row in data
+                        for row in data_iter
                     )
 
                     cursor.executemany(insert_stmt, processed_gen)
@@ -137,10 +148,8 @@ class AvroHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"Avro Read Error: {e}") from e
 
-    def write(self, data: List[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
-        if not data:
-            return
-
+    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         try:
             import fastavro  # type: ignore[import-untyped, import-not-found, unused-ignore]
         except ImportError:

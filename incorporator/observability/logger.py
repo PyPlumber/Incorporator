@@ -280,14 +280,14 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         return result
 
     @classmethod
-    async def export(cls: Type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any) -> None:
+    async def export(cls: Type[TLoggedIncorporator], *, enable_logging: bool = False, **kwargs: Any) -> None:
         """Exports the class data, optionally wrapping the process in observability logs."""
         if enable_logging:
             setup_class_logger(cls)
-            cls.log_cls_info(f"Initiating export process with args={args}, kwargs={kwargs}")
+            cls.log_cls_info(f"Initiating export process with kwargs={kwargs}")
 
         try:
-            await super().export(*args, **kwargs)
+            await super().export(**kwargs)
             if enable_logging:
                 cls.log_cls_info("Export process completed successfully.")
         except Exception as e:

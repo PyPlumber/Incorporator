@@ -1,9 +1,10 @@
 """Native zero-bloat format I/O handlers and dispatch for Incorporator."""
 
 import asyncio
+import itertools
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Union, cast
+from typing import Any, Dict, Iterable, Iterator, List, Tuple, Union, cast
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType
@@ -53,11 +54,30 @@ async def parse_source_data(
         ) from e
 
 
+def _peek_iterable(data: Iterable[Dict[str, Any]]) -> Tuple[bool, Iterator[Dict[str, Any]]]:
+    """Non-destructively probe any Iterable for emptiness.
+
+    Consumes one item from the iterator and chains it back, so the caller
+    receives a fully-intact iterator regardless of outcome.
+    Returns (is_empty, reconstructed_iterator).
+    """
+    it = iter(data)
+    try:
+        first = next(it)
+    except StopIteration:
+        return True, iter([])
+    return False, itertools.chain([first], it)
+
+
 async def write_destination_data(
-    data: List[Dict[str, Any]], file_path: Union[str, Path], format_type: FormatType, **kwargs: Any
+    data: Iterable[Dict[str, Any]], file_path: Union[str, Path], format_type: FormatType, **kwargs: Any
 ) -> None:
     handler = _HANDLERS.get(format_type)
     if not handler:
         raise IncorporatorFormatError(f"Unsupported export format: '{format_type}'.")
 
-    await asyncio.to_thread(handler.write, data, file_path, **kwargs)
+    is_empty, safe_iter = _peek_iterable(data)
+    if is_empty:
+        return
+
+    await asyncio.to_thread(handler.write, safe_iter, file_path, **kwargs)

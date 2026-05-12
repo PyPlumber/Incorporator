@@ -125,9 +125,13 @@ async def run_pipeline(
                 loop_idx += 1
                 start_time = time.perf_counter()
                 try:
-                    async with lock:  # ENSURE ATOMIC READ
-                        await cls.export(instance=dataset_ref[0], **e_params)
-                    rows = len(dataset_ref[0]) if isinstance(dataset_ref[0], list) else 1
+                    # Snapshot the reference under the lock (O(1) pointer copy).
+                    # Export runs outside the lock so _refresh_daemon can proceed
+                    # concurrently during long I/O writes (e.g. 10M-row exports).
+                    async with lock:
+                        snapshot = dataset_ref[0]
+                    await cls.export(instance=snapshot, **e_params)
+                    rows = len(snapshot) if isinstance(snapshot, list) else 1
                     await audit_queue.put(
                         AuditResult(
                             chunk_index=loop_idx,
