@@ -99,6 +99,19 @@ def test_cli_stream_reports_failed_sources(tmp_path: Path) -> None:
     assert "dead.example.com" in result.stdout
 
 
+def test_cli_keyboard_interrupt(tmp_path: Path) -> None:
+    """KeyboardInterrupt raised inside asyncio.run must be caught; exit code stays 0."""
+    config_file = tmp_path / "pipe.json"
+    config_file.write_text(json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8")
+
+    with patch("incorporator.cli.asyncio.run", side_effect=KeyboardInterrupt):
+        result = runner.invoke(app, ["stream", str(config_file)])
+
+    # The stream() handler catches KeyboardInterrupt and emits a message without sys.exit(1)
+    assert result.exit_code == 0
+    assert "stopped by user" in result.stdout
+
+
 def test_cli_fatal_exception_in_stream(tmp_path: Path) -> None:
     """A mid-stream exception must exit 1 with the fatal-error banner."""
     config_file = tmp_path / "pipe.json"

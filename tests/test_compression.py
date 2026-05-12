@@ -162,7 +162,34 @@ def test_cramjam_compression_roundtrip(tmp_path: Path, comp_type: CompressionTyp
 
 
 # ==========================================
-# 6. ROUTER COVERAGE INVARIANT
+# 6. ARCHIVE BINARY TARGET (SQLite inside ZIP)
+# ==========================================
+
+
+def test_archive_with_binary_target(tmp_path: Path) -> None:
+    """decompress_data must return raw bytes when extracting a SQLite .db from a ZIP archive."""
+    import zipfile
+
+    # Build a minimal SQLite database in memory (the magic header is enough for this test)
+    db_content = b"SQLite format 3\x00" + b"\x00" * 84  # 100-byte SQLite header stub
+
+    db_file = tmp_path / "data.db"
+    db_file.write_bytes(db_content)
+
+    zip_file = tmp_path / "archive.zip"
+    with zipfile.ZipFile(zip_file, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(db_file, arcname="data.db")
+
+    raw_bytes = zip_file.read_bytes()
+
+    result = decompress_data(raw_bytes, path_hint="archive.zip", active_format=FormatType.SQLITE, archive_target="data.db")
+
+    assert isinstance(result, bytes), "Binary format must return bytes, not str"
+    assert result == db_content
+
+
+# ==========================================
+# 7. ROUTER COVERAGE INVARIANT
 # ==========================================
 def test_router_coverage_invariant() -> None:
     """_assert_router_coverage must pass at import time — every CompressionType

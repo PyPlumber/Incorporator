@@ -156,6 +156,55 @@ def test_sqlite_write_append_mode_concatenates(tmp_path: Path) -> None:
     assert len(rows) == 4  # Original 2 + appended 2
 
 
+def test_avro_complex_union_schema(tmp_path: Path) -> None:
+    """AvroHandler.write must handle anyOf schemas where the first type is non-null (complex unions).
+
+    Tests two patterns:
+    - A nullable numeric field where null appears last in anyOf.
+    - A field whose anyOf union lists null FIRST and the concrete type second.
+    """
+    pytest.importorskip("fastavro")
+
+    avro_path = tmp_path / "complex.avro"
+    handler = AvroHandler()
+
+    # Nested anyOf: null-first (handler must skip null, pick "integer")
+    # and object-type union (handler picks "object" → serialised as "string" by Avro converter)
+    complex_schema = {
+        "properties": {
+            "id": {"type": "integer"},
+            # null listed first — handler must skip it and pick the concrete type
+            "count": {
+                "anyOf": [
+                    {"type": "null"},
+                    {"type": "integer"},
+                ]
+            },
+            # object union — tests the anyOf branch where json_type resolves to "object"
+            "meta": {
+                "anyOf": [
+                    {"type": "object", "properties": {"key": {"type": "string"}}},
+                    {"type": "null"},
+                ]
+            },
+        }
+    }
+
+    rows = [
+        {"id": 1, "count": 42, "meta": {"key": "alpha"}},
+        {"id": 2, "count": None, "meta": None},
+    ]
+
+    # Must not raise regardless of how the anyOf types resolve
+    handler.write(rows, avro_path, sql_table="ComplexRecord", pydantic_schema=complex_schema)
+    assert avro_path.exists(), "Avro file must be created"
+
+    parsed = handler.parse(avro_path)
+    assert len(parsed) == 2
+    assert parsed[0]["id"] == 1
+    assert parsed[1]["id"] == 2
+
+
 def test_sqlite_write_with_all_field_names_hint(tmp_path: Path) -> None:
     """Passing all_field_names explicitly must let the handler skip the full-row scan path."""
     db_path = tmp_path / "hinted.db"

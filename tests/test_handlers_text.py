@@ -135,3 +135,34 @@ def test_xml_parse_xxe_blocked_via_stdlib_fallback(mock_no_speedups, tmp_path: P
     )
     with pytest.raises(IncorporatorFormatError, match="Security Policy Violation"):
         XMLHandler().parse(evil)
+
+
+def test_xml_parse_stdlib_fallback(mock_no_speedups) -> None:
+    """XMLHandler.parse must succeed on safe XML when lxml is absent (stdlib happy path)."""
+    safe_xml = "<root><item><name>Alice</name><age>30</age></item></root>"
+    result = XMLHandler().parse(safe_xml)
+    text = str(result)
+    assert "Alice" in text
+    assert "30" in text
+
+
+def test_xml_parse_recovery_from_whitespace(mock_no_speedups, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stdlib recovery branch: ET.ParseError on first fromstring triggers .strip() retry."""
+    import xml.etree.ElementTree as ET
+
+    original_fromstring = ET.fromstring
+    call_count = 0
+
+    def patched_fromstring(text: str, *args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ET.ParseError("synthetic whitespace-preamble error")
+        # Second call receives the stripped string and must succeed
+        return original_fromstring(text)
+
+    monkeypatch.setattr("xml.etree.ElementTree.fromstring", patched_fromstring)
+
+    result = XMLHandler().parse("<root><item><name>recovered</name></item></root>")
+    assert call_count == 2, "Recovery branch must issue exactly two fromstring() calls"
+    assert "recovered" in str(result)
