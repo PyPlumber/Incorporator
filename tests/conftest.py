@@ -3,9 +3,34 @@
 import json
 import sys
 from pathlib import Path
+from typing import Generator
 from unittest.mock import patch
 
 import pytest
+
+
+# --- LOGGER STATE FIXTURES ---
+
+
+@pytest.fixture
+def reset_active_listeners() -> Generator[None, None, None]:
+    """Isolate _ACTIVE_LISTENERS state across tests.
+
+    Snapshots which background QueueListener threads are registered at entry,
+    then on teardown stops and removes any listener added during the test.
+    Tests that exercise ``setup_class_logger()`` should depend on this fixture
+    so a leaked listener never affects an unrelated subsequent test.
+    """
+    from incorporator.observability.logger import _ACTIVE_LISTENERS
+
+    snapshot = set(_ACTIVE_LISTENERS.keys())
+    try:
+        yield
+    finally:
+        for key in list(_ACTIVE_LISTENERS.keys()):
+            if key not in snapshot:
+                _ACTIVE_LISTENERS[key].stop()
+                del _ACTIVE_LISTENERS[key]
 
 # --- JSON FIXTURES ---
 

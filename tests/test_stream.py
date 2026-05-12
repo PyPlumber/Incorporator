@@ -5,7 +5,7 @@ Tests both O(1) Chunking and Stateful Memory streams natively.
 
 import json
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Type
 
 import pytest
 
@@ -14,19 +14,34 @@ from incorporator.observability.logger import AuditResult
 from incorporator.io.pagination import CSVPaginator
 
 
-# 1. Dummy Model for Testing
-class StreamTargetModel(LoggedIncorporator):
-    """Dynamic target for the stream to instantiate."""
-    inc_code: Any = None
-    name: str
+@pytest.fixture
+def stream_target_model() -> Type[LoggedIncorporator]:
+    """Build a fresh LoggedIncorporator subclass per test.
+
+    State isolation: defining the class inside the fixture (called once per
+    test by default) guarantees each test sees a clean ``inc_dict`` and
+    ``_schema_union``. A module-level class would accumulate state across
+    test runs and break under pytest-randomly or parallel execution.
+    """
+
+    class StreamTargetModel(LoggedIncorporator):
+        """Dynamic target for the stream to instantiate."""
+
+        inc_code: Any = None
+        name: str
+
+    return StreamTargetModel
 
 
 @pytest.mark.asyncio
-async def test_stream_engine_1_chunking_big_data(tmp_path: Path) -> None:
+async def test_stream_engine_1_chunking_big_data(
+    tmp_path: Path, stream_target_model: Type[LoggedIncorporator]
+) -> None:
     """
     ENGINE 1: stateful_polling = False
     Ensures stream() uses the Paginator to yield strict O(1) memory chunks.
     """
+    StreamTargetModel = stream_target_model
     csv_file = tmp_path / "massive_dataset.csv"
     csv_file.write_text(
         "id,name\n1,Alice\n2,Bob\n3,Charlie\n4,Diana\n5,Eve\n",
@@ -66,11 +81,14 @@ async def test_stream_engine_1_chunking_big_data(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_engine_2_stateful_live_data(tmp_path: Path) -> None:
+async def test_stream_engine_2_stateful_live_data(
+    tmp_path: Path, stream_target_model: Type[LoggedIncorporator]
+) -> None:
     """
     ENGINE 2: stateful_polling = True
     Ensures stream() builds the memory graph exactly ONCE and loops against it.
     """
+    StreamTargetModel = stream_target_model
     json_file = tmp_path / "live_data.json"
     json_file.write_text(
         json.dumps([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}, {"id": 3, "name": "Charlie"}]),
@@ -101,11 +119,14 @@ async def test_stream_engine_2_stateful_live_data(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_engine_2_empty_failsafe(tmp_path: Path) -> None:
+async def test_stream_engine_2_empty_failsafe(
+    tmp_path: Path, stream_target_model: Type[LoggedIncorporator]
+) -> None:
     """
     ENGINE 2: Empty Data Guard
     Ensures the daemon safely exits if initialization fails or yields 0 rows.
     """
+    StreamTargetModel = stream_target_model
     json_file = tmp_path / "empty_data.json"
     json_file.write_text("[]", encoding="utf-8")
 

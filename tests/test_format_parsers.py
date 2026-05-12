@@ -11,7 +11,9 @@ async def test_json_parsing_with_rust_speedups():
     """Tests the ultra-fast orjson path (assumes pip install incorporator[speedups])."""
     data = b'{"hello": "world"}'
     result = await parse_source_data(data, FormatType.JSON)
-    assert result["hello"] == "world"
+    assert isinstance(result, dict)
+    assert result == {"hello": "world"}
+    assert isinstance(result["hello"], str)
 
 
 @pytest.mark.asyncio
@@ -21,4 +23,8 @@ async def test_json_parsing_standard_fallback(mock_no_speedups):
 
     # Because of the fixture, orjson will throw an ImportError natively!
     result = await parse_source_data(data, FormatType.JSON)
-    assert result["hello"] == "world"
+    assert isinstance(result, dict)
+    assert result == {"hello": "world"}
+    assert isinstance(result["hello"], str)
+    # Equivalence with the orjson path — both code paths must produce identical output
+    assert list(result.keys()) == ["hello"]

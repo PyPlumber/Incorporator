@@ -1,7 +1,7 @@
 """Integration test for the refresh() Re-Hydration API."""
 
 import json
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -13,49 +13,48 @@ from incorporator.io import fetch
 from incorporator.schema.converters import calc
 
 
-class LiveStock(Incorporator):
-    pass
+def _make_live_ticker_mock() -> Callable[..., Any]:
+    """Builds a stateful per-test mock simulating two consecutive API responses.
+
+    State isolation: the call counter lives inside this closure rather than at
+    module scope, so each test invocation gets its own counter. A module-level
+    ``call_counter`` would leak across tests under pytest-randomly.
+    """
+    call_counter = 0
+
+    async def mock_live_ticker(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        nonlocal call_counter
+        call_counter += 1
+
+        if call_counter == 1:
+            payload = {
+                "symbol": "AAPL",
+                "company_name": "Apple Inc.",
+                "current_price": "150.00",  # String that needs parsing
+                "status": "Market Open",
+            }
+        else:
+            payload = {
+                "symbol": "AAPL",
+                "company_name": "Apple Inc.",
+                "current_price": "165.50",
+                "status": "Market Active",
+            }
+
+        req = httpx.Request("GET", url)
+        return httpx.Response(200, text=json.dumps([payload]), request=req)
+
+    return mock_live_ticker
 
 
-# --- MOCK NETWORK SETUP ---
-# We use a global counter to simulate an API where the data changes over time
-call_counter = 0
-
-
-async def mock_live_ticker(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
-    """Mocks a stock market API where the price updates on the second call."""
-    global call_counter
-    call_counter += 1
-
-    if call_counter == 1:
-        # STATE A: Initial Market Open
-        payload = {
-            "symbol": "AAPL",
-            "company_name": "Apple Inc.",
-            "current_price": "150.00",  # String that needs parsing
-            "status": "Market Open",
-        }
-    else:
-        # STATE B: Market Update (Price surged!)
-        payload = {
-            "symbol": "AAPL",
-            "company_name": "Apple Inc.",
-            "current_price": "165.50",
-            "status": "Market Active",
-        }
-
-    req = httpx.Request("GET", url)
-    return httpx.Response(200, text=json.dumps([payload]), request=req)
-
-
-# --- TESTS ---
 @pytest.mark.asyncio
 async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     """Proves refresh() re-fetches data and correctly applies the ETL pipeline again."""
-    global call_counter
-    call_counter = 0  # Reset for test isolation
 
-    monkeypatch.setattr(fetch, "execute_request", mock_live_ticker)
+    class LiveStock(Incorporator):
+        pass
+
+    monkeypatch.setattr(fetch, "execute_request", _make_live_ticker_mock())
     BASE_URL = "https://finance.api.com/ticker/aapl"
 
     # ==========================================
@@ -98,13 +97,12 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
     assert stock_b.current_price == 165.5
 
 
-class DummyModel(Incorporator):
-    pass
-
-
 @pytest.mark.asyncio
 async def test_incorporator_list_state_carrier() -> None:
     """Verifies that inc_child_path persists on the returned list wrapper."""
+
+    class DummyModel(Incorporator):
+        pass
 
     # We mock the network engine so we only test the framework's internal state mechanism
     with patch("incorporator.io.fetch.fetch_concurrent_payloads", new_callable=AsyncMock) as mock_fetch:

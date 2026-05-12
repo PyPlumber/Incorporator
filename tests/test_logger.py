@@ -18,16 +18,12 @@ class MockAPIEndpoint2(LoggedIncorporator):
 
 
 @pytest.mark.asyncio
-async def test_multiplex_file_routing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_multiplex_file_routing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
     """Proves QueueHandler creates 3 files, writes JSONL, and routes traffic via Filters."""
 
     monkeypatch.chdir(tmp_path)
-
-    # Evict any stale listener from prior test runs before configuring a fresh one
-    if "MockAPIEndpoint1" in _ACTIVE_LISTENERS:
-        _ACTIVE_LISTENERS["MockAPIEndpoint1"].stop()
-        del _ACTIVE_LISTENERS["MockAPIEndpoint1"]
-
     setup_class_logger(MockAPIEndpoint1)
 
     # UPDATED: Use inc_code and inc_name to match the refactored base API
@@ -61,14 +57,12 @@ async def test_multiplex_file_routing(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_get_error_async_reader(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_get_error_async_reader(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
     """Proves the async get_error() classmethod successfully parses JSON Lines."""
 
     monkeypatch.chdir(tmp_path)
-    if "MockAPIEndpoint2" in _ACTIVE_LISTENERS:
-        _ACTIVE_LISTENERS["MockAPIEndpoint2"].stop()
-        del _ACTIVE_LISTENERS["MockAPIEndpoint2"]
-
     setup_class_logger(MockAPIEndpoint2)
 
     # UPDATED: Use inc_code and inc_name to match the refactored base API

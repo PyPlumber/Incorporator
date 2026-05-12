@@ -4,24 +4,24 @@ from incorporator import Incorporator
 from incorporator.schema.extractors import as_list, each
 
 
-# ==========================================
-# 1. DEFINE OUR OBJECTS
-# ==========================================
-class User(Incorporator):
-    pass
-
-
-class Post(Incorporator):
-    pass
-
-
-class EchoMirror(Incorporator):
-    pass
-
-
 @pytest.mark.asyncio
 async def test_live_post_tokens() -> None:
-    """Tests live API POST functionality for both Iterative and Bulk Batch tokens."""
+    """Tests live API POST functionality for both Iterative and Bulk Batch tokens.
+
+    State isolation: subclasses are defined INSIDE the test function so each
+    invocation gets a fresh ``inc_dict`` and ``_schema_union``. Module-level
+    class definitions would accumulate state across test runs and could cause
+    cross-test pollution under pytest-randomly or parallel execution.
+    """
+
+    class User(Incorporator):
+        pass
+
+    class Post(Incorporator):
+        pass
+
+    class EchoMirror(Incorporator):
+        pass
 
     # ------------------------------------------
     # PHASE 1: Fetch Parent Data (10 Mock Users)

@@ -8,7 +8,6 @@ import pytest
 
 from incorporator import Incorporator
 from incorporator.io import fetch
-from incorporator.schema import router
 from incorporator.io.pagination import NextUrlPaginator, OffsetPaginator
 
 
@@ -90,18 +89,6 @@ async def test_explicit_next_url_paginator(monkeypatch: pytest.MonkeyPatch) -> N
     assert page_items[1].name == "NextUrl Item B"
 
 
-def test_get_url_injection() -> None:
-    """Verifies that GET requests natively inject IDs into {} templates."""
-    extracted_ids = ["alpha", "beta"]
-
-    # Scenario: User provides a template URL
-    source_urls = ["https://api.com/users/{}/profile"]
-
-    kwargs = router.resolve_declarative_routing(
-        "Test", extracted_data=extracted_ids, source_urls=source_urls, http_method="GET"
-    )
-    # It should generate N unique URLs
-    assert kwargs["inc_url"] == [
-        "https://api.com/users/alpha/profile",
-        "https://api.com/users/beta/profile",
-    ]
+# NOTE: test_get_url_injection was removed from this file — the canonical
+# version lives in tests/test_converters.py (test_get_url_injection). Both
+# were identical; deduplicating here removes maintenance burden.
