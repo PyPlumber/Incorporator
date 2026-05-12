@@ -6,6 +6,7 @@ and asynchronous connection-pooling for maximum throughput.
 
 import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
@@ -290,7 +291,8 @@ def _inject_sqlite_query(source: Union[str, List[str]], table_name: str, kwargs:
     """Auto-injects a default SELECT query for SQLite sources when sql_query is not provided."""
     sample = source[0] if isinstance(source, list) else source
     if infer_format(str(sample)) == FormatType.SQLITE and not kwargs.get("sql_query"):
-        kwargs["sql_query"] = f'SELECT * FROM "{table_name}"'  # noqa: S608
+        safe_table = re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
+        kwargs["sql_query"] = f'SELECT * FROM "{safe_table}"'  # noqa: S608
 
 
 def _normalize_source_list(

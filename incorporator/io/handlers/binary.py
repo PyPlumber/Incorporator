@@ -63,7 +63,7 @@ class SQLiteHandler(BaseFormatHandler):
         if not data:
             return
 
-        table_name = kwargs.get("sql_table", "incorporator_export")
+        table_name = sanitize_json_key(kwargs.get("sql_table", "incorporator_export"))
         if_exists = kwargs.get("if_exists", "replace")
         path = Path(file_path).resolve()
 
