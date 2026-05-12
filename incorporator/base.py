@@ -4,8 +4,9 @@ Incorporator Base Module
 The core orchestrator and declarative factory for the Incorporator framework.
 
 This file acts purely as a Domain-Driven orchestrator. It contains NO data parsing,
-network looping, or schema compilation logic. It delegates to `io/`, `schema/`, and
-`observability/` and assembles the resulting dynamic Pydantic object graphs.
+network looping, or schema compilation logic. It delegates to `io/`, `schema/`,
+`observability/`, `factory.py`, and `list.py`, then assembles the resulting
+dynamic Pydantic object graphs.
 """
 
 import asyncio
@@ -32,12 +33,13 @@ from typing import (
 
 from pydantic import BaseModel, Field
 
-from .io import handlers as format_parsers
 from .io import fetch as network
-from .schema import router
-from .schema import builder as schema_builder
+from .io import handlers as format_parsers
 from .io.formats import FormatType, infer_format
 from .io.pagination.base import AsyncPaginator
+from .schema import router
+from .list import IncorporatorList, _deduplicate_extracted  # noqa: F401 — re-exported
+from . import factory as _factory
 
 if TYPE_CHECKING:
     from .observability.logger import AuditResult
@@ -50,71 +52,8 @@ _INSPECTION_LIMIT = 3
 _counter_lock = threading.Lock()
 
 
-def _deduplicate_extracted(data: List[Any]) -> List[Any]:
-    """Deduplicate extracted parent data preserving insertion order.
-
-    Falls back gracefully when non-hashable items (dicts, objects) are present:
-    deduplicates the hashable subset and appends non-hashable items as-is.
-    """
-    try:
-        return list(dict.fromkeys(data))
-    except TypeError:
-        hashable = [x for x in data if isinstance(x, (str, int, float, bool))]
-        non_hashable = [x for x in data if not isinstance(x, (str, int, float, bool))]
-        if non_hashable:
-            logger.warning(
-                f"extracted_data contains {len(non_hashable)} non-hashable item(s) that cannot be "
-                "deduplicated and will be included as-is. Consider extracting scalar IDs."
-            )
-        return list(dict.fromkeys(hashable)) + non_hashable
-
-
 # ==========================================
-# 1. LIST WRAPPER & REGISTRY ACCESS
-# ==========================================
-class IncorporatorList(list[TIncorporator]):
-    """
-    A specialized list providing direct access to the dynamic class registry.
-
-    When `incorp()` returns multiple items, this wrapper allows users to run
-    `dataset.inc_dict.get(id)` seamlessly against the dynamically generated class
-    without needing to manually inspect `type(dataset[0])`.
-    """
-
-    failed_sources: List[str]
-
-    def __init__(
-        self,
-        model_class: Type[TIncorporator],
-        items: List[TIncorporator],
-        failed_sources: Optional[List[str]] = None,
-    ):
-        super().__init__(items)
-        self._model_class = model_class
-        # Exposes HTTP 429 failed URLs/Paths for programmatic Dead Letter Queue retries
-        self.failed_sources = failed_sources if failed_sources is not None else []
-
-        # Protects schema_builder.py's cache from cross-contamination during graph drilling
-        self.inc_child_path: Optional[str] = None
-
-    def __del__(self) -> None:
-        """Memory-leak sentinel alerting users to immediate Garbage Collection."""
-        if not self:
-            return
-        if getattr(self, "_warn_on_gc", False):
-            logger.debug(
-                "🧹 INCORPORATOR GC ALERT: A built list was just garbage collected. "
-                "Ensure you assign `.incorp()` to a variable if you need to use `.inc_dict`!"
-            )
-
-    @property
-    def inc_dict(self) -> "weakref.WeakValueDictionary[Any, TIncorporator]":
-        """Provides O(1) direct access to the class-level weakref registry."""
-        return cast("weakref.WeakValueDictionary[Any, TIncorporator]", self._model_class.inc_dict)
-
-
-# ==========================================
-# 2. THE INCORPORATOR ENGINE
+# THE INCORPORATOR ENGINE
 # ==========================================
 class Incorporator(BaseModel):
     """
@@ -173,150 +112,7 @@ class Incorporator(BaseModel):
                     base.inc_dict[self.inc_code] = self
 
     # ==========================================
-    # 3. INTERNAL FACTORIES
-    # ==========================================
-    @classmethod
-    async def _child_incorp(
-        cls: Type[TIncorporator], inc_parent: Any, **kwargs: Any
-    ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
-        """Unified Parent-to-Child API proxy for deeply nested RESTful graphs."""
-
-        child_path = kwargs.get("inc_child") or getattr(inc_parent, "inc_child_path", None)
-        if not child_path and inc_parent:
-            parent_class = inc_parent[0].__class__ if isinstance(inc_parent, list) else inc_parent.__class__
-            child_path = getattr(parent_class, "inc_child", None)
-
-        # Use the Router to perform BFS drill-down
-        extracted_data = (
-            router.extract_parent_data(inc_parent, child_path)
-            if child_path
-            else (inc_parent if isinstance(inc_parent, list) else [inc_parent])
-        )
-
-        # Deduplicate paths to prevent duplicate HTTP requests
-        if extracted_data and child_path:
-            extracted_data = _deduplicate_extracted(extracted_data)
-
-        # Enforce REST canonical methods
-        raw_method = kwargs.pop("method", kwargs.pop("http_method", "GET"))
-        kwargs["http_method"] = raw_method.upper() if isinstance(raw_method, str) else "GET"
-
-        inc_url = kwargs.get("inc_url")
-        source_urls = [inc_url] if isinstance(inc_url, str) else (inc_url or [])
-
-        # Use the Router to build POST payloads or GET queries
-        if extracted_data:
-            kwargs = router.resolve_declarative_routing(cls.__name__, extracted_data, source_urls, **kwargs)
-
-        return await cls.incorp(**kwargs)
-
-    @classmethod
-    def _build_instances(
-        cls: Type[TIncorporator],
-        parsed_data: List[Any],
-        failed_sources: List[str],
-        is_single: bool,
-        target_class: Optional[Type[TIncorporator]] = None,
-        inc_code: Optional[str] = None,
-        inc_name: Optional[str] = None,
-        excl_lst: Optional[List[str]] = None,
-        conv_dict: Optional[Dict[str, Any]] = None,
-        name_chg: Optional[List[Tuple[str, str]]] = None,
-    ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
-        """
-        The Factory Assembler:
-        1. Transforms data via Columnar processing.
-        2. Compiles the optimal Pydantic schema cache.
-        3. Instantiates the Python objects at C-speed.
-        """
-        if failed_sources:
-            warnings.warn(
-                f"Incorporator partial data returned: {len(failed_sources)} source(s) failed.",
-                stacklevel=2,
-            )
-
-        if not parsed_data:
-            # Generate a safe empty class if an API returns 200 OK but 0 records
-            EmptyClass = cast(Type[TIncorporator], schema_builder.infer_dynamic_schema("DynamicModel", [{}], cls))
-            return IncorporatorList(EmptyClass, [], failed_sources=failed_sources)
-
-        if is_single and len(parsed_data) == 1:
-            parsed_data = parsed_data[0]
-
-        # 1. Transform Phase
-        transformed_data = schema_builder.apply_etl_transformations(
-            parsed_data=parsed_data,
-            code_attr=inc_code,
-            name_attr=inc_name,
-            excl_lst=excl_lst,
-            conv_dict=conv_dict,
-            name_chg=name_chg,
-        )
-
-        # 2. Metaprogramming Compile Phase
-        ActualClass = target_class or cast(
-            Type[TIncorporator],
-            schema_builder.infer_dynamic_schema("DynamicModel", transformed_data, cls),
-        )
-
-        # 3. Final Instantiation Phase
-        if isinstance(transformed_data, list):
-            # Populate the superset schema from raw dicts before Pydantic absorbs extra keys.
-            # Guard: create a per-class dict so subclasses don't share the base-class instance.
-            if "_schema_union" not in cls.__dict__:
-                cls._schema_union = {}
-            # Writes only on first-seen keys — O(1) miss per key, zero writes after stabilization.
-            declared = ActualClass.model_json_schema().get("properties", {})
-            for item in transformed_data:
-                for k in item:
-                    if k not in cls._schema_union:
-                        cls._schema_union[k] = declared.get(k, {"type": "string"})
-
-            instances = [ActualClass(**item) for item in transformed_data]
-            return IncorporatorList(ActualClass, instances, failed_sources=failed_sources)
-
-        return ActualClass(**transformed_data)
-
-    @classmethod
-    async def test(
-        cls: Type[TIncorporator],
-        **kwargs: Any,
-    ) -> Union[TIncorporator, IncorporatorList[TIncorporator], List[Any]]:
-        """
-        DX Helper: Wraps incorp() to help developers map out unknown APIs.
-        Prints a tree-view of the payload, suggests optimal kwargs, and
-        returns a maximum of 3 records to prevent console spam.
-        """
-        kwargs["__inspect"] = True
-
-        if "inc_page" in kwargs and not kwargs.get("call_lim"):
-            kwargs["call_lim"] = 1
-
-        if "timeout" not in kwargs:
-            kwargs["timeout"] = 5.0  # Fail fast!
-
-        try:
-            result = await cls.incorp(**kwargs)
-
-        except Exception as e:
-            # Defer DX logging to the Inspector module
-            from .inspector import analyze_error
-
-            analyze_error(e)
-            return IncorporatorList(cls, [])
-
-        if isinstance(result, IncorporatorList):
-            sliced = result[:_INSPECTION_LIMIT]
-            new_list = IncorporatorList(result._model_class, sliced, result.failed_sources)
-            new_list.inc_child_path = result.inc_child_path
-            return new_list
-        elif isinstance(result, list):
-            return result[:_INSPECTION_LIMIT]
-
-        return result
-
-    # ==========================================
-    # 4. PUBLIC "HOLY TRINITY" API
+    # PUBLIC "HOLY TRINITY" API
     # ==========================================
     @classmethod
     async def incorp(
@@ -332,7 +128,7 @@ class Incorporator(BaseModel):
         name_chg: Optional[List[Tuple[str, str]]] = None,
         inc_page: Optional[AsyncPaginator] = None,
         **kwargs: Any,
-    ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
+    ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
         """Extracts data from an API or File and returns dynamically generated Python objects."""
 
         # Route to Parent Execution if triggered
@@ -350,7 +146,7 @@ class Incorporator(BaseModel):
                     "inc_page": inc_page,
                 }
             )
-            return await cls._child_incorp(inc_parent=inc_parent, **kwargs)
+            return await _factory.child_incorp(cls, inc_parent=inc_parent, **kwargs)
 
         source = inc_file if inc_file else inc_url
         if not source and not kwargs.get("payload_list"):
@@ -394,9 +190,10 @@ class Incorporator(BaseModel):
 
             analyze_data(parsed_data, {"rec_path": kwargs.get("rec_path")})
 
-        # Build Phase
+        # Build Phase — runs in a thread pool to keep the event loop free
         result = await asyncio.to_thread(
-            cls._build_instances,
+            _factory.build_instances,
+            cls,
             parsed_data,
             failed_sources,
             is_single,
@@ -427,7 +224,7 @@ class Incorporator(BaseModel):
         name_chg: Optional[List[Tuple[str, str]]] = None,
         inc_page: Optional[AsyncPaginator] = None,
         **kwargs: Any,
-    ) -> Union[TIncorporator, IncorporatorList[TIncorporator]]:
+    ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
         """Hydrates existing instances with new data, deduplicating HTTP execution via weakrefs."""
 
         target_url = new_url
@@ -490,7 +287,8 @@ class Incorporator(BaseModel):
         )
 
         result = await asyncio.to_thread(
-            cls._build_instances,
+            _factory.build_instances,
+            cls,
             parsed_data,
             failed_sources,
             is_single=(len(source_list) <= 1 and inc_page is None),
@@ -582,3 +380,41 @@ class Incorporator(BaseModel):
             export_interval=export_interval,
         ):
             yield audit
+
+    @classmethod
+    async def test(
+        cls: Type[TIncorporator],
+        **kwargs: Any,
+    ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]", List[Any]]:
+        """
+        DX Helper: Wraps incorp() to help developers map out unknown APIs.
+        Prints a tree-view of the payload, suggests optimal kwargs, and
+        returns a maximum of 3 records to prevent console spam.
+        """
+        kwargs["__inspect"] = True
+
+        if "inc_page" in kwargs and not kwargs.get("call_lim"):
+            kwargs["call_lim"] = 1
+
+        if "timeout" not in kwargs:
+            kwargs["timeout"] = 5.0  # Fail fast!
+
+        try:
+            result = await cls.incorp(**kwargs)
+
+        except Exception as e:
+            # Defer DX logging to the Inspector module
+            from .inspector import analyze_error
+
+            analyze_error(e)
+            return IncorporatorList(cls, [])
+
+        if isinstance(result, IncorporatorList):
+            sliced = result[:_INSPECTION_LIMIT]
+            new_list = IncorporatorList(result._model_class, sliced, result.failed_sources)
+            new_list.inc_child_path = result.inc_child_path
+            return new_list
+        elif isinstance(result, list):
+            return result[:_INSPECTION_LIMIT]
+
+        return result

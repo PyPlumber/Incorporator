@@ -2,7 +2,8 @@
 
 __version__ = "1.0.8"
 
-from .base import Incorporator, IncorporatorList
+from .base import Incorporator
+from .list import IncorporatorList
 from .io.compression import CompressionType
 from .schema.converters import (
     calc,
