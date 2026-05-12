@@ -38,7 +38,7 @@ from .io import handlers as format_parsers
 from .io.formats import FormatType, infer_format
 from .io.pagination.base import AsyncPaginator
 from .schema import router
-from .list import IncorporatorList, _deduplicate_extracted  # noqa: F401 — re-exported
+from .list import IncorporatorList, _deduplicate_extracted
 from . import factory as _factory
 
 if TYPE_CHECKING:
