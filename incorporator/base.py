@@ -347,6 +347,16 @@ class Incorporator(BaseModel):
         if transform_fn is None:
             return instances
 
+        import inspect
+
+        sig = inspect.signature(transform_fn)
+        params = list(sig.parameters)
+        if len(params) != 1:
+            raise ValueError(
+                f"[Incorporator] transform() must accept exactly 1 parameter (instances), "
+                f"got {len(params)}: {params}"
+            )
+
         result = transform_fn(instances)
         return result if result is not None else instances
 
@@ -391,6 +401,15 @@ class Incorporator(BaseModel):
             instances: List[TIncorporator] = cast(List[TIncorporator], list(cls.inc_dict.values()))
         else:
             actual_path = str(file_path)
+            if not isinstance(instance, list):
+                from pydantic import BaseModel
+
+                if not isinstance(instance, BaseModel):
+                    raise TypeError(
+                        f"export() 'instance' must be an Incorporator instance or a list, "
+                        f"got {type(instance).__name__!r}. "
+                        "Pass a list returned by incorp(), or omit file_path to use in-state export."
+                    )
             instances = cast(
                 List[TIncorporator],
                 instance if isinstance(instance, list) else [instance],
@@ -401,8 +420,23 @@ class Incorporator(BaseModel):
 
         # Optional code transform — runs in a thread (user code may be CPU-bound).
         transform_source: Iterable[Any] = instances
+        code_file_field_names: Optional[List[str]] = None
         if code_file is not None:
             transform_source = await asyncio.to_thread(cls._apply_code_transform, instances, code_file)
+            # Peek at the first transformed row so we can rebuild all_field_names from the
+            # *actual* output schema — code_file may add, remove, or rename fields.
+            import itertools as _itertools
+
+            _transform_iter = iter(transform_source)
+            _first_row = next(_transform_iter, None)
+            if _first_row is not None:
+                if isinstance(_first_row, dict):
+                    code_file_field_names = list(_first_row.keys())
+                elif hasattr(_first_row, "model_dump"):
+                    code_file_field_names = list(
+                        _first_row.model_dump(by_alias=True, mode="json").keys()
+                    )
+                transform_source = _itertools.chain([_first_row], _transform_iter)
 
         active_format = format_type or infer_format(actual_path)
         kwargs.update(
@@ -410,7 +444,7 @@ class Incorporator(BaseModel):
                 "sql_table": sql_table or (cls.__name__.lower() if active_format == FormatType.SQLITE else None),
                 "if_exists": if_exists,
                 "pydantic_schema": {"properties": cls._schema_union},
-                "all_field_names": list(cls._schema_union.keys()) or None,
+                "all_field_names": code_file_field_names or list(cls._schema_union.keys()) or None,
             }
         )
 

@@ -192,7 +192,7 @@ def xml_to_dict(element: Any) -> Dict[str, Any]:
 
 def check_xml_security(raw_data: str) -> None:
     """Pre-flight check to block DTDs and Entities (XXE) without external dependencies."""
-    if re.search(r"<!(?:DOCTYPE|ENTITY)", raw_data, re.IGNORECASE):
+    if re.search(r"<!(?:DOCTYPE|ENTITY)|%[a-zA-Z_][\w.-]*;", raw_data, re.IGNORECASE | re.DOTALL):
         raise IncorporatorFormatError(
             "Security Policy Violation: XML DTDs and External Entities (XXE) are strictly "
             "blocked to prevent 'Billion Laughs' memory exhaustion attacks."

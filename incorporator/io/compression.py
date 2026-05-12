@@ -141,6 +141,28 @@ def _decompress_native_stream(
     raise IncorporatorFormatError("Data must be a filepath string or bytes.")
 
 
+def _validate_tar_members(members: list) -> None:
+    """Guard against TAR path traversal (dotdot and absolute paths).
+
+    Validates every member against a resolved safe temp directory so that
+    ``../../etc/passwd`` and ``/etc/passwd``-style names are blocked before
+    any extraction takes place.
+    """
+    import tempfile
+
+    safe_dir = Path(tempfile.mkdtemp()).resolve()
+    try:
+        for member in members:
+            member_path = (safe_dir / member.name).resolve()
+            if not str(member_path).startswith(str(safe_dir)):
+                raise IncorporatorFormatError(
+                    f"Archive path traversal blocked: {member.name!r}"
+                )
+    finally:
+        # Clean up the temp directory immediately — we only needed it for resolve()
+        shutil.rmtree(safe_dir, ignore_errors=True)
+
+
 def _decompress_archive(
     data: Union[str, bytes],
     comp_type: CompressionType,
@@ -162,6 +184,7 @@ def _decompress_archive(
         file_args = {"name": Path(data).resolve()} if isinstance(data, str) else {"fileobj": io.BytesIO(data)}
         with tarfile.open(**file_args, mode="r:*") as tf:
             members = [m for m in tf.getmembers() if m.isfile()]
+            _validate_tar_members(members)  # Block path traversal before any extraction
             names = [m.name for m in members]
 
             tar_target_name = _find_target_in_archive(names, active_format, archive_target)
