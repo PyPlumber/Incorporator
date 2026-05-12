@@ -56,43 +56,148 @@ _counter_lock = threading.Lock()
 # THE INCORPORATOR ENGINE
 # ==========================================
 class Incorporator(BaseModel):
-    """
-    The Incorporator Super Class.
-    Inherits from Pydantic V2 BaseModel to leverage blazing-fast Rust validation.
+    """The Incorporator base class — subclass it to build an async ETL pipeline.
+
+    ``Incorporator`` is the public surface of the entire framework.  Subclassing
+    (not instantiation) is the primary user interaction: every subclass
+    automatically gets its own dynamically generated Pydantic V2 model **and**
+    its own ``WeakValueDictionary`` instance registry, so unrelated data sources
+    never share state.
+
+    The "Holy Trinity" API is three ``@classmethod`` factories:
+
+    - :meth:`incorp` — Extract & Transform: fetch unknown JSON/XML/CSV/SQLite,
+      coerce types, and return dot-notation Python objects.
+    - :meth:`refresh` — Stateful Update: re-fetch live data into existing
+      instances, deduplicated via origin URL/file.
+    - :meth:`export` — Load: serialise the in-memory object graph out to CSV,
+      JSON, XML, SQLite, Avro, NDJSON, etc.
+
+    Design contract:
+
+    - Inherits from ``pydantic.BaseModel`` with ``extra='allow'`` so unexpected
+      fields from messy APIs never raise ``ValidationError``.
+    - Every instance auto-registers into its subclass's ``inc_dict`` via
+      :meth:`model_post_init`, plus every parent class's registry up the MRO
+      (the "Bubble-Up" pattern — see that method's docstring).
+    - The ``inc_dict`` is a ``weakref.WeakValueDictionary``; once the user's
+      list of objects goes out of scope, the entries are garbage-collected.
+      This makes 10M-row ingestion safe by default.
+
+    Example:
+        Minimal subclass + fetch::
+
+            from incorporator import Incorporator
+
+            class User(Incorporator):
+                pass
+
+            users = await User.incorp("https://api.example.com/users", inc_code="id")
+            print(users.inc_dict[42].name)         # O(1) lookup by id
+
+        Concurrent fan-out (list source triggers ``asyncio.gather``)::
+
+            users = await User.incorp([
+                "https://api.example.com/users/1",
+                "https://api.example.com/users/2",
+            ])
+
+        Subclasses do **not** share registries::
+
+            class A(Incorporator): pass
+            class B(Incorporator): pass
+            await A.incorp(...)
+            await B.incorp(...)
+            assert A.inc_dict is not B.inc_dict      # Always true.
     """
 
-    # --- Class-Level Memory Registries ---
-    # WeakValueDictionary ensures objects are garbage-collected when the user's lists
-    # go out of scope, absolutely preventing Out-Of-Memory (OOM) leaks.
+    # ------------------------------------------------------------------
+    # Class-level state — every subclass gets its own copy of each ClassVar.
+    # ------------------------------------------------------------------
+
+    #: Per-class instance registry. Auto-populated by :meth:`model_post_init`
+    #: on every successful ``__init__``. Typed as
+    #: ``weakref.WeakValueDictionary`` so entries are reclaimed automatically
+    #: when the holding list goes out of scope — this is what prevents OOM
+    #: crashes on 10M+ row ingestion. Sibling subclasses get isolated
+    #: registries to prevent cross-contamination during graph drilling.
     inc_dict: ClassVar[weakref.WeakValueDictionary[Any, "Incorporator"]] = weakref.WeakValueDictionary()
+
+    #: Module-scoped auto-increment counter used to synthesise unique
+    #: ``inc_code`` values when the API omits an identity field. Guarded by
+    #: ``_counter_lock`` so concurrent workers spawned via
+    #: ``asyncio.to_thread`` never produce duplicate keys.
     _auto_counter: ClassVar[int] = 1
 
-    # Superset schema: union of all field→JSON-schema-property-dicts seen across incorp() calls.
-    # Updated lazily from raw transformed_data before Pydantic absorbs extra fields.
-    # Consumed by export() for Avro (pydantic_schema) and CSV/SQLite (all_field_names).
+    #: Per-class superset of every (field_name → JSON-schema-property) entry
+    #: ever observed across all :meth:`incorp` calls on this class.  Updated
+    #: lazily from the raw ``transformed_data`` **before** Pydantic absorbs
+    #: extra fields, so it sees the unfiltered API shape.  Consumed by
+    #: :meth:`export` to generate the destination schema for Avro
+    #: (``pydantic_schema``) and to seed ``all_field_names`` for CSV/SQLite.
+    #: Concurrent writes are guarded by a per-class ``threading.Lock`` held
+    #: in :mod:`incorporator.factory`.
     _schema_union: ClassVar[Dict[str, Any]] = {}
 
-    # Origin Tracking
+    #: Origin tracking — the URL the subclass was first populated from.
+    #: Populated on the first :meth:`incorp` call; :meth:`refresh` falls back
+    #: to this when called without an explicit ``new_url``.
     inc_url: ClassVar[Optional[str]] = None
+
+    #: Origin tracking — the local file path the subclass was first populated
+    #: from. Same fallback semantics as :attr:`inc_url`.
     inc_file: ClassVar[Optional[str]] = None
 
-    # --- Universal Instance Attributes ---
-    inc_code: Any = Field(default=None, description="Primary key for cls.inc_dict.")
-    inc_name: Optional[str] = Field(default=None, description="Optional readable name.")
+    # ------------------------------------------------------------------
+    # Universal instance attributes — present on every Incorporator object.
+    # ------------------------------------------------------------------
+
+    inc_code: Any = Field(
+        default=None,
+        description="Primary key used to register this instance in ``cls.inc_dict``. "
+        "Auto-synthesised from ``_auto_counter`` if the source data has no "
+        "identity field — pass ``inc_code='id'`` (or similar) to incorp() to "
+        "use a real field as the key.",
+    )
+    inc_name: Optional[str] = Field(
+        default=None,
+        description="Optional human-readable name. Used by :meth:`display` for "
+        "REPL inspection and by some converters as a label.",
+    )
     last_rcd: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        description="Exact UTC timestamp this object was instantiated.",
+        description="UTC timestamp of when this instance was constructed. "
+        "Useful for staleness checks in stateful-polling pipelines.",
     )
 
     def display(self) -> None:
-        """Utility method to quickly print core instance identity to stdout."""
+        """Print this instance's identity fields to stdout.
+
+        Emits a compact line containing ``class``, ``inc_code``, ``inc_name``,
+        and ``last_rcd`` — useful for REPL inspection and ad-hoc debugging.
+        For structured output use :meth:`pydantic.BaseModel.model_dump_json`.
+        """
         cls_name = getattr(self.__class__, "__name__", "UnknownClass")
         print(f'class:"{cls_name}", inc_code:"{self.inc_code}", inc_name:"{self.inc_name}", last_rcd:"{self.last_rcd}"')
 
     def model_post_init(self, __context: Any) -> None:
-        """
-        Pydantic Lifecycle Hook: Runs immediately after Rust instantiation.
-        Handles the crucial 'Bubble-Up' registration to protect against Schema Splintering.
+        """Pydantic V2 lifecycle hook — register this instance into ``inc_dict``.
+
+        Runs once, synchronously, immediately after Pydantic's Rust core
+        finishes ``__init__``.  Performs two jobs:
+
+        1. **Auto-key**: if ``self.inc_code`` is ``None`` (the API gave no
+           identity field), assigns the next value of ``cls._auto_counter``
+           under ``_counter_lock`` so concurrent ``asyncio.to_thread`` workers
+           cannot collide on the same synthetic key.
+
+        2. **Bubble-Up registration**: registers ``self`` into ``cls.inc_dict``
+           AND into every parent class's ``inc_dict`` up the MRO (stopping
+           at :class:`Incorporator`).  This is what makes ``link_to()``
+           lookups work regardless of whether the user holds the dynamic
+           subclass or a hand-defined base class — a defence against the
+           "Schema Splintering" bug where two API endpoints yield slightly
+           different schemas for the same logical entity.
         """
         cls = self.__class__
 
@@ -129,7 +234,153 @@ class Incorporator(BaseModel):
         inc_page: Optional[AsyncPaginator] = None,
         **kwargs: Any,
     ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
-        """Extracts data from an API or File and returns dynamically generated Python objects."""
+        """Fetch data from an HTTP API or local file and return Pydantic objects.
+
+        The single entry point for Extract + Transform.  Builds a dynamic
+        Pydantic V2 model from the raw payload, coerces every field through
+        the converter pipeline (``conv_dict``), registers each instance in
+        ``cls.inc_dict``, and returns either a single instance (when the
+        source resolves to one record) or an :class:`IncorporatorList`
+        wrapping multiple records.
+
+        Concurrency: if ``inc_url`` or ``inc_file`` is a ``List[str]``, the
+        sources are fetched concurrently via an ``asyncio.gather`` sliding
+        window (size ``concurrency_limit``, default 50) with built-in
+        per-source rate limiting and exponential-backoff retries.
+
+        Args:
+            inc_url: HTTP source. ``str`` for a single endpoint;
+                ``List[str]`` triggers concurrent fan-out.
+            inc_file: Local file path. Same ``str`` / ``List[str]``
+                polymorphism. Compressed archives (``.gz``, ``.bz2``,
+                ``.xz``, ``.zip``, ``.tar``) are auto-detected and
+                transparently decompressed.
+            inc_parent: Pass a previous ``incorp()`` result to enable the
+                Parent-Child routing pattern: child URLs are extracted from
+                ``inc_parent`` via ``inc_child`` (dot-notation JSONPath),
+                deduplicated, and fanned out concurrently. Fully abstracts
+                the HATEOAS "Discovery & Enrichment" workflow.
+            inc_child: Dot-notation path on parent objects to extract child
+                IDs or URLs (e.g. ``"results.url"`` or ``"Vehicle.VIN"``).
+                Only meaningful with ``inc_parent``.
+            inc_code: Source-field name to use as the primary key for
+                ``cls.inc_dict`` registration. If omitted, instances are
+                keyed by an auto-incremented integer from ``_auto_counter``.
+            inc_name: Source-field name used as the human-readable label.
+                Stored on each instance as ``self.inc_name``.
+            excl_lst: List of field names to **drop** before Pydantic
+                compilation — useful for stripping heavy keys like
+                ``"image_data"`` or ``"raw_html"``.
+            conv_dict: Mapping of ``field_name → converter`` applied before
+                validation. Converters include :func:`inc` (type coercion),
+                :func:`calc` (computed fields), :func:`link_to` (cross-class
+                joins), :func:`pluck` (nested extraction), :func:`split_and_get`,
+                :func:`each`, :func:`join_all`, and :func:`as_list`.
+            name_chg: List of ``(old_name, new_name)`` renames applied
+                before validation — useful for normalising field names
+                across heterogeneous sources.
+            inc_page: An :class:`AsyncPaginator` instance for streaming
+                pagination. Supported paginators include
+                :class:`NextUrlPaginator`, :class:`CursorPaginator`,
+                :class:`OffsetPaginator`, :class:`PageNumberPaginator`,
+                :class:`LinkHeaderPaginator`, :class:`SQLitePaginator`,
+                :class:`CSVPaginator`, and :class:`AvroPaginator`.
+            **kwargs: Forwarded to the format handler **and** the HTTP
+                client. Common keys: ``rec_path`` (dot-notation drill-down
+                to extract a list from a wrapper response), ``http_method``
+                (``"GET"`` / ``"POST"`` / ``"PUT"`` / ``"PATCH"``),
+                ``json_payload`` or ``form_payload`` (POST body),
+                ``payload_list`` (per-request POST bodies for bulk
+                dispatch), ``payload_type`` (``"json"`` or ``"form"``),
+                ``call_lim`` (cap pagination at N pages), ``sql_query``
+                (custom SELECT for SQLite sources), ``archive_target``
+                (file inside a ZIP/TAR to extract), ``concurrency_limit``
+                (sliding-window worker count, default 50),
+                ``requests_per_second`` (rate limit, default 15),
+                ``timeout`` (HTTP timeout, default 15s), ``headers``
+                (custom HTTP headers), ``ignore_ssl`` (disable TLS
+                verification — use with care).
+
+        Returns:
+            ``TIncorporator``: A single instance when the source resolved
+            to exactly one record and ``inc_page`` was not used.
+
+            ``IncorporatorList[TIncorporator]``: A list wrapper for multiple
+            records. The list also carries ``.failed_sources`` containing
+            URLs/paths that hit permanent 429 / network errors — the Dead
+            Letter Queue for programmatic retry.
+
+        Raises:
+            ValueError: When no source is provided (no ``inc_url``,
+                ``inc_file``, ``inc_parent``, or ``payload_list``).
+            IncorporatorFormatError: When parsing fails — the underlying
+                :class:`json.JSONDecodeError`, :class:`csv.Error`,
+                :class:`xml.etree.ElementTree.ParseError`, etc., are
+                trapped and recast.
+            IncorporatorNetworkError: For permanent 4xx (except 429) or
+                URL-scheme violations.
+
+        Examples:
+            Basic JSON URL::
+
+                class User(Incorporator):
+                    pass
+
+                users = await User.incorp(
+                    "https://api.example.com/users",
+                    inc_code="id",
+                )
+                print(users.inc_dict[42].name)
+
+            Concurrent fan-out across multiple URLs::
+
+                users = await User.incorp([
+                    "https://api.example.com/users/1",
+                    "https://api.example.com/users/2",
+                    "https://api.example.com/users/3",
+                ])
+
+            Parent-Child enrichment (HATEOAS)::
+
+                class Nav(Incorporator): pass
+                class Pokemon(Incorporator): pass
+
+                nav = await Nav.incorp(
+                    "https://pokeapi.co/api/v2/pokemon?limit=20",
+                    rec_path="results",
+                    inc_child="url",
+                )
+                pokemon = await Pokemon.incorp(
+                    inc_parent=nav,
+                    inc_code="id",
+                )
+
+            Pagination with type casting::
+
+                from datetime import datetime
+                from incorporator import inc, NextUrlPaginator
+
+                launches = await Launch.incorp(
+                    inc_url="https://ll.thespacedevs.com/2.2.0/launch/upcoming/",
+                    rec_path="results",
+                    inc_page=NextUrlPaginator("next"),
+                    call_lim=5,
+                    conv_dict={"net": inc(datetime)},
+                )
+
+            Bulk POST with declarative payload tokens::
+
+                from incorporator import join_all
+
+                results = await NHTSA.incorp(
+                    inc_url="https://vpic.nhtsa.dot.gov/api/.../DecodeVINValuesBatch/",
+                    inc_parent=invoices,
+                    http_method="POST",
+                    payload_type="form",
+                    form_payload={"format": "json", "data": join_all(";")},
+                    rec_path="Results",
+                )
+        """
 
         # Route to Parent Execution if triggered
         if inc_parent is not None:
@@ -228,7 +479,74 @@ class Incorporator(BaseModel):
         inc_page: Optional[AsyncPaginator] = None,
         **kwargs: Any,
     ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
-        """Hydrates existing instances with new data, deduplicating HTTP execution via weakrefs."""
+        """Re-fetch live data and hydrate existing instances in-place.
+
+        ``refresh()`` is the Stateful Update verb of the Holy Trinity.  It is
+        designed for long-running pipelines that need to keep an in-memory
+        object graph synchronised with a changing remote source without
+        rebuilding from scratch.
+
+        Instance resolution has three modes, chosen by the ``instance`` arg:
+
+        - **In-state (``instance=None``)**: refresh every object currently
+          in ``cls.inc_dict``. Origin URLs/files are read from each
+          instance's stored ``inc_url`` / ``inc_file`` attributes.
+        - **Re-source (``instance=str | Path``)**: re-fetch ``cls.inc_dict``
+          from a brand-new URL or file. If the string starts with ``http``
+          it is treated as a URL; otherwise as a local file path.
+        - **Targeted (``instance=List[obj] | obj``)**: refresh only the
+          listed instances. Useful for partial updates.
+
+        Deduplication: HTTP requests are deduplicated across the resolved
+        instance set via origin URL/file, so 1000 instances sharing
+        20 source URLs trigger 20 fetches, not 1000.
+
+        Args:
+            instance: Resolution mode selector (see above). Defaults to
+                ``None`` (refresh everything in ``cls.inc_dict``).
+            new_url: Optional override URL(s) — equivalent to passing
+                a string to ``instance`` but typed explicitly.
+            new_file: Optional override file path(s).
+            inc_child: Same as in :meth:`incorp` — drill into nested
+                child URLs for re-enrichment.
+            inc_code: Override the registry key field on this refresh.
+            inc_name: Override the display name field.
+            excl_lst: Same as in :meth:`incorp`.
+            conv_dict: Same as in :meth:`incorp` — re-apply or change
+                type coercion on the refreshed data.
+            name_chg: Same as in :meth:`incorp`.
+            inc_page: Optional paginator for streaming refresh.
+            **kwargs: Forwarded to the network engine and format handlers
+                (see :meth:`incorp` for the full kwarg list).
+
+        Returns:
+            ``IncorporatorList[TIncorporator]``: A new list wrapping the
+            refreshed instances. Existing Python references are mutated
+            in-place via Pydantic field updates, so callers holding the
+            old list will see updated values without reassigning.
+
+        Raises:
+            ValueError: When neither a new source nor stored origin URLs
+                are available (e.g. ``refresh()`` called before any
+                ``incorp()`` and with no override).
+
+        Examples:
+            Simple in-state refresh::
+
+                users = await User.incorp("https://api.example.com/users")
+                # ... some time later ...
+                refreshed = await User.refresh()      # uses User.inc_url
+                # `users[0]` now has the latest field values.
+
+            Refresh from a new source::
+
+                refreshed = await User.refresh("https://api.example.com/users-v2")
+
+            Partial refresh of specific instances::
+
+                stale = [users.inc_dict[i] for i in (1, 2, 3)]
+                refreshed = await User.refresh(instance=stale)
+        """
 
         target_url = new_url
         target_file = new_file
@@ -379,27 +697,96 @@ class Incorporator(BaseModel):
         code_file: Optional[Union[str, Path]] = None,
         **kwargs: Any,
     ) -> None:
-        """Serializes current Incorporator states out to physical files natively.
+        """Serialise Incorporator instances out to a file in any supported format.
+
+        Streaming-first: records flow through a lazy generator and
+        ``model_dump()`` is called per-row only when the handler asks for the
+        next item.  No full-list copy is materialised in RAM, so 10M-row
+        exports stay flat on RSS.
 
         All parameters after ``cls`` are keyword-only (enforced by the bare ``*``).
-        Supports all formats registered in ``FormatType`` and scales to 10M+ rows
-        via a lazy generator: each record is serialized only when the handler
-        requests the next item.
+
+        The ``instance`` argument is polymorphic:
+
+        - **In-state mode** (``file_path=None``, default): ``instance`` is
+          interpreted as the **output path** and the data source is
+          ``cls.inc_dict.values()``.  Convenient one-liner for "dump my
+          current state to disk."
+        - **Explicit mode** (``file_path`` provided): ``instance`` is the
+          data source (a single instance or a list) and ``file_path`` is
+          the destination.
 
         Args:
-            instance: Either a file path (when ``file_path`` is omitted, uses
-                ``cls.inc_dict`` as data source) or a list of Incorporator instances.
-            file_path: Destination file path. When provided, ``instance`` is the
-                data source. When omitted, ``instance`` is treated as the file path.
-            format_type: Override the format inferred from the file extension.
-            compression: Optional compression to apply after writing (e.g. ``"gz"``).
-            sql_table: Table name for SQLite exports. Defaults to the class name.
-            if_exists: ``"replace"`` (default), ``"append"``, or ``"fail"``.
-            code_file: Path to a ``.py`` file defining ``transform(instances)``.
-                Called with the in-state object list before serialization; the
-                return value is exported instead. Passes through ``export_params``
-                in ``stream()`` naturally.
-            **kwargs: Forwarded to the format handler.
+            instance: Either the output path (in-state mode) or the data
+                source (explicit mode). When ``file_path`` is provided
+                this must be a ``list`` or a Pydantic ``BaseModel``;
+                a plain string here raises ``TypeError``.
+            file_path: Destination file path. Omit to use in-state mode.
+            format_type: Override the format inferred from the destination
+                file extension.  See :class:`FormatType` for supported
+                values (``JSON``, ``NDJSON``, ``CSV``, ``TSV``, ``PSV``,
+                ``XML``, ``SQLITE``, ``AVRO``).
+            compression: Optional compression to apply **after** writing
+                (e.g. ``"gz"``, ``"bz2"``, ``"xz"``, ``"zip"``, ``"tar"``,
+                ``"zstd"``, ``"lz4"``, ``"snappy"``, ``"brotli"``).  Runs
+                in a background thread via ``asyncio.to_thread``.
+            sql_table: Table name for SQLite exports. Defaults to
+                ``cls.__name__.lower()``.  Sanitised against SQL injection.
+            if_exists: How to handle an existing table/file:
+                ``"replace"`` (default), ``"append"``, or ``"fail"``.
+            code_file: Path to a Python file defining a top-level
+                ``transform(instances) -> Iterable``.  Called once with
+                the in-state object list **before** serialisation; the
+                return value is exported instead.  The function must
+                accept **exactly one** parameter (enforced via
+                :func:`inspect.signature`).  Records may be dicts or
+                Pydantic models; new fields added by the transform are
+                detected via first-row peek and become CSV columns
+                automatically.
+            **kwargs: Forwarded to the format handler — e.g. ``delimiter``
+                (CSV/TSV/PSV), ``xml_root`` (XML), ``json_indent`` (JSON).
+
+        Returns:
+            ``None``. The file is written as a side effect.  In-progress
+            failures bubble up as :class:`IncorporatorFormatError`.
+
+        Raises:
+            TypeError: When ``file_path`` is provided but ``instance`` is
+                neither a list nor a ``BaseModel`` (e.g. a plain string).
+            ValueError: When ``code_file`` is provided but its
+                ``transform()`` function has more or fewer than one
+                parameter.
+            IncorporatorFormatError: On unsupported format / unwritable path.
+
+        Examples:
+            Explicit mode (list of instances → file)::
+
+                users = await User.incorp("https://api.example.com/users")
+                await User.export(instance=users, file_path="users.csv")
+
+            In-state mode (registry → file)::
+
+                await User.export("users.json")     # uses cls.inc_dict
+
+            Cross-format pivot (JSON API → SQLite warehouse)::
+
+                users = await User.incorp("https://api.example.com/users")
+                await User.export(instance=users, file_path="warehouse.db")
+
+            With code_file transform::
+
+                # transform.py
+                def transform(instances):
+                    return [
+                        {"id": u.id, "name": u.name.upper()}
+                        for u in instances
+                    ]
+
+                await User.export(
+                    instance=users,
+                    file_path="upper.csv",
+                    code_file="transform.py",
+                )
         """
         # Unrolled instance resolution for DX traceability
         if file_path is None:
@@ -482,9 +869,86 @@ class Incorporator(BaseModel):
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
     ) -> AsyncGenerator["AuditResult", None]:
-        """
-        Autonomous Pipeline Controller.
-        Dual-Engine design supports both O(1) Memory Chunking and Stateful Graph Polling.
+        """Yield :class:`AuditResult` objects from a long-running pipeline.
+
+        ``stream()`` is the autonomous pipeline verb — an async generator that
+        keeps fetching, transforming, and (optionally) exporting until exhausted
+        or cancelled.  It routes to one of two execution engines:
+
+        - **Chunking engine** (``stateful_polling=False``, default): Sequential
+          chunked ingestion.  Each iteration calls ``incorp(**incorp_params)``,
+          then ``refresh()`` and/or ``export()`` per the configured params,
+          then yields one ``AuditResult``.  Memory stays O(1) — each chunk is
+          released and ``gc.collect()`` runs before the next.  Best for
+          large paginated sources where you want a steady throughput trace.
+
+        - **Stateful-polling engine** (``stateful_polling=True``): Runs
+          ``incorp()`` once to seed the dataset, then spawns independent
+          ``_refresh_daemon`` and ``_export_daemon`` asyncio tasks on
+          decoupled schedules.  Daemons coordinate via an internal
+          ``asyncio.Lock`` so refresh mutations are atomic and export
+          snapshots are consistent.  Best for keeping a live in-memory
+          graph synchronised at one rate while exporting at another.
+
+        Interval cascade: ``refresh_interval`` and ``export_interval``
+        each fall back to ``poll_interval`` when not specified, so a
+        single ``poll_interval=60.0`` schedules both daemons identically.
+
+        Args:
+            incorp_params: kwargs forwarded to :meth:`incorp` on every
+                ingestion cycle.
+            refresh_params: kwargs for :meth:`refresh`.  When ``None``,
+                no refresh daemon is spawned (chunking) or scheduled
+                (stateful).
+            export_params: kwargs for :meth:`export`.  When ``None``,
+                no export daemon is spawned (chunking) or scheduled
+                (stateful).  ``if_exists`` is overridden to ``"append"``
+                in the chunking engine so successive chunks accumulate.
+            poll_interval: Default sleep between full cycles (chunking)
+                or default daemon period (stateful).  ``None`` means
+                "one shot then exit".
+            stateful_polling: Engine selector. ``False`` → chunking;
+                ``True`` → independent daemon tasks.
+            refresh_interval: Stateful-polling override for the refresh
+                daemon period. Falls back to ``poll_interval``.
+            export_interval: Stateful-polling override for the export
+                daemon period. Falls back to ``poll_interval``.
+
+        Yields:
+            :class:`AuditResult`: One per chunk (chunking) or per daemon
+            iteration (stateful). Fields:
+
+            - ``chunk_index`` (int): Sequential index within the engine.
+            - ``operation`` (str): ``"chunk"``, ``"incorp"``, ``"refresh"``,
+              or ``"export"``.
+            - ``rows_processed`` (int): Row count for this iteration.
+            - ``failed_sources`` (List[str]): URLs/paths that failed.
+            - ``processing_time_sec`` (float): Wall-clock duration.
+            - ``timestamp`` (datetime): UTC instant of completion.
+
+        Examples:
+            Simple chunked stream with paginator::
+
+                async for audit in User.stream(
+                    incorp_params={
+                        "inc_url": "https://api.example.com/users",
+                        "inc_page": NextUrlPaginator("next"),
+                    },
+                    export_params={"file_path": "users.ndjson"},
+                ):
+                    print(f"Chunk {audit.chunk_index}: {audit.rows_processed} rows")
+
+            Stateful polling — refresh every 5 min, export every 30 s::
+
+                async for audit in User.stream(
+                    incorp_params={"inc_url": "https://api.example.com/users"},
+                    refresh_params={},
+                    export_params={"file_path": "snapshot.json"},
+                    stateful_polling=True,
+                    refresh_interval=300.0,
+                    export_interval=30.0,
+                ):
+                    handle(audit)
         """
         from .observability.pipeline import run_pipeline
 
@@ -505,10 +969,42 @@ class Incorporator(BaseModel):
         cls: Type[TIncorporator],
         **kwargs: Any,
     ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]", List[Any]]:
-        """
-        DX Helper: Wraps incorp() to help developers map out unknown APIs.
-        Prints a tree-view of the payload, suggests optimal kwargs, and
-        returns a maximum of 3 records to prevent console spam.
+        """JIT API Profiler — explore an unknown endpoint without writing a schema.
+
+        ``test()`` is a Developer Experience helper that wraps :meth:`incorp`
+        with ``__inspect=True`` to trigger the :mod:`incorporator.inspector`
+        tree analyser.  On a successful fetch it prints a deep tree-view of
+        the payload structure, detects identity-shaped fields (UUIDs,
+        timestamps, etc.), and emits the exact ``inc_code``, ``inc_name``,
+        ``rec_path``, and ``conv_dict`` you'd plug into a real ``incorp()``
+        call.  On a failed fetch it routes the exception through
+        :func:`inspector.analyze_error` for actionable diagnostics.
+
+        Differences from :meth:`incorp` for safety:
+
+        - Default ``timeout=5.0`` (fail fast on unresponsive endpoints).
+        - When a paginator is supplied, ``call_lim`` is forced to ``1`` so
+          you only fetch one page during exploration.
+        - The return value is sliced to at most ``_INSPECTION_LIMIT`` (3)
+          records to prevent terminal flooding.
+
+        Args:
+            **kwargs: Same as :meth:`incorp`. ``timeout`` and ``call_lim``
+                get safe defaults if not provided.
+
+        Returns:
+            An :class:`IncorporatorList` of at most 3 records, or an empty
+            list on exception.
+
+        Example::
+
+            class User(Incorporator):
+                pass
+
+            # No idea what the API looks like — let test() figure it out:
+            sample = await User.test(inc_url="https://api.unknown.com/v1/users")
+            # Tree + suggested kwargs are printed to stdout.
+            # `sample` is a 3-record preview for inspection.
         """
         kwargs["__inspect"] = True
 
