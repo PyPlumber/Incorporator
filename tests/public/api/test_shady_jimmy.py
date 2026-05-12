@@ -121,23 +121,31 @@ async def test_shady_jimmy_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert isinstance(live_records, list)
     assert len(live_records) == 3
 
-    # 4. Assert the Relational Audit Logic
-    fraud_count = 0
-    for invoice in invoices:
-        vin = getattr(invoice.Vehicle, "VIN", "")
-        claimed_make = getattr(invoice.Vehicle, "Make", "Unknown").title()
-        claimed_year = int(getattr(invoice.Vehicle, "Year", 0))
-
+    # 4. Assert the Relational Audit Logic — per-invoice, per-field
+    def audit(vin: str) -> tuple:
+        """Return (claimed_make, claimed_year, actual_make, actual_year) for a VIN."""
+        invoice = next(inv for inv in invoices if getattr(inv.Vehicle, "VIN", "") == vin)
         real_car = live_records.inc_dict.get(vin)
-        assert real_car is not None
-
-        actual_make = getattr(real_car, "Make", "Unknown").title()
+        assert real_car is not None, f"NHTSA returned no record for VIN {vin}"
+        claimed_make = getattr(invoice.Vehicle, "Make", "").title()
+        claimed_year = int(getattr(invoice.Vehicle, "Year", 0))
+        actual_make = getattr(real_car, "Make", "").title()
         actual_year = getattr(real_car, "ModelYear", 0)
+        assert isinstance(actual_year, int), f"ModelYear should be int after conv_dict, got {type(actual_year)}"
+        return claimed_make, claimed_year, actual_make, actual_year
 
-        assert isinstance(actual_year, int)
+    # INV-001: Honda Accord 2003 — make and year both match → clean
+    cm, cy, am, ay = audit("1HGCM82633A004352")
+    assert cm == am, f"INV-001 make mismatch: claimed {cm!r}, actual {am!r}"
+    assert cy == ay, f"INV-001 year mismatch: claimed {cy}, actual {ay}"
 
-        if claimed_make != actual_make or claimed_year != actual_year:
-            fraud_count += 1
+    # INV-002: claimed 2024 Toyota, NHTSA says 2004 → year fraud
+    cm, cy, am, ay = audit("2T1BR32E54C123456")
+    assert cm == am, f"INV-002 make should match: claimed {cm!r}, actual {am!r}"
+    assert cy != ay, f"INV-002 year should mismatch (claimed 2024, actual 2004)"
+    assert cy == 2024 and ay == 2004
 
-    # INV-002 (Wrong Year) and INV-003 (Fake Porsche) are fraud!
-    assert fraud_count == 2
+    # INV-003: claimed Porsche 911 GT3, NHTSA says Chevrolet Volt → make fraud
+    cm, cy, am, ay = audit("1G1RC6E45BU000003")
+    assert cm != am, f"INV-003 make should mismatch (claimed {cm!r}, actual {am!r})"
+    assert cm == "Porsche" and am == "Chevrolet"
