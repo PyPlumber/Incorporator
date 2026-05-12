@@ -29,6 +29,7 @@ if typer:
     @app.callback()  # type: ignore[untyped-decorator]
     def main_callback() -> None:
         pass
+
 else:
     # Failsafe for entrypoint if Typer is missing
     app = None
@@ -99,9 +100,7 @@ if typer:
 
     @app.command()  # type: ignore[untyped-decorator]
     def stream(
-        config: Path = typer.Argument(  # noqa: B008
-            ..., help="Path to the pipeline.json configuration file."
-        ),
+        config: Path = typer.Argument(..., help="Path to the pipeline.json configuration file."),  # noqa: B008
         poll: Optional[float] = typer.Option(  # noqa: B008
             None, "--poll", help="Interval in seconds to keep the pipeline alive as a daemon (e.g., 60.0)."
         ),

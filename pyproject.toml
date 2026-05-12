@@ -52,8 +52,10 @@ dev =[
     "pytest>=7.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
+    "pytest-randomly>=3.15.0",
     "mypy>=1.0.0",
-    "ruff>=0.1.0"
+    "ruff>=0.1.0",
+    "black>=24.0"
 ]
 # The GIL-releasing C/Rust upgrades
 speedups =["orjson>=3.9", "lxml>=4.9", "cramjam>=2.7"]
@@ -127,3 +129,20 @@ ignore = []
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+# Black runs as an independent cross-check formatter at the same line-length as
+# ruff format. When configured at matching widths, black and ruff format produce
+# (effectively) identical output — so any drift between them surfaces a real bug
+# in one of the two formatters rather than a style disagreement.
+[tool.black]
+line-length = 120
+target-version = ["py39", "py310", "py311", "py312", "py313"]
+extend-exclude = '''
+/(
+    examples
+  | tests
+  | build
+  | dist
+  | \.venv
+)/
+'''

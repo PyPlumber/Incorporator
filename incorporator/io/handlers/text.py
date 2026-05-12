@@ -132,13 +132,12 @@ class XMLHandler(BaseFormatHandler):
         try:
             import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
-            raw_bytes = (
-                source.read_bytes()
-                if isinstance(source, Path)
-                else source.encode("utf-8")
-                if isinstance(source, str)
-                else source
-            )
+            if isinstance(source, Path):
+                raw_bytes = source.read_bytes()
+            elif isinstance(source, str):
+                raw_bytes = source.encode("utf-8")
+            else:
+                raw_bytes = source
             parser = lxml_ET.XMLParser(resolve_entities=False, no_network=True)
 
             try:
