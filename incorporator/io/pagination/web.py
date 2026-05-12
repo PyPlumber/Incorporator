@@ -5,7 +5,10 @@ import re
 from typing import Any, AsyncGenerator, Dict, Optional, Set, Union
 from urllib.parse import urljoin
 
+import httpx
+
 from .base import AsyncPaginator
+from ...exceptions import IncorporatorFormatError
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +64,11 @@ class LinkHeaderPaginator(AsyncPaginator):
                 if not self.current_url:
                     self.is_exhausted = True
 
-            except Exception as e:
+            except (httpx.HTTPStatusError, httpx.RequestError, IncorporatorFormatError) as e:
                 self.is_exhausted = True
                 if self.strict_mode:
-                    raise  # Let the DX Analyzer catch it!
-                logger.warning(f"LinkHeaderPaginator stopped gracefully: {e}")
+                    raise
+                logger.warning(f"LinkHeaderPaginator stopped on {type(e).__name__}: {e}")
                 break
 
 
@@ -112,11 +115,11 @@ class CursorPaginator(AsyncPaginator):
                     self.seen_cursors.add(next_cursor)
                     self.current_cursor = next_cursor
 
-            except Exception as e:
+            except (httpx.HTTPStatusError, httpx.RequestError, IncorporatorFormatError) as e:
                 self.is_exhausted = True
                 if self.strict_mode:
                     raise
-                logger.warning(f"CursorPaginator stopped: {e}")
+                logger.warning(f"CursorPaginator stopped on {type(e).__name__}: {e}")
                 break
 
 
@@ -179,11 +182,11 @@ class OffsetPaginator(AsyncPaginator):
                 else:
                     self.current_offset += self.limit
 
-            except Exception as e:
+            except (httpx.HTTPStatusError, httpx.RequestError, IncorporatorFormatError) as e:
                 self.is_exhausted = True
                 if self.strict_mode:
                     raise
-                logger.warning(f"OffsetPaginator stopped: {e}")
+                logger.warning(f"OffsetPaginator stopped on {type(e).__name__}: {e}")
                 break
 
 
@@ -243,11 +246,11 @@ class PageNumberPaginator(AsyncPaginator):
                 else:
                     self.current_page += 1
 
-            except Exception as e:
+            except (httpx.HTTPStatusError, httpx.RequestError, IncorporatorFormatError) as e:
                 self.is_exhausted = True
                 if self.strict_mode:
                     raise
-                logger.warning(f"PageNumberPaginator stopped: {e}")
+                logger.warning(f"PageNumberPaginator stopped on {type(e).__name__}: {e}")
                 break
 
 
@@ -294,9 +297,9 @@ class NextUrlPaginator(AsyncPaginator):
                     self.is_exhausted = True
                     break
 
-            except Exception as e:
+            except (httpx.HTTPStatusError, httpx.RequestError, IncorporatorFormatError) as e:
                 self.is_exhausted = True
                 if self.strict_mode:
                     raise
-                logger.warning(f"NextUrlPaginator stopped: {e}")
+                logger.warning(f"NextUrlPaginator stopped on {type(e).__name__}: {e}")
                 break

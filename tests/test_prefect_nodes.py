@@ -12,8 +12,13 @@ from incorporator.observability.logger import AuditResult
 from incorporator.prefect_nodes import run_incorporator_flow
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(scope="session")
 def prefect_test_fixture():
+    """Spins up an isolated in-process Prefect environment for the duration of this module.
+
+    NOT autouse — must be requested explicitly so the Prefect SQLite backing store
+    and env-var overrides don't bleed into unrelated tests.
+    """
     with prefect_test_harness():
         yield
 
@@ -23,14 +28,14 @@ async def mock_stream(*args: Any, **kwargs: Any) -> AsyncGenerator[AuditResult, 
 
 
 @pytest.mark.asyncio
-async def test_prefect_flow_missing_file() -> None:
+async def test_prefect_flow_missing_file(prefect_test_fixture: None) -> None:
     """Ensures the Flow throws a standard FileNotFoundError if config is missing."""
     with pytest.raises(FileNotFoundError):
         await run_incorporator_flow(config_path="missing_prefect_config.json")
 
 
 @pytest.mark.asyncio
-async def test_prefect_flow_success(tmp_path: Path) -> None:
+async def test_prefect_flow_success(tmp_path: Path, prefect_test_fixture: None) -> None:
     """Ensures the Prefect flow executes the stream task and aggregates results."""
     config_file = tmp_path / "prefect_pipeline.json"
     config_file.write_text(
