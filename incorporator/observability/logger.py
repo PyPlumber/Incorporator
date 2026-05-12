@@ -13,7 +13,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Type, TypeVar, Uni
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..base import Incorporator, IncorporatorList
+from ..base import Incorporator
+from ..list import IncorporatorList
 
 TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
 

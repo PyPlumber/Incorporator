@@ -12,7 +12,7 @@ import tarfile
 import zipfile
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Dict, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from ..exceptions import IncorporatorFormatError
 from .formats import FormatType
@@ -141,7 +141,7 @@ def _decompress_native_stream(
     raise IncorporatorFormatError("Data must be a filepath string or bytes.")
 
 
-def _validate_tar_members(members: list) -> None:
+def _validate_tar_members(members: List[Any]) -> None:
     """Guard against TAR path traversal (dotdot and absolute paths).
 
     Validates every member against a resolved safe temp directory so that

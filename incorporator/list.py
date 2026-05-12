@@ -7,11 +7,12 @@ creating a circular dependency chain.
 
 import logging
 import weakref
-from typing import Any, List, Optional, Type, TypeVar, cast
+from typing import Any, Generic, List, Optional, Type, TypeVar, cast
 
 logger = logging.getLogger(__name__)
 
-TIncorporator = TypeVar("TIncorporator")
+T = TypeVar("T")
+TIncorporator = TypeVar("TIncorporator")  # kept for any external callers
 
 
 def _deduplicate_extracted(data: List[Any]) -> List[Any]:
@@ -33,7 +34,7 @@ def _deduplicate_extracted(data: List[Any]) -> List[Any]:
         return list(dict.fromkeys(hashable)) + non_hashable
 
 
-class IncorporatorList(list):  # type: ignore[type-arg]
+class IncorporatorList(List[T]):
     """
     A specialized list providing direct access to the dynamic class registry.
 

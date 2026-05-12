@@ -147,7 +147,10 @@ class Incorporator(BaseModel):
                     "inc_page": inc_page,
                 }
             )
-            return await _factory.child_incorp(cls, inc_parent=inc_parent, **kwargs)
+            return cast(
+                Union[TIncorporator, "IncorporatorList[TIncorporator]"],
+                await _factory.child_incorp(cls, inc_parent=inc_parent, **kwargs),
+            )
 
         source = inc_file if inc_file else inc_url
         if not source and not kwargs.get("payload_list"):
@@ -209,7 +212,7 @@ class Incorporator(BaseModel):
         if inc_child is not None and isinstance(result, IncorporatorList):
             result.inc_child_path = inc_child
 
-        return result
+        return cast(Union[TIncorporator, "IncorporatorList[TIncorporator]"], result)
 
     @classmethod
     async def refresh(
@@ -309,7 +312,7 @@ class Incorporator(BaseModel):
         if inc_child is not None and isinstance(result, IncorporatorList):
             result.inc_child_path = inc_child
 
-        return result
+        return cast(Union[TIncorporator, "IncorporatorList[TIncorporator]"], result)
 
     @staticmethod
     def _apply_code_transform(
@@ -346,7 +349,7 @@ class Incorporator(BaseModel):
             raise ImportError(f"[Incorporator] Cannot load module spec from: {code_path}")
 
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        spec.loader.exec_module(module)
 
         transform_fn = getattr(module, "transform", None)
         if transform_fn is None:
@@ -531,7 +534,7 @@ class Incorporator(BaseModel):
 
         if isinstance(result, IncorporatorList):
             sliced = result[:_INSPECTION_LIMIT]
-            new_list = IncorporatorList(result._model_class, sliced, result.failed_sources)
+            new_list: IncorporatorList[Any] = IncorporatorList(result._model_class, sliced, result.failed_sources)
             new_list.inc_child_path = result.inc_child_path
             return new_list
         elif isinstance(result, list):

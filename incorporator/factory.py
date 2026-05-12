@@ -26,7 +26,7 @@ async def child_incorp(
     cls: "Type[Incorporator]",
     inc_parent: Any,
     **kwargs: Any,
-) -> Union["Incorporator", IncorporatorList]:
+) -> Union["Incorporator", "IncorporatorList[Any]"]:
     """Unified Parent-to-Child API proxy for deeply nested RESTful graphs.
 
     Extracted from Incorporator._child_incorp so the logic lives outside base.py
@@ -73,7 +73,7 @@ def build_instances(
     excl_lst: Optional[List[str]] = None,
     conv_dict: Optional[Dict[str, Any]] = None,
     name_chg: Optional[List[Tuple[str, str]]] = None,
-) -> Union["Incorporator", IncorporatorList]:
+) -> Union["Incorporator", "IncorporatorList[Any]"]:
     """
     The Factory Assembler:
     1. Transforms data via Columnar processing.
