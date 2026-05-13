@@ -188,12 +188,21 @@ class AvroHandler(BaseFormatHandler):
             }
         )
 
-        # Yield dicts to fastavro 1-by-1 to prevent duplicating the dataset in RAM
+        # Yield dicts to fastavro 1-by-1 to prevent duplicating the dataset in RAM.
+        # Sanitised-key + expected-type lookups are cached on first occurrence:
+        # after the first row, every subsequent key access is an O(1) dict hit
+        # instead of a full sanitize_json_key() call.  This eliminates the only
+        # significant per-row × per-key CPU cost in the Avro write path.
+        sanitized_key_cache: Dict[str, str] = {}
+
         def _record_generator() -> Iterator[Dict[str, Any]]:
             for row in data:
                 processed_row = {}
                 for k, v in row.items():
-                    safe_k = sanitize_json_key(k)
+                    safe_k = sanitized_key_cache.get(k)
+                    if safe_k is None:
+                        safe_k = sanitize_json_key(k)
+                        sanitized_key_cache[k] = safe_k
                     val = serialize_nested(v)
 
                     if val is not None:

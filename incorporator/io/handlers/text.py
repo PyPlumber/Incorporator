@@ -113,14 +113,24 @@ class NDJSONHandler(BaseFormatHandler):
 
 
 def _build_xml_root(data: List[Dict[str, Any]], ET: Any) -> Any:
-    """Builds an XML root element from a list of dicts using any ElementTree-compatible module."""
+    """Builds an XML root element from a list of dicts using any ElementTree-compatible module.
+
+    Key cleaning (space → underscore, digit-prefix guard) is cached on first
+    occurrence — the mapping from row keys to clean XML element names is
+    fixed per schema, so subsequent rows hit a single dict lookup instead of
+    repeating string ops per row × per key.
+    """
     root = ET.Element("root")
+    clean_key_cache: Dict[str, str] = {}
     for item in data:
         item_el = ET.SubElement(root, "item")
         for key, val in item.items():
-            clean_key = str(key).replace(" ", "_")
-            if clean_key and clean_key[0].isdigit():
-                clean_key = f"_{clean_key}"
+            clean_key = clean_key_cache.get(key)
+            if clean_key is None:
+                clean_key = str(key).replace(" ", "_")
+                if clean_key and clean_key[0].isdigit():
+                    clean_key = f"_{clean_key}"
+                clean_key_cache[key] = clean_key
             child = ET.SubElement(item_el, clean_key)
             safe_val = serialize_nested(val)
             child.text = str(safe_val) if safe_val is not None else ""
