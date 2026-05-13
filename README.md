@@ -30,24 +30,9 @@
 
 ---
 
-## 📖 Table of Contents
-- [How it Works: Zero-Schema Ingestion](#-how-it-works-zero-schema-ingestion)
-- [Installation](#-installation)
-- [The "Holy Trinity" API](#-the-holy-trinity-api)
-- [Core Superpowers](#-core-superpowers)
-  - [1. Pagination & Type Casting](#1-the-1-liner-pagination-cleaning--type-casting)
-  - [2. Array Reduction & Enrichment](#2-deep-enrichment--array-reduction)
-  - [3. Multi-API Graph Fusion](#3-multi-api-graph-fusion)
-  - [4. Declarative Bulk POSTs](#4-xml-ingestion--declarative-bulk-posts)
-  - [5. The Local Database Pivot](#5-the-local-database-pivot-json-️-sqlite)
-- [Enterprise Resilience](#-enterprise-resilience--features)
-- [Documentation & Examples](#-documentation--examples)
-
----
-
 ## 🛠️ How it Works: Zero-Schema Ingestion
 
-Imagine receiving this spacecraft telemetry JSON. Notice how the nested `"st"` dictionary **changes its structure completely** for every subsystem (`pos` vs `sig` vs `bat`). Standard parsers would crash instantly. 
+Imagine receiving this spacecraft telemetry JSON. Notice how the nested `"st"` dictionary **changes its structure completely** for every subsystem (`pos` vs `sig` vs `bat`). Standard parsers would crash instantly.
 
 **The Input (`telemetry.json`):**
 ```json
@@ -76,12 +61,12 @@ async def main():
     # 2. Instantly access the unified Python object graph via dot-notation
     print(f"Navigation Position: {systems.inc_dict['NAV'].st.pos}")   # Output: [12, 44]
     print(f"Power Battery Level: {systems.inc_dict['PWR'].st.bat}%")  # Output: 92%
-    
+
     # 3. Interpret and manipulate data effortlessly at runtime
     thr = systems.inc_dict["THR"]
     if not thr.st.ok:
         print(f"⚠️ THRUST FAILURE! Efficiency dropped to {thr.st.lvl}")
-        
+
 asyncio.run(main())
 ```
 
@@ -121,296 +106,135 @@ pip install incorporator[all]      # Installs the complete Enterprise Big Data s
 
 ---
 
-## ⛪ The "Holy Trinity" API
+## 🧰 The Verbs
 
-Manage your entire data lifecycle with just three `@classmethod` factories. Everything Incorporator does stems from these three commands:
+Every method you'll call on an `Incorporator` subclass, in order of increasing power.
 
-1. **`incorp()`**: **Extract & Transform.** Fetch unknown data, clean it dynamically, and build the Python object graph.
-2. **`refresh()`**: **Stateful Updates.** Pass existing objects back in to seamlessly fetch live updates and hydrate your memory registries.
-3. **`export()`**: **Load.** Instantly serialize your deeply nested Python objects out to clean CSV, XML, SQLite, JSON, Parquet, Excel, or Avro files.
-
-Full method-level signatures, parameter tables, and worked examples live in the auto-generated [**API Reference**](./docs/api_reference.md) (built from the source docstrings via `pdoc`).
-
----
-
-## 🕵️‍♂️ The DX Inspector: `.test()`
-Don't know the shape of an API? Don't open Postman. Don't write a schema. Let Incorporator write your code for you.
-
-When exploring a new endpoint, simply swap `.incorp()` for `.test()` to trigger the **Just-In-Time (JIT) API Profiler**. It safely fetches a single page, analyzes the data tree using regex-based value scoring, and prints exactly what kwargs you need to write.
+### `incorp()` — fetch, parse, build the object graph
 
 ```python
-import asyncio
-from incorporator import Incorporator
-
-class User(Incorporator): pass
-
-# 1. Hit an unknown API
-asyncio.run(User.test(inc_url="https://api.unknown.com/v1/users"))
-```
-The Console Output: Instantly, Incorporator prints a complete mapping of the API directly to your terminal:
-
-```text
-======================================================================
-🕵️‍♂️  INCORPORATOR DX INSPECTOR
-======================================================================
-
-📦 1. PAYLOAD STRUCTURE:
-   ├── metadata (dict)
-   │   ├── count: int = 1500
-   │   └── page: int = 1
-   └── results (list, len=1500)
-       ├── user_uuid: str = a1b2c3d4-e5f6...
-       ├── full_name: str = Jimmy Jenkins
-       ├── status: bool = True
-       ├── created_at: str = 2026-05-12T14:32:00Z
-       └── address (dict)
-
-   ⚠️  WARNING: The root object is a dictionary, but it contains arrays.
-   💡 SUGGESTION: You probably want to add `rec_path='results'` to your incorp() call.
-
-🔑 2. IDENTITY MAPPING:
-   Recommended kwargs for O(1) Memory Registry:
-   ✅ inc_code='user_uuid'
-   ✅ inc_name='full_name'
-
-🛠️  3. ETL / TYPE CASTING SUGGESTIONS:
-   💡 We detected string-based timestamps. Consider passing:
-      conv_dict={
-          'created_at': inc(datetime),
-      }
-======================================================================
-```
-
----
-
-## ⚡️ Core Superpowers
-
-### 1. The 1-Liner: Pagination, Cleaning, & Type Casting
-*Example: Fetching Space Devs upcoming launches.*
-
-You don't need a `while` loop to paginate, and you don't need to define a massive schema to drill into nested data.
-
-```python
-from datetime import datetime
-from incorporator import Incorporator, NextUrlPaginator, inc
-
 class Launch(Incorporator): pass
 
-launches = await Launch.incorp(
-    inc_url="https://ll.thespacedevs.com/2.2.0/launch/upcoming/",
-    rec_path="results",                   # Drill past the useless metadata wrapper
-    inc_page=NextUrlPaginator("next"),    # Auto-paginate using the 'next' JSON key
-    call_lim=2,                           # Safely cap at 2 pages
-    excl_lst=["image", "vid_urls"],       # Drop heavy unneeded keys instantly
-    conv_dict={
-        "net": inc(datetime)              # Safely cast ISO-8601 strings to datetime objects
-    }
-)
-
-# Access deeply nested, strongly-typed attributes with ZERO schema definition
-print(f"🚀 {launches[0].name}")
-print(f"⏰ {launches[0].net.strftime('%B %d, %Y')}")
-print(f"📍 {launches[0].pad.location.name}") # Dot-notation straight through nested dicts!
+launches = await Launch.incorp(inc_url="https://ll.thespacedevs.com/2.2.0/launch/upcoming/")
+print(launches[0].name)
 ```
+→ [Tutorial: Space Devs walkthrough](./docs/1_quick_setup.md)
 
-### 2. Deep Enrichment & Array Reduction
-*Example: Discovering Pokémon and flattening their stats.*
-
-When APIs return heavily nested arrays, Incorporator lets you intercept them using `calc()`, run a custom Python reduction function, and flatten them into simple native types.
+### `test()` — let the framework write your `incorp()` kwargs for you
 
 ```python
-from incorporator.methods.converters import calc
-
-def calculate_bst(stats_array) -> int:
-    """Reduces a nested JSON array into a single integer."""
-    return sum(stat.get("base_stat", 0) for stat in stats_array if isinstance(stat, dict))
-
-# 1. Shallow Discovery (Fetches URLs)
-pokemon_nav = await Nav.incorp(..., inc_child="url") 
-
-# 2. Deep Enrichment (Spawns concurrent requests to all discovered URLs seamlessly)
-enriched_pokemon = await Pokemon.incorp(
-    inc_parent=pokemon_nav,  # Routes the parent list directly into the network engine!
-    inc_code="id",
-    conv_dict={
-        # Intercepts the raw JSON array, calculates the total, and saves it as an integer!
-        "stats": calc(calculate_bst, "stats", default=0, target_type=int),
-    },
-    name_chg=[("stats", "base_stat_total")] # Rename the key dynamically
-)
+await Launch.test(inc_url="https://api.unknown.com/v1/users")
+# Prints payload tree + suggested inc_code, rec_path, conv_dict.
 ```
 
-### 3. Multi-API Graph Fusion
-*Example: Fusing CoinGecko assets with Binance Live Order Books.*
-
-Stop writing manual matching loops or dumping data into SQL just to join it. Incorporator lets you bind independent APIs together natively using `link_to`.
+### `refresh()` — re-fetch live data into existing instances
 
 ```python
-from incorporator.methods.converters import link_to, calc
-
-# 1. Define a clean, null-safe formatting function (No lambdas!)
-def to_usdt(sym: str) -> str:
-    return f"{str(sym).upper()}USDT" if sym else None
-
-# 2. Fetch Binance Order Books (Instantly becomes an O(1) in-memory registry)
-binance_books = await BinanceBook.incorp(
-    inc_url="https://api.binance.us/.../bookTicker", 
-    inc_code="symbol"
-)
-
-# 3. Fetch CoinGecko Assets and fuse them dynamically
-assets = await CryptoAsset.incorp(
-    inc_url="https://api.coingecko.com/...",
-    inc_code="id",
-    conv_dict={
-        # We pass our named formatting function cleanly into the extractor
-        "live_book": calc(link_to(binance_books, extractor=to_usdt), "symbol")
-    }
-)
-
-# Traverse the unified multi-API graph natively
-print(f"{assets[0].name} Live Bid: {assets[0].live_book.bidPrice}")
+await Launch.refresh(instance=launches)
 ```
 
-### 4. XML Ingestion & Declarative Bulk POSTs
-*Example: Auditing a local XML ledger against a Federal Database.*
+### `export()` — serialise to any format
 
-Need to send a batch POST request based on dynamically extracted XML data? Pass a parent object and use the magical `join_all()` token to automatically concatenate parent IDs across a Bulk POST payload.
+CSV, JSON, NDJSON, XML, SQLite, Parquet, Feather, ORC, Avro, XLSX. All share the same call.
+```python
+await Launch.export(instance=launches, file_path="launches.parquet")
+```
+→ [Formats & compression cheat sheet](./docs/formats_and_compression.md)
+
+### `stream()` — a long-running data pipeline
+
+Periodic fetch + optional stateful refresh + optional periodic export, running as a daemon. The kwargs **are** the pipeline definition. `AuditResult` per chunk is the built-in observability stream — a DX bonus, not the purpose.
 
 ```python
-from incorporator.methods.converters import join_all
-
-# 1. Ingest a local XML file
-invoices = await Invoice.incorp(
-    inc_file="jimmy_ledger.xml",
-    rec_path="Dealership.AuditFile.Invoices.Invoice",
-    inc_child="Vehicle.VIN" # Extract the VIN numbers from the XML
-)
-
-# 2. Declarative Bulk POST using the XML data!
-govt_specs = await NHTSASpec.incorp(
-    inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
-    inc_parent=invoices,
-    http_method="POST",
-    payload_type="form",
-    form_payload={
-        "format": "json",
-        "data": join_all(";") # Magically joins all XML VINs by a semicolon!
-    },
-    rec_path="Results",
-    inc_code="VIN"
-)
+async for audit in Launch.stream(
+    incorp_params={"inc_url": "https://ll.thespacedevs.com/2.2.0/launch/upcoming/"},
+    refresh_interval=60,                              # re-fetch every 60s
+    export_params={"file_path": "launches.parquet"},
+    export_interval=300,                              # flush to disk every 5 min
+):
+    if audit.failed_sources: print(audit)             # observability bonus
 ```
+→ [Streaming & pagination guide](./docs/streaming_and_pagination.md)
 
-### 5. The Local Database Pivot (JSON ➡️ SQLite)
-*Example: Moving a JSON API directly into a local SQL database.*
+### `fjord()` — a multi-source data pipeline
 
-Incorporator treats binary **SQLite** databases natively. You don't need to write `CREATE TABLE` schemas or loop through rows. Incorporator inspects the Python types, auto-generates the SQL schema, and executes C-speed bulk inserts instantly.
+Fans out across N concurrent sources, fuses them through a user-defined `outflow(state)` function, exports the combined output.
 
 ```python
-# 1. Fetch JSON API data
-users = await User.incorp("https://api.domain.com/v1/users")
-
-# 2. Dump directly to a local SQLite database! 
-# Incorporator automatically creates the 'user' table and maps the schema.
-await User.export(users, "local_warehouse.db")
-
-# 3. Read it back using a native SQL query!
-active_users = await User.incorp(
-    inc_file="local_warehouse.db", 
-    sql_query="SELECT * FROM user WHERE is_active = 1"
-)
+async for audit in Pipeline.fjord(
+    stream_params=[
+        {"cls": Coin,  "incorp_params": {"inc_url": "..."}, "refresh_interval": 30},
+        {"cls": Order, "incorp_params": {"inc_url": "..."}, "refresh_interval": 5},
+    ],
+    code_file="outflow.py",                           # defines outflow(state) -> list[dict]
+    export_params={"file_path": "fusion.parquet"},
+):
+    if audit.failed_sources: print(audit)
 ```
+→ [Multi-graph mapping guide](./docs/3_graph_mapping.md)
 
----
-## 🛠 Enterprise Resilience & Features
-
-### 🚀 GIL-Free Hyperthreading
-Incorporator handles all Disk I/O and format parsing on background threads. When installed with `[speedups]`, the framework seamlessly lazy-loads Rust and C extensions (`orjson`, `lxml`) to release the Python GIL, natively mapping multi-gigabyte data sources across all available CPU cores without stalling your async event loop.
-
-### 🗜️ Invisible Archiving & Compression
-Stop writing `zipfile` extraction logic for compressed API payloads. Incorporator natively detects, intercepts, and decompresses `gzip`, `bz2`, `lzma`, `zip`, and `tar` archives in the background—without changing a single line of your parsing code.
+### `display()` — REPL debug print
 
 ```python
-# Automatically finds, extracts, and parses the JSON hidden inside the ZIP archive!
-sales = await Sales.incorp("https://api.system.com/dump/sales_2026.json.zip")
-
-# Export to a flat CSV, then seamlessly compress it to GZIP in a background thread
-await Sales.export(sales, "cleaned_sales.csv", compression="gz")
+launches[0].display()   # <Launch id="..." name="...">
 ```
 
-### 📡 Invisible Networking & DLQs
-You never have to manage `httpx.AsyncClient` contexts. Incorporator handles shared connection pools natively. It includes exponential backoff retries via Tenacity. If a URL repeatedly fails with an HTTP 429, it gracefully skips it and places it in a **Dead Letter Queue**.
-```python
-if launches.failed_sources:
-    print(f"DLQ Alert: Programmatically retry these {len(launches.failed_sources)} URLs.")
-```
-
-### 🧠 Zero-OOM Memory Management
-When fetching hundreds of thousands of records, standard Python lists of dicts cause Out-Of-Memory (OOM) crashes. 
-Incorporator wraps lists in an `IncorporatorList`. Every instance automatically registers itself into its class `inc_dict`—backed by a `weakref.WeakValueDictionary`. You get lightning-fast O(1) lookups without blocking the Garbage Collector.
-
-### 🗄️ Non-Blocking Observability
-Swap your base class to `LoggedIncorporator` and set `enable_logging=True`. Incorporator spins up `QueueHandler` background threads to write auto-rotating JSON-line logs (`api.log`, `error.log`, `debug.log`) so disk I/O *never* blocks your asyncio event loop.
-
-### 🔄 Stateful Updates & Cross-Format Exports
-Fetch XML, interact with it as clean Python objects, and dump it to CSV instantly.
-```python
-# Update state in memory, then serialize to disk safely without boilerplate
-await Incorporator.refresh(launches)
-await Incorporator.export(launches, "upcoming_launches.csv", format_type="csv")
-```
+`stream()` and `fjord()` are the production verbs — and they're what the CLI runs against a `pipeline.json`.
 
 ---
 
-## 🐳 Docker Quickstart (CLI-only path)
+## 🚀 From Code to Production — CLI & Docker
 
-You don't have to use the Python API. The CLI can drive the same engine
-from a `pipeline.json` config — no code required (for single-source
-ETLs).
+The CLI runs the same `stream()` / `fjord()` engines from a `pipeline.json`. No Python required for single- or multi-source ETLs.
+
+| Command | What it does |
+|---------|--------------|
+| `incorporator init --type stream` | Scaffold a starter `pipeline.json` (use `--type fjord` for multi-source + `outflow.py`). |
+| `incorporator validate pipeline.json` | Structural check before you ship — no network calls. |
+| `incorporator stream pipeline.json` | Run a stream pipeline. |
+| `incorporator fjord pipeline.json` | Run a multi-source fjord pipeline. |
 
 ```bash
-# 1. Generate a starter config.
 incorporator init --type stream --output-dir .
-
-# 2. Edit pipeline.json (inc_url, headers, export_params, …).
-#    Validate before you ship.
+# Edit pipeline.json (inc_url, headers, export_params, ...)
 incorporator validate pipeline.json
-
-# 3. Run it as a one-shot…
-incorporator stream pipeline.json
-
-# 4. …or as a Dockerised daemon (compose file already in repo).
-cp .env.example .env             # fill in API keys
-mkdir -p config data logs
-mv pipeline.json config/
-docker compose up -d
-docker compose logs -f
+incorporator stream pipeline.json                # one-shot
+# ...or run it as a Dockerised daemon:
+cp .env.example .env && mkdir -p config data logs && mv pipeline.json config/
+docker compose up -d && docker compose logs -f
 ```
 
-Secrets stay out of `pipeline.json` — reference env vars with
-`${API_KEY}` or, in production, Docker / Kubernetes Secrets files with
-`${file:/run/secrets/api_key}`. See
-[`docs/cli_and_configuration.md`](docs/cli_and_configuration.md) for
-the full CLI reference and
-[`docs/deployment.md`](docs/deployment.md) for the production secrets
-pattern.
+Secrets stay out of `pipeline.json` — use `${API_KEY}` for env vars or `${file:/run/secrets/api_key}` for Docker / Kubernetes Secrets mounts.
+
+→ [CLI reference](./docs/cli_and_configuration.md) · [Deployment & secrets guide](./docs/deployment.md)
+
+---
+
+## 🛠 Resilience & Batteries Included
+
+* **GIL-free hyperthreading** via the `[speedups]` extra (orjson, lxml). → [Installation](./docs/installation.md)
+* **Invisible decompression** for `.gz`, `.bz2`, `.lzma`, `.zip`, `.tar` payloads — automatic, no extra calls. → [Formats](./docs/formats_and_compression.md)
+* **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity exponential backoff, failed URLs surfaced via `audit.failed_sources`. → [API reference](./docs/api_reference.md)
+* **Zero-OOM `IncorporatorList`** backed by a `WeakValueDictionary` for O(1) lookups without GC pressure. → [Streaming](./docs/streaming_and_pagination.md)
+* **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. → [API reference](./docs/api_reference.md)
+* **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML, all share the same `export()` surface. → [Data lake pivot](./docs/5_data_lake_pivot.md)
 
 ---
 
 ## 📚 Documentation & Examples
 
-The best way to learn Incorporator is through our deeply documented API references and Guided Tutorials. 
+The best way to learn Incorporator is through our deeply documented API references and guided tutorials.
 
 ### API Reference
 * [📖 **Auto-Generated API Reference** (pdoc)](./docs/api_reference.md) — every public class, method, converter, and paginator, rendered directly from the source docstrings.
 
 ### Guided Tutorials (Real-World Examples)
 Check out the [`/examples`](./examples) directory for runnable code, and the links below for detailed Markdown walkthroughs of each feature:
-* [🚀 **Space Devs Tutorial**](./docs/1_quick_setup.md) - Pagination, simple ETL, and type casting.
-* [⚡️ **Pokédex Power Rankings**](./docs/2_advanced_etl_calc.md) - Deep enrichment (HATEOAS) and array reductions.
-* [📊 **Stablecoin Dashboard**](./docs/3_graph_mapping.md) - Multi-API graph fusion and relational data binding.
-* [🕵️‍♂️ **Shady Jimmy's Ledger**](./docs/4_xml_post_auditing.md) - XML ingestion, O(1) memory audits, and declarative bulk POSTs.
+* [🚀 **Space Devs Tutorial**](./docs/1_quick_setup.md) — Pagination, simple ETL, and type casting.
+* [⚡️ **Pokédex Power Rankings**](./docs/2_advanced_etl_calc.md) — Deep enrichment (HATEOAS) and array reductions.
+* [📊 **Stablecoin Dashboard**](./docs/3_graph_mapping.md) — Multi-API graph fusion and relational data binding.
+* [🕵️‍♂️ **Shady Jimmy's Ledger**](./docs/4_xml_post_auditing.md) — XML ingestion, O(1) memory audits, and declarative bulk POSTs.
+* [🐘 **Data Lake Pivot**](./docs/5_data_lake_pivot.md) — Bridging JSON to Avro & SQLite.
 
 ---
 
