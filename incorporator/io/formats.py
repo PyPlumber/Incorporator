@@ -23,6 +23,8 @@ class FormatType(str, Enum):
     XML = "xml"
     SQLITE = "sqlite"
     AVRO = "avro"
+    XLSX = "xlsx"
+    PARQUET = "parquet"
 
 
 # ── (FormatType, format-type-string) → Python type ──────────────────────
@@ -44,6 +46,15 @@ FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {
     (FormatType.AVRO, "double"): float,
     (FormatType.AVRO, "bytes"): bytes,
     (FormatType.AVRO, "string"): str,
+    # Parquet logical types (pyarrow's str() of pa.DataType — int64, double, etc.)
+    (FormatType.PARQUET, "bool"): bool,
+    (FormatType.PARQUET, "int32"): int,
+    (FormatType.PARQUET, "int64"): int,
+    (FormatType.PARQUET, "float"): float,
+    (FormatType.PARQUET, "double"): float,
+    (FormatType.PARQUET, "string"): str,
+    (FormatType.PARQUET, "binary"): bytes,
+    (FormatType.PARQUET, "null"): type(None),
 }
 
 # ── (FormatType, Python type) → canonical format-type-string ────────────
@@ -69,6 +80,17 @@ PYTHON_TO_FORMAT: Dict[Tuple[FormatType, type], str] = {
     (FormatType.AVRO, list): "string",
     (FormatType.AVRO, dict): "string",
     (FormatType.AVRO, type(None)): "null",
+    # Parquet — canonical widths. int64 over int32, double over float (wider range).
+    # Nested types (list/dict) are flattened to JSON strings, mirroring CSV/Avro
+    # behaviour so Parquet round-trips deterministically across the type bridge.
+    (FormatType.PARQUET, bool): "bool",
+    (FormatType.PARQUET, int): "int64",
+    (FormatType.PARQUET, float): "double",
+    (FormatType.PARQUET, str): "string",
+    (FormatType.PARQUET, bytes): "binary",
+    (FormatType.PARQUET, list): "string",
+    (FormatType.PARQUET, dict): "string",
+    (FormatType.PARQUET, type(None)): "null",
 }
 
 
@@ -129,6 +151,10 @@ def infer_format(path_or_url: str) -> FormatType:
         return FormatType.SQLITE
     if path_lower.endswith(".avro"):
         return FormatType.AVRO
+    if path_lower.endswith((".xlsx", ".xlsm")):
+        return FormatType.XLSX
+    if path_lower.endswith((".parquet", ".pq")):
+        return FormatType.PARQUET
     return FormatType.JSON
 
 

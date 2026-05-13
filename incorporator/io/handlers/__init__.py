@@ -10,7 +10,9 @@ from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType
 from ._base import BaseFormatHandler
 from .binary import AvroHandler, SQLiteHandler
+from .columnar import ParquetHandler
 from .delimited import CSVHandler
+from .spreadsheet import ExcelHandler
 from .text import JSONHandler, NDJSONHandler, XMLHandler
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,8 @@ _HANDLERS: Dict[FormatType, BaseFormatHandler] = {
     FormatType.XML: XMLHandler(),
     FormatType.SQLITE: SQLiteHandler(),
     FormatType.AVRO: AvroHandler(),
+    FormatType.XLSX: ExcelHandler(),
+    FormatType.PARQUET: ParquetHandler(),
 }
 
 

@@ -61,17 +61,25 @@ dev =[
 speedups =["orjson>=3.9", "lxml>=4.9", "cramjam>=2.7"]
 # Big Data Formats
 avro =["fastavro>=1.8"]
+# Business spreadsheets — pure Python, ~250 KB, fits the microclient identity
+xlsx =["openpyxl>=3.1"]
+# Columnar format for data lakes / warehouses. Pyarrow is ~30 MB — deliberately
+# NOT included in [all] to keep the "everything reasonable" install lean.
+parquet =["pyarrow>=14.0"]
 # The v2.0 Pipeline Orchestration Upgrades
 orchestrate =[
     "typer>=0.9.0",
     "prefect>=2.10.0"
 ]
-# The developer "install everything" flag
+# The developer "install everything reasonable" flag.
+# NOTE: heavyweight deps (e.g. pyarrow for Parquet, ~50 MB) are intentionally
+# excluded — users opt into those explicitly via incorporator[parquet] etc.
 all =[
     "orjson>=3.9",
     "lxml>=4.9",
     "cramjam>=2.7",
     "fastavro>=1.8",
+    "openpyxl>=3.1",
     "typer>=0.9.0",
     "prefect>=2.10.0"
 ]
