@@ -101,7 +101,7 @@ def _load_user_module(code_file: Path) -> Any:
 
     The fjord CLI uses this to resolve Incorporator subclass names (declared
     in JSON as strings) back to actual class objects, and to make the
-    ``combine()`` function available to ``fjord()``.
+    ``outflow()`` function available to ``fjord()``.
     """
     import importlib.util
 
@@ -142,19 +142,21 @@ def _resolve_incorporator_class(module: Any, class_name: str, module_path: Path)
 
 
 async def _run_fjord(config: Dict[str, Any], config_dir: Path) -> None:
-    """Resolve user classes from the code_file, then drive cls.fjord()."""
+    """Resolve source classes from the code_file, then drive Incorporator.fjord().
+
+    The output class is built dynamically from the code_file's filename
+    (snake_case → PascalCase); there is no ``output_class`` JSON key.
+    """
     code_file_raw = config.get("code_file")
-    output_class_name = config.get("output_class")
     stream_params_cfg = config.get("stream_params")
     export_params = config.get("export_params")
     refresh_interval = config.get("refresh_interval")
     export_interval = config.get("export_interval")
 
-    if not code_file_raw or not output_class_name or not stream_params_cfg or not export_params:
+    if not code_file_raw or not stream_params_cfg or not export_params:
         if typer:
             typer.secho(
-                "Error: fjord config requires 'code_file', 'output_class', 'stream_params', "
-                "and 'export_params'.",
+                "Error: fjord config requires 'code_file', 'stream_params', and 'export_params'.",
                 fg=typer.colors.RED,
             )
         sys.exit(1)
@@ -163,10 +165,11 @@ async def _run_fjord(config: Dict[str, Any], config_dir: Path) -> None:
     if not code_file_path.is_absolute():
         code_file_path = (config_dir / code_file_path).resolve()
 
+    # Import the user's code_file once so we can resolve stream_params[i]['cls_name']
+    # strings to actual source Incorporator subclasses. The output class is built
+    # dynamically by fjord() itself — no resolution needed for it.
     user_module = _load_user_module(code_file_path)
-    output_class = _resolve_incorporator_class(user_module, output_class_name, code_file_path)
 
-    # Resolve stream_params[i]['cls_name'] strings to class references.
     resolved_streams: list[Dict[str, Any]] = []
     for idx, entry in enumerate(stream_params_cfg):
         cls_name = entry.get("cls_name")
@@ -184,7 +187,7 @@ async def _run_fjord(config: Dict[str, Any], config_dir: Path) -> None:
         typer.secho("🌊 Starting Incorporator Fjord...", fg=typer.colors.GREEN)
 
     try:
-        async for audit in output_class.fjord(
+        async for audit in Incorporator.fjord(
             stream_params=resolved_streams,
             code_file=code_file_path,
             export_params=export_params,
@@ -239,8 +242,9 @@ if typer:
         Execute a Multi-Source Stateful Fjord Pipeline from a JSON configuration file.
 
         The JSON must declare:
-          - code_file (path): Python file with Incorporator subclasses + a combine(state) function.
-          - output_class (str): name of the combined output Incorporator subclass.
+          - code_file (path): Python file with source Incorporator subclasses + a top-level
+            outflow(state) function. The filename's stem becomes the output class name
+            (snake_case → PascalCase; e.g. coin_market.py → CoinMarket).
           - stream_params (list): one entry per source with cls_name, incorp_params, refresh_params, etc.
           - export_params (dict): destination for the combined output.
           - refresh_interval / export_interval (floats, optional): daemon cadence.

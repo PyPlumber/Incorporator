@@ -7,7 +7,7 @@ import asyncio
 import gc
 import logging
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, cast
 
 from .logger import AuditResult
 
@@ -330,35 +330,48 @@ async def _run_chunking_engine(
         await asyncio.sleep(poll_interval)
 
 
-async def _combine_daemon(
-    cls: Any,
+async def _outflow_daemon(
+    output_class_name: str,
+    base_class: Any,
     source_refs: List[List[Any]],
     source_classes: List[Any],
-    combine_fn: Any,
+    outflow_fn: Any,
     export_params: Dict[str, Any],
     lock: asyncio.Lock,
     audit_queue: "asyncio.Queue[Optional[AuditResult]]",
     shutdown_event: asyncio.Event,
     e_interval: Optional[float],
 ) -> None:
-    """Periodic combine-and-export daemon for the fjord engine.
+    """Periodic outflow-and-export daemon for the fjord engine.
 
     On every tick:
       1. Snapshot each ``source_refs[i][0]`` under ``lock`` into a state dict
          keyed by ``source_classes[i].__name__`` (O(N) pointer copies, not deep
          copies — release the lock fast).
-      2. Outside the lock, invoke the user's ``combine_fn(state)``.  The return
-         value must be an iterable of dicts (or anything ``cls(**row)`` accepts).
-      3. Clear ``cls.inc_dict`` (so successive ticks reflect the latest joined
-         view, not an ever-growing accumulator), then build ``cls(**row)``
-         instances for each returned row — they auto-register via
-         ``model_post_init``.
-      4. Export the populated list via ``cls.export(instance=combined, **export_params)``.
-      5. Enqueue a ``combine`` AuditResult.
+      2. Outside the lock, invoke the user's ``outflow_fn(state)``.  The return
+         value is normalised to ``list[dict]`` (a single ``dict`` is wrapped;
+         ``None``/empty is treated as a zero-row tick).
+      3. On an empty return, emit an ``outflow:<ClassName>`` audit with
+         ``rows_processed=0`` and skip the build/export — same behaviour as a
+         stream chunk that yielded zero rows.
+      4. Otherwise: build (or cache-hit) the dynamic output class via
+         ``infer_dynamic_schema(output_class_name, rows, base_class)``. The
+         schema registry is keyed by ``(name, frozenset(field_keys), id(base))``
+         so successive ticks with the same row shape return the same class
+         object — no class churn.
+      5. Clear the dynamic class's ``inc_dict`` (so the registry reflects only
+         this tick's view), instantiate one object per row (auto-registering
+         via Pydantic's ``model_post_init``), retain a strong-ref snapshot on
+         the class to defeat the WeakValueDictionary GC, and export via the
+         existing ``DynamicCls.export()`` pipeline.
 
     Failures in any phase enqueue an audit with ``failed_sources`` populated
     but never crash the daemon.
     """
+    # Local import keeps the observability layer free of a hard schema dep.
+    from ..schema.builder import infer_dynamic_schema
+
+    operation = f"outflow:{output_class_name}"
     loop_idx = 0
     while not shutdown_event.is_set():
         loop_idx += 1
@@ -368,41 +381,62 @@ async def _combine_daemon(
             async with lock:
                 state = {source_classes[i].__name__: source_refs[i][0] for i in range(len(source_classes))}
 
-            # Combine phase — user code outside the lock.
-            combined_rows = combine_fn(state)
-            if combined_rows is None:
-                combined_rows = []
+            # Outflow phase — user code outside the lock.
+            rows = outflow_fn(state)
+            if isinstance(rows, dict):
+                rows = [rows]
+            elif rows is None:
+                rows = []
+            else:
+                rows = list(rows)
 
-            # Build instances of cls — auto-registers into cls.inc_dict.
-            # Clear first so the registry reflects the current tick's view only.
-            cls.inc_dict.clear()
-            combined_instances = [cls(**row) if isinstance(row, dict) else row for row in combined_rows]
-
-            # Retain a strong reference on the class so cls.inc_dict
-            # (WeakValueDictionary) stays populated between ticks. Without this,
-            # the combined instances would be GC'd as soon as the daemon's
-            # local list goes out of scope, defeating the "object map" contract.
-            cls._fjord_snapshot = combined_instances
-
-            # Export phase — uses the existing cls.export() pipeline.
-            if combined_instances:
-                await cls.export(instance=combined_instances, **export_params)
-
-            await audit_queue.put(
-                AuditResult(
-                    chunk_index=loop_idx,
-                    operation="combine",
-                    rows_processed=len(combined_instances),
-                    processing_time_sec=time.perf_counter() - start_time,
+            if not rows:
+                # Zero-row tick: audit and continue. No dynamic class needed.
+                await audit_queue.put(
+                    AuditResult(
+                        chunk_index=loop_idx,
+                        operation=operation,
+                        rows_processed=0,
+                        processing_time_sec=time.perf_counter() - start_time,
+                    )
                 )
-            )
+            else:
+                # Build (or cache-hit) the dynamic output class from the row shape.
+                # base_class is an Incorporator subclass (`base.py` plumbs it
+                # through as `Incorporator`); infer_dynamic_schema returns a
+                # Pydantic subclass inheriting from it, so the runtime object
+                # has Incorporator's inc_dict / export / _fjord_snapshot
+                # attributes — cast for mypy.
+                DynamicCls = cast(Any, infer_dynamic_schema(output_class_name, rows, base_class))
+
+                # Reset registry for this tick's view, then materialise instances.
+                DynamicCls.inc_dict.clear()
+                instances = [DynamicCls(**row) for row in rows]
+
+                # Retain a strong reference on the class so DynamicCls.inc_dict
+                # (WeakValueDictionary) stays populated between ticks. Without
+                # this the instances would be GC'd as soon as the daemon's
+                # local list goes out of scope, defeating the "object map"
+                # contract.
+                DynamicCls._fjord_snapshot = instances
+
+                await DynamicCls.export(instance=instances, **export_params)
+
+                await audit_queue.put(
+                    AuditResult(
+                        chunk_index=loop_idx,
+                        operation=operation,
+                        rows_processed=len(instances),
+                        processing_time_sec=time.perf_counter() - start_time,
+                    )
+                )
         except Exception as e:
             await audit_queue.put(
                 AuditResult(
                     chunk_index=loop_idx,
-                    operation="combine",
+                    operation=operation,
                     rows_processed=0,
-                    failed_sources=[f"Combine Error: {e}"],
+                    failed_sources=[f"Outflow Error: {e}"],
                     processing_time_sec=time.perf_counter() - start_time,
                 )
             )
@@ -415,9 +449,10 @@ async def _combine_daemon(
 
 
 async def _run_fjord_engine(
-    cls: Any,
+    output_class_name: str,
+    base_class: Any,
     stream_params: List[Dict[str, Any]],
-    combine_fn: Any,
+    outflow_fn: Any,
     export_params: Dict[str, Any],
     r_interval: Optional[float],
     e_interval: Optional[float],
@@ -425,14 +460,16 @@ async def _run_fjord_engine(
     """Multi-source stateful streaming engine for ``Incorporator.fjord()``.
 
     Generalisation of ``_run_stateful_engine`` to N sources with one
-    combine-and-export daemon producing instances of ``cls``.
+    outflow-and-export daemon. The output class is built dynamically by
+    ``_outflow_daemon`` on the first non-empty tick — this engine just
+    plumbs the name + base class through.
 
     Lifecycle:
       1. Seed phase: concurrent ``entry["cls"].incorp(**entry["incorp_params"])``
          across all entries via ``asyncio.gather``. One ``incorp`` audit yielded
          per source.
       2. Daemon phase: per-source refresh daemons (always), per-source export
-         daemons (when ``export_params`` is set on the entry), and one combine
+         daemons (when ``export_params`` is set on the entry), and one outflow
          daemon. All coordinate via a single shared ``asyncio.Lock``.
       3. Shutdown: ``shutdown_event.set()`` → cancel tasks → drain queue → exit.
     """
@@ -479,7 +516,7 @@ async def _run_fjord_engine(
         )
 
     # ------------------------------------------------------------------
-    # 2. Daemon phase — spawn refresh + per-stream export + combine tasks.
+    # 2. Daemon phase — spawn refresh + per-stream export + outflow tasks.
     # ------------------------------------------------------------------
     lock = asyncio.Lock()
     audit_queue: asyncio.Queue[Optional[AuditResult]] = asyncio.Queue()
@@ -526,14 +563,15 @@ async def _run_fjord_engine(
                 )
             )
 
-    # Always spawn the combine daemon — it's the whole point of fjord.
+    # Always spawn the outflow daemon — it's the whole point of fjord.
     tasks.append(
         asyncio.create_task(
-            _combine_daemon(
-                cls=cls,
+            _outflow_daemon(
+                output_class_name=output_class_name,
+                base_class=base_class,
                 source_refs=source_refs,
                 source_classes=source_classes,
-                combine_fn=combine_fn,
+                outflow_fn=outflow_fn,
                 export_params=export_params,
                 lock=lock,
                 audit_queue=audit_queue,

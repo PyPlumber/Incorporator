@@ -172,17 +172,20 @@ them into a brand-new entity (e.g. CoinGecko spot price + Binance futures
 price → CoinMarket with computed spread), reach for `fjord()`.
 
 `fjord()` runs each source's refresh daemon concurrently under a shared
-lock, then calls a user-supplied `combine(state)` function on each export
-tick to build instances of the calling class. Stateful-polling only —
-no chunking mode.
+lock, then calls a user-supplied `outflow(state)` function on each export
+tick. The output class is built dynamically from the rows `outflow()`
+returns — named after the `code_file` filename (`coin_market.py` →
+`CoinMarket`). No output class to declare. Stateful-polling only — no
+chunking mode.
 
 ```python
-async for audit in CoinMarket.fjord(
+# coin_market.py defines Coin, BinanceFutures, and outflow(state).
+async for audit in Incorporator.fjord(
     stream_params=[
         {"cls": Coin,           "incorp_params": {...}, "refresh_params": {}},
         {"cls": BinanceFutures, "incorp_params": {...}, "refresh_params": {}},
     ],
-    code_file="combine.py",
+    code_file="coin_market.py",
     export_params={"file_path": "markets.ndjson"},
     refresh_interval=60.0,
     export_interval=300.0,

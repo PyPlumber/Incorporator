@@ -965,13 +965,40 @@ class Incorporator(BaseModel):
             yield audit
 
     @staticmethod
-    def _load_combine_function(code_file: Union[str, Path]) -> Any:
-        """Load a top-level ``combine(state)`` function from a Python file.
+    def _pascal_case_from_stem(code_file: Union[str, Path]) -> str:
+        """Derive a Pydantic-class-friendly name from a code_file's filename.
+
+        ``coin_market.py`` → ``"CoinMarket"``; ``crypto-spread.py`` →
+        ``"CryptoSpread"``.  Used by :meth:`fjord` to name the dynamic
+        output class — the developer never has to declare it.
+
+        Raises:
+            ValueError: If the stem produces an invalid Python identifier
+                (empty, leading digit, or contains nothing alphabetic).
+        """
+        import re
+
+        stem = Path(code_file).stem
+        parts = re.split(r"[_\-\s]+", stem)
+        name = "".join(p.capitalize() for p in parts if p)
+        if not name or not name[0].isalpha():
+            raise ValueError(
+                f"[Incorporator] Cannot derive a valid Python class name from code_file stem "
+                f"{stem!r}. Use a filename like 'coin_market.py'."
+            )
+        return name
+
+    @staticmethod
+    def _load_outflow_function(code_file: Union[str, Path]) -> Any:
+        """Load a top-level ``outflow(state)`` function from a Python file.
 
         Mirrors :meth:`_apply_code_transform`'s importlib pattern but for the
-        fjord engine — the file must define a function named ``combine`` that
+        fjord engine — the file must define a function named ``outflow`` that
         accepts exactly one parameter (the state dict mapping class names to
-        ``IncorporatorList`` snapshots).
+        ``IncorporatorList`` snapshots) and returns a ``list[dict]`` (or a
+        single ``dict``, which fjord auto-wraps).  The returned rows are fed
+        into the dynamic-schema-inference path the same way ``incorp()``
+        treats parsed payloads.
 
         Returns the loaded callable. Raises ``FileNotFoundError`` /
         ``ImportError`` / ``ValueError`` on missing file, unloadable module,
@@ -984,45 +1011,48 @@ class Incorporator(BaseModel):
         if not code_path.exists():
             raise FileNotFoundError(f"[Incorporator] code_file not found: {code_path}")
 
-        spec = importlib.util.spec_from_file_location("_inc_fjord_combine", code_path)
+        spec = importlib.util.spec_from_file_location("_inc_fjord_outflow", code_path)
         if spec is None or spec.loader is None:
             raise ImportError(f"[Incorporator] Cannot load module spec from: {code_path}")
 
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        combine_fn = getattr(module, "combine", None)
-        if combine_fn is None:
+        outflow_fn = getattr(module, "outflow", None)
+        if outflow_fn is None:
             raise ValueError(
-                f"[Incorporator] code_file must define a top-level combine(state) function: {code_path}"
+                f"[Incorporator] code_file must define a top-level outflow(state) function: {code_path}"
             )
 
-        sig = inspect.signature(combine_fn)
+        sig = inspect.signature(outflow_fn)
         params = list(sig.parameters)
         if len(params) != 1:
             raise ValueError(
-                f"[Incorporator] combine() must accept exactly 1 parameter (state), got {len(params)}: {params}"
+                f"[Incorporator] outflow() must accept exactly 1 parameter (state), got {len(params)}: {params}"
             )
 
-        return combine_fn
+        return outflow_fn
 
     @classmethod
     async def fjord(
-        cls: Type[TIncorporator],
+        cls,
         stream_params: List[Dict[str, Any]],
         code_file: Union[str, Path],
         export_params: Dict[str, Any],
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
     ) -> AsyncGenerator["AuditResult", None]:
-        """Multi-source stateful streaming with a combined output class.
+        """Multi-source stateful streaming with a dynamically-built output class.
 
         ``fjord()`` is the multi-source analogue of :meth:`stream` — it ingests
         from N independent Incorporator subclasses concurrently, exposes their
-        live ``inc_dict`` registries to a developer-provided ``combine(state)``
-        function, and builds new instances of the calling class (``cls``) from
-        whatever ``combine()`` returns.  The combined instances are then
-        exported via the existing :meth:`export` pipeline.
+        live ``inc_dict`` registries to a developer-provided ``outflow(state)``
+        function, and feeds whatever ``outflow()`` returns into the same
+        dynamic-schema-inference + export pipeline ``incorp()`` already uses.
+        **No user-defined output class is required** — the class is built
+        automatically and named after the ``code_file``'s filename
+        (snake_case → PascalCase; e.g. ``coin_market.py`` →
+        ``CoinMarket``).
 
         Think of it as: N rivers (streams) → one fjord (combined body) → one
         exported output.
@@ -1049,18 +1079,18 @@ class Incorporator(BaseModel):
                 - ``export_interval`` (float): per-entry override of the
                   top-level ``export_interval``.
             code_file: Path to a Python file defining a top-level
-                ``combine(state)`` function.  ``state`` is a dict mapping each
+                ``outflow(state)`` function.  ``state`` is a dict mapping each
                 source class's ``__name__`` to its current ``IncorporatorList``
-                snapshot.  Must return an iterable of dicts (or Pydantic
-                models); each row is used to construct one ``cls(**row)``
-                instance.
-            export_params: kwargs forwarded to ``cls.export()`` for the
-                combined output.  Required — the joined output must have a
-                destination.
+                snapshot.  Must return ``list[dict]`` (or a single ``dict``,
+                auto-wrapped); each row is used to construct one instance of
+                the dynamic output class.
+            export_params: kwargs forwarded to the dynamic output class's
+                ``export()`` for the combined output.  Required — the joined
+                output must have a destination.
             refresh_interval: Default sleep between refresh ticks for each
                 source daemon.  Per-entry ``refresh_interval`` overrides this.
                 ``None`` means "one-shot then exit".
-            export_interval: Default sleep between combine-and-export ticks.
+            export_interval: Default sleep between outflow-and-export ticks.
                 ``None`` means "one-shot then exit".
 
         Yields:
@@ -1071,21 +1101,36 @@ class Incorporator(BaseModel):
             - ``"fjord_refresh:<ClassName>"`` — per-source refresh tick.
             - ``"export:<ClassName>"`` — per-source export tick (when an
               entry has ``export_params``).
-            - ``"combine"`` — combine-and-export tick.
+            - ``"outflow:<DynamicClassName>"`` — outflow-and-export tick.
 
         Example:
-            CoinGecko + Binance Futures combined into a spread table::
+            ``coin_market.py``::
+
+                from incorporator import Incorporator
 
                 class Coin(Incorporator): pass
                 class BinanceFutures(Incorporator): pass
 
-                class CoinMarket(Incorporator):
-                    coin_name: str = ""
-                    spot_price: float = 0.0
-                    futures_price: float = 0.0
-                    spread: float = 0.0
+                def outflow(state):
+                    rows = []
+                    for c in state["Coin"]:
+                        f = state["BinanceFutures"].inc_dict.get(c.inc_code)
+                        if f:
+                            rows.append({
+                                "inc_code":      c.inc_code,
+                                "coin_name":     getattr(c, "name", ""),
+                                "spot_price":    getattr(c, "current_price", 0.0),
+                                "futures_price": getattr(f, "price", 0.0),
+                                "spread":        getattr(f, "price", 0.0) - getattr(c, "current_price", 0.0),
+                            })
+                    return rows
 
-                async for audit in CoinMarket.fjord(
+            Driver — note no ``CoinMarket`` class to declare::
+
+                from incorporator import Incorporator
+                from coin_market import Coin, BinanceFutures
+
+                async for audit in Incorporator.fjord(
                     stream_params=[
                         {"cls": Coin,
                          "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"},
@@ -1094,7 +1139,7 @@ class Incorporator(BaseModel):
                          "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
                          "refresh_params": {}},
                     ],
-                    code_file="combine.py",
+                    code_file="coin_market.py",          # → output class auto-named "CoinMarket"
                     export_params={"file_path": "markets.ndjson"},
                     refresh_interval=60.0,
                     export_interval=300.0,
@@ -1105,28 +1150,33 @@ class Incorporator(BaseModel):
 
         # Validate stream_params shape early — fail fast with clear errors.
         if not stream_params:
-            raise ValueError(f"[{cls.__name__}] fjord() requires at least one stream in stream_params.")
+            raise ValueError("[Incorporator.fjord] requires at least one stream in stream_params.")
         for idx, entry in enumerate(stream_params):
             if "cls" not in entry:
                 raise ValueError(
-                    f"[{cls.__name__}] stream_params[{idx}] missing required key 'cls' (Incorporator subclass)."
+                    f"[Incorporator.fjord] stream_params[{idx}] missing required key 'cls' (Incorporator subclass)."
                 )
             if not isinstance(entry["cls"], type) or not issubclass(entry["cls"], Incorporator):
                 raise TypeError(
-                    f"[{cls.__name__}] stream_params[{idx}]['cls'] must be an Incorporator subclass, "
+                    f"[Incorporator.fjord] stream_params[{idx}]['cls'] must be an Incorporator subclass, "
                     f"got {type(entry['cls']).__name__!r}."
                 )
             if "incorp_params" not in entry:
                 raise ValueError(
-                    f"[{cls.__name__}] stream_params[{idx}] missing required key 'incorp_params'."
+                    f"[Incorporator.fjord] stream_params[{idx}] missing required key 'incorp_params'."
                 )
 
-        combine_fn = cls._load_combine_function(code_file)
+        # Derive the output class name from the code_file filename. fjord
+        # builds the actual Pydantic class lazily on the first non-empty
+        # outflow() tick — see _outflow_daemon in observability/pipeline.py.
+        output_class_name = cls._pascal_case_from_stem(code_file)
+        outflow_fn = cls._load_outflow_function(code_file)
 
         async for audit in _run_fjord_engine(
-            cls=cls,
+            output_class_name=output_class_name,
+            base_class=Incorporator,
             stream_params=stream_params,
-            combine_fn=combine_fn,
+            outflow_fn=outflow_fn,
             export_params=export_params,
             r_interval=refresh_interval,
             e_interval=export_interval,

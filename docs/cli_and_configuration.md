@@ -106,26 +106,35 @@ Terminal output is suppressed, and telemetry is routed to non-blocking backgroun
 
 While `incorporator stream` operates on **one** source per pipeline, the
 `incorporator fjord` subcommand drives **multiple sources concurrently** and
-joins them into a brand-new combined output class via a Python `combine()`
-function you supply.
+joins them into a brand-new output class via a Python `outflow()` function
+you supply.
 
 Use fjord when you need to keep a live, joined object map synchronised
 across N APIs (e.g. crypto spot price + futures price → combined market
 spread).
 
+### Zero output-class declaration
+
+You **do not** define the output Incorporator subclass. fjord builds it
+dynamically from the rows your `outflow()` function returns — same
+zero-schema philosophy as `incorp()`. The class name is derived from the
+`code_file` filename: **snake_case → PascalCase**.
+
+- `coin_market.py` → `CoinMarket`
+- `crypto_spread.py` → `CryptoSpread`
+- `nascar_fantasy.py` → `NascarFantasy`
+
 ### Configuration File (`fjord.json`)
 
-Unlike `stream`, fjord needs Python references that can't live in JSON. So
-the config points to a `code_file` — a single `.py` containing your
-`Incorporator` subclasses **and** a top-level `combine(state)` function.
-The CLI imports that file at startup, resolves the class names by
-`getattr`, and validates each resolved object is an `Incorporator`
-subclass.
+The config points to a `code_file` — a single `.py` containing your
+source `Incorporator` subclasses **and** a top-level `outflow(state)`
+function. The CLI imports that file at startup, resolves source class
+names via `getattr`, and validates each resolved object is an
+`Incorporator` subclass.
 
 ```json
 {
-  "code_file": "my_pipeline.py",
-  "output_class": "CoinMarket",
+  "code_file": "coin_market.py",
   "stream_params": [
     {
       "cls_name": "Coin",
@@ -154,33 +163,28 @@ subclass.
 
 | Field | Required | Description |
 | :--- | :--- | :--- |
-| `code_file` | ✅ | Path to a `.py` file containing Incorporator subclasses and a `combine(state)` function. Resolved relative to the JSON config's directory. |
-| `output_class` | ✅ | Name of the **combined output** Incorporator subclass declared in `code_file`. Instances built from `combine()` rows land in this class's `inc_dict`. |
+| `code_file` | ✅ | Path to a `.py` file containing source Incorporator subclasses and a top-level `outflow(state)` function. **The filename's stem becomes the output class name** (snake_case → PascalCase). Resolved relative to the JSON config's directory. |
 | `stream_params` | ✅ | List of per-source dicts. Each must declare `cls_name` (string matching a subclass in `code_file`) and `incorp_params`. Optional: `refresh_params`, `export_params` (per-source export). |
 | `export_params` | ✅ | Destination for the combined output graph. |
 | `refresh_interval` | ⬜ | Cadence (seconds) for per-source refresh daemons. Each entry can override. |
-| `export_interval` | ⬜ | Cadence (seconds) for the combine-and-export tick. |
+| `export_interval` | ⬜ | Cadence (seconds) for the outflow-and-export tick. |
 
-### The `combine()` Function
+### The `outflow()` Function
 
-Lives in the same `code_file` as the classes. Receives `state` — a dict
-keyed by source-class name, valued with that source's `IncorporatorList`.
-Returns a list of dicts; fjord builds `OutputClass(**row)` instances and
-exports them.
+Lives in the same `code_file` as the source classes. Receives `state` —
+a dict keyed by source-class name, valued with that source's
+`IncorporatorList`. Returns a `list[dict]` (or a single `dict`, auto-
+wrapped). fjord feeds the rows through the same dynamic-schema-inference
+path `incorp()` uses, then exports the instances.
 
 ```python
-# my_pipeline.py
+# coin_market.py
 from incorporator import Incorporator
 
 class Coin(Incorporator): pass
 class BinanceFutures(Incorporator): pass
-class CoinMarket(Incorporator):
-    coin_name: str = ""
-    spot_price: float = 0.0
-    futures_price: float = 0.0
-    spread: float = 0.0
 
-def combine(state):
+def outflow(state):
     coins = state["Coin"]
     futures = state["BinanceFutures"]
     rows = []
@@ -198,6 +202,20 @@ def combine(state):
     return rows
 ```
 
+#### `outflow()` contract — what you do vs. what fjord does
+
+| You write | fjord handles |
+| :--- | :--- |
+| The join logic (`for c in state["Coin"]…`) | Concurrent source ingestion + shared async lock |
+| The dict shape per row | Building the dynamic Pydantic class from the dicts |
+| Domain math (`spread = f.price - c.current_price`) | Per-source refresh daemons + per-source optional export |
+| Returning `list[dict]` | Exporting the instances via `export()` (format inferred from extension) |
+|  | Audit telemetry, graceful shutdown, weak-ref management |
+
+If `outflow()` returns `[]`, fjord emits an audit with `rows_processed=0`
+and skips the export for that tick. Useful for "no joined rows this
+iteration" without crashing the daemon.
+
 ### Running the Daemon
 
 ```bash
@@ -207,6 +225,15 @@ incorporator fjord fjord.json --logs
 There is no `--poll` flag — fjord is **stateful-polling only** by design.
 Cadence is driven by `refresh_interval` and `export_interval` inside the
 JSON config.
+
+### Audit operations
+
+| Operation tag | Emitted by |
+| :--- | :--- |
+| `fjord_incorp:<ClassName>` | Seed phase, one per source |
+| `fjord_refresh:<ClassName>` | Per-source refresh daemon tick |
+| `export:<ClassName>` | Per-source export daemon tick (when `export_params` set on entry) |
+| `outflow:<DynamicClassName>` | Outflow-and-export daemon tick |
 
 ### When to Reach For `fjord` vs `stream`
 
