@@ -218,10 +218,12 @@ def _decompress_cramjam(
 
         if isinstance(data, str):
             with open(Path(data).resolve(), "rb") as f:
-                raw_bytes = cast(bytes, cj_module.decompress(f.read()))
+                # cramjam ≥2.x returns a Buffer object, not plain bytes — wrap in bytes()
+                raw_bytes = bytes(cj_module.decompress(f.read()))
                 return raw_bytes if is_bin else raw_bytes.decode("utf-8")
 
-        raw_bytes = cast(bytes, cj_module.decompress(data))
+        # cramjam ≥2.x returns a Buffer object, not plain bytes — wrap in bytes()
+        raw_bytes = bytes(cj_module.decompress(data))
         return raw_bytes if is_bin else raw_bytes.decode("utf-8")
 
     except ImportError:
@@ -279,13 +281,15 @@ def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> 
             if hasattr(cj_module, "Compressor"):
                 compressor = cj_module.Compressor()
                 while chunk := f_in.read(1024 * 1024):  # 1MB Chunks
-                    f_out.write(compressor.compress(chunk))
+                    # cramjam ≥2.x: compress() returns int (bytes consumed), not bytes.
+                    # Compressed output is retrieved via finish() / flush() at the end.
+                    compressor.compress(chunk)
 
-                # Close the stream explicitly if the binding supports it
+                # Drain the compressor output buffer
                 if hasattr(compressor, "finish"):
-                    f_out.write(compressor.finish())
+                    f_out.write(bytes(compressor.finish()))
                 elif hasattr(compressor, "flush"):
-                    f_out.write(compressor.flush())
+                    f_out.write(bytes(compressor.flush()))
             else:
                 # Fallback for older cramjam installations
                 f_out.write(cast(bytes, cj_module.compress(f_in.read())))
