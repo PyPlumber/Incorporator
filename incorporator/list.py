@@ -1,8 +1,11 @@
 """
 IncorporatorList: the typed list wrapper and deduplication utility.
 
-Kept separate from base.py so it can be imported by factory.py without
-creating a circular dependency chain.
+Lives at the package root (rather than under ``schema/``) because it is
+a *runtime collection of Incorporator instances* — public API exported
+in ``incorporator.__all__`` — not a schema-compilation artifact.
+``schema/`` is reserved for the modules that build Pydantic classes
+from raw data (``builder``, ``router``, ``factory``).
 """
 
 import logging

@@ -402,15 +402,19 @@ async def test_fjord_per_stream_export(tmp_path: Path, monkeypatch: pytest.Monke
 
 def test_pascal_case_from_stem_basic() -> None:
     """Direct unit test for the filename → class name derivation."""
-    assert Incorporator._pascal_case_from_stem(Path("coin_market.py")) == "CoinMarket"
-    assert Incorporator._pascal_case_from_stem(Path("crypto-spread.py")) == "CryptoSpread"
-    assert Incorporator._pascal_case_from_stem(Path("simple.py")) == "Simple"
-    assert Incorporator._pascal_case_from_stem(Path("a_b_c_d.py")) == "ABCD"
+    from incorporator.usercode import pascal_case_from_stem
+
+    assert pascal_case_from_stem(Path("coin_market.py")) == "CoinMarket"
+    assert pascal_case_from_stem(Path("crypto-spread.py")) == "CryptoSpread"
+    assert pascal_case_from_stem(Path("simple.py")) == "Simple"
+    assert pascal_case_from_stem(Path("a_b_c_d.py")) == "ABCD"
 
 
 def test_pascal_case_from_stem_rejects_invalid() -> None:
     """Stems that can't produce a valid Python identifier raise ValueError."""
+    from incorporator.usercode import pascal_case_from_stem
+
     with pytest.raises(ValueError, match="Cannot derive a valid Python class name"):
-        Incorporator._pascal_case_from_stem(Path("123.py"))
+        pascal_case_from_stem(Path("123.py"))
     with pytest.raises(ValueError, match="Cannot derive a valid Python class name"):
-        Incorporator._pascal_case_from_stem(Path("_.py"))
+        pascal_case_from_stem(Path("_.py"))

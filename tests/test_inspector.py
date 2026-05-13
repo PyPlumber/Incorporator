@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from incorporator.exceptions import IncorporatorFormatError, IncorporatorNetworkError
-from incorporator.inspector import _print_tree, analyze_data, analyze_error
+from incorporator.tools.inspector import _print_tree, analyze_data, analyze_error
 
 
 # ==========================================

@@ -127,9 +127,7 @@ def _resolve_incorporator_class(module: Any, class_name: str, module_path: Path)
     target = getattr(module, class_name, None)
     if target is None:
         if typer:
-            typer.secho(
-                f"Error: class '{class_name}' not found in {module_path}", fg=typer.colors.RED
-            )
+            typer.secho(f"Error: class '{class_name}' not found in {module_path}", fg=typer.colors.RED)
         sys.exit(1)
     if not isinstance(target, type) or not issubclass(target, Incorporator):
         if typer:
@@ -175,9 +173,7 @@ async def _run_fjord(config: Dict[str, Any], config_dir: Path) -> None:
         cls_name = entry.get("cls_name")
         if not cls_name:
             if typer:
-                typer.secho(
-                    f"Error: stream_params[{idx}] missing 'cls_name' field.", fg=typer.colors.RED
-                )
+                typer.secho(f"Error: stream_params[{idx}] missing 'cls_name' field.", fg=typer.colors.RED)
             sys.exit(1)
         resolved_entry = {k: v for k, v in entry.items() if k != "cls_name"}
         resolved_entry["cls"] = _resolve_incorporator_class(user_module, cls_name, code_file_path)

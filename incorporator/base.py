@@ -5,8 +5,8 @@ The core orchestrator and declarative factory for the Incorporator framework.
 
 This file acts purely as a Domain-Driven orchestrator. It contains NO data parsing,
 network looping, or schema compilation logic. It delegates to `io/`, `schema/`,
-`observability/`, `factory.py`, and `list.py`, then assembles the resulting
-dynamic Pydantic object graphs.
+`observability/`, `tools/`, `usercode.py`, and `list.py`, then assembles the
+resulting dynamic Pydantic object graphs.
 """
 
 import asyncio
@@ -33,13 +33,14 @@ from typing import (
 
 from pydantic import BaseModel, Field
 
-from . import factory as _factory
 from .io import fetch as network
 from .io import handlers as format_parsers
 from .io.formats import FormatType, infer_format
 from .io.pagination.base import AsyncPaginator
 from .list import IncorporatorList, _deduplicate_extracted
+from .schema import factory as _factory
 from .schema import router
+from .usercode import apply_code_transform, load_outflow_function, pascal_case_from_stem
 
 if TYPE_CHECKING:
     from .observability.logger import AuditResult
@@ -136,7 +137,7 @@ class Incorporator(BaseModel):
     #: :meth:`export` to generate the destination schema for Avro
     #: (``pydantic_schema``) and to seed ``all_field_names`` for CSV/SQLite.
     #: Concurrent writes are guarded by a per-class ``threading.Lock`` held
-    #: in :mod:`incorporator.factory`.
+    #: in :mod:`incorporator.schema.factory`.
     _schema_union: ClassVar[Dict[str, Any]] = {}
 
     #: Origin tracking — the URL the subclass was first populated from.
@@ -440,7 +441,7 @@ class Incorporator(BaseModel):
 
         # Routes raw data to the Inspector if triggered
         if __inspect:
-            from .inspector import analyze_data
+            from .tools.inspector import analyze_data
 
             analyze_data(parsed_data, {"rec_path": kwargs.get("rec_path")})
 
@@ -631,59 +632,6 @@ class Incorporator(BaseModel):
 
         return cast(Union[TIncorporator, "IncorporatorList[TIncorporator]"], result)
 
-    @staticmethod
-    def _apply_code_transform(
-        instances: List[Any],
-        code_file: Union[str, Path],
-    ) -> List[Any]:
-        """Loads a Python file and calls its top-level ``transform(instances)`` function.
-
-        The file must define::
-
-            def transform(instances):
-                # filter, sort, add computed fields, etc.
-                return modified_instances
-
-        If no ``transform`` function is found, ``instances`` is returned unchanged.
-        Runs synchronously — callers should wrap in ``asyncio.to_thread`` for CPU-heavy transforms.
-
-        Args:
-            instances: The list of Incorporator objects to transform.
-            code_file: Absolute or relative path to a ``.py`` file.
-
-        Raises:
-            FileNotFoundError: If ``code_file`` does not exist.
-            ImportError: If the file cannot be loaded as a Python module.
-        """
-        import importlib.util
-
-        code_path = Path(code_file).resolve()
-        if not code_path.exists():
-            raise FileNotFoundError(f"[Incorporator] code_file not found: {code_path}")
-
-        spec = importlib.util.spec_from_file_location("_inc_code_transform", code_path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"[Incorporator] Cannot load module spec from: {code_path}")
-
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        transform_fn = getattr(module, "transform", None)
-        if transform_fn is None:
-            return instances
-
-        import inspect
-
-        sig = inspect.signature(transform_fn)
-        params = list(sig.parameters)
-        if len(params) != 1:
-            raise ValueError(
-                f"[Incorporator] transform() must accept exactly 1 parameter (instances), got {len(params)}: {params}"
-            )
-
-        result = transform_fn(instances)
-        return result if result is not None else instances
-
     @classmethod
     async def export(
         cls: Type[TIncorporator],
@@ -815,7 +763,7 @@ class Incorporator(BaseModel):
         transform_source: Iterable[Any] = instances
         code_file_field_names: Optional[List[str]] = None
         if code_file is not None:
-            transform_source = await asyncio.to_thread(cls._apply_code_transform, instances, code_file)
+            transform_source = await asyncio.to_thread(apply_code_transform, instances, code_file)
             # Peek at the first transformed row so we can rebuild all_field_names from the
             # *actual* output schema — code_file may add, remove, or rename fields.
             import itertools as _itertools
@@ -964,75 +912,6 @@ class Incorporator(BaseModel):
         ):
             yield audit
 
-    @staticmethod
-    def _pascal_case_from_stem(code_file: Union[str, Path]) -> str:
-        """Derive a Pydantic-class-friendly name from a code_file's filename.
-
-        ``coin_market.py`` → ``"CoinMarket"``; ``crypto-spread.py`` →
-        ``"CryptoSpread"``.  Used by :meth:`fjord` to name the dynamic
-        output class — the developer never has to declare it.
-
-        Raises:
-            ValueError: If the stem produces an invalid Python identifier
-                (empty, leading digit, or contains nothing alphabetic).
-        """
-        import re
-
-        stem = Path(code_file).stem
-        parts = re.split(r"[_\-\s]+", stem)
-        name = "".join(p.capitalize() for p in parts if p)
-        if not name or not name[0].isalpha():
-            raise ValueError(
-                f"[Incorporator] Cannot derive a valid Python class name from code_file stem "
-                f"{stem!r}. Use a filename like 'coin_market.py'."
-            )
-        return name
-
-    @staticmethod
-    def _load_outflow_function(code_file: Union[str, Path]) -> Any:
-        """Load a top-level ``outflow(state)`` function from a Python file.
-
-        Mirrors :meth:`_apply_code_transform`'s importlib pattern but for the
-        fjord engine — the file must define a function named ``outflow`` that
-        accepts exactly one parameter (the state dict mapping class names to
-        ``IncorporatorList`` snapshots) and returns a ``list[dict]`` (or a
-        single ``dict``, which fjord auto-wraps).  The returned rows are fed
-        into the dynamic-schema-inference path the same way ``incorp()``
-        treats parsed payloads.
-
-        Returns the loaded callable. Raises ``FileNotFoundError`` /
-        ``ImportError`` / ``ValueError`` on missing file, unloadable module,
-        missing function, or wrong arity.
-        """
-        import importlib.util
-        import inspect
-
-        code_path = Path(code_file).resolve()
-        if not code_path.exists():
-            raise FileNotFoundError(f"[Incorporator] code_file not found: {code_path}")
-
-        spec = importlib.util.spec_from_file_location("_inc_fjord_outflow", code_path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"[Incorporator] Cannot load module spec from: {code_path}")
-
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        outflow_fn = getattr(module, "outflow", None)
-        if outflow_fn is None:
-            raise ValueError(
-                f"[Incorporator] code_file must define a top-level outflow(state) function: {code_path}"
-            )
-
-        sig = inspect.signature(outflow_fn)
-        params = list(sig.parameters)
-        if len(params) != 1:
-            raise ValueError(
-                f"[Incorporator] outflow() must accept exactly 1 parameter (state), got {len(params)}: {params}"
-            )
-
-        return outflow_fn
-
     @classmethod
     async def fjord(
         cls,
@@ -1162,15 +1041,13 @@ class Incorporator(BaseModel):
                     f"got {type(entry['cls']).__name__!r}."
                 )
             if "incorp_params" not in entry:
-                raise ValueError(
-                    f"[Incorporator.fjord] stream_params[{idx}] missing required key 'incorp_params'."
-                )
+                raise ValueError(f"[Incorporator.fjord] stream_params[{idx}] missing required key 'incorp_params'.")
 
         # Derive the output class name from the code_file filename. fjord
         # builds the actual Pydantic class lazily on the first non-empty
         # outflow() tick — see _outflow_daemon in observability/pipeline.py.
-        output_class_name = cls._pascal_case_from_stem(code_file)
-        outflow_fn = cls._load_outflow_function(code_file)
+        output_class_name = pascal_case_from_stem(code_file)
+        outflow_fn = load_outflow_function(code_file)
 
         async for audit in _run_fjord_engine(
             output_class_name=output_class_name,
@@ -1191,7 +1068,7 @@ class Incorporator(BaseModel):
         """JIT API Profiler — explore an unknown endpoint without writing a schema.
 
         ``test()`` is a Developer Experience helper that wraps :meth:`incorp`
-        with ``__inspect=True`` to trigger the :mod:`incorporator.inspector`
+        with ``__inspect=True`` to trigger the :mod:`incorporator.tools.inspector`
         tree analyser.  On a successful fetch it prints a deep tree-view of
         the payload structure, detects identity-shaped fields (UUIDs,
         timestamps, etc.), and emits the exact ``inc_code``, ``inc_name``,
@@ -1238,7 +1115,7 @@ class Incorporator(BaseModel):
 
         except Exception as e:
             # Defer DX logging to the Inspector module
-            from .inspector import analyze_error
+            from .tools.inspector import analyze_error
 
             analyze_error(e)
             return IncorporatorList(cls, [])

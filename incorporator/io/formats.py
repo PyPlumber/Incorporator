@@ -137,8 +137,13 @@ def to_python_type(fmt: FormatType, type_str: str, default: type = str) -> type:
     return FORMAT_TO_PYTHON.get((fmt, type_str), default)
 
 
-def to_format_type(fmt: FormatType, python_type: type, default: str = "string") -> str:
-    """Return the canonical format type string for a Python type."""
+def _to_format_type(fmt: FormatType, python_type: type, default: str = "string") -> str:
+    """Return the canonical format type string for a Python type.
+
+    Internal — currently only consumed indirectly via :func:`convert_type`'s
+    PYTHON_TO_FORMAT lookup.  Kept as a named helper so future format
+    backends can monkey-patch it without touching the registry.
+    """
     return PYTHON_TO_FORMAT.get((fmt, python_type), default)
 
 

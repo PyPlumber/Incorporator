@@ -1,23 +1,29 @@
 """
-Incorporator Factory Module
-============================
+Incorporator Factory Module (schema-driven instance assembly).
+==============================================================
 Module-level factory functions extracted from Incorporator classmethod internals.
-Each function receives `cls` explicitly so this module stays independent of
-base.py at import time — eliminating the circular-import risk.
+Each function receives ``cls`` explicitly so this module stays independent of
+``base.py`` at import time — eliminating the circular-import risk.
 
-Dependency direction: factory.py → schema/, list.py  (never → base.py at runtime)
+This module lives inside ``incorporator/schema/`` because its job is the
+same conceptual layer as ``schema/builder.py`` and ``schema/router.py``:
+take raw data, compile or look up a Pydantic class, and instantiate it.
+
+Dependency direction:
+    ``base.py → schema/factory.py → schema/{builder,router}.py``
+    (never the reverse)
 """
 
 import logging
 import warnings
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type, Union, cast
 
-from .list import IncorporatorList, _deduplicate_extracted
-from .schema import builder as schema_builder
-from .schema import router
+from ..list import IncorporatorList, _deduplicate_extracted
+from . import builder as schema_builder
+from . import router
 
 if TYPE_CHECKING:
-    from .base import Incorporator
+    from ..base import Incorporator
 
 logger = logging.getLogger(__name__)
 

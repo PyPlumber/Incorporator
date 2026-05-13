@@ -66,7 +66,7 @@ Incorporator includes a pre-built `@flow` wrapper that automatically pipes our `
 Create a tiny deployment script (`deploy.py`):
 ```python
 import asyncio
-from incorporator.prefect_nodes import run_incorporator_flow
+from incorporator.integrations.prefect import run_incorporator_flow
 
 async def deploy():
     # Automatically loads your pipeline.json and executes it as a Prefect Flow

@@ -9,7 +9,7 @@ import pytest
 from prefect.testing.utilities import prefect_test_harness
 
 from incorporator.observability.logger import AuditResult
-from incorporator.prefect_nodes import run_incorporator_flow
+from incorporator.integrations.prefect import run_incorporator_flow
 
 
 @pytest.fixture(scope="session")
@@ -43,7 +43,7 @@ async def test_prefect_flow_success(tmp_path: Path, prefect_test_fixture: None) 
         encoding="utf-8",
     )
 
-    with patch("incorporator.prefect_nodes.LoggedIncorporator.stream", new=mock_stream):
+    with patch("incorporator.integrations.prefect.LoggedIncorporator.stream", new=mock_stream):
         results: List[AuditResult] = await run_incorporator_flow(config_path=str(config_file), poll_interval=None)
 
         assert len(results) == 1
