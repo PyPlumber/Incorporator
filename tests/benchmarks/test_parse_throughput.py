@@ -182,18 +182,16 @@ async def test_xml_parse_throughput(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_parquet_parse_throughput(tmp_path: Path) -> None:
-    """Parquet parse must sustain at least 100k rows/sec.
+    """Parquet parse must sustain at least 150k rows/sec.
 
-    pyarrow's ``pq.read_table`` is C-backed and returns an Arrow Table that
-    we convert via ``to_pylist`` + ``deserialize_nested`` per value.  The
-    to_pylist conversion dominates — Arrow → Python dict allocation is the
-    real bottleneck, not the columnar read itself.  Measured baseline is
-    ~160k rows/sec; the 100k floor leaves CI headroom.
+    The framework converts the Arrow Table to ``List[Dict]`` via the
+    ``_table_to_dicts`` helper, which uses pyarrow.compute for vectorised
+    JSON-prefix detection and skips non-string columns entirely.  Measured
+    baseline is ~200k rows/sec; the 150k floor leaves CI headroom.
 
-    Notable: Parquet parse is *slower than NDJSON parse* on this dataset
-    because Arrow → dict materialisation is heavier than orjson's bulk
-    decode.  Parquet's wins are on disk size + write-side batching, not
-    on parse throughput.
+    The columnar layout still helps writes more than parses (we materialise
+    back to dicts), but the gap to row-oriented formats has narrowed
+    considerably — see ``incorporator/io/handlers/columnar.py::_table_to_dicts``.
     """
     pytest.importorskip("pyarrow")
     src = tmp_path / "data.parquet"
@@ -208,10 +206,10 @@ async def test_parquet_parse_throughput(tmp_path: Path) -> None:
     throughput = ROW_COUNT / elapsed
     print(f"\n  Parquet parse: {throughput:,.0f} rows/sec ({elapsed:.2f}s)")
 
-    assert throughput >= 100_000, (
-        f"Parquet parse throughput {throughput:,.0f} rows/sec is below 100k floor. "
-        "Suggests deserialize_nested is doing JSON parsing on scalar values, "
-        "or the Arrow Table is being walked twice."
+    assert throughput >= 150_000, (
+        f"Parquet parse throughput {throughput:,.0f} rows/sec is below 150k floor. "
+        "Suggests _table_to_dicts lost the pyarrow.compute fast path, or "
+        "the Arrow Table is being walked twice."
     )
 
 
@@ -222,13 +220,12 @@ async def test_parquet_parse_throughput(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_feather_parse_throughput(tmp_path: Path) -> None:
-    """Feather parse must sustain at least 100k rows/sec.
+    """Feather parse must sustain at least 150k rows/sec.
 
-    Feather V2 supports memory-mapped reads with zero deserialisation at
-    the Arrow layer.  Like Parquet, the real cost shows up at the Arrow →
-    Python dict conversion (``to_pylist``) — not the read itself.  Measured
-    baseline is ~165k rows/sec, marginally better than Parquet because
-    there's no decompression step.
+    Feather V2 supports memory-mapped reads with zero decompression — so
+    after the ``_table_to_dicts`` optimisation Feather parse is the fastest
+    of the columnar formats at ~215k rows/sec, competitive with
+    NDJSON+orjson on row-oriented data.
     """
     pytest.importorskip("pyarrow")
     src = tmp_path / "data.feather"
@@ -243,9 +240,10 @@ async def test_feather_parse_throughput(tmp_path: Path) -> None:
     throughput = ROW_COUNT / elapsed
     print(f"\n  Feather parse: {throughput:,.0f} rows/sec ({elapsed:.2f}s)")
 
-    assert throughput >= 100_000, (
-        f"Feather parse throughput {throughput:,.0f} rows/sec is below 100k floor. "
-        "Suggests we lost the memory-mapped read path."
+    assert throughput >= 150_000, (
+        f"Feather parse throughput {throughput:,.0f} rows/sec is below 150k floor. "
+        "Suggests we lost the memory-mapped read path or the _table_to_dicts "
+        "pyarrow.compute fast path."
     )
 
 

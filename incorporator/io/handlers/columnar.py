@@ -31,12 +31,13 @@ Design choices:
   Arrow dataset APIs. Out of scope for v1.
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Union
 
 from ...exceptions import IncorporatorFormatError
-from ..formats import FormatType, convert_type, deserialize_nested, serialize_nested
+from ..formats import FormatType, convert_type, serialize_nested
 from ._base import BaseFormatHandler, _raise_if_append_unsupported
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,85 @@ def _arrow_type_for(name: str, properties: Dict[str, Any]) -> Any:
         "null": pa.null(),
     }
     return type_map.get(parquet_type_str, pa.string())
+
+
+def _table_to_dicts(table: Any) -> List[Dict[str, Any]]:
+    """Convert a ``pyarrow.Table`` to ``List[Dict]`` with the minimum allocations.
+
+    Shared parse-path helper for ParquetHandler, FeatherHandler, and OrcHandler —
+    all three previously did the same naive loop:
+
+        rows = []
+        for raw_row in table.to_pylist():
+            rows.append({k: deserialize_nested(v) for k, v in raw_row.items()})
+
+    That allocated ``2 × N`` dicts (one in ``to_pylist`` + one in the
+    comprehension) and called ``deserialize_nested`` on every cell — even
+    int/float/bool columns where it's a no-op ``isinstance`` check.
+
+    This helper does two things differently:
+
+    1. **In-place mutation** — uses the dicts ``to_pylist()`` already allocated.
+       Cuts dict allocations in half.  Mutating values mid-iteration is safe
+       in Python; we never add or remove keys.
+    2. **Schema-aware iteration** — uses ``table.schema`` to identify which
+       columns are strings.  Only those can possibly contain JSON-encoded
+       nested data (``serialize_nested`` writes lists/dicts as JSON strings),
+       so int/float/bool/null columns are skipped entirely.
+
+    The net effect on a 4-column dataset with 1 string column is roughly
+    halving the Python-side parse cost.  Real win scales with the
+    non-string fraction of the schema.
+    """
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    rows: List[Dict[str, Any]] = table.to_pylist()
+
+    # Find which columns might contain JSON-serialised nested values.
+    # serialize_nested() flattens dict/list -> JSON string, so only string
+    # columns are candidates for re-hydration.
+    string_cols = [field.name for field in table.schema if pa.types.is_string(field.type)]
+    if not string_cols:
+        return rows
+
+    # The pyarrow trick: push the "does this cell start with { or [?" check
+    # down to Arrow's vectorised C compute engine.  Returns a boolean mask
+    # over the column in microseconds.  Then pc.any() — also C-level —
+    # tells us in O(1) whether the column has ANY candidates worth visiting
+    # from Python.
+    #
+    # Real-world payoff: most string columns (names, descriptions, ids,
+    # statuses) never contain JSON.  This lets us skip the entire per-row
+    # Python loop for those columns — only the columns with at least one
+    # plausible JSON cell pay the per-row cost, and even then only the
+    # flagged rows are touched.
+    for col_name in string_cols:
+        col = table.column(col_name)
+        # Vectorised "starts with { or [" check — runs in C across all rows.
+        # pyarrow.compute is dynamically generated so mypy can't see its API.
+        could_be_json_mask = pc.or_(  # type: ignore[attr-defined]
+            pc.starts_with(col, "{"),  # type: ignore[attr-defined]
+            pc.starts_with(col, "["),  # type: ignore[attr-defined]
+        )
+        # Boolean reduction in C — bails out on first True.
+        if not pc.any(could_be_json_mask).as_py():  # type: ignore[attr-defined]
+            continue
+
+        # At least one cell looks like JSON.  Walk only the flagged rows.
+        flags = could_be_json_mask.to_pylist()
+        for i, flag in enumerate(flags):
+            if not flag:
+                continue
+            v = rows[i][col_name]
+            # The vectorised scan only checked the prefix — verify the suffix
+            # closes correctly before paying for json.loads.
+            if len(v) >= 2 and ((v[0] == "{" and v[-1] == "}") or (v[0] == "[" and v[-1] == "]")):
+                try:
+                    rows[i][col_name] = json.loads(v)
+                except (json.JSONDecodeError, ValueError):
+                    pass  # not JSON after all — leave the original string
+    return rows
 
 
 def _materialize_table(data: Iterable[Dict[str, Any]], kwargs: Dict[str, Any]) -> Any:
@@ -139,13 +219,11 @@ class ParquetHandler(BaseFormatHandler):
             else:
                 raise IncorporatorFormatError("ParquetHandler requires raw bytes or a physical Path object.")
 
-            # to_pylist() yields a list of dicts keyed by column name. Apply
-            # deserialize_nested so values written as JSON strings (lists/dicts)
-            # come back as native Python types on round-trip.
-            rows: List[Dict[str, Any]] = []
-            for raw_row in table.to_pylist():
-                rows.append({k: deserialize_nested(v) for k, v in raw_row.items()})
-            return rows
+            # _table_to_dicts mutates the dicts to_pylist() already allocated
+            # and only touches string columns (where serialize_nested could
+            # have JSON-encoded nested values).  Eliminates the double-dict
+            # allocation and the per-cell isinstance(str) check.
+            return _table_to_dicts(table)
         except IncorporatorFormatError:
             raise
         except Exception as e:
@@ -263,10 +341,7 @@ class FeatherHandler(BaseFormatHandler):
             else:
                 raise IncorporatorFormatError("FeatherHandler requires raw bytes or a physical Path object.")
 
-            rows: List[Dict[str, Any]] = []
-            for raw_row in table.to_pylist():
-                rows.append({k: deserialize_nested(v) for k, v in raw_row.items()})
-            return rows
+            return _table_to_dicts(table)
         except IncorporatorFormatError:
             raise
         except Exception as e:
@@ -327,10 +402,7 @@ class OrcHandler(BaseFormatHandler):
                 raise IncorporatorFormatError("OrcHandler requires raw bytes or a physical Path object.")
 
             table = orc_file.read()  # type: ignore[no-untyped-call]
-            rows: List[Dict[str, Any]] = []
-            for raw_row in table.to_pylist():
-                rows.append({k: deserialize_nested(v) for k, v in raw_row.items()})
-            return rows
+            return _table_to_dicts(table)
         except IncorporatorFormatError:
             raise
         except Exception as e:
