@@ -43,34 +43,58 @@ def load_user_module(path: Union[str, Path], *, name_hint: str = "_inc_user_modu
     """Import a path-anchored ``.py`` file and return its module object.
 
     Single-source loader for every sidecar file the framework accepts:
-    inflow.py (helpers for trinity calls), outflow.py (Incorporator
-    subclass + fjord ``outflow(state)``), and the deprecated
-    ``code_file=`` alias.
+    inflow.py (helpers for trinity calls) and outflow.py (Incorporator
+    subclasses + fjord ``outflow(state)`` plus optional ``transform()``
+    hook for export).
+
+    **Per-path caching.** The loader registers each module under
+    ``sys.modules`` keyed by a hash of the resolved absolute path, so
+    repeated calls with the same path return the cached module object
+    without re-executing the file.  Stream and fjord daemons therefore
+    pay the import cost exactly once per session even when ``inflow=``
+    is threaded through every chunk.
 
     Args:
         path: Absolute or relative path to a ``.py`` file.
-        name_hint: A unique module name used in ``sys.modules`` for this
-            spec.  Defaults to a generic sentinel; callers can pass a
-            more specific hint for cleaner tracebacks.
+        name_hint: A unique module name prefix used in ``sys.modules``.
+            The final cache key combines this with a digest of the
+            resolved path so different sidecar files don't collide.
 
     Returns:
-        The loaded module object.  Repeated calls with the same path are
-        cached by Python via ``sys.modules`` — no re-execution.
+        The loaded module object.
 
     Raises:
         FileNotFoundError: ``path`` does not resolve to an existing file.
         ImportError: The file cannot be loaded as a Python module.
     """
+    import sys
+
     code_path = Path(path).resolve()
     if not code_path.is_file():
         raise FileNotFoundError(f"[Incorporator] sidecar file not found: {code_path}")
 
-    spec = importlib.util.spec_from_file_location(name_hint, code_path)
+    cache_key = f"{name_hint}_{abs(hash(str(code_path)))}"
+    cached = sys.modules.get(cache_key)
+    if cached is not None:
+        return cached
+
+    spec = importlib.util.spec_from_file_location(cache_key, code_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"[Incorporator] Cannot load module spec from: {code_path}")
 
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Register BEFORE exec_module — covers re-entrant imports inside the
+    # user file and ensures the cache check above sees the module on the
+    # next call.
+    sys.modules[cache_key] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        # Roll back the cache entry so a broken file can be fixed and
+        # reloaded in the same process without a stale half-initialised
+        # module sitting in sys.modules.
+        sys.modules.pop(cache_key, None)
+        raise
     return module
 
 
@@ -86,7 +110,7 @@ def extract_public_names(module: ModuleType) -> Dict[str, Any]:
 
 def apply_code_transform(
     instances: List[Any],
-    code_file: Union[str, Path],
+    outflow: Union[str, Path],
 ) -> List[Any]:
     """Load a Python file and call its top-level ``transform(instances)`` function.
 
@@ -102,17 +126,17 @@ def apply_code_transform(
 
     Args:
         instances: The list of Incorporator objects to transform.
-        code_file: Absolute or relative path to a ``.py`` file.
+        outflow: Absolute or relative path to a ``.py`` outflow file.
 
     Raises:
-        FileNotFoundError: If ``code_file`` does not exist.
+        FileNotFoundError: If ``outflow`` does not exist.
         ImportError: If the file cannot be loaded as a Python module.
         ValueError: If ``transform`` is defined but takes the wrong number
             of parameters.
     """
-    code_path = Path(code_file).resolve()
+    code_path = Path(outflow).resolve()
     if not code_path.exists():
-        raise FileNotFoundError(f"[Incorporator] code_file not found: {code_path}")
+        raise FileNotFoundError(f"[Incorporator] outflow file not found: {code_path}")
 
     spec = importlib.util.spec_from_file_location("_inc_code_transform", code_path)
     if spec is None or spec.loader is None:
@@ -136,7 +160,7 @@ def apply_code_transform(
     return result if result is not None else instances
 
 
-def load_outflow_function(code_file: Union[str, Path]) -> Callable[[Any], Any]:
+def load_outflow_function(outflow: Union[str, Path]) -> Callable[[Any], Any]:
     """Load a top-level ``outflow(state)`` function from a Python file.
 
     Mirrors :func:`apply_code_transform`'s importlib pattern but for the
@@ -151,13 +175,13 @@ def load_outflow_function(code_file: Union[str, Path]) -> Callable[[Any], Any]:
         The loaded callable.
 
     Raises:
-        FileNotFoundError: ``code_file`` does not exist.
+        FileNotFoundError: ``outflow`` does not exist.
         ImportError: The file cannot be loaded as a Python module.
         ValueError: ``outflow`` is missing or has the wrong arity.
     """
-    code_path = Path(code_file).resolve()
+    code_path = Path(outflow).resolve()
     if not code_path.exists():
-        raise FileNotFoundError(f"[Incorporator] code_file not found: {code_path}")
+        raise FileNotFoundError(f"[Incorporator] outflow file not found: {code_path}")
 
     spec = importlib.util.spec_from_file_location("_inc_fjord_outflow", code_path)
     if spec is None or spec.loader is None:
@@ -168,7 +192,7 @@ def load_outflow_function(code_file: Union[str, Path]) -> Callable[[Any], Any]:
 
     outflow_fn = getattr(module, "outflow", None)
     if outflow_fn is None:
-        raise ValueError(f"[Incorporator] code_file must define a top-level outflow(state) function: {code_path}")
+        raise ValueError(f"[Incorporator] outflow file must define a top-level outflow(state) function: {code_path}")
 
     sig = _inspect.signature(outflow_fn)
     params = list(sig.parameters)
@@ -180,8 +204,8 @@ def load_outflow_function(code_file: Union[str, Path]) -> Callable[[Any], Any]:
     return outflow_fn  # type: ignore[no-any-return]
 
 
-def pascal_case_from_stem(code_file: Union[str, Path]) -> str:
-    """Derive a Pydantic-class-friendly name from a code_file's filename.
+def pascal_case_from_stem(outflow: Union[str, Path]) -> str:
+    """Derive a Pydantic-class-friendly name from an outflow file's filename.
 
     ``coin_market.py`` → ``"CoinMarket"``;
     ``crypto-spread.py`` → ``"CryptoSpread"``.  Used by
@@ -192,12 +216,12 @@ def pascal_case_from_stem(code_file: Union[str, Path]) -> str:
         ValueError: If the stem produces an invalid Python identifier
             (empty, leading digit, or contains nothing alphabetic).
     """
-    stem = Path(code_file).stem
+    stem = Path(outflow).stem
     parts = re.split(r"[_\-\s]+", stem)
     name = "".join(p.capitalize() for p in parts if p)
     if not name or not name[0].isalpha():
         raise ValueError(
-            f"[Incorporator] Cannot derive a valid Python class name from code_file stem "
+            f"[Incorporator] Cannot derive a valid Python class name from outflow stem "
             f"{stem!r}. Use a filename like 'coin_market.py'."
         )
     return name

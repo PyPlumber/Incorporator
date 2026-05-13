@@ -2,9 +2,10 @@
 
 The resolver turns JSON-text Python-call expressions (e.g.
 ``"NextUrlPaginator('next')"``, ``"inc(datetime)"``) into real callables /
-instances at config-load time, so users don't need a ``code_file`` for
+instances at config-load time, so users don't need a sidecar file for
 the common cases. Tokens needing user-defined functions (``calc``,
-``link_to``) still require a ``code_file`` — those raise
+``link_to``) resolve when an ``inflow.py`` extends the allow-list via
+the ``extra_names=`` parameter; otherwise they raise
 :class:`TokenResolutionError` here with a clear allow-list message.
 """
 

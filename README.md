@@ -174,7 +174,7 @@ async for audit in Pipeline.fjord(
         {"cls": Coin,  "incorp_params": {"inc_url": "..."}, "refresh_interval": 30},
         {"cls": Order, "incorp_params": {"inc_url": "..."}, "refresh_interval": 5},
     ],
-    code_file="outflow.py",                           # defines outflow(state) -> list[dict]
+    outflow="outflow.py",                             # defines outflow(state) -> list[dict]
     export_params={"file_path": "fusion.parquet"},
 ):
     if audit.failed_sources: print(audit)

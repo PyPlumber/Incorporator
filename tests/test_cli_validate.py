@@ -16,7 +16,7 @@ def test_autodetect_stream() -> None:
 
 
 def test_autodetect_fjord() -> None:
-    assert autodetect_type({"code_file": "x.py", "stream_params": []}) == "fjord"
+    assert autodetect_type({"outflow": "x.py", "stream_params": []}) == "fjord"
 
 
 def test_autodetect_defaults_to_stream_when_ambiguous() -> None:
@@ -70,7 +70,7 @@ def _write_fjord(tmp_path: Path, module_src: str = FJORD_OK_SRC) -> tuple[Dict[s
     module = tmp_path / "valid_fjord.py"
     module.write_text(module_src, encoding="utf-8")
     cfg: Dict[str, Any] = {
-        "code_file": "valid_fjord.py",
+        "outflow": "valid_fjord.py",
         "stream_params": [{"cls_name": "A", "incorp_params": {"inc_url": "https://x"}}],
         "export_params": {"file_path": str(tmp_path / "out.ndjson")},
     }
@@ -88,9 +88,9 @@ def test_validate_fjord_missing_outflow_key(tmp_path: Path) -> None:
     assert any("outflow" in e for e in errs)
 
 
-def test_validate_fjord_code_file_not_found(tmp_path: Path) -> None:
+def test_validate_fjord_outflow_not_found(tmp_path: Path) -> None:
     cfg = {
-        "code_file": "ghost.py",
+        "outflow": "ghost.py",
         "stream_params": [{"cls_name": "A", "incorp_params": {}}],
         "export_params": {"file_path": "out.ndjson"},
     }
@@ -181,7 +181,7 @@ def test_validate_stream_outflow_with_stateful_polling_ok(tmp_path: Path) -> Non
 
 
 def test_validate_fjord_accepts_outflow_canonical_key(tmp_path: Path) -> None:
-    """fjord pipeline.json should accept 'outflow' as the canonical key (rename from 'code_file')."""
+    """fjord pipeline.json declares the outflow path with the canonical 'outflow' key."""
     module = tmp_path / "outflow.py"
     module.write_text(FJORD_OK_SRC, encoding="utf-8")
     cfg = {
@@ -189,18 +189,5 @@ def test_validate_fjord_accepts_outflow_canonical_key(tmp_path: Path) -> None:
         "stream_params": [{"cls_name": "A", "incorp_params": {"inc_url": "https://x"}}],
         "export_params": {"file_path": str(tmp_path / "out.ndjson")},
     }
-    errs = validate_fjord_config(cfg, tmp_path)
-    assert errs == []
-
-
-def test_validate_fjord_legacy_code_file_alias_still_works(tmp_path: Path) -> None:
-    """Existing pipeline.json with 'code_file' still validates (deprecated but accepted).
-
-    The shared ``_write_fjord`` helper above sets ``code_file`` (the legacy
-    key) — this test confirms the validator still resolves that to outflow
-    semantics without errors.
-    """
-    cfg, _ = _write_fjord(tmp_path)
-    assert "code_file" in cfg and "outflow" not in cfg
     errs = validate_fjord_config(cfg, tmp_path)
     assert errs == []

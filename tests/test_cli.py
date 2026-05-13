@@ -156,7 +156,7 @@ def _write_fjord_fixture(tmp_path: Path) -> tuple[Path, Path]:
     config.write_text(
         json.dumps(
             {
-                "code_file": "coin_market.py",
+                "outflow": "coin_market.py",
                 "stream_params": [
                     {"cls_name": "Coin", "incorp_params": {"inc_url": "https://x"}},
                     {"cls_name": "BinanceFutures", "incorp_params": {"inc_url": "https://y"}},
@@ -180,7 +180,7 @@ async def mock_fjord(*args: Any, **kwargs: Any) -> AsyncGenerator[AuditResult, N
 
 
 def test_cli_fjord_success(tmp_path: Path) -> None:
-    """fjord subcommand imports the code_file, resolves source classes, and drains audits.
+    """fjord subcommand imports the outflow file, resolves source classes, and drains audits.
 
     The output class is auto-derived from the filename — no ``output_class``
     JSON key.
@@ -204,7 +204,7 @@ def test_cli_fjord_success(tmp_path: Path) -> None:
 def test_cli_fjord_missing_required_keys(tmp_path: Path) -> None:
     """fjord config missing required keys exits 1 with clear error."""
     config = tmp_path / "fjord.json"
-    config.write_text(json.dumps({"code_file": "x.py"}), encoding="utf-8")
+    config.write_text(json.dumps({"outflow": "x.py"}), encoding="utf-8")
 
     result = runner.invoke(app, ["fjord", str(config)])
 
@@ -245,7 +245,7 @@ def test_cli_fjord_stream_missing_cls_name(tmp_path: Path) -> None:
     config.write_text(
         json.dumps(
             {
-                "code_file": "coin_market.py",
+                "outflow": "coin_market.py",
                 "stream_params": [{"incorp_params": {}}],
                 "export_params": {"file_path": "out.ndjson"},
             }
@@ -284,14 +284,14 @@ def test_cli_validate_stream_missing_source_key(tmp_path: Path) -> None:
 
 
 def test_cli_validate_fjord_ok(tmp_path: Path) -> None:
-    """A well-formed fjord config (resolved code_file, outflow arity OK) validates."""
+    """A well-formed fjord config (resolved outflow file, outflow arity OK) validates."""
     cfg, _ = _write_fjord_fixture(tmp_path)
     result = runner.invoke(app, ["validate", str(cfg)])
     assert result.exit_code == 0, result.stdout
 
 
 def test_cli_validate_fjord_missing_outflow(tmp_path: Path) -> None:
-    """code_file without a top-level outflow() fails fjord validation."""
+    """outflow file without a top-level outflow() function fails fjord validation."""
     user_module = tmp_path / "broken_fjord.py"
     user_module.write_text(
         "from incorporator import Incorporator\n"
@@ -303,14 +303,14 @@ def test_cli_validate_fjord_missing_outflow(tmp_path: Path) -> None:
     cfg.write_text(
         json.dumps(
             {
-                "code_file": "broken_fjord.py",
+                "outflow": "broken_fjord.py",
                 "stream_params": [{"cls_name": "A", "incorp_params": {"inc_url": "https://x"}}],
                 "export_params": {"file_path": "out.ndjson"},
             }
         ),
         encoding="utf-8",
     )
-    # autodetect picks fjord because of `code_file` + `stream_params` (list).
+    # autodetect picks fjord because of `outflow` + `stream_params` (list).
     result = runner.invoke(app, ["validate", str(cfg)])
     assert result.exit_code == 1
     assert "outflow" in result.stdout.lower()

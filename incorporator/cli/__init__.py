@@ -235,28 +235,22 @@ async def _run_stream(
 # ---------------------------------------------------------------------------
 
 
-def _load_user_module(code_file: Path) -> Any:
-    """Import the user's Python file once; return its module object.
+def _load_user_module(outflow_path: Path) -> Any:
+    """Import the user's outflow.py once; return its module object.
 
-    The fjord CLI uses this to resolve Incorporator subclass names (declared
-    in JSON as strings) back to actual class objects, and to make the
-    ``outflow()`` function available to ``fjord()``.
+    Thin CLI-friendly wrapper around :func:`incorporator.usercode.load_user_module`:
+    exits with code 1 + a readable diagnostic instead of raising.  The fjord
+    CLI uses this to resolve ``cls_name`` strings back to Incorporator
+    subclasses and to make the ``outflow(state)`` function available to
+    :meth:`Incorporator.fjord`.
     """
-    import importlib.util
+    from ..usercode import load_user_module as _ucm_load_user_module
 
-    code_path = code_file.resolve()
-    if not code_path.exists():
-        _err(f"Error: code_file not found: {code_path}", fg=typer.colors.RED if typer else None)
+    try:
+        return _ucm_load_user_module(outflow_path, name_hint="_inc_fjord_user_module")
+    except (FileNotFoundError, ImportError, SyntaxError) as exc:
+        _err(f"Error: failed to load outflow file {outflow_path}: {exc}", fg=typer.colors.RED if typer else None)
         sys.exit(1)
-
-    spec = importlib.util.spec_from_file_location("_inc_fjord_user_module", code_path)
-    if spec is None or spec.loader is None:
-        _err(f"Error: Cannot load module spec from: {code_path}", fg=typer.colors.RED if typer else None)
-        sys.exit(1)
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _resolve_incorporator_class(module: Any, class_name: str, module_path: Path) -> Any:
@@ -286,21 +280,13 @@ async def _run_fjord(
     The output class is built dynamically from the outflow file's filename
     (snake_case → PascalCase); there is no ``output_class`` JSON key.
     """
-    # Resolve outflow/code_file alias.  outflow is canonical; code_file is
-    # the deprecated alias — accept both, warn on code_file.
-    outflow_raw = config.get("outflow") or config.get("code_file")
+    outflow_raw = config.get("outflow")
     if outflow_raw is None:
         _err(
             "Error: pipeline.json must declare 'outflow' (path to outflow.py).",
             fg=typer.colors.RED if typer else None,
         )
         sys.exit(1)
-    if "outflow" not in config and "code_file" in config:
-        _err(
-            "Warning: 'code_file' is a deprecated alias for 'outflow' in pipeline.json. "
-            "Rename the key for forward compatibility.",
-            fg=typer.colors.YELLOW if typer else None,
-        )
 
     stream_params_cfg = config["stream_params"]
     export_params = config["export_params"]
@@ -417,7 +403,7 @@ if typer:
         Execute a Multi-Source Stateful Fjord Pipeline from a JSON configuration file.
 
         The JSON must declare:
-          - code_file (path): Python file with source Incorporator subclasses + a top-level
+          - outflow (path): Python file with source Incorporator subclasses + a top-level
             outflow(state) function. The filename's stem becomes the output class name
             (snake_case → PascalCase; e.g. coin_market.py → CoinMarket).
           - stream_params (list): one entry per source with cls_name, incorp_params, refresh_params, etc.
@@ -460,7 +446,7 @@ if typer:
 
         Resolves ${VAR} / ${file:...} references, checks required keys,
         and (for fjord) confirms cls_name targets and outflow() arity in
-        the referenced code_file.
+        the referenced outflow file.
 
         Exits 0 if the config is valid, 1 with a diagnostic report otherwise.
         """

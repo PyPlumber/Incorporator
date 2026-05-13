@@ -163,7 +163,7 @@ In Phase 3, we retrieved the federal specs in $O(1)$ time by simply querying the
 
 `join_all(";")` itself is JSON-expressible — the CLI's text-token resolver
 will turn `"join_all(\";\")"` into a real callable at load time. What
-still requires a `code_file` here is the **two-phase chain** (Phase 1's
+still requires an `outflow.py` here is the **two-phase chain** (Phase 1's
 `invoices` becomes Phase 2's `inc_parent`, and Phase 3 reconciles the two
 registries). That's the natural fjord shape: each source is its own
 `stream_params` entry, and the `outflow(state)` function runs the
@@ -171,7 +171,7 @@ reconciliation across both in-memory registries:
 
 ```json
 {
-  "code_file": "audit_jimmy.py",
+  "outflow": "audit_jimmy.py",
   "stream_params": [
     {
       "cls_name": "Invoice",

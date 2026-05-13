@@ -4,7 +4,7 @@ Key sentinels exported from this package
 -----------------------------------------
 ``new``
     Pass ``new`` as a field type when the value does not come from the source data and
-    must be generated entirely by a ``calc()`` expression or a ``code_file`` transform::
+    must be generated entirely by a ``calc()`` expression or an ``outflow`` transform::
 
         class Order(Incorporator):
             total: float = inc(new)  # will be populated by calc()

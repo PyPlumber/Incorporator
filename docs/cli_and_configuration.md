@@ -334,8 +334,8 @@ inside tracebacks aren't scrubbed — keep secrets out of URLs.
 ## 7. The `validate` and `init` Subcommands
 
 `incorporator validate <config.json>` runs every structural check the
-runtime does (required keys, env var expansion, code_file imports,
-outflow arity) **without executing the pipeline**. Exits 0 / 1 with a
+runtime does (required keys, env var expansion, inflow/outflow imports,
+outflow() arity) **without executing the pipeline**. Exits 0 / 1 with a
 human-readable report. Use this in CI and in pre-commit hooks.
 
 `incorporator init [--type stream|fjord] [--output-dir .]` writes a
@@ -361,7 +361,7 @@ spread).
 You **do not** define the output Incorporator subclass. fjord builds it
 dynamically from the rows your `outflow()` function returns — same
 zero-schema philosophy as `incorp()`. The class name is derived from the
-`code_file` filename: **snake_case → PascalCase**.
+`outflow` filename: **snake_case → PascalCase**.
 
 - `coin_market.py` → `CoinMarket`
 - `crypto_spread.py` → `CryptoSpread`
@@ -369,7 +369,7 @@ zero-schema philosophy as `incorp()`. The class name is derived from the
 
 ### Configuration File (`fjord.json`)
 
-The config points to a `code_file` — a single `.py` containing your
+The config points to an `outflow` file — a single `.py` containing your
 source `Incorporator` subclasses **and** a top-level `outflow(state)`
 function. The CLI imports that file at startup, resolves source class
 names via `getattr`, and validates each resolved object is an
@@ -406,15 +406,16 @@ names via `getattr`, and validates each resolved object is an
 
 | Field | Required | Description |
 | :--- | :--- | :--- |
-| `code_file` | ✅ | Path to a `.py` file containing source Incorporator subclasses and a top-level `outflow(state)` function. **The filename's stem becomes the output class name** (snake_case → PascalCase). Resolved relative to the JSON config's directory. |
-| `stream_params` | ✅ | List of per-source dicts. Each must declare `cls_name` (string matching a subclass in `code_file`) and `incorp_params`. Optional: `refresh_params`, `export_params` (per-source export). |
+| `outflow` | ✅ | Path to a `.py` file containing source Incorporator subclasses and a top-level `outflow(state)` function. **The filename's stem becomes the output class name** (snake_case → PascalCase). Resolved relative to the JSON config's directory. |
+| `stream_params` | ✅ | List of per-source dicts. Each must declare `cls_name` (string matching a subclass in the `outflow` file) and `incorp_params`. Optional: `refresh_params`, `export_params` (per-source export). |
+| `inflow` | ⬜ | Optional path to an `inflow.py` whose public symbols extend the token resolver's allow-list — typically reducer functions referenced from per-source `conv_dict` text tokens. |
 | `export_params` | ✅ | Destination for the combined output graph. |
 | `refresh_interval` | ⬜ | Cadence (seconds) for per-source refresh daemons. Each entry can override. |
 | `export_interval` | ⬜ | Cadence (seconds) for the outflow-and-export tick. |
 
 ### The `outflow()` Function
 
-Lives in the same `code_file` as the source classes. Receives `state` —
+Lives in the same `outflow.py` file as the source classes. Receives `state` —
 a dict keyed by source-class name, valued with that source's
 `IncorporatorList`. Returns a `list[dict]` (or a single `dict`, auto-
 wrapped). fjord feeds the rows through the same dynamic-schema-inference

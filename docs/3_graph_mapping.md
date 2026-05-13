@@ -138,11 +138,11 @@ Instead of writing nightmare dictionary lookups (`x.get("current_price", 0)`), y
 
 ## 🐳 Run it from the CLI
 
-Multi-source fusion is the canonical fjord shape. Each source is its own entry under `stream_params`; the `outflow()` function in the `code_file` performs the `link_to` join and returns the unified rows:
+Multi-source fusion is the canonical fjord shape. Each source is its own entry under `stream_params`; the `outflow()` function in the `outflow.py` file performs the `link_to` join and returns the unified rows:
 
 ```json
 {
-  "code_file": "outflow.py",
+  "outflow": "outflow.py",
   "stream_params": [
     {
       "cls_name": "BinanceBook",

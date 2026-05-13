@@ -156,4 +156,4 @@ incorporator validate pipeline.json
 incorporator stream pipeline.json
 ```
 
-> The strings `"NextUrlPaginator(\"next\")"` and `"inc(datetime)"` get parsed and resolved to real instances at config-load time — no `code_file` needed. Tokens that take user-defined Python functions (`calc()`, `link_to()`, `each()`) still need a `code_file`. See [the CLI guide](./cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full allow-list.
+> The strings `"NextUrlPaginator('next')"` and `"inc(datetime)"` get parsed and resolved to real instances at config-load time. Tokens that take user-defined Python functions (`calc()`, `link_to()`, `each()`) live in an `inflow.py` sidecar — the CLI imports it once and exposes its public symbols to the token resolver. See [the CLI guide](./cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full allow-list and the `@name` reference syntax.

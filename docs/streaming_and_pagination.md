@@ -174,7 +174,7 @@ price → CoinMarket with computed spread), reach for `fjord()`.
 `fjord()` runs each source's refresh daemon concurrently under a shared
 lock, then calls a user-supplied `outflow(state)` function on each export
 tick. The output class is built dynamically from the rows `outflow()`
-returns — named after the `code_file` filename (`coin_market.py` →
+returns — named after the `outflow` filename (`coin_market.py` →
 `CoinMarket`). No output class to declare. Stateful-polling only — no
 chunking mode.
 
@@ -185,7 +185,7 @@ async for audit in Incorporator.fjord(
         {"cls": Coin,           "incorp_params": {...}, "refresh_params": {}},
         {"cls": BinanceFutures, "incorp_params": {...}, "refresh_params": {}},
     ],
-    code_file="coin_market.py",
+    outflow="coin_market.py",
     export_params={"file_path": "markets.ndjson"},
     refresh_interval=60.0,
     export_interval=300.0,

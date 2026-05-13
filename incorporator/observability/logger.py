@@ -436,12 +436,11 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     async def fjord(
         cls,
         stream_params: List[Dict[str, Any]],
-        outflow: Optional[Any] = None,
-        export_params: Optional[Dict[str, Any]] = None,
+        outflow: Any,
+        export_params: Dict[str, Any],
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
         inflow: Optional[Any] = None,
-        code_file: Optional[Any] = None,  # legacy alias for outflow
         enable_logging: bool = False,
     ) -> AsyncGenerator[AuditResult, None]:
         """Fjord wrapper that routes per-tick audits through the disk loggers.
@@ -471,7 +470,6 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
                 refresh_interval=refresh_interval,
                 export_interval=export_interval,
                 inflow=inflow,
-                code_file=code_file,
             ):
                 if enable_logging:
                     _route_audit_to_log(cls, audit)

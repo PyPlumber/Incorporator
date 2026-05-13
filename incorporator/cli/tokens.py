@@ -12,12 +12,13 @@ fields whose values *are* callables or instances:
 * ``export_params.conv_dict`` — same as incorp's
 
 This module resolves the **text form** of those callables into real
-Python objects at config-load time, so users don't need a ``code_file``
-just to express ``"inc_page": "NextUrlPaginator(\"next\")"``.
+Python objects at config-load time, so users don't need a sidecar
+``.py`` file just to express ``"inc_page": "NextUrlPaginator('next')"``.
 
-Tokens that require user Python (``calc(my_function)``, ``link_to(MyClass)``,
-``each(MyClass)``) still need a ``code_file`` — there's no way to fit a
-user-defined function into a JSON string. Those are the fjord scenarios.
+Tokens that require user Python (``calc(my_function)``, ``link_to(MyClass)``)
+need an ``inflow.py`` sidecar whose public symbols extend the allow-list.
+The CLI loader handles this automatically when a top-level ``inflow``
+key is present in ``pipeline.json``.
 
 ## Syntax
 

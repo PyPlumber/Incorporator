@@ -107,7 +107,7 @@ Because the data is safely parked in the `.inc_dict` registries, you can immedia
 
 ## 🐳 Run it from the CLI
 
-This is the simplest CLI case — fetch JSON, write to SQLite (or Avro, or Parquet, or any other supported format). Pure JSON, no `code_file` needed:
+This is the simplest CLI case — fetch JSON, write to SQLite (or Avro, or Parquet, or any other supported format). Pure JSON, no sidecar file needed:
 
 ```json
 {

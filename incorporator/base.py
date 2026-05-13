@@ -691,7 +691,6 @@ class Incorporator(BaseModel):
         sql_table: Optional[str] = None,
         if_exists: str = "replace",
         outflow: Optional[Union[str, Path]] = None,
-        code_file: Optional[Union[str, Path]] = None,  # legacy alias for outflow
         **kwargs: Any,
     ) -> None:
         """Serialise Incorporator instances out to a file in any supported format.
@@ -731,7 +730,7 @@ class Incorporator(BaseModel):
                 ``cls.__name__.lower()``.  Sanitised against SQL injection.
             if_exists: How to handle an existing table/file:
                 ``"replace"`` (default), ``"append"``, or ``"fail"``.
-            code_file: Path to a Python file defining a top-level
+            outflow: Path to a Python file defining a top-level
                 ``transform(instances) -> Iterable``.  Called once with
                 the in-state object list **before** serialisation; the
                 return value is exported instead.  The function must
@@ -750,7 +749,7 @@ class Incorporator(BaseModel):
         Raises:
             TypeError: When ``file_path`` is provided but ``instance`` is
                 neither a list nor a ``BaseModel`` (e.g. a plain string).
-            ValueError: When ``code_file`` is provided but its
+            ValueError: When ``outflow`` is provided but its
                 ``transform()`` function has more or fewer than one
                 parameter.
             IncorporatorFormatError: On unsupported format / unwritable path.
@@ -770,7 +769,7 @@ class Incorporator(BaseModel):
                 users = await User.incorp("https://api.example.com/users")
                 await User.export(instance=users, file_path="warehouse.db")
 
-            With code_file transform::
+            With outflow transform::
 
                 # transform.py
                 def transform(instances):
@@ -782,7 +781,7 @@ class Incorporator(BaseModel):
                 await User.export(
                     instance=users,
                     file_path="upper.csv",
-                    code_file="transform.py",
+                    outflow="transform.py",
                 )
         """
         # Unrolled instance resolution for DX traceability
@@ -808,35 +807,22 @@ class Incorporator(BaseModel):
         if not instances:
             return
 
-        # Resolve outflow/code_file alias.  outflow= is the canonical name;
-        # code_file= remains as a deprecated alias.
-        if outflow is None and code_file is not None:
-            import warnings as _warnings
-
-            _warnings.warn(
-                "[Incorporator.export] code_file= is a deprecated alias for outflow=. "
-                "Pass outflow= directly; code_file= will be removed in a future major.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            outflow = code_file
-
         # Optional code transform — runs in a thread (user code may be CPU-bound).
         transform_source: Iterable[Any] = instances
-        code_file_field_names: Optional[List[str]] = None
+        outflow_field_names: Optional[List[str]] = None
         if outflow is not None:
             transform_source = await asyncio.to_thread(apply_code_transform, instances, outflow)
             # Peek at the first transformed row so we can rebuild all_field_names from the
-            # *actual* output schema — code_file may add, remove, or rename fields.
+            # *actual* output schema — outflow may add, remove, or rename fields.
             import itertools as _itertools
 
             _transform_iter = iter(transform_source)
             _first_row = next(_transform_iter, None)
             if _first_row is not None:
                 if isinstance(_first_row, dict):
-                    code_file_field_names = list(_first_row.keys())
+                    outflow_field_names = list(_first_row.keys())
                 elif hasattr(_first_row, "model_dump"):
-                    code_file_field_names = list(_first_row.model_dump(by_alias=True, mode="json").keys())
+                    outflow_field_names = list(_first_row.model_dump(by_alias=True, mode="json").keys())
                 transform_source = _itertools.chain([_first_row], _transform_iter)
 
         active_format = format_type or infer_format(actual_path)
@@ -845,13 +831,13 @@ class Incorporator(BaseModel):
                 "sql_table": sql_table or (cls.__name__.lower() if active_format == FormatType.SQLITE else None),
                 "if_exists": if_exists,
                 "pydantic_schema": {"properties": cls._schema_union},
-                "all_field_names": code_file_field_names or list(cls._schema_union.keys()) or None,
+                "all_field_names": outflow_field_names or list(cls._schema_union.keys()) or None,
             }
         )
 
         # Lazy serialization generator: model_dump() is called per-object only when
         # the handler requests the next row — no full-list copy in RAM.
-        # Handles both Incorporator objects (model_dump) and raw dicts from code_file transforms.
+        # Handles both Incorporator objects (model_dump) and raw dicts from outflow transforms.
         def _make_lazy_iter(source: Iterable[Any]) -> Iterable[Dict[str, Any]]:
             for obj in source:
                 if isinstance(obj, Incorporator):
@@ -1033,12 +1019,11 @@ class Incorporator(BaseModel):
     async def fjord(
         cls,
         stream_params: List[Dict[str, Any]],
-        outflow: Optional[Union[str, Path]] = None,
-        export_params: Optional[Dict[str, Any]] = None,
+        outflow: Union[str, Path],
+        export_params: Dict[str, Any],
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
         inflow: Optional[Union[str, Path]] = None,
-        code_file: Optional[Union[str, Path]] = None,  # legacy alias for outflow
     ) -> AsyncGenerator["AuditResult", None]:
         """Multi-source stateful streaming with a dynamically-built output class.
 
@@ -1048,7 +1033,7 @@ class Incorporator(BaseModel):
         function, and feeds whatever ``outflow()`` returns into the same
         dynamic-schema-inference + export pipeline ``incorp()`` already uses.
         **No user-defined output class is required** — the class is built
-        automatically and named after the ``code_file``'s filename
+        automatically and named after the ``outflow`` filename
         (snake_case → PascalCase; e.g. ``coin_market.py`` →
         ``CoinMarket``).
 
@@ -1091,9 +1076,6 @@ class Incorporator(BaseModel):
                 symbols extend the token resolver's allow-list (mostly for
                 ``conv_dict`` callables in per-source ``incorp_params``).
                 See :func:`incorporator.usercode.load_user_module`.
-            code_file: **Deprecated alias for ``outflow``.**  Emits a
-                ``DeprecationWarning`` when supplied; will be removed in a
-                future major release.
             refresh_interval: Default sleep between refresh ticks for each
                 source daemon.  Per-entry ``refresh_interval`` overrides this.
                 ``None`` means "one-shot then exit".
@@ -1146,30 +1128,14 @@ class Incorporator(BaseModel):
                          "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
                          "refresh_params": {}},
                     ],
-                    code_file="coin_market.py",          # → output class auto-named "CoinMarket"
+                    outflow="coin_market.py",           # → output class auto-named "CoinMarket"
                     export_params={"file_path": "markets.ndjson"},
                     refresh_interval=60.0,
                     export_interval=300.0,
                 ):
                     print(f"{audit.operation}: {audit.rows_processed} rows")
         """
-        import warnings
-
         from .observability.pipeline import _run_fjord_engine
-
-        # Resolve outflow/code_file alias — code_file is the legacy name.
-        if outflow is None and code_file is not None:
-            warnings.warn(
-                "[Incorporator.fjord] code_file= is a deprecated alias for outflow=. "
-                "Pass outflow= directly; code_file= will be removed in a future major.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            outflow = code_file
-        if outflow is None:
-            raise ValueError("[Incorporator.fjord] outflow= (path to outflow.py) is required.")
-        if export_params is None:
-            raise ValueError("[Incorporator.fjord] export_params= is required.")
 
         # Optional inflow= sidecar — load once so its public names are in
         # sys.modules for any string-form tokens already resolved by the CLI

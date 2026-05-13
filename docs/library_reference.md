@@ -42,17 +42,23 @@ its full signature, parameter table, return value, raised exceptions,
 and worked examples. The library surface, by verb:
 
 ### Core verbs on `Incorporator`
-- `incorp()` — fetch + parse + build the object graph
+- `incorp()` — fetch + parse + build the object graph. Accepts an
+  optional `inflow=` sidecar (path to a `.py` with user-defined helper
+  functions referenced from `conv_dict` string tokens).
 - `test()` — JIT API profiler; prints recommended `incorp()` kwargs for
-  an unknown endpoint
-- `refresh()` — stateful update of an existing object graph
+  an unknown endpoint.
+- `refresh()` — stateful update of an existing object graph. Same
+  `inflow=` semantics as `incorp()`.
 - `export()` — serialise to CSV, JSON, NDJSON, XML, SQLite, Parquet,
-  Feather, ORC, Excel, or Avro
+  Feather, ORC, Excel, or Avro. Accepts an optional `outflow=` path to
+  a `.py` defining a `transform(instances)` hook.
 - `stream()` — long-running single-source pipeline (chunking or
-  stateful polling)
+  stateful polling). Accepts `inflow=` (any mode) and `outflow=`
+  (**stateful-polling only** — chunking has no persistent registry).
 - `fjord()` — long-running multi-source pipeline with a user-defined
-  `outflow(state)` function
-- `display()` — REPL identity print (debug helper)
+  `outflow(state)` function in `outflow.py`. Accepts `inflow=` for
+  per-source converter helpers.
+- `display()` — REPL identity print (debug helper).
 
 ### Submodules
 - `incorporator.schema.converters` — `inc()`, `calc()`, `each()`,

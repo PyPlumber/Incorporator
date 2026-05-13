@@ -30,7 +30,7 @@ the rows your `outflow()` returns, named after the code-file stem.
 ## Step 1: `outflow.py` — The Code File
 
 `fjord()` needs Python code (class definitions + the join logic), so it
-lives in a `code_file`:
+lives in an `outflow.py`:
 
 ```python
 # outflow.py
@@ -70,7 +70,7 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 ```
 
-That's the entire `code_file`. Two classes + one function. No daemon
+That's the entire `outflow.py`. Two classes + one function. No daemon
 plumbing, no lock acquisition, no audit emission — `fjord()` handles all
 of it.
 
@@ -104,7 +104,7 @@ async def main():
                 },
             },
         ],
-        code_file="outflow.py",
+        outflow="outflow.py",
         export_params={"file_path": "data/launch_with_rocket.parquet"},
         refresh_interval=60.0,
         export_interval=120.0,
@@ -132,7 +132,7 @@ if __name__ == "__main__":
    heavy CPU join doesn't block the refresh daemons.
 4. **Dynamic output class.** From the rows `outflow()` returns, the engine
    uses `infer_dynamic_schema()` to build a Pydantic class named after
-   the `code_file` stem (`outflow.py` → `Outflow`). The instances
+   the `outflow.py` stem (`outflow.py` → `Outflow`). The instances
    auto-register in `Outflow.inc_dict` for downstream `link_to(...)` use.
 5. **Export.** Same handler dispatch as `stream()` — file extension picks
    the format (Parquet here, but switch to `.ndjson`, `.csv`, `.sqlite`,
@@ -180,7 +180,7 @@ incorporator fjord pipeline.json --logs
 
 Notice the JSON uses `cls_name` (string) while the Python uses `cls`
 (class reference). The CLI loader resolves `cls_name` by importing the
-`code_file` and looking up the class by name — that's how the JSON
+`outflow.py` file and looking up the class by name — that's how the JSON
 stays serialisable.
 
 ---

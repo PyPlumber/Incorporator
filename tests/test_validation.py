@@ -53,8 +53,8 @@ async def test_export_accepts_list_instance(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_code_file_transform_wrong_arity_raises(tmp_path: Path) -> None:
-    """_apply_code_transform must raise ValueError when transform has wrong arity."""
+async def test_outflow_transform_wrong_arity_raises(tmp_path: Path) -> None:
+    """apply_code_transform must raise ValueError when transform has wrong arity."""
     json_file = tmp_path / "data.json"
     json_file.write_text(json.dumps([{"id": 1}]), encoding="utf-8")
 
@@ -75,13 +75,13 @@ async def test_code_file_transform_wrong_arity_raises(tmp_path: Path) -> None:
         await TransformArityModel.export(
             instance=result,
             file_path=str(tmp_path / "out.json"),
-            code_file=str(bad_transform),
+            outflow=str(bad_transform),
         )
 
 
 @pytest.mark.asyncio
-async def test_code_file_transform_correct_arity_passes(tmp_path: Path) -> None:
-    """_apply_code_transform must succeed when transform has exactly 1 parameter."""
+async def test_outflow_transform_correct_arity_passes(tmp_path: Path) -> None:
+    """apply_code_transform must succeed when transform has exactly 1 parameter."""
     json_file = tmp_path / "data.json"
     json_file.write_text(json.dumps([{"id": 1, "name": "Alice"}]), encoding="utf-8")
 
@@ -99,20 +99,20 @@ async def test_code_file_transform_correct_arity_passes(tmp_path: Path) -> None:
 
     result = await TransformGoodModel.incorp(inc_file=str(json_file), inc_code="id", inc_name="name")
     out_path = tmp_path / "out.json"
-    await TransformGoodModel.export(instance=result, file_path=str(out_path), code_file=str(good_transform))
+    await TransformGoodModel.export(instance=result, file_path=str(out_path), outflow=str(good_transform))
 
     content = out_path.read_text(encoding="utf-8")
     assert "ALICE" in content
 
 
 # ==========================================
-# 3. code_file SCHEMA DRIFT
+# 3. outflow SCHEMA DRIFT
 # ==========================================
 
 
 @pytest.mark.asyncio
-async def test_export_code_file_new_field_in_csv(tmp_path: Path) -> None:
-    """When code_file adds a new field, it must appear as a column in CSV output."""
+async def test_export_outflow_new_field_in_csv(tmp_path: Path) -> None:
+    """When outflow adds a new field, it must appear as a column in CSV output."""
     json_file = tmp_path / "data.json"
     json_file.write_text(json.dumps([{"id": 1, "name": "Alice"}]), encoding="utf-8")
 
@@ -136,7 +136,7 @@ async def test_export_code_file_new_field_in_csv(tmp_path: Path) -> None:
     await DriftTestModel.export(
         instance=result,
         file_path=str(out_csv),
-        code_file=str(transform_file),
+        outflow=str(transform_file),
     )
 
     content = out_csv.read_text(encoding="utf-8")
