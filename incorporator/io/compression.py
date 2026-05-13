@@ -205,7 +205,7 @@ def _decompress_cramjam(
 ) -> Union[str, bytes]:
     """Lazy-loads Cramjam Rust bindings with structural binary bypass."""
     try:
-        import cramjam  # type: ignore[import-not-found]
+        import cramjam  # type: ignore[import-not-found, import-untyped, unused-ignore]
 
         module_name = _CRAMJAM_MODULE_MAP.get(comp_type)
         if not module_name:
