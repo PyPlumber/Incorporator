@@ -231,22 +231,27 @@ Secrets stay out of `pipeline.json` — use `${API_KEY}` for env vars or `${file
 
 ## 📚 Documentation & Examples
 
-The best way to learn Incorporator is through our deeply documented library reference and guided tutorials.
+The best way to learn Incorporator is through guided tutorials and the auto-generated library reference. Runnable code lives under [`/examples`](./examples).
 
-### Library Reference
-* [📖 **Auto-Generated Library Reference** (pdoc)](./docs/library_reference.md) — every public class, method, converter, and paginator, rendered directly from the source docstrings.
-
-### Guided Tutorials (Real-World Examples)
-Check out the [`/examples`](./examples) directory for runnable code, and the links below for detailed Markdown walkthroughs of each feature:
+### Guided Tutorials — `incorp()` Patterns
 * [🚀 **Space Devs Tutorial**](./docs/1_quick_setup.md) — Pagination, simple ETL, and type casting.
 * [⚡️ **Pokédex Power Rankings**](./docs/2_advanced_etl_calc.md) — Deep enrichment (HATEOAS) and array reductions.
 * [📊 **Stablecoin Dashboard**](./docs/3_graph_mapping.md) — Multi-API graph fusion and relational data binding.
 * [🕵️‍♂️ **Shady Jimmy's Ledger**](./docs/4_xml_post_auditing.md) — XML ingestion, O(1) memory audits, and declarative bulk POSTs.
 * [🐘 **Data Lake Pivot**](./docs/5_data_lake_pivot.md) — Bridging JSON to Avro & SQLite.
 
+### Production-Verb Walkthroughs
+* [🌊 **Streaming Daemon**](./docs/6_streaming_daemon.md) — `stream()` end-to-end: refresh cadences, export intervals, signal-aware shutdown.
+* [🌊 **Multi-Source Fjord**](./docs/7_multi_source_fjord.md) — `fjord()` end-to-end: fusing two feeds through a user `outflow(state)` function.
+* [🕵️‍♂️ **DX Inspector**](./docs/8_dx_inspector.md) — `test()` end-to-end: let the framework write your `incorp()` kwargs.
+
+### Reference
+* [📖 **Library Reference** (pdoc)](./docs/library_reference.md) — every public class, method, converter, and paginator, rendered from the source docstrings.
+* [⚡ **Performance Characteristics**](./docs/performance.md) — measured throughput per format (both directions) + the automatic engine optimisations.
+
 ---
 
 ## 🤝 Philosophy & Contributing
 Incorporator is built on strict OOP principles, non-blocking observability, and a forgiving metaprogramming shield. We trap standard library exceptions (`JSONDecodeError`, `httpx.HTTPStatusError`) and gracefully recast them as domain errors. Your event loop is safe with us.
 
-Contributions are welcome!
+Contributions: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the dev install, quality bar, and architecture conventions. Security disclosures: see [`SECURITY.md`](./SECURITY.md). Release notes: [`CHANGELOG.md`](./CHANGELOG.md).
