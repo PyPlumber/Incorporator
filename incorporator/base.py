@@ -964,6 +964,175 @@ class Incorporator(BaseModel):
         ):
             yield audit
 
+    @staticmethod
+    def _load_combine_function(code_file: Union[str, Path]) -> Any:
+        """Load a top-level ``combine(state)`` function from a Python file.
+
+        Mirrors :meth:`_apply_code_transform`'s importlib pattern but for the
+        fjord engine — the file must define a function named ``combine`` that
+        accepts exactly one parameter (the state dict mapping class names to
+        ``IncorporatorList`` snapshots).
+
+        Returns the loaded callable. Raises ``FileNotFoundError`` /
+        ``ImportError`` / ``ValueError`` on missing file, unloadable module,
+        missing function, or wrong arity.
+        """
+        import importlib.util
+        import inspect
+
+        code_path = Path(code_file).resolve()
+        if not code_path.exists():
+            raise FileNotFoundError(f"[Incorporator] code_file not found: {code_path}")
+
+        spec = importlib.util.spec_from_file_location("_inc_fjord_combine", code_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"[Incorporator] Cannot load module spec from: {code_path}")
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        combine_fn = getattr(module, "combine", None)
+        if combine_fn is None:
+            raise ValueError(
+                f"[Incorporator] code_file must define a top-level combine(state) function: {code_path}"
+            )
+
+        sig = inspect.signature(combine_fn)
+        params = list(sig.parameters)
+        if len(params) != 1:
+            raise ValueError(
+                f"[Incorporator] combine() must accept exactly 1 parameter (state), got {len(params)}: {params}"
+            )
+
+        return combine_fn
+
+    @classmethod
+    async def fjord(
+        cls: Type[TIncorporator],
+        stream_params: List[Dict[str, Any]],
+        code_file: Union[str, Path],
+        export_params: Dict[str, Any],
+        refresh_interval: Optional[float] = None,
+        export_interval: Optional[float] = None,
+    ) -> AsyncGenerator["AuditResult", None]:
+        """Multi-source stateful streaming with a combined output class.
+
+        ``fjord()`` is the multi-source analogue of :meth:`stream` — it ingests
+        from N independent Incorporator subclasses concurrently, exposes their
+        live ``inc_dict`` registries to a developer-provided ``combine(state)``
+        function, and builds new instances of the calling class (``cls``) from
+        whatever ``combine()`` returns.  The combined instances are then
+        exported via the existing :meth:`export` pipeline.
+
+        Think of it as: N rivers (streams) → one fjord (combined body) → one
+        exported output.
+
+        Stateful polling only.  For single-source streaming or chunked
+        sequential ingestion, use :meth:`stream`.
+
+        Args:
+            stream_params: List of source-stream config dicts. Each entry
+                **must** contain:
+
+                - ``cls`` (Type[Incorporator]): the source Incorporator subclass.
+                - ``incorp_params`` (dict): kwargs forwarded to
+                  ``cls.incorp()`` for the seed phase.
+
+                Each entry **may** contain:
+
+                - ``refresh_params`` (dict): kwargs for ``cls.refresh()``.
+                  Omit to skip refresh for that source.
+                - ``export_params`` (dict): kwargs for a per-source export.
+                  Omit to skip per-source export.
+                - ``refresh_interval`` (float): per-entry override of the
+                  top-level ``refresh_interval``.
+                - ``export_interval`` (float): per-entry override of the
+                  top-level ``export_interval``.
+            code_file: Path to a Python file defining a top-level
+                ``combine(state)`` function.  ``state`` is a dict mapping each
+                source class's ``__name__`` to its current ``IncorporatorList``
+                snapshot.  Must return an iterable of dicts (or Pydantic
+                models); each row is used to construct one ``cls(**row)``
+                instance.
+            export_params: kwargs forwarded to ``cls.export()`` for the
+                combined output.  Required — the joined output must have a
+                destination.
+            refresh_interval: Default sleep between refresh ticks for each
+                source daemon.  Per-entry ``refresh_interval`` overrides this.
+                ``None`` means "one-shot then exit".
+            export_interval: Default sleep between combine-and-export ticks.
+                ``None`` means "one-shot then exit".
+
+        Yields:
+            :class:`AuditResult`: One per phase. The ``operation`` field
+            identifies what fired:
+
+            - ``"fjord_incorp:<ClassName>"`` — seed phase, one per source.
+            - ``"fjord_refresh:<ClassName>"`` — per-source refresh tick.
+            - ``"export:<ClassName>"`` — per-source export tick (when an
+              entry has ``export_params``).
+            - ``"combine"`` — combine-and-export tick.
+
+        Example:
+            CoinGecko + Binance Futures combined into a spread table::
+
+                class Coin(Incorporator): pass
+                class BinanceFutures(Incorporator): pass
+
+                class CoinMarket(Incorporator):
+                    coin_name: str = ""
+                    spot_price: float = 0.0
+                    futures_price: float = 0.0
+                    spread: float = 0.0
+
+                async for audit in CoinMarket.fjord(
+                    stream_params=[
+                        {"cls": Coin,
+                         "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"},
+                         "refresh_params": {}},
+                        {"cls": BinanceFutures,
+                         "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                         "refresh_params": {}},
+                    ],
+                    code_file="combine.py",
+                    export_params={"file_path": "markets.ndjson"},
+                    refresh_interval=60.0,
+                    export_interval=300.0,
+                ):
+                    print(f"{audit.operation}: {audit.rows_processed} rows")
+        """
+        from .observability.pipeline import _run_fjord_engine
+
+        # Validate stream_params shape early — fail fast with clear errors.
+        if not stream_params:
+            raise ValueError(f"[{cls.__name__}] fjord() requires at least one stream in stream_params.")
+        for idx, entry in enumerate(stream_params):
+            if "cls" not in entry:
+                raise ValueError(
+                    f"[{cls.__name__}] stream_params[{idx}] missing required key 'cls' (Incorporator subclass)."
+                )
+            if not isinstance(entry["cls"], type) or not issubclass(entry["cls"], Incorporator):
+                raise TypeError(
+                    f"[{cls.__name__}] stream_params[{idx}]['cls'] must be an Incorporator subclass, "
+                    f"got {type(entry['cls']).__name__!r}."
+                )
+            if "incorp_params" not in entry:
+                raise ValueError(
+                    f"[{cls.__name__}] stream_params[{idx}] missing required key 'incorp_params'."
+                )
+
+        combine_fn = cls._load_combine_function(code_file)
+
+        async for audit in _run_fjord_engine(
+            cls=cls,
+            stream_params=stream_params,
+            combine_fn=combine_fn,
+            export_params=export_params,
+            r_interval=refresh_interval,
+            e_interval=export_interval,
+        ):
+            yield audit
+
     @classmethod
     async def test(
         cls: Type[TIncorporator],
