@@ -156,3 +156,34 @@ By providing the `join_all` token, Incorporator automatically intercepts all 500
 We didn't need to write a messy dictionary merge algorithm to join Jimmy's records with the Government records. Because we set `inc_code="VIN"` when parsing the NHTSA response, the data was securely cached in memory. 
 
 In Phase 3, we retrieved the federal specs in $O(1)$ time by simply querying the registry: `govt_specs.inc_dict.get(jimmy_vin)`.
+
+---
+
+## 🐳 Run it from the CLI
+
+This audit is a two-phase pipeline (XML ingest → bulk POST → reconcile) and uses the `join_all()` declarative token plus the `inc_parent` chain — both are Python-side tokens. The CLI runs this as a fjord with a `code_file` carrying the Python pieces:
+
+```json
+{
+  "code_file": "audit_jimmy.py",
+  "stream_params": [
+    {
+      "cls_name": "Invoice",
+      "incorp_params": {
+        "inc_file": "jimmy_ledger.xml",
+        "rec_path": "Dealership.AuditFile.Invoices.Invoice",
+        "inc_code": "id",
+        "inc_child": "Vehicle.VIN"
+      }
+    }
+  ],
+  "export_params": {"file_path": "data/jimmy_audit.ndjson"}
+}
+```
+
+```bash
+incorporator validate pipeline.json
+incorporator fjord pipeline.json
+```
+
+`audit_jimmy.py` defines the `Invoice` and `NHTSASpec` classes, and the `outflow(state)` function that issues the bulk POST with `join_all(";")`, then reconciles each invoice VIN against the federal registry in O(1). See [`examples/fjord_code/outflow_example.py`](../examples/fjord_code/outflow_example.py) for the pattern and [the CLI guide](./cli_and_configuration.md) for the full schema.

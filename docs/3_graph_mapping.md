@@ -133,3 +133,44 @@ Because Incorporator transforms raw JSON into strict, flat Python objects *durin
 assets.sort(key=lambda a: getattr(a, "current_price", 0), reverse=True)
 ```
 Instead of writing nightmare dictionary lookups (`x.get("current_price", 0)`), you can run standard Python `.sort()`, `filter()`, or list comprehensions across your dynamically mapped graph using beautiful dot-notation (`a.current_price`).
+
+---
+
+## 🐳 Run it from the CLI
+
+Multi-source fusion is the canonical fjord shape. Each source is its own entry under `stream_params`; the `outflow()` function in the `code_file` performs the `link_to` join and returns the unified rows:
+
+```json
+{
+  "code_file": "outflow.py",
+  "stream_params": [
+    {
+      "cls_name": "BinanceBook",
+      "incorp_params": {
+        "inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
+        "inc_code": "symbol"
+      },
+      "refresh_params": {}
+    },
+    {
+      "cls_name": "CryptoAsset",
+      "incorp_params": {
+        "inc_url": "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=100",
+        "inc_code": "id",
+        "inc_name": "name"
+      },
+      "refresh_params": {}
+    }
+  ],
+  "export_params": {"file_path": "data/crypto_fusion.ndjson"},
+  "refresh_interval": 60,
+  "export_interval": 120
+}
+```
+
+```bash
+incorporator validate pipeline.json
+incorporator fjord pipeline.json
+```
+
+The `outflow.py` defines `BinanceBook(Incorporator)`, `CryptoAsset(Incorporator)`, and the `outflow(state)` function that runs the `link_to` lookups across the two in-memory registries. With the intervals above, every 60 s the sources refresh, and every 120 s the fused dataset is flushed to disk. See [`examples/fjord_code/outflow_example.py`](../examples/fjord_code/outflow_example.py) for the pattern and [the CLI guide](./cli_and_configuration.md) for the full schema.

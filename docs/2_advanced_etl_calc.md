@@ -157,3 +157,35 @@ The PokéAPI returns massive base64 strings and thousand-item lists for `moves`.
 With **Incorporator**, you aren't just ingesting APIs—you are sculpting them. 
 
 Using the explicit `inc_child` state carrier and declarative `calc` tokens, you can take 150 deeply nested, fractured JSON payloads and compress them into a highly optimized, flat list of native Python objects in just a fraction of a second.
+
+---
+
+## 🐳 Run it from the CLI
+
+This pipeline relies on Python-side tokens — `calc(calculate_bst, ...)` and the two-phase `inc_parent` chain — so it can't be expressed as pure JSON. The CLI handles this via a `code_file` that defines the Python helpers, with `pipeline.json` referencing it:
+
+```json
+{
+  "code_file": "outflow.py",
+  "stream_params": [
+    {
+      "cls_name": "Pokemon",
+      "incorp_params": {
+        "inc_url": "https://pokeapi.co/api/v2/pokemon/?limit=50",
+        "rec_path": "results",
+        "inc_code": "id",
+        "inc_name": "name",
+        "excl_lst": ["sprites", "moves", "game_indices", "held_items"]
+      }
+    }
+  ],
+  "export_params": {"file_path": "data/pokemon.ndjson"}
+}
+```
+
+```bash
+incorporator validate pipeline.json
+incorporator fjord pipeline.json
+```
+
+The companion `outflow.py` defines the `Pokemon(Incorporator)` class plus an `outflow(state)` function that runs the `calc()` reduction on the in-memory roster. See [`examples/fjord_code/outflow_example.py`](../examples/fjord_code/outflow_example.py) for the canonical pattern, and [the CLI guide](./cli_and_configuration.md) for the full schema.

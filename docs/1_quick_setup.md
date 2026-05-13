@@ -128,3 +128,29 @@ In the raw API, the launch pad isn't flat data—it is a deeply nested dictionar
 In traditional frameworks, you would have to define explicit `PadModel` and `LocationModel` classes to type-hint and access this data. 
 
 **Incorporator dynamically traverses nested JSON dictionaries and generates native Python sub-classes on the fly.** You get strict, object-oriented dot-notation with absolutely zero boilerplate setup required.
+
+---
+
+## 🐳 Run it from the CLI
+
+The same pipeline expressed as `pipeline.json` — drop into a config file, validate, and run with no Python wrapper required:
+
+```json
+{
+  "incorp_params": {
+    "inc_url": "https://ll.thespacedevs.com/2.2.0/launch/upcoming/",
+    "rec_path": "results",
+    "inc_code": "id",
+    "inc_name": "name",
+    "excl_lst": ["image", "infographic", "program", "vid_urls"]
+  },
+  "export_params": {"file_path": "data/launches.ndjson"}
+}
+```
+
+```bash
+incorporator validate pipeline.json
+incorporator stream pipeline.json
+```
+
+> **Note:** JSON can carry strings/numbers/lists but not Python callables. Python-typed tokens like `inc_page=NextUrlPaginator("next")` and `conv_dict={"net": inc(datetime)}` need to live in a `code_file` referenced from the JSON. See [`examples/pipeline_fjord.json`](../examples/pipeline_fjord.json) for the `code_file` pattern, and [the CLI guide](./cli_and_configuration.md) for the full schema.

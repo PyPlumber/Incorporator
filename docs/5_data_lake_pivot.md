@@ -102,3 +102,34 @@ print(f"Avro Read City:     {avro_users.inc_dict[target_id].address.city}")
 We went from a nested JSON Web Payload ➡️ Relational SQLite Database ➡️ Binary Hadoop Stream ➡️ and back to fully reconstructed Python Objects using exactly **two methods** (`incorp` and `export`). 
 
 Because the data is safely parked in the `.inc_dict` registries, you can immediately use `link_to(sql_users)` or `link_to(avro_users)` to fuse this data with live REST API responses—without writing a single Database Mapper (ORM) or Hadoop Serializer.
+
+---
+
+## 🐳 Run it from the CLI
+
+This is the simplest CLI case — fetch JSON, write to SQLite (or Avro, or Parquet, or any other supported format). Pure JSON, no `code_file` needed:
+
+```json
+{
+  "incorp_params": {
+    "inc_url": "https://jsonplaceholder.typicode.com/users",
+    "inc_code": "id",
+    "inc_name": "name"
+  },
+  "export_params": {"file_path": "data/users_warehouse.db"}
+}
+```
+
+```bash
+incorporator validate pipeline.json
+incorporator stream pipeline.json
+```
+
+**Switch the export target by changing the file extension** — Incorporator infers the handler from the path:
+
+* `users_warehouse.db` → SQLite
+* `users_datalake.avro` → Apache Avro *(requires `pip install incorporator[avro]`)*
+* `users.parquet` → Parquet *(requires `pip install incorporator[parquet]`)*
+* `users.ndjson` / `.csv` / `.xlsx` → all native
+
+For a Dockerised daemon that polls + refreshes on a schedule, see [`examples/pipeline_daemon.json`](../examples/pipeline_daemon.json) and [the deployment guide](./deployment.md).
