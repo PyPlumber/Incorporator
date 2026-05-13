@@ -133,7 +133,7 @@ In traditional frameworks, you would have to define explicit `PadModel` and `Loc
 
 ## 🐳 Run it from the CLI
 
-The same pipeline expressed as `pipeline.json` — drop into a config file, validate, and run with no Python wrapper required:
+The same pipeline expressed as `pipeline.json` — drop into a config file, validate, and run with no Python wrapper required. The CLI loader resolves text-form tokens (paginators, type-cast converters) into real Python objects automatically, so you can express the exact same kwargs you'd use in Python:
 
 ```json
 {
@@ -142,7 +142,10 @@ The same pipeline expressed as `pipeline.json` — drop into a config file, vali
     "rec_path": "results",
     "inc_code": "id",
     "inc_name": "name",
-    "excl_lst": ["image", "infographic", "program", "vid_urls"]
+    "inc_page": "NextUrlPaginator(\"next\")",
+    "call_lim": 2,
+    "excl_lst": ["image", "infographic", "program", "vid_urls"],
+    "conv_dict": {"net": "inc(datetime)"}
   },
   "export_params": {"file_path": "data/launches.ndjson"}
 }
@@ -153,4 +156,4 @@ incorporator validate pipeline.json
 incorporator stream pipeline.json
 ```
 
-> **Note:** JSON can carry strings/numbers/lists but not Python callables. Python-typed tokens like `inc_page=NextUrlPaginator("next")` and `conv_dict={"net": inc(datetime)}` need to live in a `code_file` referenced from the JSON. See [`examples/pipeline_fjord.json`](../examples/pipeline_fjord.json) for the `code_file` pattern, and [the CLI guide](./cli_and_configuration.md) for the full schema.
+> The strings `"NextUrlPaginator(\"next\")"` and `"inc(datetime)"` get parsed and resolved to real instances at config-load time — no `code_file` needed. Tokens that take user-defined Python functions (`calc()`, `link_to()`, `each()`) still need a `code_file`. See [the CLI guide](./cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full allow-list.

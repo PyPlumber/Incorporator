@@ -20,6 +20,7 @@ from incorporator import Incorporator, LoggedIncorporator
 
 from .envexpand import EnvExpansionError, expand_env
 from .scaffold import write_scaffold
+from .tokens import TokenResolutionError, resolve_tokens
 from .validate import validate_config
 
 logger = logging.getLogger(__name__)
@@ -86,9 +87,20 @@ def _load_pipeline_config(config_path: Path) -> Dict[str, Any]:
         sys.exit(1)
 
     try:
-        return cast(Dict[str, Any], expand_env(parsed))
+        expanded = cast(Dict[str, Any], expand_env(parsed))
     except EnvExpansionError as e:
         _err(f"Error: env-var expansion failed: {e}", fg=typer.colors.RED if typer else None)
+        sys.exit(1)
+
+    # Resolve JSON-text tokens (e.g. "NextUrlPaginator('next')",
+    # "inc(datetime)", "join_all(';')") into real Python objects before the
+    # config reaches the engine.  Tokens needing user-defined functions or
+    # classes still require a code_file — those raise TokenResolutionError
+    # here with a clear allow-list message.
+    try:
+        return cast(Dict[str, Any], resolve_tokens(expanded))
+    except TokenResolutionError as e:
+        _err(f"Error: token resolution failed: {e}", fg=typer.colors.RED if typer else None)
         sys.exit(1)
 
 

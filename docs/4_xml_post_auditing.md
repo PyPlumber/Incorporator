@@ -161,7 +161,13 @@ In Phase 3, we retrieved the federal specs in $O(1)$ time by simply querying the
 
 ## 🐳 Run it from the CLI
 
-This audit is a two-phase pipeline (XML ingest → bulk POST → reconcile) and uses the `join_all()` declarative token plus the `inc_parent` chain — both are Python-side tokens. The CLI runs this as a fjord with a `code_file` carrying the Python pieces:
+`join_all(";")` itself is JSON-expressible — the CLI's text-token resolver
+will turn `"join_all(\";\")"` into a real callable at load time. What
+still requires a `code_file` here is the **two-phase chain** (Phase 1's
+`invoices` becomes Phase 2's `inc_parent`, and Phase 3 reconciles the two
+registries). That's the natural fjord shape: each source is its own
+`stream_params` entry, and the `outflow(state)` function runs the
+reconciliation across both in-memory registries:
 
 ```json
 {

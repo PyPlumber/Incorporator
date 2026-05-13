@@ -161,6 +161,83 @@ fails with a confusing 401.
 
 ---
 
+## Text-Form Tokens (Paginators, Converters, etc.)
+
+JSON can carry strings, numbers, lists, and dicts — but not Python
+callables. So how does ``pipeline.json`` express something like
+``inc_page=NextUrlPaginator("next")`` or ``conv_dict={"net": inc(datetime)}``?
+
+**Answer: as text.** The CLI loader parses any value that looks like a
+Python function-call expression, resolves it against a strict allow-list
+of known classes / functions, and substitutes the real Python object
+before the engine sees the config. You write the exact text you'd write
+in Python — quoting flips from triple-quote to JSON-escape-quote, that's
+it.
+
+### Examples that work as JSON
+
+```json
+{
+  "incorp_params": {
+    "inc_url": "https://api.example.com/v1/items",
+    "inc_page": "NextUrlPaginator(\"next\")",
+    "rec_path": "data",
+    "conv_dict": {
+      "created_at": "inc(datetime)",
+      "price": "inc(float)",
+      "tags": "as_list()"
+    },
+    "form_payload": {
+      "ids": "join_all(\";\")"
+    }
+  }
+}
+```
+
+### Allow-list
+
+| Category | Names |
+|---|---|
+| Paginators | `NextUrlPaginator`, `CursorPaginator`, `OffsetPaginator`, `PageNumberPaginator`, `LinkHeaderPaginator`, `SQLitePaginator`, `CSVPaginator`, `AvroPaginator` |
+| Converters | `inc`, `as_list`, `join_all`, `split_and_get`, `pluck`, `sum_attributes` |
+| Type names (allowed as args to the above) | `datetime`, `date`, `time`, `int`, `float`, `bool`, `str`, `list`, `dict`, `tuple`, `set`, `bytes`, `None`, `True`, `False`, `new` |
+
+### What still needs a `code_file`
+
+Tokens that take **user-defined functions or classes** as arguments
+can't be expressed in JSON text — there's no way to fit a Python
+function into a JSON string. These still require a `code_file`:
+
+* `calc(my_function, "field")` — user reducer function
+* `each(MyClass)` — user-defined Incorporator subclass
+* `link_to(some_registry)` — reference to a class with a populated
+  `inc_dict`
+
+If you need any of these, the natural pattern is the [fjord
+subcommand](#8-the-fjord-subcommand--multi-source-stateful-pipelines)
+or a stream pipeline that references a `code_file` (the validator
+recognises `export_params.code_file` for stream pipelines and the
+top-level `code_file` for fjord).
+
+### Safety
+
+The resolver uses a strict safe-eval pattern based on `ast.parse`:
+
+* Only literals (strings, numbers, bools, None), allow-listed names,
+  and calls on allow-listed names are accepted.
+* **Rejected with a clear error**: attribute access, subscripts,
+  imports, lambdas, comprehensions, binary operators, anything not
+  in the allow-list.
+* Plain strings (URLs, file paths, headers, English prose) don't
+  match the shape regex and pass through unchanged.
+
+If you write a string that *looks* like a call (matches the shape)
+but uses an unknown identifier, you get a loud error at load time
+with the full allow-list printed — not a confusing downstream
+failure.
+
+---
+
 ## 6. Observability & Telemetry (`--logs`)
 
 When running Incorporator as a background daemon (especially inside a Docker container), you need robust observability without blocking the async event loop.
