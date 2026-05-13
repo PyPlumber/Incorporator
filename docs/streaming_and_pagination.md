@@ -201,3 +201,30 @@ incorporator fjord pipeline.json --logs
 👉 See the [fjord section](./cli_and_configuration.md#6-the-fjord-subcommand--multi-source-stateful-pipelines)
 of the CLI guide for the JSON schema and a worked example, or the
 [API reference](./api_reference.md) for the full method signature.
+
+---
+
+## 6. Performance Characteristics
+
+Streaming pipelines benefit from several recent engine optimisations — they
+apply automatically, no code changes required:
+
+* **HTTP/2 multiplexing** in the shared `httpx.AsyncClient` — one TCP/TLS
+  connection carries every concurrent request, eliminating per-batch
+  handshake overhead.
+* **LRU `SCHEMA_REGISTRY`** — compiled Pydantic classes are cached and
+  evicted by least-recently-used; long-running daemons that see many
+  distinct shapes don't thrash the cache.
+* **Batched `model_validate`** — Pydantic instantiation runs in 1000-row
+  batches so the Rust core can amortise schema lookups across the batch.
+* **In-place columnar parse** — Parquet/Feather/ORC parse uses
+  `pyarrow.compute` for vectorised JSON-prefix detection, skipping the
+  per-cell Python check entirely when string columns contain no JSON.
+* **`asyncio.to_thread` for `outflow_fn`** — CPU-heavy user joins in
+  `fjord()` no longer block refresh / export daemons running on other
+  sources.
+
+Measured throughput on commodity hardware: 200k+ rows/sec for Parquet
+parse, 140k–250k rows/sec for delimited and columnar writes. See
+[`tests/benchmarks/`](../tests/benchmarks/) for the full per-format
+matrix.
