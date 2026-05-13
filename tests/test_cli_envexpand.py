@@ -1,10 +1,10 @@
-"""Unit tests for incorporator.cli_envexpand.expand_env."""
+"""Unit tests for incorporator.cli.envexpand.expand_env."""
 
 from pathlib import Path
 
 import pytest
 
-from incorporator.cli_envexpand import EnvExpansionError, expand_env
+from incorporator.cli.envexpand import EnvExpansionError, expand_env
 
 
 def test_expand_env_simple(monkeypatch: pytest.MonkeyPatch) -> None:

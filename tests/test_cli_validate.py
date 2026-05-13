@@ -1,9 +1,9 @@
-"""Unit tests for incorporator.cli_validate (validators called in isolation)."""
+"""Unit tests for incorporator.cli.validate (validators called in isolation)."""
 
 from pathlib import Path
 from typing import Any, Dict
 
-from incorporator.cli_validate import (
+from incorporator.cli.validate import (
     autodetect_type,
     validate_config,
     validate_fjord_config,

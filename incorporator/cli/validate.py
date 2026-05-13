@@ -24,7 +24,7 @@ import importlib.util
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple
 
-from .base import Incorporator
+from ..base import Incorporator
 
 ConfigType = Literal["stream", "fjord"]
 
@@ -140,7 +140,7 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
     # outflow() arity check via usercode.load_outflow_function — it already
     # raises with the right diagnostic if the function is missing or has the
     # wrong signature. We swallow the ValueError into the report.
-    from .usercode import load_outflow_function
+    from ..usercode import load_outflow_function
 
     try:
         load_outflow_function(code_file_path)

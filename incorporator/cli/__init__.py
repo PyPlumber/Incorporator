@@ -18,9 +18,9 @@ except ImportError:
 
 from incorporator import Incorporator, LoggedIncorporator
 
-from .cli_envexpand import EnvExpansionError, expand_env
-from .cli_scaffold import write_scaffold
-from .cli_validate import validate_config
+from .envexpand import EnvExpansionError, expand_env
+from .scaffold import write_scaffold
+from .validate import validate_config
 
 logger = logging.getLogger(__name__)
 
