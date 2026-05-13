@@ -1,10 +1,10 @@
 """Dynamic Pydantic model generation and Declarative ETL engine."""
 
-import copy
 import keyword
 import logging
 import re
 import weakref
+from collections import OrderedDict
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
@@ -13,8 +13,10 @@ from ..exceptions import IncorporatorSchemaError
 
 logger = logging.getLogger(__name__)
 
-# Cache to prevent recompiling identical schemas during deep nesting
-SCHEMA_REGISTRY: Dict[Tuple[str, FrozenSet[Any], int], Type[BaseModel]] = {}
+# LRU cache keyed by (model_name, frozenset(field_types), id(base_class)).
+# OrderedDict + move_to_end on hit gives O(1) LRU eviction — older entries
+# fall off the front while hot schemas stay at the end.
+SCHEMA_REGISTRY: "OrderedDict[Tuple[str, FrozenSet[Any], int], Type[BaseModel]]" = OrderedDict()
 MAX_REGISTRY_SIZE = 1000  # Hard boundary to prevent OOM leaks
 
 # The protective shield for Pydantic internals
@@ -74,9 +76,12 @@ def apply_etl_transformations(
         return items if isinstance(parsed_data, list) else items[0]
 
     # 1. COLUMNAR PASS: Exclusions (Drop)
+    # Loop order: rows outer, keys inner — keeps each dict warm in the CPU
+    # cache during the inner loop, avoiding cache thrashing on large datasets.
     if excl_lst:
-        for key in excl_lst:
-            for d in dict_items:
+        excl_set = frozenset(excl_lst)
+        for d in dict_items:
+            for key in excl_set:
                 d.pop(key, None)
 
     # 2. COLUMNAR PASS: Conversions (Mutate)
@@ -140,10 +145,13 @@ def apply_etl_transformations(
                         logger.warning(f"Standard conv_dict failed on key '{key}': {e}")
 
     # 3. COLUMNAR PASS: Renaming (Alias)
+    # Loop order: rows outer, keys inner — same cache-locality reasoning as
+    # the exclusions pass above.  name_map preserves chronological insertion
+    # order so rename sequences applied to the same key chain correctly.
     if name_chg:
         name_map = dict(name_chg)  # Dict conversion preserves chronological insertion order!
-        for old_key, new_key in name_map.items():
-            for d in dict_items:
+        for d in dict_items:
+            for old_key, new_key in name_map.items():
                 if old_key in d:
                     d[new_key] = d.pop(old_key)
 
@@ -197,8 +205,18 @@ def infer_dynamic_schema(
 
     sample_dict: Dict[str, Any] = {}
 
-    # Python natively handles lists smaller than 50 without throwing an IndexError
-    items_to_sample = data[:50] if isinstance(data, list) else [data]
+    # Stratified sampling: evenly spaced indices up to 100 records so rare
+    # field types that appear later in large datasets are more likely to be
+    # discovered.  On short lists (< 100) this degenerates to `data[:n]`.
+    if isinstance(data, list):
+        n = len(data)
+        if n <= 100:
+            items_to_sample = data
+        else:
+            step = n // 100
+            items_to_sample = data[::step][:100]
+    else:
+        items_to_sample = [data]
 
     for item in items_to_sample:
         if isinstance(item, dict):
@@ -240,6 +258,9 @@ def infer_dynamic_schema(
         id(base_class),
     )
     if cache_key in SCHEMA_REGISTRY:
+        # LRU: promote this key to the most-recently-used position so hot
+        # schemas are never evicted while cold ones age off the front.
+        SCHEMA_REGISTRY.move_to_end(cache_key)
         return SCHEMA_REGISTRY[cache_key]
 
     fields: Dict[str, Any] = {}
@@ -276,19 +297,26 @@ def infer_dynamic_schema(
             **fields,
         )
 
-        # Mirror necessary state into the dynamic child class
+        # Mirror necessary state into the dynamic child class.
+        # Shallow copy (dict()) instead of deepcopy: the child class owns its
+        # own mapping but shares values by reference.  Values that need true
+        # isolation are mutable only via their class's own methods, so shared
+        # references are safe.  deepcopy on large _schema_union dicts was
+        # allocating gigabytes over long runs with 1000+ compiled schemas.
         for attr_name in dir(base_class):
             if not attr_name.startswith("__") and attr_name not in PYDANTIC_RESERVED:
                 attr_val = getattr(base_class, attr_name)
                 if isinstance(attr_val, dict):
-                    setattr(DynamicModel, attr_name, copy.deepcopy(attr_val))
+                    setattr(DynamicModel, attr_name, dict(attr_val))
                 elif isinstance(attr_val, weakref.WeakValueDictionary):
                     # Type mapping for strictly typed generic dicts
                     setattr(DynamicModel, attr_name, weakref.WeakValueDictionary[Any, Any]())
 
-        # Cache the generated root-level model
+        # LRU cache insert: evict the least-recently-used entry when the
+        # registry is full.  OrderedDict.popitem(last=False) removes the
+        # oldest (front) entry in O(1) — guaranteed by CPython's dict impl.
         if len(SCHEMA_REGISTRY) >= MAX_REGISTRY_SIZE:
-            SCHEMA_REGISTRY.pop(next(iter(SCHEMA_REGISTRY)))
+            SCHEMA_REGISTRY.popitem(last=False)
         SCHEMA_REGISTRY[cache_key] = DynamicModel
 
         return DynamicModel

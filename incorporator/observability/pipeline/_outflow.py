@@ -52,16 +52,24 @@ async def _outflow_daemon(
 
     operation = f"outflow:{output_class_name}"
     loop_idx = 0
+    # Pre-compute state dict keys once — avoids re-allocating the key list on
+    # every tick.  The key order is stable for the lifetime of the daemon.
+    state_keys = [cls.__name__ for cls in source_classes]
     while not shutdown_event.is_set():
         loop_idx += 1
         start_time = time.perf_counter()
         try:
-            # Snapshot phase — under lock, O(N) pointer reads.
+            # Snapshot phase — under lock, O(N) pointer reads only.
+            # dict(zip(...)) is slightly faster than a comprehension with index
+            # arithmetic and reuses the pre-computed key list.
             async with lock:
-                state = {source_classes[i].__name__: source_refs[i][0] for i in range(len(source_classes))}
+                state = dict(zip(state_keys, [ref[0] for ref in source_refs]))
 
             # Outflow phase — user code outside the lock.
-            rows = outflow_fn(state)
+            # asyncio.to_thread releases the GIL so CPU-heavy outflow functions
+            # (e.g. complex multi-source joins) don't block refresh/export
+            # daemons running on other sources.
+            rows = await asyncio.to_thread(outflow_fn, state)
             if isinstance(rows, dict):
                 rows = [rows]
             elif rows is None:

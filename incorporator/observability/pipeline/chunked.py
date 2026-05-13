@@ -1,7 +1,6 @@
 """Chunked sequential engine (Engine 1): O(1)-memory paginator-driven streaming."""
 
 import asyncio
-import gc
 import time
 from typing import Any, AsyncGenerator, Dict, Optional
 
@@ -31,11 +30,15 @@ async def _run_chunking_engine(
             chunk_idx += 1
             start_time = time.perf_counter()
 
-            params = incorp_params.copy()
+            # Only copy incorp_params when we must mutate it (paginator path).
+            # Single-shot mode never mutates params, so we skip the copy.
             if paginator:
                 if getattr(paginator, "is_exhausted", False):
                     break
+                params = incorp_params.copy()
                 params["call_lim"] = 1
+            else:
+                params = incorp_params
 
             try:
                 dataset = await cls.incorp(**params)
@@ -58,7 +61,10 @@ async def _run_chunking_engine(
                 )
 
                 del dataset
-                gc.collect()
+                # Yield the event loop so other tasks can run between chunks.
+                # Manual gc.collect() removed — Python's generational GC handles
+                # short-lived datasets without manual intervention, and calling
+                # gc.collect() here would block the event loop for milliseconds.
                 await asyncio.sleep(0)
 
                 if not paginator:

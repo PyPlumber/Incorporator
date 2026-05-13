@@ -63,8 +63,16 @@ class HTTPClientBuilder:
         timeout: float = 15.0,
         headers: Optional[Dict[str, str]] = None,
     ) -> httpx.AsyncClient:
-        client_limits = httpx.Limits(max_keepalive_connections=concurrency_limit, max_connections=concurrency_limit)
+        # Decouple keepalive pool from worker count: a small pool of persistent
+        # connections is reused by all concurrent workers, amortising TCP/TLS
+        # handshakes across the session.  max_connections is still capped at
+        # concurrency_limit to prevent runaway socket exhaustion.
+        client_limits = httpx.Limits(
+            max_keepalive_connections=10,
+            max_connections=concurrency_limit,
+        )
         return httpx.AsyncClient(
+            http2=True,  # HTTP/2 multiplexing (pip install httpx[http2])
             follow_redirects=True,
             timeout=timeout,
             limits=client_limits,
