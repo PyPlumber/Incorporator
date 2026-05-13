@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `inflow` / `outflow` sidecar files & `@name` references
+- **`inflow=` kwarg** on `incorp()` / `refresh()` / `stream()`. Points at
+  a Python sidecar (`inflow.py`) holding user-defined helpers — `calc`
+  reducers, custom converters, paginator instances, anything the
+  trinity's `conv_dict` / `inc_page` kwargs need but JSON can't carry
+  directly. Imports happen **once** (cached via `sys.modules`); the
+  CLI's token resolver extends its allow-list with the module's public
+  symbols so JSON tokens can reference user functions by bare name.
+- **`outflow=` kwarg** on `fjord()`, `stream()`, and `export()`. Canonical
+  replacement for `code_file=`, which becomes a deprecated alias
+  (emits `DeprecationWarning`). On `stream()`, `outflow=` requires
+  `stateful_polling=True` — chunking mode releases per-chunk state and
+  has no persistent registry for a user-defined subclass to attach to.
+- **`@name` sigil syntax** in `pipeline.json`. Bare-name references to
+  inflow symbols (`"inc_page": "@launches_pager"`) eliminate JSON-escape
+  ugliness entirely. Coexists with call-grammar tokens
+  (`"inc_page": "NextUrlPaginator('next')"`) — mix-and-match.
+- **`calc`, `calc_all`, `link_to`, `link_to_list`** added to the token
+  resolver's allow-list. They now resolve when `inflow.py` provides the
+  user callable / registry referenced in the first arg.
+- **`incorporator init --with-inflow`** flag — scaffolds an `inflow.py`
+  stub alongside `pipeline.json`. Off by default for `--type stream`
+  (keeps minimal cases minimal).
+
+### Changed — Naming
+- **`code_file=` → `outflow=`** on `Incorporator.fjord()` and
+  `Incorporator.export()`. Old name preserved as a deprecated alias
+  (`DeprecationWarning`); will be removed in a future major.
+- **`"code_file"` → `"outflow"`** as the canonical top-level key in
+  `pipeline.json` for fjord configs. Old key still accepted by the
+  validator with a yellow deprecation hint in the CLI output.
+
 ### Added — CLI & Production Deployment
 - **`incorporator init / validate / stream / fjord`** CLI subcommands. Drives the same engines from a `pipeline.json` — no Python wrapper required for single- or multi-source ETLs.
 - **Env-var + Secrets-file interpolation in `pipeline.json`**: `${API_KEY}`, `${VAR:-default}`, `${VAR:?required}`, and `${file:/run/secrets/api_key}` for Docker / Kubernetes Secrets mounts.

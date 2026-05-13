@@ -162,30 +162,41 @@ Using the explicit `inc_child` state carrier and declarative `calc` tokens, you 
 
 ## 🐳 Run it from the CLI
 
-This pipeline relies on Python-side tokens — `calc(calculate_bst, ...)` and the two-phase `inc_parent` chain — so it can't be expressed as pure JSON. The CLI handles this via a `code_file` that defines the Python helpers, with `pipeline.json` referencing it:
+The CLI handles user-defined reducers via an **`inflow.py` sidecar** — a single Python file containing the helper functions your pipeline.json references. No fjord wrapper, no outflow function, no second class. Just a vanilla stream pipeline that uses your reducer.
+
+### `inflow.py` — the helpers
+
+```python
+def calculate_bst(stats_array):
+    """Same reducer from the Python example, exposed for the CLI."""
+    return sum(s.get("base_stat", 0) for s in stats_array if isinstance(s, dict))
+```
+
+### `pipeline.json` — zero escape characters
 
 ```json
 {
-  "code_file": "outflow.py",
-  "stream_params": [
-    {
-      "cls_name": "Pokemon",
-      "incorp_params": {
-        "inc_url": "https://pokeapi.co/api/v2/pokemon/?limit=50",
-        "rec_path": "results",
-        "inc_code": "id",
-        "inc_name": "name",
-        "excl_lst": ["sprites", "moves", "game_indices", "held_items"]
-      }
-    }
-  ],
+  "inflow": "inflow.py",
+  "incorp_params": {
+    "inc_url": "https://pokeapi.co/api/v2/pokemon/?limit=50",
+    "rec_path": "results",
+    "inc_code": "id",
+    "inc_name": "name",
+    "excl_lst": ["sprites", "moves", "game_indices", "held_items"],
+    "conv_dict": {
+      "stats": "calc(calculate_bst, 'stats', default=0, target_type=int)"
+    },
+    "name_chg": [["stats", "base_stat_total"]]
+  },
   "export_params": {"file_path": "data/pokemon.ndjson"}
 }
 ```
 
 ```bash
 incorporator validate pipeline.json
-incorporator fjord pipeline.json
+incorporator stream pipeline.json
 ```
 
-The companion `outflow.py` defines the `Pokemon(Incorporator)` class plus an `outflow(state)` function that runs the `calc()` reduction on the in-memory roster. See [`examples/fjord_code/outflow_example.py`](../examples/fjord_code/outflow_example.py) for the canonical pattern, and [the CLI guide](./cli_and_configuration.md) for the full schema.
+The token resolver imports `inflow.py` at config-load time, sees `calculate_bst` in its public symbols, and resolves the `calc(...)` string to a real Python callable before the engine runs. The reducer runs **before** format dispatch, so this exact pipeline.json works for any export format — switch the extension to `.csv`, `.parquet`, `.avro`, etc., and the integer still lands in the cell.
+
+> **Tip:** for paginators and pre-built converter instances, use the cleaner `@name` syntax. Define `next_page = NextUrlPaginator("next")` in `inflow.py`, then reference it as `"inc_page": "@next_page"` in pipeline.json — zero JSON escape characters. See [the CLI guide](./cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full pattern.

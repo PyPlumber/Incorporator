@@ -148,7 +148,7 @@ The same pipeline as a `pipeline.json`:
 
 ```json
 {
-  "code_file": "outflow.py",
+  "outflow": "outflow.py",
   "stream_params": [
     {
       "cls_name": "SpaceXLaunch",

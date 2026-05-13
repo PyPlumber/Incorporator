@@ -1,7 +1,7 @@
 {
-  "_comment_": "Two-source fjord pipeline. The output class is built dynamically from the code_file's stem (outflow_example.py -> OutflowExample). Run: incorporator validate examples/pipeline_fjord.json && incorporator fjord examples/pipeline_fjord.json --logs",
+  "_comment_": "Two-source fjord pipeline. The output class is built dynamically from the outflow file's stem (outflow_example.py -> OutflowExample). Run: incorporator validate examples/pipeline_fjord.json && incorporator fjord examples/pipeline_fjord.json --logs",
 
-  "code_file": "fjord_code/outflow_example.py",
+  "outflow": "fjord_code/outflow_example.py",
 
   "stream_params": [
     {

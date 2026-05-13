@@ -170,54 +170,115 @@ callables. So how does ``pipeline.json`` express something like
 **Answer: as text.** The CLI loader parses any value that looks like a
 Python function-call expression, resolves it against a strict allow-list
 of known classes / functions, and substitutes the real Python object
-before the engine sees the config. You write the exact text you'd write
-in Python — quoting flips from triple-quote to JSON-escape-quote, that's
-it.
+before the engine sees the config.
 
-### Examples that work as JSON
+There are **two complementary syntaxes**, both safe-eval'd at config
+load time:
+
+### Syntax 1: `@name` references (cleanest)
+
+Pre-build the instance in `inflow.py` and reference it by bare name in
+JSON. Zero escapes, zero call grammar in the JSON.
+
+```python
+# inflow.py
+from incorporator.io.pagination import NextUrlPaginator
+from incorporator.schema.converters import inc
+
+next_page = NextUrlPaginator("next")
+to_datetime = inc(datetime)
+```
+
+```json
+{
+  "inflow": "inflow.py",
+  "incorp_params": {
+    "inc_url": "https://api.example.com/v1/items",
+    "inc_page": "@next_page",
+    "rec_path": "data",
+    "conv_dict": {"created_at": "@to_datetime"}
+  }
+}
+```
+
+### Syntax 2: Call grammar (no sidecar file)
+
+For trivial framework cases that don't justify an `inflow.py`, use call
+grammar with **single quotes inside** so no escapes are needed:
 
 ```json
 {
   "incorp_params": {
     "inc_url": "https://api.example.com/v1/items",
-    "inc_page": "NextUrlPaginator(\"next\")",
-    "rec_path": "data",
+    "inc_page": "NextUrlPaginator('next')",
     "conv_dict": {
       "created_at": "inc(datetime)",
       "price": "inc(float)",
       "tags": "as_list()"
     },
-    "form_payload": {
-      "ids": "join_all(\";\")"
-    }
+    "form_payload": {"ids": "join_all(';')"}
   }
 }
 ```
 
+You can mix both — `@name` for anything non-trivial, call grammar for
+one-offs.
+
 ### Allow-list
+
+These names resolve out of the box:
 
 | Category | Names |
 |---|---|
 | Paginators | `NextUrlPaginator`, `CursorPaginator`, `OffsetPaginator`, `PageNumberPaginator`, `LinkHeaderPaginator`, `SQLitePaginator`, `CSVPaginator`, `AvroPaginator` |
-| Converters | `inc`, `as_list`, `join_all`, `split_and_get`, `pluck`, `sum_attributes` |
-| Type names (allowed as args to the above) | `datetime`, `date`, `time`, `int`, `float`, `bool`, `str`, `list`, `dict`, `tuple`, `set`, `bytes`, `None`, `True`, `False`, `new` |
+| Converters | `inc`, `as_list`, `join_all`, `split_and_get`, `pluck`, `sum_attributes`, `calc`, `calc_all`, `link_to`, `link_to_list` |
+| Types (as args) | `datetime`, `date`, `time`, `int`, `float`, `bool`, `str`, `list`, `dict`, `tuple`, `set`, `bytes`, `None`, `True`, `False`, `new` |
 
-### What still needs a `code_file`
+### User Functions via `inflow`
 
-Tokens that take **user-defined functions or classes** as arguments
-can't be expressed in JSON text — there's no way to fit a Python
-function into a JSON string. These still require a `code_file`:
+`calc`, `calc_all`, `link_to`, and `link_to_list` take a **user-defined**
+callable or registry as their first argument. JSON alone can't carry a
+Python function, so these resolve **only when you supply an `inflow.py`**
+whose public symbols include the named helper.
 
-* `calc(my_function, "field")` — user reducer function
-* `each(MyClass)` — user-defined Incorporator subclass
-* `link_to(some_registry)` — reference to a class with a populated
-  `inc_dict`
+```python
+# inflow.py
+def calculate_bst(stats):
+    return sum(s.get("base_stat", 0) for s in stats if isinstance(s, dict))
+```
 
-If you need any of these, the natural pattern is the [fjord
-subcommand](#8-the-fjord-subcommand--multi-source-stateful-pipelines)
-or a stream pipeline that references a `code_file` (the validator
-recognises `export_params.code_file` for stream pipelines and the
-top-level `code_file` for fjord).
+```json
+{
+  "inflow": "inflow.py",
+  "incorp_params": {
+    "inc_url": "https://pokeapi.co/api/v2/pokemon/?limit=50",
+    "rec_path": "results",
+    "inc_code": "name",
+    "conv_dict": {"stats": "calc(calculate_bst, 'stats', default=0, target_type=int)"}
+  },
+  "export_params": {"file_path": "data/pokemon.csv"}
+}
+```
+
+> **`conv_dict` is format-agnostic.** It (and every other ETL transform —
+> `excl_lst`, `name_chg`, `code_attr`, `name_attr`) runs **before** format
+> dispatch in `incorporator/schema/factory.py::build_instances`. So the
+> reducer's output lands in *every* output format equally — CSV, NDJSON,
+> Parquet, Avro, XLSX, etc. The example above with `.csv` proves this:
+> the integer from `calculate_bst` ends up as a number in the CSV cell,
+> not the raw list of dicts.
+
+The CLI imports `inflow.py` **once** per pipeline run (cached via
+`sys.modules`); per-chunk operations don't re-import anything.
+
+### What still needs an outflow / fjord pattern
+
+A user-defined Incorporator subclass (with custom methods, computed
+attributes, etc.) can't live in `inflow.py` — that file is for
+helper functions consumed by the token resolver. Custom classes live in
+an `outflow.py` referenced by the [fjord subcommand](#8-the-fjord-subcommand--multi-source-stateful-pipelines),
+or (for single-source stateful daemons) by `stream`'s `outflow=` field
+when `"stateful_polling": true`.
 
 ### Safety
 
@@ -230,6 +291,8 @@ The resolver uses a strict safe-eval pattern based on `ast.parse`:
   in the allow-list.
 * Plain strings (URLs, file paths, headers, English prose) don't
   match the shape regex and pass through unchanged.
+* The `@name` grammar is single-token only — `@foo.bar`, `@foo()`, and
+  bare `@` all stay as literal strings.
 
 If you write a string that *looks* like a call (matches the shape)
 but uses an unknown identifier, you get a loud error at load time
@@ -314,7 +377,7 @@ names via `getattr`, and validates each resolved object is an
 
 ```json
 {
-  "code_file": "coin_market.py",
+  "outflow": "coin_market.py",
   "stream_params": [
     {
       "cls_name": "Coin",
