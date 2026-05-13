@@ -92,13 +92,33 @@ def _load_pipeline_config(config_path: Path) -> Dict[str, Any]:
         _err(f"Error: env-var expansion failed: {e}", fg=typer.colors.RED if typer else None)
         sys.exit(1)
 
-    # Resolve JSON-text tokens (e.g. "NextUrlPaginator('next')",
-    # "inc(datetime)", "join_all(';')") into real Python objects before the
-    # config reaches the engine.  Tokens needing user-defined functions or
-    # classes still require a code_file — those raise TokenResolutionError
-    # here with a clear allow-list message.
+    # Load the optional inflow= sidecar once.  Its public symbols extend the
+    # token resolver's allow-list, so JSON strings like "@calc_bst" or
+    # "calc(my_reducer, 'stats')" resolve to real callables before the engine
+    # ever sees the config.  importlib's sys.modules cache absorbs any
+    # later re-load via the same path.
+    extra_names: Dict[str, Any] = {}
+    inflow_field = expanded.get("inflow")
+    if inflow_field:
+        try:
+            from ..usercode import extract_public_names, load_user_module
+
+            inflow_path = (config_path.parent / str(inflow_field)).resolve()
+            module = load_user_module(inflow_path, name_hint="_inc_cli_inflow")
+            extra_names = extract_public_names(module)
+        except (FileNotFoundError, ImportError, SyntaxError) as e:
+            _err(
+                f"Error: failed to load inflow file {inflow_field!r}: {e}",
+                fg=typer.colors.RED if typer else None,
+            )
+            sys.exit(1)
+
+    # Resolve JSON-text tokens (e.g. "@my_pager", "inc(datetime)",
+    # "join_all(';')") into real Python objects before the config reaches
+    # the engine.  Tokens needing user-defined classes still require an
+    # outflow file (fjord pattern).
     try:
-        return cast(Dict[str, Any], resolve_tokens(expanded))
+        return cast(Dict[str, Any], resolve_tokens(expanded, extra_names=extra_names))
     except TokenResolutionError as e:
         _err(f"Error: token resolution failed: {e}", fg=typer.colors.RED if typer else None)
         sys.exit(1)
@@ -261,28 +281,43 @@ async def _run_fjord(
     json_output: bool,
     heartbeat_file: Optional[Path],
 ) -> None:
-    """Resolve source classes from the code_file, then drive Incorporator.fjord().
+    """Resolve source classes from the outflow file, then drive Incorporator.fjord().
 
-    The output class is built dynamically from the code_file's filename
+    The output class is built dynamically from the outflow file's filename
     (snake_case → PascalCase); there is no ``output_class`` JSON key.
     """
-    code_file_raw = config["code_file"]
+    # Resolve outflow/code_file alias.  outflow is canonical; code_file is
+    # the deprecated alias — accept both, warn on code_file.
+    outflow_raw = config.get("outflow") or config.get("code_file")
+    if outflow_raw is None:
+        _err(
+            "Error: pipeline.json must declare 'outflow' (path to outflow.py).",
+            fg=typer.colors.RED if typer else None,
+        )
+        sys.exit(1)
+    if "outflow" not in config and "code_file" in config:
+        _err(
+            "Warning: 'code_file' is a deprecated alias for 'outflow' in pipeline.json. "
+            "Rename the key for forward compatibility.",
+            fg=typer.colors.YELLOW if typer else None,
+        )
+
     stream_params_cfg = config["stream_params"]
     export_params = config["export_params"]
     refresh_interval = config.get("refresh_interval")
     export_interval = config.get("export_interval")
 
-    code_file_path = Path(code_file_raw)
-    if not code_file_path.is_absolute():
-        code_file_path = (config_dir / code_file_path).resolve()
+    outflow_path = Path(outflow_raw)
+    if not outflow_path.is_absolute():
+        outflow_path = (config_dir / outflow_path).resolve()
 
-    user_module = _load_user_module(code_file_path)
+    user_module = _load_user_module(outflow_path)
 
     resolved_streams: list[Dict[str, Any]] = []
     for entry in stream_params_cfg:
         cls_name = entry["cls_name"]
         resolved_entry = {k: v for k, v in entry.items() if k != "cls_name"}
-        resolved_entry["cls"] = _resolve_incorporator_class(user_module, cls_name, code_file_path)
+        resolved_entry["cls"] = _resolve_incorporator_class(user_module, cls_name, outflow_path)
         resolved_streams.append(resolved_entry)
 
     shutdown = asyncio.Event()
@@ -292,7 +327,7 @@ async def _run_fjord(
 
     fjord_gen = LoggedIncorporator.fjord(
         stream_params=resolved_streams,
-        code_file=code_file_path,
+        outflow=outflow_path,
         export_params=export_params,
         refresh_interval=refresh_interval,
         export_interval=export_interval,
@@ -446,6 +481,11 @@ if typer:
             "-o",
             help="Directory to write the starter files into (created if missing).",
         ),
+        with_inflow: bool = typer.Option(  # noqa: B008
+            False,
+            "--with-inflow",
+            help="Also scaffold an inflow.py for user-defined helpers (calc reducers, custom converters).",
+        ),
     ) -> None:
         """
         Generate a starter pipeline.json (and, for fjord, an outflow.py).
@@ -455,7 +495,7 @@ if typer:
         then ``incorporator stream <path>`` or ``incorporator fjord <path>``.
         """
         try:
-            written = write_scaffold(type_, output_dir.resolve())
+            written = write_scaffold(type_, output_dir.resolve(), with_inflow=with_inflow)
         except FileExistsError as e:
             typer.secho(f"Error: {e}", fg=typer.colors.RED)
             sys.exit(1)

@@ -53,6 +53,40 @@ _INSPECTION_LIMIT = 3
 _counter_lock = threading.Lock()
 
 
+def _apply_inflow_resolution(
+    inflow: Union[str, Path],
+    conv_dict: Optional[Dict[str, Any]],
+    inc_page: Optional[AsyncPaginator],
+) -> Tuple[Optional[Dict[str, Any]], Optional[AsyncPaginator]]:
+    """Load the inflow module and resolve string-form tokens in trinity kwargs.
+
+    Shared by :meth:`Incorporator.incorp` and :meth:`Incorporator.refresh`.
+    When ``inflow`` is set, imports the module (cached via ``sys.modules``,
+    so the first call pays the import cost and all subsequent calls are
+    free) and resolves any string-form tokens in ``conv_dict`` and
+    ``inc_page`` against the module's public symbols.
+
+    Real Python callables already present in ``conv_dict`` pass through
+    unchanged — the resolver only touches strings.
+    """
+    from .cli.tokens import resolve_tokens
+    from .usercode import extract_public_names, load_user_module
+
+    module = load_user_module(inflow, name_hint="_inc_trinity_inflow")
+    extra_names = extract_public_names(module)
+    resolved_conv = cast(
+        Optional[Dict[str, Any]],
+        resolve_tokens(conv_dict, extra_names=extra_names) if conv_dict else conv_dict,
+    )
+    resolved_page = inc_page
+    if isinstance(inc_page, str):
+        resolved_page = cast(
+            Optional[AsyncPaginator],
+            resolve_tokens(inc_page, extra_names=extra_names),
+        )
+    return resolved_conv, resolved_page
+
+
 # ==========================================
 # THE INCORPORATOR ENGINE
 # ==========================================
@@ -233,6 +267,7 @@ class Incorporator(BaseModel):
         conv_dict: Optional[Dict[str, Any]] = None,
         name_chg: Optional[List[Tuple[str, str]]] = None,
         inc_page: Optional[AsyncPaginator] = None,
+        inflow: Optional[Union[str, Path]] = None,
         **kwargs: Any,
     ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
         """Fetch data from an HTTP API or local file and return Pydantic objects.
@@ -383,6 +418,13 @@ class Incorporator(BaseModel):
                 )
         """
 
+        # inflow= sidecar: load any user-defined helpers and resolve string-
+        # form tokens in conv_dict / inc_page against the module's public
+        # symbols.  Cheap when not set; module imports are cached via
+        # sys.modules so per-call cost is one dict lookup after first load.
+        if inflow is not None:
+            conv_dict, inc_page = _apply_inflow_resolution(inflow, conv_dict, inc_page)
+
         # Route to Parent Execution if triggered
         if inc_parent is not None:
             kwargs.update(
@@ -478,6 +520,7 @@ class Incorporator(BaseModel):
         conv_dict: Optional[Dict[str, Any]] = None,
         name_chg: Optional[List[Tuple[str, str]]] = None,
         inc_page: Optional[AsyncPaginator] = None,
+        inflow: Optional[Union[str, Path]] = None,
         **kwargs: Any,
     ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
         """Re-fetch live data and hydrate existing instances in-place.
@@ -573,6 +616,11 @@ class Incorporator(BaseModel):
             )
             return IncorporatorList(cls, [])
 
+        # inflow= sidecar: same DX as incorp() — resolve string-form tokens
+        # in conv_dict / inc_page against the module's public symbols.
+        if inflow is not None:
+            conv_dict, inc_page = _apply_inflow_resolution(inflow, conv_dict, inc_page)
+
         TargetClass = inst_list[0].__class__
         kwargs["http_method"] = kwargs.pop("method", kwargs.pop("http_method", "GET")).upper()
 
@@ -642,7 +690,8 @@ class Incorporator(BaseModel):
         compression: Optional[str] = None,
         sql_table: Optional[str] = None,
         if_exists: str = "replace",
-        code_file: Optional[Union[str, Path]] = None,
+        outflow: Optional[Union[str, Path]] = None,
+        code_file: Optional[Union[str, Path]] = None,  # legacy alias for outflow
         **kwargs: Any,
     ) -> None:
         """Serialise Incorporator instances out to a file in any supported format.
@@ -759,11 +808,24 @@ class Incorporator(BaseModel):
         if not instances:
             return
 
+        # Resolve outflow/code_file alias.  outflow= is the canonical name;
+        # code_file= remains as a deprecated alias.
+        if outflow is None and code_file is not None:
+            import warnings as _warnings
+
+            _warnings.warn(
+                "[Incorporator.export] code_file= is a deprecated alias for outflow=. "
+                "Pass outflow= directly; code_file= will be removed in a future major.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            outflow = code_file
+
         # Optional code transform — runs in a thread (user code may be CPU-bound).
         transform_source: Iterable[Any] = instances
         code_file_field_names: Optional[List[str]] = None
-        if code_file is not None:
-            transform_source = await asyncio.to_thread(apply_code_transform, instances, code_file)
+        if outflow is not None:
+            transform_source = await asyncio.to_thread(apply_code_transform, instances, outflow)
             # Peek at the first transformed row so we can rebuild all_field_names from the
             # *actual* output schema — code_file may add, remove, or rename fields.
             import itertools as _itertools
@@ -816,6 +878,8 @@ class Incorporator(BaseModel):
         stateful_polling: bool = False,
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
+        inflow: Optional[Union[str, Path]] = None,
+        outflow: Optional[Union[str, Path]] = None,
     ) -> AsyncGenerator["AuditResult", None]:
         """Yield :class:`AuditResult` objects from a long-running pipeline.
 
@@ -900,8 +964,61 @@ class Incorporator(BaseModel):
         """
         from .observability.pipeline import run_pipeline
 
+        # outflow= is a stateful-daemon-only hook: chunking releases per-chunk
+        # state and has no persistent registry for a user-defined class to
+        # attach to.  Fail loud here rather than silently accepting the
+        # kwarg for chunking pipelines.
+        if outflow is not None and not stateful_polling:
+            raise ValueError(
+                "[Incorporator.stream] outflow= requires stateful_polling=True. "
+                "Chunking mode releases per-chunk state; a user-defined subclass "
+                "has no persistent registry to attach to. Use outflow only with "
+                "the stateful daemon engine, or drop the outflow= kwarg."
+            )
+
+        # Receiver class swap: when outflow= is set, prefer the user-defined
+        # Incorporator subclass over `cls`.  By convention the class is named
+        # after the file stem in PascalCase (`outflow.py` -> `Outflow`);
+        # if that name is absent the first Incorporator subclass found in
+        # the module wins.
+        receiver_cls: Type[Incorporator] = cast(Type[Incorporator], cls)
+        if outflow is not None:
+            from .usercode import load_user_module, pascal_case_from_stem
+
+            module = load_user_module(outflow, name_hint="_inc_stream_outflow")
+            preferred_name = pascal_case_from_stem(outflow)
+            candidate = getattr(module, preferred_name, None)
+            if not (isinstance(candidate, type) and issubclass(candidate, Incorporator)):
+                # Fall back: first Incorporator subclass in the module.
+                candidate = next(
+                    (
+                        getattr(module, n)
+                        for n in dir(module)
+                        if isinstance(getattr(module, n, None), type)
+                        and issubclass(getattr(module, n), Incorporator)
+                        and getattr(module, n) is not Incorporator
+                    ),
+                    None,
+                )
+            if candidate is None:
+                raise ValueError(
+                    f"[Incorporator.stream] outflow={outflow!r} must define an "
+                    f"Incorporator subclass (preferred name {preferred_name!r})."
+                )
+            receiver_cls = candidate
+
+        # inflow= is a CLI/JSON convenience — when the trinity is driven by
+        # the engine directly (this path), the module is loaded once via
+        # importlib's sys.modules cache so per-chunk operations are free.
+        # Python users passing callables directly into conv_dict don't need
+        # this hook at all.
+        if inflow is not None:
+            from .usercode import load_user_module
+
+            load_user_module(inflow, name_hint="_inc_stream_inflow")
+
         async for audit in run_pipeline(
-            cls=cls,
+            cls=receiver_cls,
             incorp_params=incorp_params,
             refresh_params=refresh_params,
             export_params=export_params,
@@ -916,10 +1033,12 @@ class Incorporator(BaseModel):
     async def fjord(
         cls,
         stream_params: List[Dict[str, Any]],
-        code_file: Union[str, Path],
-        export_params: Dict[str, Any],
+        outflow: Optional[Union[str, Path]] = None,
+        export_params: Optional[Dict[str, Any]] = None,
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
+        inflow: Optional[Union[str, Path]] = None,
+        code_file: Optional[Union[str, Path]] = None,  # legacy alias for outflow
     ) -> AsyncGenerator["AuditResult", None]:
         """Multi-source stateful streaming with a dynamically-built output class.
 
@@ -957,15 +1076,24 @@ class Incorporator(BaseModel):
                   top-level ``refresh_interval``.
                 - ``export_interval`` (float): per-entry override of the
                   top-level ``export_interval``.
-            code_file: Path to a Python file defining a top-level
-                ``outflow(state)`` function.  ``state`` is a dict mapping each
+            outflow: Path to a Python file defining a top-level
+                ``outflow(state)`` function and (optionally) the
+                ``Incorporator`` subclasses referenced by ``stream_params``
+                ``cls_name`` entries.  ``state`` is a dict mapping each
                 source class's ``__name__`` to its current ``IncorporatorList``
-                snapshot.  Must return ``list[dict]`` (or a single ``dict``,
-                auto-wrapped); each row is used to construct one instance of
-                the dynamic output class.
+                snapshot.  ``outflow(state)`` must return ``list[dict]``
+                (or a single ``dict``, auto-wrapped); each row is used to
+                construct one instance of the dynamic output class.
             export_params: kwargs forwarded to the dynamic output class's
                 ``export()`` for the combined output.  Required — the joined
                 output must have a destination.
+            inflow: Optional path to a sidecar ``inflow.py`` whose public
+                symbols extend the token resolver's allow-list (mostly for
+                ``conv_dict`` callables in per-source ``incorp_params``).
+                See :func:`incorporator.usercode.load_user_module`.
+            code_file: **Deprecated alias for ``outflow``.**  Emits a
+                ``DeprecationWarning`` when supplied; will be removed in a
+                future major release.
             refresh_interval: Default sleep between refresh ticks for each
                 source daemon.  Per-entry ``refresh_interval`` overrides this.
                 ``None`` means "one-shot then exit".
@@ -1025,7 +1153,32 @@ class Incorporator(BaseModel):
                 ):
                     print(f"{audit.operation}: {audit.rows_processed} rows")
         """
+        import warnings
+
         from .observability.pipeline import _run_fjord_engine
+
+        # Resolve outflow/code_file alias — code_file is the legacy name.
+        if outflow is None and code_file is not None:
+            warnings.warn(
+                "[Incorporator.fjord] code_file= is a deprecated alias for outflow=. "
+                "Pass outflow= directly; code_file= will be removed in a future major.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            outflow = code_file
+        if outflow is None:
+            raise ValueError("[Incorporator.fjord] outflow= (path to outflow.py) is required.")
+        if export_params is None:
+            raise ValueError("[Incorporator.fjord] export_params= is required.")
+
+        # Optional inflow= sidecar — load once so its public names are in
+        # sys.modules for any string-form tokens already resolved by the CLI
+        # before this method ran.  Python users who pre-resolve their kwargs
+        # don't need it; the load is a no-op cost via importlib caching.
+        if inflow is not None:
+            from .usercode import load_user_module
+
+            load_user_module(inflow, name_hint="_inc_fjord_inflow")
 
         # Validate stream_params shape early — fail fast with clear errors.
         if not stream_params:
@@ -1043,11 +1196,11 @@ class Incorporator(BaseModel):
             if "incorp_params" not in entry:
                 raise ValueError(f"[Incorporator.fjord] stream_params[{idx}] missing required key 'incorp_params'.")
 
-        # Derive the output class name from the code_file filename. fjord
+        # Derive the output class name from the outflow filename. fjord
         # builds the actual Pydantic class lazily on the first non-empty
         # outflow() tick — see _outflow_daemon in observability/pipeline.py.
-        output_class_name = pascal_case_from_stem(code_file)
-        outflow_fn = load_outflow_function(code_file)
+        output_class_name = pascal_case_from_stem(outflow)
+        outflow_fn = load_outflow_function(outflow)
 
         async for audit in _run_fjord_engine(
             output_class_name=output_class_name,

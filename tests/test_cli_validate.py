@@ -83,9 +83,9 @@ def test_validate_fjord_ok(tmp_path: Path) -> None:
     assert errs == []
 
 
-def test_validate_fjord_missing_code_file_key(tmp_path: Path) -> None:
+def test_validate_fjord_missing_outflow_key(tmp_path: Path) -> None:
     errs = validate_fjord_config({"stream_params": [], "export_params": {}}, tmp_path)
-    assert any("code_file" in e for e in errs)
+    assert any("outflow" in e for e in errs)
 
 
 def test_validate_fjord_code_file_not_found(tmp_path: Path) -> None:
@@ -127,4 +127,80 @@ def test_validate_config_dispatches_to_fjord(tmp_path: Path) -> None:
     cfg, _ = _write_fjord(tmp_path)
     detected, errs = validate_config(cfg, tmp_path)
     assert detected == "fjord"
+    assert errs == []
+
+
+# ----- inflow + outflow on stream -----
+
+
+def test_validate_stream_inflow_missing_file(tmp_path: Path) -> None:
+    cfg = {"incorp_params": {"inc_url": "https://x", "inc_code": "id"}, "inflow": "nope.py"}
+    errs = validate_stream_config(cfg, tmp_path)
+    assert any("inflow file not found" in e for e in errs)
+
+
+def test_validate_stream_inflow_import_error(tmp_path: Path) -> None:
+    bad = tmp_path / "bad_inflow.py"
+    bad.write_text("def x(:\n", encoding="utf-8")
+    cfg = {"incorp_params": {"inc_url": "https://x", "inc_code": "id"}, "inflow": "bad_inflow.py"}
+    errs = validate_stream_config(cfg, tmp_path)
+    assert any("inflow file failed to import" in e for e in errs)
+
+
+def test_validate_stream_inflow_ok(tmp_path: Path) -> None:
+    good = tmp_path / "inflow.py"
+    good.write_text("def calculate(x):\n    return x\n", encoding="utf-8")
+    cfg = {"incorp_params": {"inc_url": "https://x", "inc_code": "id"}, "inflow": "inflow.py"}
+    errs = validate_stream_config(cfg, tmp_path)
+    assert errs == []
+
+
+def test_validate_stream_outflow_without_stateful_polling_errors(tmp_path: Path) -> None:
+    """outflow on stream requires stateful_polling=true."""
+    good = tmp_path / "outflow.py"
+    good.write_text("from incorporator import Incorporator\nclass MyData(Incorporator): pass\n", encoding="utf-8")
+    cfg = {
+        "incorp_params": {"inc_url": "https://x", "inc_code": "id"},
+        "outflow": "outflow.py",
+        # stateful_polling deliberately absent (default false)
+    }
+    errs = validate_stream_config(cfg, tmp_path)
+    assert any("stateful_polling" in e for e in errs)
+
+
+def test_validate_stream_outflow_with_stateful_polling_ok(tmp_path: Path) -> None:
+    good = tmp_path / "outflow.py"
+    good.write_text("from incorporator import Incorporator\nclass MyData(Incorporator): pass\n", encoding="utf-8")
+    cfg = {
+        "incorp_params": {"inc_url": "https://x", "inc_code": "id"},
+        "outflow": "outflow.py",
+        "stateful_polling": True,
+    }
+    errs = validate_stream_config(cfg, tmp_path)
+    assert errs == []
+
+
+def test_validate_fjord_accepts_outflow_canonical_key(tmp_path: Path) -> None:
+    """fjord pipeline.json should accept 'outflow' as the canonical key (rename from 'code_file')."""
+    module = tmp_path / "outflow.py"
+    module.write_text(FJORD_OK_SRC, encoding="utf-8")
+    cfg = {
+        "outflow": "outflow.py",
+        "stream_params": [{"cls_name": "A", "incorp_params": {"inc_url": "https://x"}}],
+        "export_params": {"file_path": str(tmp_path / "out.ndjson")},
+    }
+    errs = validate_fjord_config(cfg, tmp_path)
+    assert errs == []
+
+
+def test_validate_fjord_legacy_code_file_alias_still_works(tmp_path: Path) -> None:
+    """Existing pipeline.json with 'code_file' still validates (deprecated but accepted).
+
+    The shared ``_write_fjord`` helper above sets ``code_file`` (the legacy
+    key) — this test confirms the validator still resolves that to outflow
+    semantics without errors.
+    """
+    cfg, _ = _write_fjord(tmp_path)
+    assert "code_file" in cfg and "outflow" not in cfg
+    errs = validate_fjord_config(cfg, tmp_path)
     assert errs == []

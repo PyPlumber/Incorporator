@@ -146,3 +146,25 @@ async def test_stream_engine_2_empty_failsafe(
     assert len(audits) == 1
     assert audits[0].rows_processed == 0
     assert "Initial incorp() yielded no data" in audits[0].failed_sources[0]
+
+
+@pytest.mark.asyncio
+async def test_stream_outflow_without_stateful_polling_raises(tmp_path: Path) -> None:
+    """outflow on stream is stateful-only — chunking mode must raise ValueError fast."""
+    outflow_py = tmp_path / "outflow.py"
+    outflow_py.write_text(
+        "from incorporator import LoggedIncorporator\nclass Outflow(LoggedIncorporator): pass\n",
+        encoding="utf-8",
+    )
+
+    class StreamModel(LoggedIncorporator):
+        inc_code: Any = None
+
+    gen = StreamModel.stream(
+        incorp_params={"inc_url": "https://example.invalid/x"},
+        outflow=outflow_py,
+        # stateful_polling=False (default) — engine must refuse outflow here
+    )
+    with pytest.raises(ValueError, match="stateful_polling=True"):
+        async for _ in gen:
+            pass  # pragma: no cover — generator should raise on first iteration

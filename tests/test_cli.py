@@ -216,13 +216,13 @@ def test_cli_fjord_missing_required_keys(tmp_path: Path) -> None:
     assert "output_class" not in result.stdout
 
 
-def test_cli_fjord_code_file_not_found(tmp_path: Path) -> None:
-    """fjord config pointing at a non-existent code_file exits 1."""
+def test_cli_fjord_outflow_not_found(tmp_path: Path) -> None:
+    """fjord config pointing at a non-existent outflow file exits 1."""
     config = tmp_path / "fjord.json"
     config.write_text(
         json.dumps(
             {
-                "code_file": "ghost.py",
+                "outflow": "ghost.py",
                 "stream_params": [{"cls_name": "Coin", "incorp_params": {}}],
                 "export_params": {"file_path": "out.ndjson"},
             }
@@ -233,7 +233,7 @@ def test_cli_fjord_code_file_not_found(tmp_path: Path) -> None:
     result = runner.invoke(app, ["fjord", str(config)])
 
     assert result.exit_code == 1
-    assert "code_file not found" in result.stdout
+    assert "outflow not found" in result.stdout
 
 
 def test_cli_fjord_stream_missing_cls_name(tmp_path: Path) -> None:

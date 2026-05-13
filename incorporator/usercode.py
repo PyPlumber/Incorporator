@@ -1,27 +1,87 @@
 """Filesystem-based loaders for user-supplied Python code.
 
-This module hosts three small utilities that don't belong on the
+This module hosts the small utilities that don't belong on the
 ``Incorporator`` class — they don't touch ``cls``/``self`` and share
-exactly one job: read a ``.py`` off disk, validate a named function's
-arity, and either run it or return the callable.
+exactly one job: read a ``.py`` off disk and surface its symbols.
 
+- :func:`load_user_module` — import a path-anchored ``.py`` file once,
+  return its module object. Backs every CLI/Python flow that needs a
+  user sidecar (inflow.py for incorp/refresh/stream; outflow.py for
+  fjord's classes; export's optional transform hook).
+- :func:`extract_public_names` — return ``{name: obj}`` for every
+  top-level non-underscore name in a loaded module. Used by the token
+  resolver to extend its allow-list with the inflow module's symbols.
 - :func:`apply_code_transform` — load and run an optional
   ``transform(instances)`` hook (used by :meth:`Incorporator.export`).
 - :func:`load_outflow_function` — load fjord's required
   ``outflow(state)`` function (used by :meth:`Incorporator.fjord`).
 - :func:`pascal_case_from_stem` — derive a PascalCase class name from
-  a filename stem (used by fjord to name its dynamic output class).
+  a filename stem (used by fjord/stream to name a dynamic output
+  class, or to look up the user-defined class in an outflow.py).
 
 Keeping these out of ``base.py`` makes the import graph one-directional::
 
     base.py → usercode.py        (never the reverse)
+
+All loaders rely on Python's ``importlib.util.spec_from_file_location``
++ ``exec_module``, which registers the module in ``sys.modules`` before
+``exec_module`` returns.  Subsequent calls with the same path therefore
+**don't re-execute the file** — Python's import cache absorbs the
+repeat.  Callers can safely call these helpers per-tick without paying
+re-import cost.
 """
 
 import importlib.util
 import inspect as _inspect
 import re
 from pathlib import Path
-from typing import Any, Callable, List, Union
+from types import ModuleType
+from typing import Any, Callable, Dict, List, Union
+
+
+def load_user_module(path: Union[str, Path], *, name_hint: str = "_inc_user_module") -> ModuleType:
+    """Import a path-anchored ``.py`` file and return its module object.
+
+    Single-source loader for every sidecar file the framework accepts:
+    inflow.py (helpers for trinity calls), outflow.py (Incorporator
+    subclass + fjord ``outflow(state)``), and the deprecated
+    ``code_file=`` alias.
+
+    Args:
+        path: Absolute or relative path to a ``.py`` file.
+        name_hint: A unique module name used in ``sys.modules`` for this
+            spec.  Defaults to a generic sentinel; callers can pass a
+            more specific hint for cleaner tracebacks.
+
+    Returns:
+        The loaded module object.  Repeated calls with the same path are
+        cached by Python via ``sys.modules`` — no re-execution.
+
+    Raises:
+        FileNotFoundError: ``path`` does not resolve to an existing file.
+        ImportError: The file cannot be loaded as a Python module.
+    """
+    code_path = Path(path).resolve()
+    if not code_path.is_file():
+        raise FileNotFoundError(f"[Incorporator] sidecar file not found: {code_path}")
+
+    spec = importlib.util.spec_from_file_location(name_hint, code_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"[Incorporator] Cannot load module spec from: {code_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def extract_public_names(module: ModuleType) -> Dict[str, Any]:
+    """Return ``{name: obj}`` for every public (non-underscore) name in ``module``.
+
+    Used by the token resolver to extend its allow-list with whatever
+    the user's ``inflow.py`` exposes.  No ``__all__`` is required — the
+    "public by default" convention follows Python's standard rules.
+    """
+    return {n: getattr(module, n) for n in dir(module) if not n.startswith("_")}
 
 
 def apply_code_transform(

@@ -49,7 +49,7 @@ import ast
 import logging
 import re
 from datetime import date, datetime, time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ..io.pagination import (
     AvroPaginator,
@@ -61,10 +61,12 @@ from ..io.pagination import (
     PageNumberPaginator,
     SQLitePaginator,
 )
-from ..schema.converters import inc, new
+from ..schema.converters import calc, calc_all, inc, new
 from ..schema.extractors import (
     as_list,
     join_all,
+    link_to,
+    link_to_list,
     pluck,
     split_and_get,
     sum_attributes,
@@ -84,14 +86,22 @@ _ALLOWED_NAMES: Dict[str, Any] = {
     "SQLitePaginator": SQLitePaginator,
     "CSVPaginator": CSVPaginator,
     "AvroPaginator": AvroPaginator,
-    # Converter / extractor tokens whose arguments are all literals or
-    # well-known type names (so they don't need a user-defined function).
+    # Converter / extractor tokens.  `inc`, `as_list`, `join_all`,
+    # `split_and_get`, `pluck`, `sum_attributes` take all-literal args and
+    # work standalone.  `calc`, `calc_all`, `link_to`, `link_to_list` take
+    # a user-defined callable or registry — they only resolve when the
+    # caller also supplies an `inflow.py` whose public names include the
+    # referenced helper.
     "inc": inc,
     "as_list": as_list,
     "join_all": join_all,
     "split_and_get": split_and_get,
     "pluck": pluck,
     "sum_attributes": sum_attributes,
+    "calc": calc,
+    "calc_all": calc_all,
+    "link_to": link_to,
+    "link_to_list": link_to_list,
     # Type / sentinel names that show up as bare identifiers inside calls
     # like ``inc(datetime)`` or ``inc(int)``.
     "datetime": datetime,
@@ -112,37 +122,46 @@ _ALLOWED_NAMES: Dict[str, Any] = {
     "new": new,  # incorporator schema "any-type" sentinel
 }
 
-# A string looks like a token only if it matches a Python call grammar.
+# A string looks like a call-grammar token only if it matches a Python call.
 # Dotted names (``datetime.datetime(...)``) match here intentionally — the AST
 # walker rejects them with a clear error, which is friendlier than silent
 # pass-through that fails opaquely downstream.  URLs, plain strings, file
 # paths, and headers still don't match (no top-level parens).
 _TOKEN_SHAPE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*\s*\(.*\)\s*$", re.DOTALL)
 
+# The ``@name`` sigil for bare-name references into the inflow module's
+# public symbols.  Deliberately strict: a single ``@`` prefix followed by a
+# valid Python identifier and nothing else.  No dots, no parens, no slashes
+# — so the grammar can't be confused with email addresses, URLs, decorators,
+# or ``npm``-style scopes.
+_AT_SIGIL_SHAPE = re.compile(r"^@([A-Za-z_][A-Za-z0-9_]*)$")
+
 
 class TokenResolutionError(ValueError):
     """Raised when a JSON-text token references an unsafe / unknown symbol."""
 
 
-def _eval_node(node: ast.AST, *, origin: str) -> Any:
-    """Walk an AST under the safe-eval allow-list and return the Python value.
+def _eval_node(node: ast.AST, *, origin: str, allowed: Dict[str, Any]) -> Any:
+    """Walk an AST under the safe-eval ``allowed`` map and return the Python value.
 
     ``origin`` is the original token string — surfaced in error messages.
+    ``allowed`` is the effective allow-list (framework names + any
+    ``extra_names`` supplied by the caller).
     """
     if isinstance(node, ast.Expression):
-        return _eval_node(node.body, origin=origin)
+        return _eval_node(node.body, origin=origin, allowed=allowed)
 
     if isinstance(node, ast.Constant):
         return node.value
 
     if isinstance(node, ast.Name):
-        if node.id not in _ALLOWED_NAMES:
+        if node.id not in allowed:
             raise TokenResolutionError(
                 f"Token {origin!r} references unknown identifier {node.id!r}. "
-                f"Allow-listed names: {sorted(_ALLOWED_NAMES)}. "
-                "User-defined functions / classes must live in a code_file."
+                f"Allow-listed names: {sorted(allowed)}. "
+                "User-defined functions / classes must live in an inflow.py."
             )
-        return _ALLOWED_NAMES[node.id]
+        return allowed[node.id]
 
     if isinstance(node, ast.Call):
         if not isinstance(node.func, ast.Name):
@@ -150,13 +169,13 @@ def _eval_node(node: ast.AST, *, origin: str) -> Any:
                 f"Token {origin!r} uses an unsupported call form. "
                 "Only top-level allow-listed function names may be called."
             )
-        func = _eval_node(node.func, origin=origin)
-        args = [_eval_node(a, origin=origin) for a in node.args]
-        kwargs = {kw.arg: _eval_node(kw.value, origin=origin) for kw in node.keywords if kw.arg}
+        func = _eval_node(node.func, origin=origin, allowed=allowed)
+        args = [_eval_node(a, origin=origin, allowed=allowed) for a in node.args]
+        kwargs = {kw.arg: _eval_node(kw.value, origin=origin, allowed=allowed) for kw in node.keywords if kw.arg}
         return func(*args, **kwargs)
 
     if isinstance(node, (ast.List, ast.Tuple)):
-        elts = [_eval_node(e, origin=origin) for e in node.elts]
+        elts = [_eval_node(e, origin=origin, allowed=allowed) for e in node.elts]
         return list(elts) if isinstance(node, ast.List) else tuple(elts)
 
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant):
@@ -171,19 +190,37 @@ def _eval_node(node: ast.AST, *, origin: str) -> Any:
     )
 
 
-def _resolve_string(text: str) -> Any:
+def _resolve_string(text: str, *, allowed: Dict[str, Any]) -> Any:
     """Attempt to resolve ``text`` as a token. Returns the original string on
     a structural non-match; raises :class:`TokenResolutionError` on a
     structural match with an unsafe payload.
 
-    The two-tier behaviour is deliberate:
+    Two resolution paths:
 
-    * Shape mismatch → silent pass-through. URLs and ordinary strings never
-      try to parse, so they stay strings.
-    * Shape match, allow-list miss → loud error. The user clearly *meant* a
-      token; tell them why it didn't resolve instead of letting the engine
-      receive a raw string and fail later with a confusing error.
+    * **``@name`` sigil** — strict bare-name reference. Looks ``name`` up
+      in ``allowed`` and returns the object. The cleanest pattern for
+      anything pre-built in ``inflow.py``: ``"@my_pager"``.
+    * **Call-grammar** — ``Name(args)`` form. AST-parsed against the
+      safe-eval allow-list. Useful for trivial framework cases that
+      don't justify an inflow file: ``"inc(datetime)"``.
+
+    Shape mismatch on both paths → silent pass-through. URLs and ordinary
+    strings stay as strings.
+
+    Shape match + allow-list miss → loud error. The user clearly *meant*
+    a reference; tell them why it didn't resolve.
     """
+    # @name sigil — cheapest check, run first.
+    sigil_match = _AT_SIGIL_SHAPE.match(text)
+    if sigil_match:
+        name = sigil_match.group(1)
+        if name not in allowed:
+            user_names = sorted(n for n in allowed if n not in _ALLOWED_NAMES)
+            user_hint = f" inflow.py public names: {user_names}." if user_names else " No inflow.py is loaded."
+            raise TokenResolutionError(f"Token {text!r} references unknown name {name!r}.{user_hint}")
+        return allowed[name]
+
+    # Call-grammar path.
     if not _TOKEN_SHAPE.match(text):
         return text
     try:
@@ -192,25 +229,41 @@ def _resolve_string(text: str) -> Any:
         # Looked like a call but isn't valid Python. Leave it alone.
         logger.debug("Token shape matched but ast.parse failed: %r", text)
         return text
-    return _eval_node(tree, origin=text)
+    return _eval_node(tree, origin=text, allowed=allowed)
 
 
-def resolve_tokens(obj: Any) -> Any:
+def resolve_tokens(obj: Any, extra_names: Optional[Dict[str, Any]] = None) -> Any:
     """Recursively walk ``obj`` and resolve every JSON-text token in place.
 
     ``obj`` is typically the dict returned by :func:`json.load` after
     :func:`expand_env` has expanded environment-variable references.
 
+    ``extra_names`` is an optional mapping of additional allow-list
+    entries — typically the public symbols of an ``inflow.py`` module
+    extracted via :func:`incorporator.usercode.extract_public_names`.
+    Framework names take precedence on conflict (defensive against a
+    user accidentally shadowing ``inc``, ``as_list``, etc.).
+
     Returns a new structure with strings substituted by their resolved
     Python values where applicable. The input is not mutated.
     """
-    if isinstance(obj, dict):
-        return {k: resolve_tokens(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [resolve_tokens(v) for v in obj]
-    if isinstance(obj, str):
-        return _resolve_string(obj)
-    return obj
+    # Build the merged allow-list once at the top of the walk.  User-supplied
+    # names go FIRST so framework names win on conflict via the second update.
+    if extra_names:
+        allowed: Dict[str, Any] = {**extra_names, **_ALLOWED_NAMES}
+    else:
+        allowed = _ALLOWED_NAMES
+
+    def _walk(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {k: _walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_walk(v) for v in node]
+        if isinstance(node, str):
+            return _resolve_string(node, allowed=allowed)
+        return node
+
+    return _walk(obj)
 
 
 __all__ = [

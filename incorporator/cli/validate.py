@@ -87,19 +87,51 @@ def validate_stream_config(config: Dict[str, Any], config_dir: Path) -> List[str
     if "stateful_polling" in config and not isinstance(config["stateful_polling"], bool):
         errors.append("'stateful_polling', if present, must be a boolean.")
 
-    # Optional export code_file — confirm the file loads, but `transform` is
-    # optional so we don't enforce it.
+    # Optional inflow file — must import cleanly if specified.
+    inflow_raw = config.get("inflow")
+    if inflow_raw:
+        if not isinstance(inflow_raw, str):
+            errors.append("'inflow', if present, must be a string path.")
+        else:
+            inflow_path = _resolve_code_file(inflow_raw, config_dir)
+            if not inflow_path.is_file():
+                errors.append(f"inflow file not found: {inflow_path}")
+            else:
+                load_err = _try_import(inflow_path)
+                if load_err:
+                    errors.append(f"inflow file failed to import: {load_err}")
+
+    # Optional outflow (or legacy code_file) — stateful-polling pipelines only.
+    outflow_raw = config.get("outflow") or config.get("code_file")
+    if outflow_raw:
+        if not config.get("stateful_polling"):
+            errors.append(
+                "'outflow' requires 'stateful_polling': true.  Chunking-mode streams "
+                "release per-chunk state and have no persistent registry for a "
+                "user-defined Incorporator subclass to attach to.  Drop 'outflow', "
+                "or switch to stateful polling."
+            )
+        else:
+            outflow_path = _resolve_code_file(str(outflow_raw), config_dir)
+            if not outflow_path.is_file():
+                errors.append(f"outflow file not found: {outflow_path}")
+            else:
+                load_err = _try_import(outflow_path)
+                if load_err:
+                    errors.append(f"outflow file failed to import: {load_err}")
+
+    # Legacy export_params.code_file — confirm the file loads (transform optional).
     export_params = config.get("export_params")
     if isinstance(export_params, dict):
-        code_file = export_params.get("code_file")
+        code_file = export_params.get("code_file") or export_params.get("outflow")
         if code_file:
             resolved = _resolve_code_file(code_file, config_dir)
             if not resolved.is_file():
-                errors.append(f"export_params.code_file not found: {resolved}")
+                errors.append(f"export_params.outflow not found: {resolved}")
             else:
                 load_err = _try_import(resolved)
                 if load_err:
-                    errors.append(f"export_params.code_file failed to import: {load_err}")
+                    errors.append(f"export_params.outflow failed to import: {load_err}")
 
     return errors
 
@@ -108,12 +140,13 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
     """Structural validation for an ``incorporator fjord`` pipeline.json."""
     errors: List[str] = []
 
-    code_file_raw = config.get("code_file")
+    # Accept outflow= (canonical) or code_file= (deprecated alias).
+    outflow_raw = config.get("outflow") or config.get("code_file")
     stream_params = config.get("stream_params")
     export_params = config.get("export_params")
 
-    if not code_file_raw:
-        errors.append("'code_file' (path) is required.")
+    if not outflow_raw:
+        errors.append("'outflow' (path to outflow.py) is required.")
     if not isinstance(stream_params, list) or not stream_params:
         errors.append("'stream_params' must be a non-empty JSON array.")
     if not isinstance(export_params, dict):
@@ -124,14 +157,28 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
     if errors:
         return errors
 
-    code_file_path = _resolve_code_file(str(code_file_raw), config_dir)
+    # Optional inflow file — must import cleanly if specified.
+    inflow_raw = config.get("inflow")
+    if inflow_raw:
+        if not isinstance(inflow_raw, str):
+            errors.append("'inflow', if present, must be a string path.")
+        else:
+            inflow_path = _resolve_code_file(inflow_raw, config_dir)
+            if not inflow_path.is_file():
+                errors.append(f"inflow file not found: {inflow_path}")
+            else:
+                load_err_inflow = _try_import(inflow_path)
+                if load_err_inflow:
+                    errors.append(f"inflow file failed to import: {load_err_inflow}")
+
+    code_file_path = _resolve_code_file(str(outflow_raw), config_dir)
     if not code_file_path.is_file():
-        errors.append(f"code_file not found: {code_file_path}")
+        errors.append(f"outflow not found: {code_file_path}")
         return errors
 
     load_err = _try_import(code_file_path)
     if load_err:
-        errors.append(f"code_file failed to import: {load_err}")
+        errors.append(f"outflow failed to import: {load_err}")
         return errors
 
     # Reload via importlib for symbol access (cheap — same module spec).

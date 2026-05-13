@@ -168,3 +168,69 @@ def test_url_with_query_params_stays_string() -> None:
 def test_scalar_passthrough(value: Any) -> None:
     out = resolve_tokens({"x": value})
     assert out["x"] == value
+
+
+# ---------- extra_names extension (the inflow hook) ----------
+
+
+def test_extra_names_resolves_user_function() -> None:
+    """Pass a user reducer via extra_names; calc(user_fn, 'field') should resolve."""
+    from incorporator.schema.converters import CalcOp
+
+    def my_reducer(values: Any) -> int:
+        return sum(values) if isinstance(values, list) else 0
+
+    out = resolve_tokens(
+        {"x": "calc(my_reducer, 'field')"},
+        extra_names={"my_reducer": my_reducer},
+    )
+    assert isinstance(out["x"], CalcOp)
+
+
+def test_framework_name_wins_over_user_shadow() -> None:
+    """A user trying to shadow ``inc`` doesn't break framework semantics."""
+    sneaky = lambda *_: "hijacked"  # noqa: E731
+    out = resolve_tokens(
+        {"x": "inc(int)"},
+        extra_names={"inc": sneaky},
+    )
+    # Framework `inc` still wins — out["x"] is the real converter callable.
+    assert callable(out["x"])
+    assert out["x"]("42") == 42
+
+
+# ---------- @name sigil ----------
+
+
+def test_at_sigil_resolves_inflow_reference() -> None:
+    from incorporator.io.pagination import NextUrlPaginator
+
+    my_pager = NextUrlPaginator("next")
+    out = resolve_tokens({"inc_page": "@my_pager"}, extra_names={"my_pager": my_pager})
+    assert out["inc_page"] is my_pager
+
+
+def test_at_sigil_unknown_name_raises_with_user_hint() -> None:
+    with pytest.raises(TokenResolutionError, match="unknown name"):
+        resolve_tokens({"x": "@nope"}, extra_names={"my_pager": object()})
+
+
+def test_at_sigil_rejects_dotted_or_call() -> None:
+    """@foo.bar and @foo() don't match the strict sigil grammar — pass through."""
+    out = resolve_tokens({"x": "@foo.bar", "y": "@foo()"})
+    assert out["x"] == "@foo.bar"
+    assert out["y"] == "@foo()"
+
+
+def test_at_sigil_empty_pass_through() -> None:
+    """Bare ``@`` is not a valid sigil; stays a literal string."""
+    out = resolve_tokens({"x": "@"})
+    assert out["x"] == "@"
+
+
+def test_single_quote_inside_call_token() -> None:
+    """JSON-friendly form: NextUrlPaginator('next') — no escape needed."""
+    from incorporator.io.pagination import NextUrlPaginator
+
+    out = resolve_tokens({"inc_page": "NextUrlPaginator('next')"})
+    assert isinstance(out["inc_page"], NextUrlPaginator)

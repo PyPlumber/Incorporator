@@ -393,6 +393,8 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         stateful_polling: bool = False,
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
+        inflow: Optional[Any] = None,
+        outflow: Optional[Any] = None,
         enable_logging: bool = False,
     ) -> AsyncGenerator[AuditResult, None]:
         """
@@ -412,6 +414,8 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
                 stateful_polling=stateful_polling,
                 refresh_interval=refresh_interval,
                 export_interval=export_interval,
+                inflow=inflow,
+                outflow=outflow,
             ):
                 if enable_logging:
                     _route_audit_to_log(cls, audit)
@@ -432,10 +436,12 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     async def fjord(
         cls,
         stream_params: List[Dict[str, Any]],
-        code_file: Any,
-        export_params: Dict[str, Any],
+        outflow: Optional[Any] = None,
+        export_params: Optional[Dict[str, Any]] = None,
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
+        inflow: Optional[Any] = None,
+        code_file: Optional[Any] = None,  # legacy alias for outflow
         enable_logging: bool = False,
     ) -> AsyncGenerator[AuditResult, None]:
         """Fjord wrapper that routes per-tick audits through the disk loggers.
@@ -460,10 +466,12 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         try:
             async for audit in super().fjord(
                 stream_params=stream_params,
-                code_file=code_file,
+                outflow=outflow,
                 export_params=export_params,
                 refresh_interval=refresh_interval,
                 export_interval=export_interval,
+                inflow=inflow,
+                code_file=code_file,
             ):
                 if enable_logging:
                     _route_audit_to_log(cls, audit)
