@@ -19,9 +19,14 @@ Incorporator natively supports flat text files, streaming logs, and binary datab
 | **CSV** | `.csv` | *Native* | Includes $O(1)$ Auto-Unflattening (safely parses JSON strings inside CSV columns). |
 | **TSV** | `.tsv` | *Native* | Tab-Separated Values. Uses the CSV engine configured for `\t`. |
 | **PSV** | `.psv` | *Native* | Pipe-Separated Values. Uses the CSV engine configured for `\|`. |
-| **XML** | `.xml` | *Native* | Natively protected against XXE (Billion Laughs) memory exhaustion attacks. |
+| **XML** | `.xml` | *Native* | Hardened against XXE attacks (external-entity injection, Billion Laughs DoS). Falls back to `defusedxml` semantics on the stdlib parser. |
+| **HTML Tables** | `.html`, `.htm` | `[speedups]` | Extracts `<table>` elements via `lxml`. Each row becomes an Incorporator instance; mismatched columns are handled gracefully. |
 | **SQLite** | `.db`, `.sqlite*` | *Native* | Natively executes `SELECT` and bulk `INSERT` statements at C-speed. |
+| **Excel** | `.xlsx` | `[xlsx]` | Pure-Python via `openpyxl` (~250 KB). Reads/writes worksheets with header rows auto-detected. |
 | **Apache Avro** | `.avro` | `[avro]` | Requires `pip install incorporator[avro]`. Converts Pydantic to strict binary schemas. |
+| **Apache Parquet** | `.parquet` | `[parquet]` | Columnar format for data lakes / warehouses. Uses `pyarrow` (heavyweight — opt-in only). |
+| **Feather / Arrow IPC** | `.feather`, `.arrow` | `[parquet]` | Zero-copy columnar interchange. Shares the `pyarrow` install with Parquet. |
+| **Apache ORC** | `.orc` | `[parquet]` | Hadoop / Hive columnar format. Also via `pyarrow`. |
 
 ---
 
@@ -72,6 +77,12 @@ pip install incorporator[cramjam]
 # Unlocks binary Apache Avro streams via the fastavro library
 pip install incorporator[avro]
 
-# Installs the complete Big Data suite
+# Unlocks Excel (.xlsx) read/write via openpyxl (pure-Python, lightweight)
+pip install incorporator[xlsx]
+
+# Unlocks Parquet, Feather/Arrow, and ORC via pyarrow (heavyweight, ~30 MB)
+pip install incorporator[parquet]
+
+# Installs the complete Big Data suite (excludes [parquet] — opt in explicitly)
 pip install incorporator[all]
 ```

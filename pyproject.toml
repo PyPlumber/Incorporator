@@ -71,6 +71,8 @@ orchestrate =[
     "typer>=0.9.0",
     "prefect>=2.10.0"
 ]
+# Documentation generation (contributor-only — NOT added to [all])
+docs =["pdoc>=14.0"]
 # The developer "install everything reasonable" flag.
 # NOTE: heavyweight deps (e.g. pyarrow for Parquet, ~50 MB) are intentionally
 # excluded — users opt into those explicitly via incorporator[parquet] etc.

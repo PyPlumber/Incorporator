@@ -125,9 +125,11 @@ pip install incorporator[all]      # Installs the complete Enterprise Big Data s
 
 Manage your entire data lifecycle with just three `@classmethod` factories. Everything Incorporator does stems from these three commands:
 
-1. **`incorp()`**: **Extract & Transform.** [*(Docs)*](./docs/incorp_reference.md) Fetch unknown data, clean it dynamically, and build the Python object graph.
-2. **`refresh()`**: **Stateful Updates.** [*(Docs)*](./docs/refresh_reference.md) Pass existing objects back in to seamlessly fetch live updates and hydrate your memory registries.
-3. **`export()`**: **Load.** [*(Docs)*](./docs/export_reference.md) Instantly serialize your deeply nested Python objects out to clean CSV, XML, SQLite, or JSON files.
+1. **`incorp()`**: **Extract & Transform.** Fetch unknown data, clean it dynamically, and build the Python object graph.
+2. **`refresh()`**: **Stateful Updates.** Pass existing objects back in to seamlessly fetch live updates and hydrate your memory registries.
+3. **`export()`**: **Load.** Instantly serialize your deeply nested Python objects out to clean CSV, XML, SQLite, JSON, Parquet, Excel, or Avro files.
+
+Full method-level signatures, parameter tables, and worked examples live in the auto-generated [**API Reference**](./docs/api_reference.md) (built from the source docstrings via `pdoc`).
 
 ---
 
@@ -365,10 +367,8 @@ await Incorporator.export(launches, "upcoming_launches.csv", format_type="csv")
 
 The best way to learn Incorporator is through our deeply documented API references and Guided Tutorials. 
 
-### API References
-* [📖 **`incorp()` API Reference & ETL Guide**](./docs/incorp_reference.md)
-* [📖 **`refresh()` API Reference & Stateful Updates**](./docs/refresh_reference.md)
-* [📖 **`export()` API Reference & Serialization**](./docs/export_reference.md)
+### API Reference
+* [📖 **Auto-Generated API Reference** (pdoc)](./docs/api_reference.md) — every public class, method, converter, and paginator, rendered directly from the source docstrings.
 
 ### Guided Tutorials (Real-World Examples)
 Check out the [`/examples`](./examples) directory for runnable code, and the links below for detailed Markdown walkthroughs of each feature:

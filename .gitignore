@@ -48,6 +48,7 @@ dist/
 incorporator.egg-info/
 AGENTS.md
 /.claude/
+site/
 
 # 7. OS & Database Files
 .DS_Store

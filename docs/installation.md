@@ -46,10 +46,38 @@ pip install incorporator[avro]
 **What this installs:** `fastavro`
 * **Why you need it:** Unlocks native read/write support for Apache Avro binary streams, heavily utilized in Hadoop, Kafka, and enterprise data lakes.
 
+### 📊 The Spreadsheet Flag
+```bash
+pip install incorporator[xlsx]
+```
+**What this installs:** `openpyxl` (pure-Python, ~250 KB).
+* **Why you need it:** Unlocks read/write for `.xlsx` workbooks so you can hand business stakeholders a spreadsheet straight from an API call. Lightweight enough to fit the microclient identity.
+
+### 🪶 The Columnar Data-Lake Flag
+```bash
+pip install incorporator[parquet]
+```
+**What this installs:** `pyarrow` (~30 MB — heavyweight; deliberately **not** in `[all]`).
+* **Why you need it:** Unlocks Apache **Parquet**, **Feather / Arrow IPC**, and **ORC** read/write. Required for data-lake and warehouse interoperability.
+
+### 🛠️ The Orchestration Flag
+```bash
+pip install incorporator[orchestrate]
+```
+**What this installs:** `typer`, `prefect`.
+* **Why you need it:** Unlocks the `incorporator stream` and `incorporator fjord` CLI subcommands plus the pre-built Prefect `@flow` wrappers (see `deployment.md`).
+
+### 📖 The Docs Flag (Contributors Only)
+```bash
+pip install incorporator[docs]
+```
+**What this installs:** `pdoc`.
+* **Why you need it:** Builds the auto-generated API reference site from the Google-style docstrings in the source. See `api_reference.md`.
+
 ---
 
 ## 3. The "Install Everything" Flag
-If you are developing locally or running on a cloud server without strict dependency constraints, you can install the entire suite of enterprise tools at once:
+If you are developing locally or running on a cloud server without strict dependency constraints, you can install the bundled enterprise tools at once:
 
 ```bash
 pip install incorporator[all]
@@ -57,10 +85,13 @@ pip install incorporator[all]
 <<<<<<< HEAD
 =======
 
+**Note:** `[all]` deliberately excludes `[parquet]` (pyarrow is ~30 MB) and
+`[docs]` (contributor-only). Opt into those explicitly when you need them.
+
 ---
 
 ## Next Steps
-Now that Incorporator is installed, head over to our [**Quick Setup Tutorial**](../examples/1_space_devs_quick_setup.py) to map your first API!
+Now that Incorporator is installed, head over to our [**Quick Setup Tutorial**](./1_quick_setup.md) to map your first API!
 ```
 
 ### Why this document works:
