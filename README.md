@@ -23,16 +23,16 @@
 [![GitHub stars](https://img.shields.io/github/stars/PyPlumber/incorporator?color=yellow&label=stars)](https://github.com/PyPlumber/incorporator/stargazers)
 
 ### ✨ Highlights
-* **Works with unpredictable JSON APIs**—and effortlessly digests XML, CSV, NDJSON, and SQLite—without writing a single line of schema.
+* **Works with unpredictable JSON APIs**—and effortlessly digests XML, CSV, NDJSON, SQLite, and columnar Parquet—without writing a single line of schema.
 * **Turns raw data into native Python objects instantly**, bypassing the need for manual model definitions or brittle classes.
 * **Handles changing JSON structures at runtime**, absorbing missing keys or mutating data types without throwing validation errors.
 * **Harnesses Pydantic and HTTPX** under the hood without forcing you to write data classes, connection poolers, or pagination `while` loops.
 
 ### 🎯 Use this when:
 * You are working with evolving, undocumented, or heavily nested JSON APIs.
-* You need a universal bridge to instantly map legacy XML or flat CSVs into the exact same Python object graph.
+* You need a universal bridge to map legacy XML, flat CSVs, or columnar Parquet into the exact same Python object graph.
 * You are exhausted by writing boilerplate models and validation logic just to explore a new data source.
-* You need to extract deeply nested web data, transform it, and pivot it straight into a local SQL database seamlessly.
+* You need to extract deeply nested web data, transform it, and pivot it straight into a local SQL database or columnar data lake.
 
 ---
 
@@ -79,7 +79,7 @@ asyncio.run(main())
 ### 🤷‍♂️ Wait, what if my data isn't JSON?
 It doesn't matter. Incorporator automatically infers the format from the URL or file extension. The syntax **never changes**.
 
-We natively support **JSON, NDJSON (JSON Lines), CSV, TSV, PSV, XML, and SQLite**, with optional support for binary **Apache Avro** streams.
+Out of the box: **JSON, NDJSON, CSV, TSV, PSV, XML, SQLite, and HTML** (HTML is parse-only). Opt-in extras unlock **Apache Parquet, Feather (Arrow IPC), ORC, Apache Avro, and Excel (XLSX)** — same `incorp()` / `export()` surface, no syntax changes.
 
 If that exact same telemetry data comes from a legacy system as XML or CSV:
 ```python
@@ -95,19 +95,21 @@ systems_csv = await Incorporator.incorp(inc_file="telemetry.csv", inc_code="id")
 
 ## 📦 Installation
 
-Built entirely on the Python standard library, Pydantic V2 metaprogramming, and HTTPX.
+Built on Pydantic V2 metaprogramming, HTTPX, and Tenacity. No system dependencies.
 
 ```bash
 pip install incorporator
 ```
-*Dependencies: `pydantic (>=2.0)`, `httpx`, `tenacity`.*
+*Core dependencies: `pydantic (>=2.0)`, `httpx`, `tenacity`.*
 
-For Big Data streams, GIL-free hyperthreading, and ultra-fast Rust compression, use our zero-bloat extras:
+Opt in to format and performance extras as you need them:
 ```bash
-pip install incorporator[speedups] # Unlocks GIL-free orjson & lxml parsing
-pip install incorporator[cramjam]  # Unlocks zstd, lz4, snappy, brotli compression
-pip install incorporator[avro]     # Unlocks Apache Avro binary streams
-pip install incorporator[all]      # Installs the complete Enterprise Big Data suite
+pip install incorporator[speedups]    # orjson + lxml + cramjam (GIL-releasing parsers, Rust compression)
+pip install incorporator[parquet]     # pyarrow — unlocks Parquet, Feather, and ORC
+pip install incorporator[avro]        # fastavro — Apache Avro binary streams
+pip install incorporator[xlsx]        # openpyxl — Excel (.xlsx) read/write
+pip install incorporator[orchestrate] # typer + prefect — CLI + Prefect task wrappers
+pip install incorporator[all]         # everything except [parquet] (pyarrow is ~30 MB — opt in explicitly)
 ```
 
 ---
