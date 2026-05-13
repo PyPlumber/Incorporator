@@ -1,9 +1,13 @@
-"""Columnar format handler: Apache Parquet via pyarrow.
+"""Columnar format handlers: Apache Parquet, Feather (Arrow IPC), and ORC.
 
-Parquet is the dominant columnar format in modern data engineering — every
-serious data lake (S3, GCS, ADLS), warehouse (BigQuery, Snowflake, Redshift),
-and query engine (DuckDB, Spark, Polars) reads it natively. This handler closes
-the most-cited ecosystem gap vs. dlt / petl / pandas.
+All three rest on the same ``pyarrow`` dep — installing ``incorporator[parquet]``
+gives you all three formats. This is deliberate: pyarrow is the single largest
+optional dep and we want to maximize its leverage.
+
+Parquet is the data-lake format (S3, BigQuery, Snowflake, DuckDB, Spark).
+Feather is the data-science interchange format (pandas/polars/R/Julia). ORC is
+the Hadoop/Hive ecosystem columnar format. All three reuse the same row
+coercion, schema-from-Pydantic logic, and type bridge tables.
 
 ``pyarrow`` is lazy-imported inside ``parse()`` / ``write()`` so importing this
 module never pulls the ~30 MB Apache Arrow runtime at framework import time.
@@ -75,6 +79,40 @@ def _arrow_type_for(name: str, properties: Dict[str, Any]) -> Any:
         "null": pa.null(),
     }
     return type_map.get(parquet_type_str, pa.string())
+
+
+def _materialize_table(data: Iterable[Dict[str, Any]], kwargs: Dict[str, Any]) -> Any:
+    """Coerce an iterable of dicts into a single pyarrow.Table.
+
+    Shared by FeatherHandler and OrcHandler — both formats are written
+    one-shot (no streaming writer API), so we materialize once. ParquetHandler
+    does NOT use this helper; it streams via ParquetWriter for O(1) memory.
+
+    Honours the same kwargs as ParquetHandler.write:
+        * pydantic_schema → explicit Arrow schema
+        * all_field_names → explicit column order
+    """
+    import pyarrow as pa
+
+    pydantic_schema = kwargs.get("pydantic_schema", {})
+    properties: Dict[str, Any] = pydantic_schema.get("properties", {})
+    explicit_keys: List[str] = kwargs.get("all_field_names") or list(properties.keys())
+
+    rows_list: List[Dict[str, Any]] = list(data)
+    if not rows_list:
+        return None
+    if not explicit_keys:
+        explicit_keys = list(dict.fromkeys(k for row in rows_list for k in row))
+
+    coerced = [
+        {k: (serialize_nested(row.get(k)) if row.get(k) is not None else None) for k in explicit_keys}
+        for row in rows_list
+    ]
+
+    if properties:
+        schema = pa.schema([pa.field(k, _arrow_type_for(k, properties), nullable=True) for k in explicit_keys])
+        return pa.Table.from_pylist(coerced, schema=schema)
+    return pa.Table.from_pylist(coerced)
 
 
 class ParquetHandler(BaseFormatHandler):
@@ -196,3 +234,127 @@ class ParquetHandler(BaseFormatHandler):
                     writer.close()
         except Exception as e:
             raise IncorporatorFormatError(f"Parquet Write Error on {file_path}: {e}") from e
+
+
+class FeatherHandler(BaseFormatHandler):
+    """Parse and write Feather V2 (Apache Arrow IPC) files using pyarrow.
+
+    Feather is the fastest interchange format for data-science workflows —
+    memory-mapped reads with zero deserialization. The pyarrow.feather API is
+    one-shot (no streaming writer), so writes materialize the dataset before
+    flushing. For datasets large enough to exceed RAM, use Parquet instead.
+
+    Compression defaults to LZ4 (Feather V2's native default).
+    """
+
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+        try:
+            import pyarrow.feather as feather
+        except ImportError:
+            raise IncorporatorFormatError("pyarrow not installed. Run: pip install incorporator[parquet]") from None
+
+        try:
+            if isinstance(source, Path):
+                table = feather.read_table(source)  # type: ignore[no-untyped-call]
+            elif isinstance(source, bytes):
+                import io
+
+                table = feather.read_table(io.BytesIO(source))  # type: ignore[no-untyped-call]
+            else:
+                raise IncorporatorFormatError("FeatherHandler requires raw bytes or a physical Path object.")
+
+            rows: List[Dict[str, Any]] = []
+            for raw_row in table.to_pylist():
+                rows.append({k: deserialize_nested(v) for k, v in raw_row.items()})
+            return rows
+        except IncorporatorFormatError:
+            raise
+        except Exception as e:
+            raise IncorporatorFormatError(f"Feather Read Error: {e}") from e
+
+    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        # Empty guard handled centrally by _peek_iterable in handlers/__init__.py.
+        # Feather V2 has no streaming writer — append is not supported.
+        _raise_if_append_unsupported(kwargs, "Feather/Arrow IPC")
+
+        try:
+            import pyarrow.feather as feather
+        except ImportError:
+            raise IncorporatorFormatError("pyarrow not installed. Run: pip install incorporator[parquet]") from None
+
+        path = Path(file_path).resolve()
+        compression = kwargs.get("feather_compression", "lz4")  # Feather V2 default
+
+        try:
+            table = _materialize_table(data, kwargs)
+            if table is None:
+                return  # nothing to write
+            feather.write_feather(table, str(path), compression=compression)  # type: ignore[no-untyped-call]
+        except Exception as e:
+            raise IncorporatorFormatError(f"Feather Write Error on {file_path}: {e}") from e
+
+
+class OrcHandler(BaseFormatHandler):
+    """Parse and write Apache ORC files using pyarrow.
+
+    ORC is the columnar format of the Hadoop/Hive ecosystem (Trino, Presto,
+    Hive, Spark on Hadoop). The pyarrow.orc API is one-shot — writes
+    materialize the dataset before flushing. Use Parquet for streaming.
+
+    Note: pyarrow's ORC support has historically been platform-sensitive on
+    Windows. The handler reports a clear error if pyarrow.orc fails to import
+    even though pyarrow itself loaded successfully.
+    """
+
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+        try:
+            from pyarrow import orc
+        except ImportError:
+            raise IncorporatorFormatError(
+                "pyarrow.orc not available. Run: pip install incorporator[parquet] "
+                "(ORC support requires pyarrow with libarrow_orc; on some platforms "
+                "this may need pyarrow built from source)."
+            ) from None
+
+        try:
+            if isinstance(source, Path):
+                orc_file = orc.ORCFile(source)  # type: ignore[no-untyped-call]
+            elif isinstance(source, bytes):
+                import io
+
+                orc_file = orc.ORCFile(io.BytesIO(source))  # type: ignore[no-untyped-call]
+            else:
+                raise IncorporatorFormatError("OrcHandler requires raw bytes or a physical Path object.")
+
+            table = orc_file.read()  # type: ignore[no-untyped-call]
+            rows: List[Dict[str, Any]] = []
+            for raw_row in table.to_pylist():
+                rows.append({k: deserialize_nested(v) for k, v in raw_row.items()})
+            return rows
+        except IncorporatorFormatError:
+            raise
+        except Exception as e:
+            raise IncorporatorFormatError(f"ORC Read Error: {e}") from e
+
+    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        # Empty guard handled centrally by _peek_iterable in handlers/__init__.py.
+        # ORC has no streaming writer in pyarrow — append is not supported.
+        _raise_if_append_unsupported(kwargs, "ORC")
+
+        try:
+            from pyarrow import orc
+        except ImportError:
+            raise IncorporatorFormatError(
+                "pyarrow.orc not available. Run: pip install incorporator[parquet] "
+                "(ORC support requires pyarrow with libarrow_orc)."
+            ) from None
+
+        path = Path(file_path).resolve()
+
+        try:
+            table = _materialize_table(data, kwargs)
+            if table is None:
+                return  # nothing to write
+            orc.write_table(table, str(path))  # type: ignore[no-untyped-call]
+        except Exception as e:
+            raise IncorporatorFormatError(f"ORC Write Error on {file_path}: {e}") from e

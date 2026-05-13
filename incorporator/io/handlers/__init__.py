@@ -10,8 +10,9 @@ from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType
 from ._base import BaseFormatHandler
 from .binary import AvroHandler, SQLiteHandler
-from .columnar import ParquetHandler
+from .columnar import FeatherHandler, OrcHandler, ParquetHandler
 from .delimited import CSVHandler
+from .markup import HTMLHandler
 from .spreadsheet import ExcelHandler
 from .text import JSONHandler, NDJSONHandler, XMLHandler
 
@@ -30,6 +31,9 @@ _HANDLERS: Dict[FormatType, BaseFormatHandler] = {
     FormatType.AVRO: AvroHandler(),
     FormatType.XLSX: ExcelHandler(),
     FormatType.PARQUET: ParquetHandler(),
+    FormatType.FEATHER: FeatherHandler(),
+    FormatType.ORC: OrcHandler(),
+    FormatType.HTML: HTMLHandler(),
 }
 
 

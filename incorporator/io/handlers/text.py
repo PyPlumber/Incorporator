@@ -129,6 +129,15 @@ def _build_xml_root(data: List[Dict[str, Any]], ET: Any) -> Any:
 
 class XMLHandler(BaseFormatHandler):
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        # Defense-in-depth: run check_xml_security BEFORE either parser path.
+        # lxml's resolve_entities=False silently drops XXE entities (good!) but
+        # also silently returns success — so the framework would never know an
+        # attack was attempted. Stdlib ElementTree has no XXE protection at
+        # all. Centralizing the security check here gives us a single,
+        # consistent rejection point regardless of which parser is installed.
+        raw_str_for_check = source.read_text(encoding="utf-8") if isinstance(source, Path) else ensure_string(source)
+        check_xml_security(raw_str_for_check)
+
         try:
             import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
@@ -150,15 +159,12 @@ class XMLHandler(BaseFormatHandler):
         except ImportError:
             import xml.etree.ElementTree as ET
 
-            raw_str = ensure_string(source)
-            check_xml_security(raw_str)
-
             try:
-                root = ET.fromstring(raw_str)  # noqa: S314
+                root = ET.fromstring(raw_str_for_check)  # noqa: S314
                 return xml_to_dict(root)
             except ET.ParseError:
                 try:
-                    root = ET.fromstring(raw_str.strip())  # noqa: S314
+                    root = ET.fromstring(raw_str_for_check.strip())  # noqa: S314
                     return xml_to_dict(root)
                 except ET.ParseError as e:
                     raise IncorporatorFormatError(f"Invalid XML: {e}") from e

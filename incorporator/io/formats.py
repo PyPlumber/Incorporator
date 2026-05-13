@@ -25,6 +25,9 @@ class FormatType(str, Enum):
     AVRO = "avro"
     XLSX = "xlsx"
     PARQUET = "parquet"
+    FEATHER = "feather"
+    ORC = "orc"
+    HTML = "html"
 
 
 # ── (FormatType, format-type-string) → Python type ──────────────────────
@@ -55,6 +58,23 @@ FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {
     (FormatType.PARQUET, "string"): str,
     (FormatType.PARQUET, "binary"): bytes,
     (FormatType.PARQUET, "null"): type(None),
+    # Feather (Arrow IPC) and ORC share the same Arrow logical type system.
+    (FormatType.FEATHER, "bool"): bool,
+    (FormatType.FEATHER, "int32"): int,
+    (FormatType.FEATHER, "int64"): int,
+    (FormatType.FEATHER, "float"): float,
+    (FormatType.FEATHER, "double"): float,
+    (FormatType.FEATHER, "string"): str,
+    (FormatType.FEATHER, "binary"): bytes,
+    (FormatType.FEATHER, "null"): type(None),
+    (FormatType.ORC, "bool"): bool,
+    (FormatType.ORC, "int32"): int,
+    (FormatType.ORC, "int64"): int,
+    (FormatType.ORC, "float"): float,
+    (FormatType.ORC, "double"): float,
+    (FormatType.ORC, "string"): str,
+    (FormatType.ORC, "binary"): bytes,
+    (FormatType.ORC, "null"): type(None),
 }
 
 # ── (FormatType, Python type) → canonical format-type-string ────────────
@@ -91,6 +111,24 @@ PYTHON_TO_FORMAT: Dict[Tuple[FormatType, type], str] = {
     (FormatType.PARQUET, list): "string",
     (FormatType.PARQUET, dict): "string",
     (FormatType.PARQUET, type(None)): "null",
+    # Feather (Arrow IPC) — identical canonical widths to Parquet.
+    (FormatType.FEATHER, bool): "bool",
+    (FormatType.FEATHER, int): "int64",
+    (FormatType.FEATHER, float): "double",
+    (FormatType.FEATHER, str): "string",
+    (FormatType.FEATHER, bytes): "binary",
+    (FormatType.FEATHER, list): "string",
+    (FormatType.FEATHER, dict): "string",
+    (FormatType.FEATHER, type(None)): "null",
+    # ORC — same canonical widths.
+    (FormatType.ORC, bool): "bool",
+    (FormatType.ORC, int): "int64",
+    (FormatType.ORC, float): "double",
+    (FormatType.ORC, str): "string",
+    (FormatType.ORC, bytes): "binary",
+    (FormatType.ORC, list): "string",
+    (FormatType.ORC, dict): "string",
+    (FormatType.ORC, type(None)): "null",
 }
 
 
@@ -155,6 +193,12 @@ def infer_format(path_or_url: str) -> FormatType:
         return FormatType.XLSX
     if path_lower.endswith((".parquet", ".pq")):
         return FormatType.PARQUET
+    if path_lower.endswith((".feather", ".arrow", ".ipc")):
+        return FormatType.FEATHER
+    if path_lower.endswith(".orc"):
+        return FormatType.ORC
+    if path_lower.endswith((".html", ".htm")):
+        return FormatType.HTML
     return FormatType.JSON
 
 
