@@ -2,7 +2,7 @@
 
 Incorporator is designed with a **"Zero-Bloat"** philosophy. The base package relies purely on the Python Standard Library, Pydantic, and HTTPX. 
 
-However, for enterprise environments processing data, Incorporator supports lazy-loaded **Rust and C extensions** that unlock native hyperthreading and bypass the Python Global Interpreter Lock (GIL).
+However, for enterprise environments processing gigabytes of data, Incorporator supports lazy-loaded **Rust and C extensions** that unlock native hyperthreading and bypass the Python Global Interpreter Lock (GIL).
 
 ---
 
@@ -82,8 +82,6 @@ If you are developing locally or running on a cloud server without strict depend
 ```bash
 pip install incorporator[all]
 ```
-<<<<<<< HEAD
-=======
 
 **Note:** `[all]` deliberately excludes `[parquet]` (pyarrow is ~30 MB) and
 `[docs]` (contributor-only). Opt into those explicitly when you need them.
@@ -97,4 +95,3 @@ Now that Incorporator is installed, head over to our [**Quick Setup Tutorial**](
 ### Why this document works:
 1. **It builds trust:** Senior engineers hate "magic" dependencies. By explicitly stating *why* `orjson` and `lxml` are used (to release the GIL), you immediately prove that this framework is built by performance experts.
 2. **It keeps the README clean:** The README stays focused on code examples and features, while this document handles the pedantic environment-setup details.
->>>>>>> 13991c8 (fix: pop orchestration kwargs before worker dispatch to prevent handler pollution)
