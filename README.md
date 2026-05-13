@@ -222,19 +222,19 @@ Secrets stay out of `pipeline.json` — use `${API_KEY}` for env vars or `${file
 
 * **GIL-free hyperthreading** via the `[speedups]` extra (orjson, lxml). → [Installation](./docs/installation.md)
 * **Invisible decompression** for `.gz`, `.bz2`, `.lzma`, `.zip`, `.tar` payloads — automatic, no extra calls. → [Formats](./docs/formats_and_compression.md)
-* **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity exponential backoff, failed URLs surfaced via `audit.failed_sources`. → [API reference](./docs/api_reference.md)
+* **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity exponential backoff, failed URLs surfaced via `audit.failed_sources`. → [Library reference](./docs/library_reference.md)
 * **Zero-OOM `IncorporatorList`** backed by a `WeakValueDictionary` for O(1) lookups without GC pressure. → [Streaming](./docs/streaming_and_pagination.md)
-* **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. → [API reference](./docs/api_reference.md)
+* **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. → [Library reference](./docs/library_reference.md)
 * **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML, all share the same `export()` surface. → [Data lake pivot](./docs/5_data_lake_pivot.md)
 
 ---
 
 ## 📚 Documentation & Examples
 
-The best way to learn Incorporator is through our deeply documented API references and guided tutorials.
+The best way to learn Incorporator is through our deeply documented library reference and guided tutorials.
 
-### API Reference
-* [📖 **Auto-Generated API Reference** (pdoc)](./docs/api_reference.md) — every public class, method, converter, and paginator, rendered directly from the source docstrings.
+### Library Reference
+* [📖 **Auto-Generated Library Reference** (pdoc)](./docs/library_reference.md) — every public class, method, converter, and paginator, rendered directly from the source docstrings.
 
 ### Guided Tutorials (Real-World Examples)
 Check out the [`/examples`](./examples) directory for runnable code, and the links below for detailed Markdown walkthroughs of each feature:

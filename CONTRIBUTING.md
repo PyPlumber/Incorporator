@@ -86,7 +86,7 @@ or REST API. Keep that lens when picking names and surfacing concepts.
 ## Documentation
 
 - **Public docstrings** use Google style and are auto-rendered by `pdoc`
-  into `docs/api_reference.md`. Don't write prose duplicates of class /
+  into `docs/library_reference.md`. Don't write prose duplicates of class /
   method documentation elsewhere — link to the generated reference.
 - **Tutorials** (the numbered `docs/N_*.md` files) cover one feature each
   and end with a "Run it from the CLI" addendum mapping the Python code

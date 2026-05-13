@@ -347,4 +347,4 @@ JSON config.
 | Sequencing / DAG dependencies between pipelines | Wrap either in a Prefect flow (see `deployment.md`) |
 
 For the full method-level signature of `fjord()`, see the pdoc-built
-[API reference](./api_reference.md).
+[Library reference](./library_reference.md).

@@ -66,7 +66,7 @@ pip install incorporator[orchestrate]
 pip install incorporator[docs]
 ```
 **What this installs:** `pdoc`.
-* **Why you need it:** Builds the auto-generated API reference site from the Google-style docstrings in the source. See `api_reference.md`.
+* **Why you need it:** Builds the auto-generated library reference site from the Google-style docstrings in the source. See `library_reference.md`.
 
 ---
 

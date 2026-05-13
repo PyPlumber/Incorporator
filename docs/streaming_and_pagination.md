@@ -200,7 +200,7 @@ incorporator fjord pipeline.json --logs
 
 👉 See the [fjord section](./cli_and_configuration.md#6-the-fjord-subcommand--multi-source-stateful-pipelines)
 of the CLI guide for the JSON schema and a worked example, or the
-[API reference](./api_reference.md) for the full method signature.
+[Library reference](./library_reference.md) for the full method signature.
 
 ---
 
