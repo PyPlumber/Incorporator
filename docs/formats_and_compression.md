@@ -43,10 +43,10 @@ If a URL or File ends with a recognized compression extension, Incorporator will
 | **LZMA / XZ** | `.lzma`, `.xz` | *Native* | Modern compression natively supported by Python. |
 | **ZIP** | `.zip` | *Native* | Directory archive. Automatically searches for the valid data file (see below). |
 | **Tarball** | `.tar`, `.tgz` | *Native* | Directory archive. Uses $O(1)$ linear iteration for lightning-fast extraction. |
-| **Zstandard** | `.zst` | `[cramjam]` | Requires `pip install incorporator[cramjam]`. Ultra-fast Rust bindings. |
-| **LZ4** | `.lz4` | `[cramjam]` | Requires `pip install incorporator[cramjam]`. Ultra-fast Rust bindings. |
-| **Snappy** | `.snappy` | `[cramjam]` | Requires `pip install incorporator[cramjam]`. Standard for Hadoop environments. |
-| **Brotli** | `.br` | `[cramjam]` | Requires `pip install incorporator[cramjam]`. High-density web compression. |
+| **Zstandard** | `.zst` | `[speedups]` | Requires `pip install incorporator[speedups]`. Ultra-fast Rust bindings via `cramjam`. |
+| **LZ4** | `.lz4` | `[speedups]` | Requires `pip install incorporator[speedups]`. Ultra-fast Rust bindings via `cramjam`. |
+| **Snappy** | `.snappy` | `[speedups]` | Requires `pip install incorporator[speedups]`. Standard for Hadoop environments. |
+| **Brotli** | `.br` | `[speedups]` | Requires `pip install incorporator[speedups]`. High-density web compression. |
 
 ---
 
@@ -71,8 +71,9 @@ Incorporator strictly adheres to a "Zero-Bloat" philosophy. The base installatio
 If you are a Data Engineer working with massive Kafka streams or Hadoop clusters, you can opt-in to our Big Data plugins:
 
 ```bash
-# Unlocks Rust-backed Zstandard, LZ4, Snappy, and Brotli via the cramjam library
-pip install incorporator[cramjam]
+# Unlocks GIL-releasing orjson + lxml parsing AND Rust-backed Zstandard, LZ4,
+# Snappy, and Brotli compression via cramjam — all bundled in one extra.
+pip install incorporator[speedups]
 
 # Unlocks binary Apache Avro streams via the fastavro library
 pip install incorporator[avro]

@@ -25,19 +25,13 @@ pip install incorporator
 
 If you are deploying Incorporator to process multi-gigabyte data streams, we highly recommend utilizing our optional installation flags.
 
-### 🚀 The Speedups Flag (GIL-Free Hyperthreading)
+### 🚀 The Speedups Flag (GIL-Free Hyperthreading + Rust Compression)
 ```bash
 pip install incorporator[speedups]
 ```
-**What this installs:** `orjson`, `lxml`
-* **Why you need it:** Standard Python `json` and `xml` libraries hold the Global Interpreter Lock (GIL). If you download a 500MB payload, the main Event Loop freezes while parsing it. Installing `[speedups]` automatically routes Incorporator through Rust/C backends, releasing the GIL and allowing your OS to parse multiple massive payloads across different CPU cores simultaneously.
-
-### 🗜️ The Compression Flag
-```bash
-pip install incorporator[cramjam]
-```
-**What this installs:** `cramjam`
-* **Why you need it:** While Incorporator natively supports `gzip`, `bz2`, `zip`, and `tar`, installing `cramjam` unlocks ultra-fast, Rust-backed chunk streaming for `zstd`, `lz4`, `snappy`, and `brotli`. It ensures O(1) memory safety when decompressing massive server logs.
+**What this installs:** `orjson`, `lxml`, `cramjam`
+* **Why you need it:** Standard Python `json` and `xml` libraries hold the Global Interpreter Lock (GIL). If you download a 500MB payload, the main Event Loop freezes while parsing it. Installing `[speedups]` routes Incorporator through Rust/C backends — `orjson` for JSON, `lxml` for XML/HTML — releasing the GIL and parsing massive payloads across multiple CPU cores simultaneously.
+* **Bonus: ultra-fast compression.** The same extra also installs `cramjam`, which unlocks Rust-backed streaming for `zstd`, `lz4`, `snappy`, and `brotli` on top of the natively-supported `gzip`, `bz2`, `lzma`, `zip`, and `tar`. One install, both wins.
 
 ### 🐘 The Big Data Flag
 ```bash
