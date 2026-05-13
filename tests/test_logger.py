@@ -2,16 +2,14 @@
 
 import logging
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from incorporator import LoggedIncorporator, setup_class_logger
 from incorporator.observability.logger import (
-    JSONFormatter,
-    LoggingMixin,
     _ACTIVE_LISTENERS,
+    JSONFormatter,
     _cleanup_listeners,
 )
 
@@ -313,3 +311,118 @@ async def test_get_error_async_reader(
     assert last_error["level"] == "ERROR"
     assert last_error["msg"] == "Disk read test"
     assert 'class:"MockAPIEndpoint2"' in last_error["meta"]
+
+
+# ===========================================================================
+# AUDIT ↔ LOG_META / GET_ERROR INTEGRATION
+# ===========================================================================
+
+
+def test_audit_log_meta_shape() -> None:
+    """AuditResult.log_meta() exposes the audit fields in a flat key:value form."""
+    from incorporator.observability.logger import AuditResult
+
+    audit = AuditResult(
+        chunk_index=3,
+        operation="chunk",
+        rows_processed=42,
+        processing_time_sec=1.234,
+        failed_sources=["x", "y"],
+    )
+    meta = audit.log_meta()
+    assert 'operation:"chunk"' in meta
+    assert "chunk_index:3" in meta
+    assert "rows:42" in meta
+    assert "time_sec:1.234" in meta
+    assert "failed:2" in meta
+
+
+def test_redact_scrubs_query_string_secrets() -> None:
+    """_redact replaces query-string auth values with ***REDACTED***."""
+    from incorporator.observability.logger import _redact
+
+    url = "https://api.example.com/v1/users?api_key=abc123&token=xyz789&page=2"
+    out = _redact(url)
+    assert "abc123" not in out
+    assert "xyz789" not in out
+    assert "***REDACTED***" in out
+    # Non-secret query params survive.
+    assert "page=2" in out
+
+
+def test_redact_is_noop_on_clean_strings() -> None:
+    from incorporator.observability.logger import _redact
+
+    assert _redact("https://api.example.com/v1/users") == "https://api.example.com/v1/users"
+    assert _redact("") == ""
+
+
+@pytest.mark.asyncio
+async def test_route_audit_to_log_writes_structured_audit_to_get_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """An AuditResult with failed_sources lands in error.log with an 'audit' key.
+
+    The Pydantic dump rides on the log record under the new ``audit`` key, so
+    callers of ``Class.get_error()`` can read structured data directly.
+    """
+    monkeypatch.chdir(tmp_path)
+    from incorporator.observability.logger import AuditResult, _route_audit_to_log
+
+    class AuditLogModel(LoggedIncorporator):
+        pass
+
+    setup_class_logger(AuditLogModel)
+
+    audit = AuditResult(
+        chunk_index=1,
+        operation="chunk",
+        rows_processed=10,
+        processing_time_sec=0.5,
+        failed_sources=["https://dead.example.com/x?api_key=should_be_redacted"],
+    )
+    _route_audit_to_log(AuditLogModel, audit)
+
+    # Flush the queue to disk so get_error can read.
+    _ACTIVE_LISTENERS["AuditLogModel"].stop()
+
+    errors = await AuditLogModel.get_error()
+    assert errors, "expected the audit failure to land in error.log"
+
+    record = errors[-1]
+    # The structured audit dump should be on the record under "audit".
+    assert "audit" in record
+    audit_dump = record["audit"]
+    assert audit_dump["chunk_index"] == 1
+    assert audit_dump["rows_processed"] == 10
+    # Failed sources were redacted before being written.
+    assert any("***REDACTED***" in s for s in audit_dump["failed_sources"])
+    assert all("should_be_redacted" not in s for s in audit_dump["failed_sources"])
+    # log_meta() summary on the record.
+    assert "operation:" in record["meta"]
+
+
+def test_route_audit_to_log_skips_zero_row_no_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """A zero-row, zero-failure audit is treated as no-op (nothing logged)."""
+    monkeypatch.chdir(tmp_path)
+    from incorporator.observability.logger import AuditResult, _route_audit_to_log
+
+    class QuietModel(LoggedIncorporator):
+        pass
+
+    setup_class_logger(QuietModel)
+
+    _route_audit_to_log(
+        QuietModel,
+        AuditResult(chunk_index=1, operation="chunk", rows_processed=0, processing_time_sec=0.01),
+    )
+
+    _ACTIVE_LISTENERS["QuietModel"].stop()
+
+    info_log = tmp_path / "logs" / "QuietModel_api.log"
+    error_log = tmp_path / "logs" / "QuietModel_error.log"
+    # Neither path should have been triggered by this no-op audit.
+    assert not info_log.exists() or info_log.read_text(encoding="utf-8").strip() == ""
+    assert not error_log.exists() or error_log.read_text(encoding="utf-8").strip() == ""

@@ -27,8 +27,19 @@ RUN pip install --upgrade pip && \
 # Switch to the secure non-root user
 USER appuser
 
-# Expose the Typer CLI as the container's native entrypoint
-ENTRYPOINT["incorporator"]
+# The CLI writes a heartbeat file every audit; HEALTHCHECK monitors its mtime
+# so Docker/Kubernetes can detect a stalled daemon (no audits in 2 min).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD test -f /tmp/incorporator.heartbeat \
+        && test $(( $(date +%s) - $(stat -c %Y /tmp/incorporator.heartbeat) )) -lt 120 \
+        || exit 1
 
-# The default command runs the stream as an infinite daemon with a 60-second poll
-CMD["stream", "/app/config/pipeline.json", "--poll", "60.0", "--logs"]
+# Expose the Typer CLI as the container's native entrypoint
+ENTRYPOINT ["incorporator"]
+
+# Default: daemon-mode stream with 60-second polling, structured disk logs,
+# and a heartbeat file the HEALTHCHECK above can stat.
+CMD ["stream", "/app/config/pipeline.json", \
+     "--poll", "60.0", \
+     "--logs", \
+     "--heartbeat-file", "/tmp/incorporator.heartbeat"]

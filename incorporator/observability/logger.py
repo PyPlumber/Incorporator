@@ -38,6 +38,83 @@ class AuditResult(BaseModel):
     processing_time_sec: float = Field(..., description="Chunk processing duration in seconds.")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    def log_meta(self) -> str:
+        """Compact, single-line meta string mirroring :meth:`LoggingMixin.log_meta`.
+
+        Used by :func:`_route_audit_to_log` so audit records share the
+        flat ``meta`` shape with instance-level log records. The full
+        Pydantic dump is also attached as a structured ``audit`` field
+        on every record (see :class:`JSONFormatter`).
+        """
+        return (
+            f'operation:"{self.operation}", chunk_index:{self.chunk_index}, '
+            f"rows:{self.rows_processed}, time_sec:{self.processing_time_sec:.3f}, "
+            f"failed:{len(self.failed_sources)}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Secret redaction for log output
+# ---------------------------------------------------------------------------
+
+# Matches `<key>=<value>` query-string-style auth params. The value group is
+# replaced with a placeholder. Case-insensitive. Stops at `&`, whitespace, or
+# end of string.
+_REDACT_QS_PATTERN = re.compile(r"(?i)(api[_-]?key|token|secret|password|bearer|authorization)=([^&\s\"']+)")
+
+
+def _redact(text: str) -> str:
+    """Scrub common credential patterns from log-bound strings.
+
+    Targets query-string auth (`?api_key=abc&token=xyz`) — the most likely
+    place a secret slips into a URL that ends up in ``failed_sources`` or
+    an HTTP error message. Full traceback scrubbing is intentionally out
+    of scope; instance-level secrets are the developer's responsibility
+    once they enter ``exc_info``.
+
+    Returns ``text`` unchanged when no patterns match — cheap fast path
+    for typical audit lines.
+    """
+    return _REDACT_QS_PATTERN.sub(r"\1=***REDACTED***", text)
+
+
+def _route_audit_to_log(cls: Type[Any], audit: "AuditResult") -> None:
+    """Adapter shared by :meth:`LoggedIncorporator.stream` and ``fjord``.
+
+    - Routes audits with ``failed_sources`` to ``error.log``.
+    - Routes audits with ``rows_processed > 0`` (and no failures) to ``info``.
+    - Zero-row, zero-failure audits are skipped (noise).
+    - Attaches the structured ``audit`` dump as a record extra so
+      :class:`JSONFormatter` writes it as a top-level JSON key alongside
+      ``meta`` — :meth:`LoggingMixin.get_error` callers can read
+      ``record["audit"]`` directly.
+    - Applies :func:`_redact` to the human-readable message *and* the
+      ``failed_sources`` list inside the dumped audit. The ``AuditResult``
+      yielded back to the caller is untouched.
+    """
+    dump = audit.model_dump(mode="json")
+    dump["failed_sources"] = [_redact(s) for s in dump.get("failed_sources", [])]
+
+    extra = {
+        "meta": audit.log_meta(),
+        "audit": dump,
+        "is_api": False,
+    }
+
+    if audit.failed_sources:
+        msg = f"{audit.operation} chunk {audit.chunk_index} encountered failures: " f"{dump['failed_sources']}"
+        cls_logger = cls._get_cls_logger() if hasattr(cls, "_get_cls_logger") else logging.getLogger(cls.__name__)
+        if cls_logger.isEnabledFor(logging.ERROR):
+            cls_logger.error(msg, extra=extra)
+    elif audit.rows_processed > 0:
+        msg = (
+            f"{audit.operation} chunk {audit.chunk_index} complete: "
+            f"{audit.rows_processed} rows in {audit.processing_time_sec:.3f}s."
+        )
+        cls_logger = cls._get_cls_logger() if hasattr(cls, "_get_cls_logger") else logging.getLogger(cls.__name__)
+        if cls_logger.isEnabledFor(logging.INFO):
+            cls_logger.info(msg, extra=extra)
+
 
 def _cleanup_listeners() -> None:
     """Gracefully shuts down all background logging threads on application exit."""
@@ -63,13 +140,17 @@ class JSONFormatter(logging.Formatter):
     """Formats log records as JSON Lines for easy dynamic parsing."""
 
     def format(self, record: logging.LogRecord) -> str:
-        log_obj = {
+        log_obj: Dict[str, Any] = {
             "level": record.levelname,
             "msg": record.getMessage(),
             "time": self.formatTime(record, self.datefmt),
         }
         if hasattr(record, "meta"):
             log_obj["meta"] = record.meta
+        # Structured audit payload attached by _route_audit_to_log — surfaces as
+        # a top-level JSON key so get_error() consumers can read record["audit"].
+        if hasattr(record, "audit"):
+            log_obj["audit"] = record.audit
         if record.exc_info:
             log_obj["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(log_obj)
@@ -333,18 +414,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
                 export_interval=export_interval,
             ):
                 if enable_logging:
-                    # 1. Log throughput metrics to info.log
-                    if audit.rows_processed > 0:
-                        cls.log_cls_info(
-                            f"Stream Chunk {audit.chunk_index} complete: "
-                            f"{audit.rows_processed} rows in {audit.processing_time_sec:.3f}s."
-                        )
-
-                    # 2. Route DLQ (Dead Letter Queue) candidates to error.log
-                    if audit.failed_sources:
-                        cls.log_cls_error(
-                            f"Stream Chunk {audit.chunk_index} encountered failures: {audit.failed_sources}"
-                        )
+                    _route_audit_to_log(cls, audit)
 
                 # Yield downstream to the caller natively
                 yield audit
@@ -356,4 +426,54 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             # Catch catastrophic framework failures outside the base loop
             if enable_logging:
                 cls.log_cls_error(f"Fatal Stream Pipeline Error: {str(e)}", exc_info=True)
+            raise
+
+    @classmethod
+    async def fjord(
+        cls,
+        stream_params: List[Dict[str, Any]],
+        code_file: Any,
+        export_params: Dict[str, Any],
+        refresh_interval: Optional[float] = None,
+        export_interval: Optional[float] = None,
+        enable_logging: bool = False,
+    ) -> AsyncGenerator[AuditResult, None]:
+        """Fjord wrapper that routes per-tick audits through the disk loggers.
+
+        Mirrors :meth:`stream` — when ``enable_logging`` is set, every
+        :class:`AuditResult` yielded by the fjord engine is also routed
+        through :func:`_route_audit_to_log` so:
+
+        - throughput audits land in the calling class's ``info.log`` /
+          ``api.log``,
+        - failures land in ``error.log``, retrievable via :meth:`get_error`,
+        - the structured ``audit`` dump rides on every JSON record.
+
+        For per-source operations (``"fjord_refresh:Coin"``, ``"outflow:CoinMarket"``)
+        the audit is logged under the calling class for retrieval simplicity.
+        Per-source loggers are still set up by :meth:`incorp` on first use.
+        """
+        if enable_logging:
+            setup_class_logger(cls)
+            cls.log_cls_info("Initiating fjord orchestration.")
+
+        try:
+            async for audit in super().fjord(
+                stream_params=stream_params,
+                code_file=code_file,
+                export_params=export_params,
+                refresh_interval=refresh_interval,
+                export_interval=export_interval,
+            ):
+                if enable_logging:
+                    _route_audit_to_log(cls, audit)
+
+                yield audit
+
+            if enable_logging:
+                cls.log_cls_info("Fjord process completed gracefully.")
+
+        except Exception as e:
+            if enable_logging:
+                cls.log_cls_error(f"Fatal Fjord Pipeline Error: {str(e)}", exc_info=True)
             raise

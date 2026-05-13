@@ -1,0 +1,13 @@
+{
+  "_comment_": "Minimal stream pipeline: pulls SpaceX launches once, exports to CSV. Run with: incorporator stream examples/pipeline_stream.json",
+
+  "incorp_params": {
+    "inc_url": "https://api.spacexdata.com/v4/launches/latest",
+    "inc_code": "id",
+    "inc_name": "name"
+  },
+
+  "export_params": {
+    "file_path": "data/spacex_latest.csv"
+  }
+}

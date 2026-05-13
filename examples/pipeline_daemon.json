@@ -1,0 +1,19 @@
+{
+  "_comment_": "Daemon-mode stream: continuous polling with decoupled refresh / export schedules. The 'stateful_polling' flag switches engines from chunked-one-shot to long-lived daemons. Run with: incorporator stream examples/pipeline_daemon.json --logs --heartbeat-file /tmp/inc.beat",
+
+  "incorp_params": {
+    "inc_url": "https://api.spacexdata.com/v4/launches/latest",
+    "inc_code": "id",
+    "inc_name": "name"
+  },
+
+  "refresh_params": {},
+
+  "export_params": {
+    "file_path": "data/spacex_latest.ndjson"
+  },
+
+  "stateful_polling": true,
+  "refresh_interval": 60.0,
+  "export_interval": 120.0
+}

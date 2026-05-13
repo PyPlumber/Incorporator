@@ -1,0 +1,17 @@
+{
+  "_comment_": "Stream pipeline with bearer-token auth pulled from the environment. Copy .env.example to .env, set API_KEY, then: incorporator validate examples/pipeline_with_auth.json && incorporator stream examples/pipeline_with_auth.json",
+
+  "incorp_params": {
+    "inc_url": "https://api.example.com/protected/resource",
+    "inc_code": "id",
+    "inc_name": "name",
+    "headers": {
+      "Accept": "application/json",
+      "Authorization": "Bearer ${API_KEY:?Set API_KEY in your .env file}"
+    }
+  },
+
+  "export_params": {
+    "file_path": "data/protected.ndjson"
+  }
+}

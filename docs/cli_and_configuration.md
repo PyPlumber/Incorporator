@@ -84,7 +84,84 @@ incorporator stream pipeline.json --poll 60.0
 
 ---
 
-## 5. Observability & Telemetry (`--logs`)
+### Authentication Headers
+
+Every kwarg accepted by `Incorporator.incorp()` is also accepted under
+`incorp_params` in the JSON. The most common production knob is custom
+headers — auth, content negotiation, user-agents:
+
+```json
+"incorp_params": {
+  "inc_url": "https://api.example.com/protected",
+  "inc_code": "id",
+  "headers": {
+    "Authorization": "Bearer ${API_KEY}",
+    "Accept": "application/json"
+  }
+}
+```
+
+The `${API_KEY}` reference is expanded from environment at JSON-load
+time (see "Environment Variables & Secrets" below). Never put a raw
+token in a checked-in `pipeline.json`.
+
+### Machine-readable Output (`--json-output`)
+
+Both `stream` and `fjord` accept `--json-output`, which switches stdout
+to NDJSON (one `AuditResult` per line). The colorized startup banner
+and `🛑/❌` framing messages go to **stderr** so stdout stays parseable.
+
+```bash
+incorporator stream pipeline.json --json-output | jq '.rows_processed'
+```
+
+Useful for piping into GitHub Actions, Prefect, log shippers, or any
+tool that wants structured progress.
+
+### Heartbeat for Healthchecks (`--heartbeat-file`)
+
+When you pass `--heartbeat-file PATH`, the CLI `touch`es that file
+after every audit. Pair it with the Dockerfile's `HEALTHCHECK`
+instruction so the container is marked unhealthy if no audits arrive
+in 2 minutes:
+
+```bash
+incorporator stream pipeline.json --poll 60 --heartbeat-file /tmp/inc.beat
+```
+
+The Dockerfile (and `docker-compose.yml`) already use
+`/tmp/incorporator.heartbeat` by default — see
+[`deployment.md`](deployment.md).
+
+---
+
+## 5. Environment Variables & Secrets
+
+Every **string** value in `pipeline.json` is scanned for `${...}`
+references at load time. Three forms:
+
+| Syntax | Meaning |
+| :--- | :--- |
+| `${API_KEY}` | Required env var; load fails if unset. |
+| `${API_KEY:-fallback}` | Use `fallback` if `API_KEY` is unset. |
+| `${API_KEY:?explanation}` | Same as `${API_KEY}` but raises with your message. |
+| `${file:/run/secrets/api_key}` | Read the file's UTF-8 contents (whitespace-stripped). For Docker Swarm / Kubernetes Secrets. |
+| `$${LITERAL}` | Escape — substituted with the literal `${LITERAL}`. |
+
+Best-practice picks:
+
+- **Local dev**: env vars via `.env` + `docker compose --env-file`. Easy.
+- **Production**: file-based references with `${file:/run/secrets/...}`
+  — env vars are visible to anyone with Docker daemon access
+  (`docker inspect`); mounted secret files aren't.
+
+`incorporator validate <config.json>` runs the expansion and reports
+which variable is missing — so you find out before the network call
+fails with a confusing 401.
+
+---
+
+## 6. Observability & Telemetry (`--logs`)
 
 When running Incorporator as a background daemon (especially inside a Docker container), you need robust observability without blocking the async event loop.
 
@@ -100,9 +177,35 @@ Terminal output is suppressed, and telemetry is routed to non-blocking backgroun
 2.  **`logs/{Class}_error.log`**: The Dead Letter Queue (DLQ). Catches network timeouts, 400/500 status codes, and malformed data schemas.
 3.  **`logs/{Class}_debug.log`**: Deep framework execution traces for local troubleshooting.
 
+Every `AuditResult` yielded by the pipeline is also routed to these
+files: the structured `audit` payload appears as a top-level JSON key
+on every record, so `await MyClass.get_error()` returns rows whose
+`record["audit"]` contains the full Pydantic dump (chunk index,
+operation, rows processed, timing, redacted failed_sources). The same
+routing applies to `fjord` audits — tagged per-source with operations
+like `"fjord_refresh:Coin"` and `"outflow:CoinMarket"`.
+
+URLs with query-string auth (`?api_key=...`, `?token=...`) are redacted
+to `***REDACTED***` before being written to the log files. Headers
+inside tracebacks aren't scrubbed — keep secrets out of URLs.
+
 ---
 
-## 6. The `fjord` Subcommand — Multi-Source Stateful Pipelines
+## 7. The `validate` and `init` Subcommands
+
+`incorporator validate <config.json>` runs every structural check the
+runtime does (required keys, env var expansion, code_file imports,
+outflow arity) **without executing the pipeline**. Exits 0 / 1 with a
+human-readable report. Use this in CI and in pre-commit hooks.
+
+`incorporator init [--type stream|fjord] [--output-dir .]` writes a
+starter `pipeline.json` (and, for fjord, an `outflow.py`). Refuses to
+overwrite existing files. After running, edit the placeholders, then
+`validate`, then `stream` / `fjord`.
+
+---
+
+## 8. The `fjord` Subcommand — Multi-Source Stateful Pipelines
 
 While `incorporator stream` operates on **one** source per pipeline, the
 `incorporator fjord` subcommand drives **multiple sources concurrently** and

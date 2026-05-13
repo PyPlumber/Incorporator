@@ -19,6 +19,7 @@ ENV/
 # 3. Secrets & Orchestration Configs (CRITICAL SAFETY)
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 credentials.json

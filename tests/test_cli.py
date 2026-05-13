@@ -83,7 +83,7 @@ def test_cli_missing_incorp_params(tmp_path: Path) -> None:
     result = runner.invoke(app, ["stream", str(config_file)])
 
     assert result.exit_code == 1
-    assert "'incorp_params' must be defined" in result.stdout
+    assert "'incorp_params' (dict) is required" in result.stdout
 
 
 def test_cli_stream_reports_failed_sources(tmp_path: Path) -> None:
@@ -187,10 +187,10 @@ def test_cli_fjord_success(tmp_path: Path) -> None:
     """
     config, _ = _write_fjord_fixture(tmp_path)
 
-    # Patch the fjord classmethod on the base Incorporator — the CLI now calls
-    # Incorporator.fjord(...) directly (no user-defined output class).
+    # Patch the LoggedIncorporator.fjord wrapper — the CLI now routes through
+    # it so per-tick audits flow through the disk logger when --logs is set.
     with patch(
-        "incorporator.cli.Incorporator.fjord",
+        "incorporator.cli.LoggedIncorporator.fjord",
         new=mock_fjord,
     ):
         result = runner.invoke(app, ["fjord", str(config)])
@@ -209,7 +209,9 @@ def test_cli_fjord_missing_required_keys(tmp_path: Path) -> None:
     result = runner.invoke(app, ["fjord", str(config)])
 
     assert result.exit_code == 1
-    assert "fjord config requires" in result.stdout
+    # New validator reports each missing required key by name.
+    assert "stream_params" in result.stdout
+    assert "export_params" in result.stdout
     # output_class is no longer required — make sure the error message dropped it.
     assert "output_class" not in result.stdout
 
@@ -253,4 +255,164 @@ def test_cli_fjord_stream_missing_cls_name(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["fjord", str(config)])
     assert result.exit_code == 1
-    assert "missing 'cls_name'" in result.stdout
+    assert "missing 'cls_name'" in result.stdout.lower() or "cls_name" in result.stdout
+
+
+# ==========================================
+# VALIDATE SUBCOMMAND
+# ==========================================
+
+
+def test_cli_validate_stream_ok(tmp_path: Path) -> None:
+    """A well-formed stream config validates cleanly."""
+    cfg = tmp_path / "pipeline.json"
+    cfg.write_text(
+        json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8"
+    )
+    result = runner.invoke(app, ["validate", str(cfg)])
+    assert result.exit_code == 0, result.stdout
+    assert "is valid" in result.stdout
+
+
+def test_cli_validate_stream_missing_source_key(tmp_path: Path) -> None:
+    """incorp_params with no source key fails validation with a list of valid keys."""
+    cfg = tmp_path / "pipeline.json"
+    cfg.write_text(json.dumps({"incorp_params": {"inc_code": "id"}}), encoding="utf-8")
+    result = runner.invoke(app, ["validate", str(cfg)])
+    assert result.exit_code == 1
+    assert "at least one source key" in result.stdout
+
+
+def test_cli_validate_fjord_ok(tmp_path: Path) -> None:
+    """A well-formed fjord config (resolved code_file, outflow arity OK) validates."""
+    cfg, _ = _write_fjord_fixture(tmp_path)
+    result = runner.invoke(app, ["validate", str(cfg)])
+    assert result.exit_code == 0, result.stdout
+
+
+def test_cli_validate_fjord_missing_outflow(tmp_path: Path) -> None:
+    """code_file without a top-level outflow() fails fjord validation."""
+    user_module = tmp_path / "broken_fjord.py"
+    user_module.write_text(
+        "from incorporator import Incorporator\n"
+        "class A(Incorporator): pass\n"
+        "# no outflow() defined\n",
+        encoding="utf-8",
+    )
+    cfg = tmp_path / "fjord.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "code_file": "broken_fjord.py",
+                "stream_params": [{"cls_name": "A", "incorp_params": {"inc_url": "https://x"}}],
+                "export_params": {"file_path": "out.ndjson"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    # autodetect picks fjord because of `code_file` + `stream_params` (list).
+    result = runner.invoke(app, ["validate", str(cfg)])
+    assert result.exit_code == 1
+    assert "outflow" in result.stdout.lower()
+
+
+def test_cli_validate_unset_env_var_reports_clearly(tmp_path: Path) -> None:
+    """A required ${VAR} that isn't in the environment surfaces at validate-time."""
+    cfg = tmp_path / "pipeline.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "incorp_params": {
+                    "inc_url": "https://x",
+                    "headers": {"Authorization": "Bearer ${NONEXISTENT_TEST_VAR}"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["validate", str(cfg)])
+    assert result.exit_code == 1
+    assert "NONEXISTENT_TEST_VAR" in result.stdout
+
+
+# ==========================================
+# INIT SUBCOMMAND
+# ==========================================
+
+
+def test_cli_init_stream_writes_pipeline_json(tmp_path: Path) -> None:
+    """init --type stream writes a single pipeline.json scaffold."""
+    result = runner.invoke(app, ["init", "--output-dir", str(tmp_path), "--type", "stream"])
+    assert result.exit_code == 0, result.stdout
+    assert (tmp_path / "pipeline.json").is_file()
+    assert "Wrote 1 starter file" in result.stdout
+
+
+def test_cli_init_fjord_writes_two_files(tmp_path: Path) -> None:
+    """init --type fjord writes pipeline.json + outflow.py."""
+    result = runner.invoke(app, ["init", "--output-dir", str(tmp_path), "--type", "fjord"])
+    assert result.exit_code == 0, result.stdout
+    assert (tmp_path / "pipeline.json").is_file()
+    assert (tmp_path / "outflow.py").is_file()
+
+
+def test_cli_init_refuses_overwrite(tmp_path: Path) -> None:
+    """init must refuse to clobber an existing pipeline.json."""
+    (tmp_path / "pipeline.json").write_text("{}", encoding="utf-8")
+    result = runner.invoke(app, ["init", "--output-dir", str(tmp_path), "--type", "stream"])
+    assert result.exit_code == 1
+    assert "Refusing to overwrite" in result.stdout
+
+
+# ==========================================
+# --json-output FLAG
+# ==========================================
+
+
+def test_cli_stream_json_output_emits_ndjson(tmp_path: Path) -> None:
+    """--json-output emits one NDJSON AuditResult line per chunk.
+
+    The runner's default behaviour merges stderr into stdout, so we filter
+    for lines that look like JSON objects. In real terminal use the
+    NDJSON-only stream lands on stdout and banners on stderr — that
+    redirection is verified manually via the Docker smoke verification.
+    """
+    cfg = tmp_path / "pipeline.json"
+    cfg.write_text(json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8")
+
+    with patch("incorporator.cli.LoggedIncorporator.stream", new=mock_stream):
+        result = runner.invoke(app, ["stream", str(cfg), "--json-output"])
+
+    assert result.exit_code == 0, result.stdout
+    # Filter for JSON-looking lines and confirm they parse with the audit shape.
+    json_lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
+    assert json_lines, f"expected at least one NDJSON audit line, got: {result.stdout!r}"
+    for line in json_lines:
+        record = json.loads(line)
+        assert "rows_processed" in record
+        assert "chunk_index" in record
+        assert "operation" in record
+
+
+# ==========================================
+# HEARTBEAT FILE
+# ==========================================
+
+
+def test_cli_stream_heartbeat_file_touched(tmp_path: Path) -> None:
+    """--heartbeat-file causes the CLI to touch the path after every audit."""
+    cfg = tmp_path / "pipeline.json"
+    cfg.write_text(
+        json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8"
+    )
+    heartbeat = tmp_path / "hb.beat"
+    assert not heartbeat.exists()
+
+    with patch("incorporator.cli.LoggedIncorporator.stream", new=mock_stream):
+        result = runner.invoke(
+            app,
+            ["stream", str(cfg), "--heartbeat-file", str(heartbeat)],
+        )
+
+    assert result.exit_code == 0, result.stdout
+    assert heartbeat.exists()

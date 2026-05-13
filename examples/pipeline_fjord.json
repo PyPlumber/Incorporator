@@ -1,0 +1,31 @@
+{
+  "_comment_": "Two-source fjord pipeline. The output class is built dynamically from the code_file's stem (outflow_example.py -> OutflowExample). Run: incorporator validate examples/pipeline_fjord.json && incorporator fjord examples/pipeline_fjord.json --logs",
+
+  "code_file": "fjord_code/outflow_example.py",
+
+  "stream_params": [
+    {
+      "cls_name": "SpaceXLaunch",
+      "incorp_params": {
+        "inc_url": "https://api.spacexdata.com/v4/launches/latest",
+        "inc_code": "id"
+      },
+      "refresh_params": {}
+    },
+    {
+      "cls_name": "SpaceXRocket",
+      "incorp_params": {
+        "inc_url": "https://api.spacexdata.com/v4/rockets",
+        "inc_code": "id"
+      },
+      "refresh_params": {}
+    }
+  ],
+
+  "export_params": {
+    "file_path": "data/launch_with_rocket.ndjson"
+  },
+
+  "refresh_interval": 60.0,
+  "export_interval": 120.0
+}

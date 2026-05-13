@@ -8,6 +8,95 @@ The Incorporator Orchestration Platform is designed to run anywhere. Because the
 
 Incorporator pipelines are stateless by design, making them perfect for Docker. The framework safely handles local data and configuration files via volume mounts.
 
+### 5-Minute Quickstart with `docker compose`
+
+The repository ships with a working `docker-compose.yml` and an
+`.env.example`. End-to-end first run:
+
+```bash
+# 1. Copy the secrets template and fill in any required values.
+cp .env.example .env
+
+# 2. Wire up the three host folders compose mounts into the container.
+mkdir -p config data logs
+
+# 3. Pick a starter pipeline.json. examples/ has four ready-to-edit configs.
+cp examples/pipeline_stream.json config/pipeline.json
+# Or, generate one from scratch:
+#   incorporator init --type stream --output-dir config
+
+# 4. Validate before you ship.
+incorporator validate config/pipeline.json
+
+# 5. Build + run.
+docker compose up -d
+docker compose logs -f
+```
+
+Volumes mounted by `docker-compose.yml`:
+
+| Host path | Container path | Purpose |
+| :--- | :--- | :--- |
+| `./config` | `/app/config` (read-only) | `pipeline.json` and any user `outflow.py` files |
+| `./data` | `/app/data` | Exported output files (CSV / NDJSON / Parquet / …) |
+| `./logs` | `/app/logs` | Rotating JSON log files (when `--logs` is set) |
+
+### Secrets — Local vs. Production
+
+Three options, increasing isolation:
+
+1. **`.env` file (compose default).** Convenient for local dev.
+   References from `pipeline.json` like
+   `"Authorization": "Bearer ${BEARER_TOKEN}"` are expanded at JSON
+   load time from environment. Visible via `docker inspect`, so don't
+   use in production.
+2. **Docker Swarm Secrets / Kubernetes Secrets.** Mount the secret as
+   a tmpfs file (e.g. at `/run/secrets/bearer_token`) and reference it
+   in JSON with `"Authorization": "Bearer ${file:/run/secrets/bearer_token}"`.
+   Not visible to `docker inspect`; survives a leaky `env` dump.
+3. **External secret manager** (Vault, AWS Secrets Manager, GCP Secret
+   Manager). Out of scope for this CLI — pull secrets into env vars
+   or sidecar-mounted files before the container starts; the JSON
+   references the same `${VAR}` or `${file:...}` form.
+
+`.env` is gitignored. `pipeline.json` is also gitignored by default
+since most teams keep environment-specific configs out of source
+control — copy yours into `config/` per environment.
+
+### Healthcheck
+
+The Dockerfile and `docker-compose.yml` both declare a `HEALTHCHECK`
+that watches `/tmp/incorporator.heartbeat`. The CLI's
+`--heartbeat-file` flag (already baked into the default `CMD`)
+`touch`es that file after every audit. If no audits land for 2
+minutes, the container is reported unhealthy — your orchestrator
+(compose / swarm / k8s) can then restart it automatically.
+
+### Custom Dockerfile
+
+If you don't want to use compose, the repo's `Dockerfile` works
+standalone. Build:
+
+```bash
+docker build -t incorporator:v2 .
+```
+
+Run as a one-shot:
+
+```bash
+docker run --rm \
+  -v $(pwd)/my_pipeline.json:/app/config/pipeline.json \
+  -v $(pwd)/output_data:/app/data \
+  -v $(pwd)/output_logs:/app/logs \
+  incorporator:v2 stream /app/config/pipeline.json --logs
+```
+
+Watch the chunking telemetry:
+
+```bash
+docker logs -f <container-name>
+```
+
 ### The Zero-Bloat Dockerfile
 If you are building a custom container for your pipeline, use this optimized blueprint. It runs securely as a non-root user and automatically bakes in the Rust/C speedups for maximum OS performance.
 
@@ -29,25 +118,24 @@ RUN pip install --upgrade pip && \
     pip install --no-cache-dir .[all]
 
 USER appuser
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD test -f /tmp/incorporator.heartbeat \
+        && test $(( $(date +%s) - $(stat -c %Y /tmp/incorporator.heartbeat) )) -lt 120 \
+        || exit 1
 ENTRYPOINT ["incorporator"]
-CMD ["stream", "/app/config/pipeline.json", "--poll", "60.0", "--logs"]
+CMD ["stream", "/app/config/pipeline.json", \
+     "--poll", "60.0", \
+     "--logs", \
+     "--heartbeat-file", "/tmp/incorporator.heartbeat"]
 ```
 
-### Running the Daemon
-Once built (`docker build -t incorporator:v2 .`), run the daemon by mounting your local `pipeline.json` and a data folder directly into the container:
+### Graceful Shutdown
 
-```bash
-docker run -d \
-  --name my_pipeline_stream \
-  -v $(pwd)/my_pipeline.json:/app/config/pipeline.json \
-  -v $(pwd)/output_data:/app/data \
-  incorporator:v2
-```
-
-You can watch the chunking telemetry in real-time natively via Docker:
-```bash
-docker logs -f my_pipeline_stream
-```
+The CLI installs a SIGTERM handler that triggers the same shutdown
+path as Ctrl+C: the engine drains in-flight refresh/export daemons,
+flushes audits, and exits cleanly. `docker stop`, `docker compose
+down`, and `kubectl delete pod` all send SIGTERM by default — no
+extra config required.
 
 ---
 

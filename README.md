@@ -363,6 +363,41 @@ await Incorporator.export(launches, "upcoming_launches.csv", format_type="csv")
 
 ---
 
+## 🐳 Docker Quickstart (CLI-only path)
+
+You don't have to use the Python API. The CLI can drive the same engine
+from a `pipeline.json` config — no code required (for single-source
+ETLs).
+
+```bash
+# 1. Generate a starter config.
+incorporator init --type stream --output-dir .
+
+# 2. Edit pipeline.json (inc_url, headers, export_params, …).
+#    Validate before you ship.
+incorporator validate pipeline.json
+
+# 3. Run it as a one-shot…
+incorporator stream pipeline.json
+
+# 4. …or as a Dockerised daemon (compose file already in repo).
+cp .env.example .env             # fill in API keys
+mkdir -p config data logs
+mv pipeline.json config/
+docker compose up -d
+docker compose logs -f
+```
+
+Secrets stay out of `pipeline.json` — reference env vars with
+`${API_KEY}` or, in production, Docker / Kubernetes Secrets files with
+`${file:/run/secrets/api_key}`. See
+[`docs/cli_and_configuration.md`](docs/cli_and_configuration.md) for
+the full CLI reference and
+[`docs/deployment.md`](docs/deployment.md) for the production secrets
+pattern.
+
+---
+
 ## 📚 Documentation & Examples
 
 The best way to learn Incorporator is through our deeply documented API references and Guided Tutorials. 

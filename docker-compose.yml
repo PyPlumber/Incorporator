@@ -1,0 +1,39 @@
+# Local-dev compose file for the Incorporator daemon.
+#
+# Quickstart:
+#   1. cp .env.example .env       # then fill in any secrets you need
+#   2. mkdir -p config data logs   # if you haven't already
+#   3. cp examples/pipeline_stream.json config/pipeline.json
+#   4. docker compose up -d
+#   5. docker compose logs -f      # watch audits stream
+#
+# Secrets handling:
+#   - .env vars get injected as container env vars; referenced from
+#     pipeline.json via ${VAR_NAME}.
+#   - Visible via `docker inspect` — fine for local dev, not for
+#     production. For production, switch to Docker Swarm / Kubernetes
+#     Secrets which mount tmpfs files; reference them in pipeline.json
+#     via ${file:/run/secrets/secret_name}.
+#   - .env is gitignored. Never commit it.
+
+version: "3.9"
+
+services:
+  incorporator:
+    build: .
+    image: incorporator:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config:/app/config:ro    # pipeline.json + outflow.py (read-only)
+      - ./data:/app/data           # exported outputs
+      - ./logs:/app/logs           # rotating JSON logs (only if --logs is set)
+    # The Dockerfile sets the HEALTHCHECK directive; compose still benefits
+    # from declaring it here so `docker compose ps` shows healthy/unhealthy
+    # without forcing the image's HEALTHCHECK to be the source of truth.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/incorporator.heartbeat && test $$(( $$(date +%s) - $$(stat -c %Y /tmp/incorporator.heartbeat) )) -lt 120"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
