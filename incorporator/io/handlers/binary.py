@@ -46,6 +46,13 @@ class SQLiteHandler(BaseFormatHandler):
 
         Iterates the cursor directly (no ``fetchall()`` memory bomb), so the
         read path is bounded regardless of result-set size.
+
+        Boolean recovery: SQLite has no native BOOLEAN type — writes encode
+        ``True``/``False`` as ``1``/``0`` ints.  Pass ``sql_bool_columns=
+        ["col_a", "col_b"]`` to recover the original bool semantics on read;
+        any value of ``0`` / ``1`` in those columns is cast back to
+        ``False`` / ``True``.  Without the kwarg, ints come back as ints
+        (documented behaviour — the column type is genuinely ambiguous).
         """
         if not isinstance(source, Path):
             raise IncorporatorFormatError("SQLiteHandler requires a physical Path object.")
@@ -55,6 +62,7 @@ class SQLiteHandler(BaseFormatHandler):
             raise IncorporatorFormatError("Reading from SQLite requires an 'sql_query' kwarg.")
 
         sql_params = kwargs.get("sql_params", ())
+        bool_columns: frozenset = frozenset(kwargs.get("sql_bool_columns", ()))
 
         try:
             conn = sqlite3.connect(source)
@@ -67,7 +75,10 @@ class SQLiteHandler(BaseFormatHandler):
                 for row in cursor:
                     parsed_row = dict(row)
                     for k, v in parsed_row.items():
-                        parsed_row[k] = deserialize_nested(v)
+                        if k in bool_columns and v in (0, 1):
+                            parsed_row[k] = bool(v)
+                        else:
+                            parsed_row[k] = deserialize_nested(v)
                     rows.append(parsed_row)
 
                 return rows

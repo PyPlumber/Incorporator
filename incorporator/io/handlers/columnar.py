@@ -38,7 +38,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType, convert_type, serialize_nested
-from ._base import BaseFormatHandler, _raise_if_append_unsupported
+from ._base import BaseFormatHandler, _raise_if_append_unsupported, atomic_write_path
 
 logger = logging.getLogger(__name__)
 
@@ -165,8 +165,16 @@ def _materialize_table(data: Iterable[Dict[str, Any]], kwargs: Dict[str, Any]) -
     """Coerce an iterable of dicts into a single pyarrow.Table.
 
     Shared by FeatherHandler and OrcHandler — both formats are written
-    one-shot (no streaming writer API), so we materialize once. ParquetHandler
-    does NOT use this helper; it streams via ParquetWriter for O(1) memory.
+    one-shot (no streaming writer API exposed by pyarrow), so we
+    materialise once.  ParquetHandler does NOT use this helper; it
+    streams via ParquetWriter for O(1) memory.
+
+    **RAM caveat:** Feather V2 and ORC require the full dataset
+    in-memory at write time because pyarrow's ``feather.write_feather``
+    and ``orc.write_table`` APIs accept a Table, not a record-batch
+    stream.  For multi-GB outputs, switch to ``.parquet`` (streaming
+    row-group writes) or ``.ndjson`` (line-per-row text streaming).
+    The framework can't smuggle around the format-level constraint.
 
     Honours the same kwargs as ParquetHandler.write:
         * pydantic_schema → explicit Arrow schema
@@ -311,21 +319,25 @@ class ParquetHandler(BaseFormatHandler):
                 yield batch
 
         try:
-            writer: Any = None
-            try:
-                for batch in _batched_iter(data_iter, _WRITE_BATCH_ROWS):
-                    if explicit_schema is not None:
-                        table = pa.Table.from_pylist(batch, schema=explicit_schema)
-                    else:
-                        # Native inference from the first batch — its schema seeds
-                        # the writer and is reused for every subsequent batch.
-                        table = pa.Table.from_pylist(batch)
-                    if writer is None:
-                        writer = pq.ParquetWriter(path, table.schema, compression=compression)  # type: ignore[no-untyped-call]
-                    writer.write_table(table)
-            finally:
-                if writer is not None:
-                    writer.close()
+            # Atomic write: build to a sibling tempfile, rename on success.
+            # A crash mid-write leaves the prior path intact (or absent)
+            # instead of a half-written Parquet with a corrupt footer.
+            with atomic_write_path(path) as tmp_path:
+                writer: Any = None
+                try:
+                    for batch in _batched_iter(data_iter, _WRITE_BATCH_ROWS):
+                        if explicit_schema is not None:
+                            table = pa.Table.from_pylist(batch, schema=explicit_schema)
+                        else:
+                            # Native inference from the first batch — its schema seeds
+                            # the writer and is reused for every subsequent batch.
+                            table = pa.Table.from_pylist(batch)
+                        if writer is None:
+                            writer = pq.ParquetWriter(tmp_path, table.schema, compression=compression)  # type: ignore[no-untyped-call]
+                        writer.write_table(table)
+                finally:
+                    if writer is not None:
+                        writer.close()
         except Exception as e:
             raise IncorporatorFormatError(f"Parquet Write Error on {file_path}: {e}") from e
 
@@ -393,7 +405,9 @@ class FeatherHandler(BaseFormatHandler):
             table = _materialize_table(data, kwargs)
             if table is None:
                 return  # nothing to write
-            feather.write_feather(table, str(path), compression=compression)  # type: ignore[no-untyped-call]
+            # Atomic write — build to tempfile, rename on success.
+            with atomic_write_path(path) as tmp_path:
+                feather.write_feather(table, str(tmp_path), compression=compression)  # type: ignore[no-untyped-call]
         except Exception as e:
             raise IncorporatorFormatError(f"Feather Write Error on {file_path}: {e}") from e
 
@@ -466,6 +480,8 @@ class OrcHandler(BaseFormatHandler):
             table = _materialize_table(data, kwargs)
             if table is None:
                 return  # nothing to write
-            orc.write_table(table, str(path))  # type: ignore[no-untyped-call]
+            # Atomic write — build to tempfile, rename on success.
+            with atomic_write_path(path) as tmp_path:
+                orc.write_table(table, str(tmp_path))  # type: ignore[no-untyped-call]
         except Exception as e:
             raise IncorporatorFormatError(f"ORC Write Error on {file_path}: {e}") from e

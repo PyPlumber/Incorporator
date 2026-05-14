@@ -22,7 +22,7 @@ from typing import Any, Dict, Iterable, List, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import deserialize_nested, serialize_nested
-from ._base import BaseFormatHandler, _neutralise_formula_injection, _raise_if_append_unsupported
+from ._base import BaseFormatHandler, _neutralise_formula_injection, _raise_if_append_unsupported, atomic_write_path
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,10 @@ class ExcelHandler(BaseFormatHandler):
                         cells = [_neutralise_formula_injection(v) for v in cells]
                     ws.append(cells)
 
-                wb.save(str(path))
+                # Atomic save — write to a sibling tempfile then rename so
+                # an interrupted save can't leave a corrupt .xlsx zip behind.
+                with atomic_write_path(path) as tmp_path:
+                    wb.save(str(tmp_path))
             finally:
                 wb.close()
         except Exception as e:

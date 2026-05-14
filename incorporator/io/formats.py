@@ -7,7 +7,7 @@ import json
 import re
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Tuple, Union
+from typing import Any, Dict, Optional, Set, Tuple, Union
 
 from ..exceptions import IncorporatorFormatError
 
@@ -234,20 +234,34 @@ def deserialize_nested(val: Any) -> Any:
     return val
 
 
-def xml_to_dict(element: Any) -> Dict[str, Any]:
-    """Recursively converts an XML ElementTree (standard or lxml) into a Python dictionary."""
+def xml_to_dict(element: Any, force_list: Optional[Set[str]] = None) -> Dict[str, Any]:
+    """Recursively converts an XML ElementTree (standard or lxml) into a Python dictionary.
+
+    Tag-shape consistency: by default a tag that appears once becomes a
+    scalar; repeated siblings become a list.  This causes shape drift when
+    the *same* tag is sometimes single, sometimes multiple, across payloads.
+    Pass ``force_list={"item", "row"}`` to force those tag names to always
+    be lists — even when count is 1 — so downstream Pydantic schema
+    inference sees a stable shape.
+    """
+    force_list = force_list or set()
     result: Dict[str, Any] = {element.tag: {} if element.attrib else None}
     children = list(element)
 
     if children:
         child_dict: Dict[str, Any] = {}
         for child in children:
-            child_result = xml_to_dict(child)
+            child_result = xml_to_dict(child, force_list=force_list)
             for key, val in child_result.items():
                 if key in child_dict:
                     if not isinstance(child_dict[key], list):
                         child_dict[key] = [child_dict[key]]
                     child_dict[key].append(val)
+                elif key in force_list:
+                    # Force-list tags always start as a one-element list so
+                    # downstream consumers see a stable list shape regardless
+                    # of how many siblings the source XML actually has.
+                    child_dict[key] = [val]
                 else:
                     child_dict[key] = val
         if element.attrib:

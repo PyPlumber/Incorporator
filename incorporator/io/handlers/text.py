@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, List, TextIO, Union, cast
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import check_xml_security, ensure_string, serialize_nested, xml_to_dict
-from ._base import BaseFormatHandler, _raise_if_append_unsupported
+from ._base import BaseFormatHandler, _raise_if_append_unsupported, atomic_write_path
 
 logger = logging.getLogger(__name__)
 
@@ -60,16 +60,18 @@ class JSONHandler(BaseFormatHandler):
             import orjson  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
             # Streaming JSON array: write one record at a time — no full-list materialization.
+            # Atomic write: build to a sibling tempfile then rename on success.
             try:
-                with open(path, "wb") as f:
-                    f.write(b"[\n")
-                    first = True
-                    for item in data:
-                        if not first:
-                            f.write(b",\n")
-                        f.write(orjson.dumps(item, option=orjson.OPT_INDENT_2))
-                        first = False
-                    f.write(b"\n]")
+                with atomic_write_path(path) as tmp_path:
+                    with open(tmp_path, "wb") as f:
+                        f.write(b"[\n")
+                        first = True
+                        for item in data:
+                            if not first:
+                                f.write(b",\n")
+                            f.write(orjson.dumps(item, option=orjson.OPT_INDENT_2))
+                            first = False
+                        f.write(b"\n]")
             except OSError as e:
                 raise IncorporatorFormatError(f"JSON File IO Error on {file_path}: {e}") from e
 
@@ -77,15 +79,16 @@ class JSONHandler(BaseFormatHandler):
             import json
 
             try:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write("[\n")
-                    first = True
-                    for item in data:
-                        if not first:
-                            f.write(",\n")
-                        f.write(json.dumps(item, indent=4))
-                        first = False
-                    f.write("\n]")
+                with atomic_write_path(path) as tmp_path:
+                    with open(tmp_path, "w", encoding="utf-8") as f:
+                        f.write("[\n")
+                        first = True
+                        for item in data:
+                            if not first:
+                                f.write(",\n")
+                            f.write(json.dumps(item, indent=4))
+                            first = False
+                        f.write("\n]")
             except OSError as e:
                 raise IncorporatorFormatError(f"JSON File IO Error on {file_path}: {e}") from e
 
@@ -186,6 +189,11 @@ class XMLHandler(BaseFormatHandler):
         Always runs ``check_xml_security`` first — even with lxml's
         ``resolve_entities=False``, the framework needs a consistent
         rejection point so attacks never silently no-op.
+
+        Pass ``xml_force_list=["item", "row"]`` to force those tag names
+        to always be lists in the result — useful when the same tag is
+        sometimes single and sometimes multiple across documents, which
+        otherwise causes downstream schema-inference shape drift.
         """
         # Defense-in-depth: run check_xml_security BEFORE either parser path.
         # lxml's resolve_entities=False silently drops XXE entities (good!) but
@@ -195,6 +203,9 @@ class XMLHandler(BaseFormatHandler):
         # consistent rejection point regardless of which parser is installed.
         raw_str_for_check = source.read_text(encoding="utf-8") if isinstance(source, Path) else ensure_string(source)
         check_xml_security(raw_str_for_check)
+
+        force_list_kwarg = kwargs.get("xml_force_list") or []
+        force_list_set = set(force_list_kwarg) if force_list_kwarg else None
 
         try:
             import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]
@@ -209,21 +220,21 @@ class XMLHandler(BaseFormatHandler):
 
             try:
                 root = lxml_ET.fromstring(raw_bytes, parser=parser)
-                return xml_to_dict(root)
+                return xml_to_dict(root, force_list=force_list_set)
             except lxml_ET.ParseError:
                 root = lxml_ET.fromstring(raw_bytes.strip(), parser=parser)
-                return xml_to_dict(root)
+                return xml_to_dict(root, force_list=force_list_set)
 
         except ImportError:
             import xml.etree.ElementTree as ET
 
             try:
                 root = ET.fromstring(raw_str_for_check)  # noqa: S314
-                return xml_to_dict(root)
+                return xml_to_dict(root, force_list=force_list_set)
             except ET.ParseError:
                 try:
                     root = ET.fromstring(raw_str_for_check.strip())  # noqa: S314
-                    return xml_to_dict(root)
+                    return xml_to_dict(root, force_list=force_list_set)
                 except ET.ParseError as e:
                     raise IncorporatorFormatError(f"Invalid XML: {e}") from e
 
@@ -245,14 +256,20 @@ class XMLHandler(BaseFormatHandler):
             import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
             root = _build_xml_root(data_list, lxml_ET)
-            lxml_ET.ElementTree(root).write(str(path), encoding="utf-8", xml_declaration=True, pretty_print=True)
+            # Atomic write: build to tempfile, rename on success so an
+            # interrupted write doesn't leave a malformed XML on disk.
+            with atomic_write_path(path) as tmp_path:
+                lxml_ET.ElementTree(root).write(
+                    str(tmp_path), encoding="utf-8", xml_declaration=True, pretty_print=True
+                )
 
         except ImportError:
             import xml.etree.ElementTree as ET
 
             try:
-                with open(path, "w", encoding="utf-8") as f:
-                    root = _build_xml_root(data_list, ET)
-                    ET.ElementTree(root).write(f, encoding="unicode")
+                with atomic_write_path(path) as tmp_path:
+                    with open(tmp_path, "w", encoding="utf-8") as f:
+                        root = _build_xml_root(data_list, ET)
+                        ET.ElementTree(root).write(f, encoding="unicode")
             except OSError as e:
                 raise IncorporatorFormatError(f"XML File IO Error on {file_path}: {e}") from e

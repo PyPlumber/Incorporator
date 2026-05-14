@@ -1,11 +1,51 @@
 """Abstract base handler and shared utilities for format I/O."""
 
+import os
+import uuid
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Union
+from typing import Any, Dict, Iterable, Iterator, List, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType
+
+
+@contextmanager
+def atomic_write_path(target: Union[str, Path]) -> Iterator[Path]:
+    """Yield a sibling tempfile path; rename atomically on success.
+
+    Use for monolithic formats that write a single bulk file (Parquet,
+    Excel, JSON, XML).  If the write completes successfully, the
+    tempfile is renamed to ``target`` via ``os.replace()`` — an atomic
+    operation on POSIX and Windows.  If the write raises, the tempfile
+    is removed so we don't leave a half-written corrupt file behind.
+
+    Pre-existing ``target`` files are left untouched until the rename
+    succeeds, so an interrupted write never destroys the prior version.
+
+    Streaming formats (NDJSON, CSV, SQLite, Avro) don't need this —
+    their writes append line-by-line and partial output is recoverable.
+    """
+    target_path = Path(target).resolve()
+    # Sibling tempfile in the same directory so os.replace stays atomic
+    # (cross-device renames are not atomic on POSIX).
+    tmp_path = target_path.with_name(f"{target_path.name}.tmp-{uuid.uuid4().hex[:8]}")
+    try:
+        yield tmp_path
+    except BaseException:
+        # Clean up the tempfile on any failure (including KeyboardInterrupt).
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+    else:
+        # Successful write — rename atomically.  os.replace overwrites the
+        # destination on both POSIX and Windows (≥Vista), so we don't need
+        # to special-case "destination exists".
+        os.replace(tmp_path, target_path)
 
 
 # Formats whose write handlers accept ``if_exists="append"``.  The pipeline

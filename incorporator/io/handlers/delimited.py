@@ -28,6 +28,12 @@ class CSVHandler(BaseFormatHandler):
         self.delimiter = delimiter
 
     def _parse_stream(self, stream: Union[TextIO, io.StringIO], **kwargs: Any) -> List[Dict[str, Any]]:
+        # csv.DictReader yields empty strings ("") for empty cells.  By default
+        # we coerce those to None so Pydantic's Optional[T] semantics work the
+        # way users expect — a blank cell in a CSV is semantically *missing*
+        # data, not the empty-string sentinel.  Opt out with
+        # ``csv_empty_as_none=False`` when "" is genuinely meaningful.
+        empty_as_none: bool = kwargs.get("csv_empty_as_none", True)
         try:
             reader = csv.DictReader(stream, delimiter=self.delimiter)
             rows: List[Dict[str, Any]] = []
@@ -36,7 +42,10 @@ class CSVHandler(BaseFormatHandler):
                 parsed_row: Dict[str, Any] = {}
                 for k, v in row.items():
                     safe_k = str(k) if k is not None else "unknown_column"
-                    parsed_row[safe_k] = deserialize_nested(v)
+                    coerced = deserialize_nested(v)
+                    if empty_as_none and coerced == "":
+                        coerced = None
+                    parsed_row[safe_k] = coerced
                 rows.append(parsed_row)
             return rows
         except csv.Error as e:
