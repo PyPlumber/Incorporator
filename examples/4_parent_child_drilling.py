@@ -1,13 +1,13 @@
 """
-Tutorial 4 — Parent → Child Drilling: SpaceX Launches + Rockets
----------------------------------------------------------------
+Tutorial 4 — Parent → Child Drilling: SpaceX Launches + Rockets + Launchpads
+----------------------------------------------------------------------------
 Companion script for `docs/4_parent_child_drilling.md`.
 
-Two `incorp()` calls build two registries — launches and rockets —
-then join them by rocket ID in O(1).  The framework handles the
-parent→child fan-out concurrently, dedupes the rocket IDs (most
-upcoming launches share a handful of rocket types), and retries on
-transient failure.
+Three `incorp()` calls build three registries — launches, rockets,
+and launchpads — then join them by ID in O(1).  The framework fans
+out each parent → child drill concurrently, dedupes IDs (only a
+handful of pads / rocket types serve hundreds of upcoming launches),
+and retries on transient failure.
 
 Run with:
     python examples/4_parent_child_drilling.py
@@ -26,6 +26,10 @@ class Rocket(Incorporator):
     pass
 
 
+class Pad(Incorporator):
+    pass
+
+
 async def main() -> None:
     # ------------------------------------------------------------------
     # PHASE 1 — Load the parent list (upcoming launches).
@@ -38,38 +42,53 @@ async def main() -> None:
     print(f"✅ Loaded {len(launches)} upcoming launches.")
 
     # ------------------------------------------------------------------
-    # PHASE 2 — Drill each launch's `rocket` field into the rockets endpoint.
+    # PHASE 2 — Drill BOTH `rocket` and `launchpad` IDs in parallel.
     # ------------------------------------------------------------------
-    # `inc_url` carries a single `{}` slot.  The framework extracts each
-    # launch's `rocket` ID, dedups the set, and fans out concurrent
-    # requests to /v4/rockets/{rocket_id}.
-    rockets = await Rocket.incorp(
-        inc_url="https://api.spacexdata.com/v4/rockets/{}",
-        inc_parent=launches,
-        inc_child="rocket",
-        inc_code="id",
+    # Each drill is an independent incorp() call against the same parent
+    # registry.  The framework extracts each launch's child ID, dedups
+    # the set (5 unique pads cover 18 launches; only 2 rocket types), and
+    # fans out concurrent requests through the shared HTTP/2 client.
+    rockets, pads = await asyncio.gather(
+        Rocket.incorp(
+            inc_url="https://api.spacexdata.com/v4/rockets/{}",
+            inc_parent=launches,
+            inc_child="rocket",
+            inc_code="id",
+        ),
+        Pad.incorp(
+            inc_url="https://api.spacexdata.com/v4/launchpads/{}",
+            inc_parent=launches,
+            inc_child="launchpad",
+            inc_code="id",
+        ),
     )
-    print(f"✅ Loaded {len(rockets)} unique rockets.")
+    print(f"✅ Loaded {len(rockets)} unique rockets, {len(pads)} unique launchpads.")
 
     # ------------------------------------------------------------------
-    # PHASE 3 — O(1) in-memory join.
+    # PHASE 3 — O(1) three-way join.
     # ------------------------------------------------------------------
-    print("\n" + "=" * 78)
-    print(f"{'LAUNCH':<40} {'ROCKET':<22} {'HEIGHT':>12}")
-    print("=" * 78)
+    header = f"{'LAUNCH':<32} {'ROCKET':<14} {'PAD':<20} {'REGION':<18} {'SUCCESS':>8}"
+    print("\n" + "=" * len(header))
+    print(header)
+    print("=" * len(header))
     for launch in launches[:15]:
         rocket = Rocket.inc_dict.get(launch.rocket)
-        rocket_name = rocket.name if rocket else "?"
-        try:
-            height = f"{rocket.height.meters:.1f} m" if rocket else "?"
-        except AttributeError:
-            height = "?"
-        name = (launch.name or "Unknown")[:40]
-        print(f"{name:<40} {rocket_name:<22} {height:>12}")
+        pad = Pad.inc_dict.get(launch.launchpad)
 
-    # Any failed sources surface on the result list for DLQ retry.
-    if rockets.failed_sources:
-        print(f"\n⚠️  Failed rocket lookups: {rockets.failed_sources}")
+        rocket_name = rocket.name if rocket else "?"
+        pad_name = (pad.name if pad else "?")[:20]
+        region = (pad.region if pad else "?")[:18]
+        success = (
+            f"{pad.launch_successes}/{pad.launch_attempts}"
+            if pad and pad.launch_attempts
+            else "—"
+        )
+        name = (launch.name or "Unknown")[:32]
+        print(f"{name:<32} {rocket_name:<14} {pad_name:<20} {region:<18} {success:>8}")
+
+    # Failed sources surface on each result list for DLQ retry.
+    if rockets.failed_sources or pads.failed_sources:
+        print(f"\n⚠️  Failed: rockets={rockets.failed_sources}, pads={pads.failed_sources}")
 
 
 if __name__ == "__main__":

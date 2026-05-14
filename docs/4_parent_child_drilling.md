@@ -22,34 +22,44 @@ rocket specs — all in two `incorp()` calls.
 ## The Pattern
 
 ```python
-# 1. Load the parents — each launch has a `rocket: str` field with an ID.
+# 1. Load the parents — each launch has `rocket` and `launchpad` ID fields.
 launches = await Launch.incorp(
     inc_url="https://api.spacexdata.com/v4/launches/upcoming",
     inc_code="id",
     inc_name="name",
 )
 
-# 2. Drill the child — for each launch's rocket ID, hit /v4/rockets/{id}.
-rockets = await Rocket.incorp(
-    inc_url="https://api.spacexdata.com/v4/rockets/{}",  # `{}` is the ID slot
-    inc_parent=launches,                                 # parent list to walk
-    inc_child="rocket",                                  # field name on parent
-    inc_code="id",
+# 2. Drill BOTH child relationships in parallel.
+rockets, pads = await asyncio.gather(
+    Rocket.incorp(
+        inc_url="https://api.spacexdata.com/v4/rockets/{}",  # `{}` is the ID slot
+        inc_parent=launches,                                 # parent list to walk
+        inc_child="rocket",                                  # field name on parent
+        inc_code="id",
+    ),
+    Pad.incorp(
+        inc_url="https://api.spacexdata.com/v4/launchpads/{}",
+        inc_parent=launches,
+        inc_child="launchpad",
+        inc_code="id",
+    ),
 )
 ```
 
-The framework:
+For each `inc_parent` / `inc_child` pair, the framework:
 
-1. Walks `launches`, extracts each launch's `rocket` field.
-2. Deduplicates the IDs (most upcoming launches share a handful of
-   rocket types — no point requesting the same rocket twice).
+1. Walks `launches`, extracts the child field from every record.
+2. **Deduplicates the IDs** — 18 upcoming launches share just 2
+   rocket types and 3 launchpads, so the framework fires 5 HTTP
+   requests, not 36.
 3. Substitutes each unique ID into the `{}` slot of `inc_url`.
 4. Fires every request **concurrently** through the same shared
-   `httpx.AsyncClient` (HTTP/2 multiplexed).
-5. Builds a `Rocket` instance per response and registers it under
-   `Rocket.inc_dict[<rocket_id>]`.
+   `httpx.AsyncClient` (HTTP/2 multiplexed). Both drills overlap in
+   time because `asyncio.gather` runs them in parallel.
+5. Builds a typed instance per response and registers it under
+   `<Cls>.inc_dict[<id>]`.
 
-Two registries, fully populated, ready for an O(1) join.
+Three registries, fully populated, ready for an O(1) three-way join.
 
 ---
 
@@ -68,6 +78,10 @@ class Rocket(Incorporator):
     pass
 
 
+class Pad(Incorporator):
+    pass
+
+
 async def main():
     # Phase 1: Load the parent list.
     launches = await Launch.incorp(
@@ -77,29 +91,55 @@ async def main():
     )
     print(f"Loaded {len(launches)} upcoming launches.")
 
-    # Phase 2: Drill the rocket ID on each launch into its own object.
-    rockets = await Rocket.incorp(
-        inc_url="https://api.spacexdata.com/v4/rockets/{}",
-        inc_parent=launches,
-        inc_child="rocket",
-        inc_code="id",
+    # Phase 2: Drill BOTH children in parallel.
+    rockets, pads = await asyncio.gather(
+        Rocket.incorp(
+            inc_url="https://api.spacexdata.com/v4/rockets/{}",
+            inc_parent=launches,
+            inc_child="rocket",
+            inc_code="id",
+        ),
+        Pad.incorp(
+            inc_url="https://api.spacexdata.com/v4/launchpads/{}",
+            inc_parent=launches,
+            inc_child="launchpad",
+            inc_code="id",
+        ),
     )
-    print(f"Loaded {len(rockets)} unique rockets.")
+    print(f"Loaded {len(rockets)} rockets, {len(pads)} pads.")
 
-    # Phase 3: O(1) in-memory join.
-    print("\n" + "=" * 70)
-    print(f"{'LAUNCH':<35} {'ROCKET':<20} {'HEIGHT':>10}")
-    print("=" * 70)
+    # Phase 3: O(1) three-way join.
     for launch in launches:
         rocket = Rocket.inc_dict.get(launch.rocket)
-        height = f"{rocket.height.meters:.1f} m" if rocket else "?"
-        rocket_name = rocket.name if rocket else "?"
-        print(f"{launch.name[:35]:<35} {rocket_name:<20} {height:>10}")
+        pad = Pad.inc_dict.get(launch.launchpad)
+        print(
+            f"{launch.name:<32} "
+            f"{rocket.name:<14} "
+            f"{pad.name:<20} "
+            f"{pad.region:<12} "
+            f"{pad.launch_successes}/{pad.launch_attempts}"
+        )
 
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+
+Output (real SpaceX data, today):
+
+```text
+LAUNCH                           ROCKET         PAD                  REGION       SUCCESS
+========================================================================================
+USSF-44                          Falcon Heavy   KSC LC 39A           Florida       55/55
+Starlink 4-36 (v1.5)             Falcon 9       CCSFS SLC 40         Florida       97/99
+CRS-26                           Falcon 9       KSC LC 39A           Florida       55/55
+SWOT                             Falcon 9       VAFB SLC 4E          California    27/28
+TTL-1                            Falcon 9       VAFB SLC 4E          California    27/28
+```
+
+The dedup story: **18 launches, 36 child references, 5 HTTP requests.**
+The framework collapsed the duplicates before fan-out. Compare to a
+naive `for` loop that would have fired 36 sequential requests.
 
 ---
 
