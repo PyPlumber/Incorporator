@@ -450,6 +450,220 @@ manufacturer leaderboard surfaces and the legacy ETL hid in memory.
 
 ---
 
+## 🐳 Run It From the CLI
+
+The same seven-source pipeline expressed as a JSON config — no
+Python wrapper required.  The CLI loader resolves `cls_name` by
+importing the `outflow=` file and looking up each class by name,
+which is how the multi-source registration stays JSON-serialisable.
+
+### `config/pipeline.json`
+
+```json
+{
+  "inflow":  "examples/fjord_code/nascar_fantasy.py",
+  "outflow": "examples/fjord_code/nascar_fantasy.py",
+  "stream_params": [
+    {
+      "cls_name": "Track",
+      "incorp_params": {
+        "inc_url":   "https://cf.nascar.com/cacher/tracks.json",
+        "rec_path":  "items",
+        "inc_code":  "track_id",
+        "inc_name":  "track_name"
+      },
+      "refresh_params": null
+    },
+    {
+      "cls_name": "Driver",
+      "incorp_params": {
+        "inc_url":   "https://cf.nascar.com/cacher/drivers.json",
+        "rec_path":  "response",
+        "inc_code":  "Nascar_Driver_ID",
+        "inc_name":  "Full_Name",
+        "excl_lst":  ["Series_Logo", "Short_Name", "Description", "Hobbies",
+                      "Children", "Residing_City", "Residing_State",
+                      "Residing_Country", "Image_Transparent", "SecondaryImage",
+                      "Career_Stats", "Age", "Rank", "Points", "Points_Behind",
+                      "No_Wins", "Poles", "Top5", "Top10", "Laps_Led",
+                      "Stage_Wins", "Playoff_Points", "Playoff_Rank",
+                      "Integrated_Sponsor_Name", "Integrated_Sponsor",
+                      "Integrated_Sponsor_URL", "Silly_Season_Change",
+                      "Silly_Season_Change_Description", "Driver_Post_Status",
+                      "Driver_Part_Time"]
+      }
+    },
+    {
+      "cls_name": "Race",
+      "incorp_params": {
+        "inc_url":   "https://cf.nascar.com/cacher/2026/race_list_basic.json",
+        "rec_path":  "series_1",
+        "inc_code":  "race_id",
+        "inc_name":  "race_name",
+        "excl_lst":  ["schedule", "track_name"],
+        "name_chg":  [["track_id", "track"]]
+      }
+    },
+    {
+      "cls_name": "CupStanding",
+      "incorp_params": {
+        "inc_url":   "https://cf.nascar.com/data/cacher/production/2026/1/racinginsights-points-feed.json",
+        "inc_code":  "driver_id",
+        "inc_name":  "driver_name",
+        "excl_lst":  ["is_clinch", "driver_first_name", "driver_last_name",
+                      "driver_suffix", "playoff_stage_wins"],
+        "conv_dict": {
+          "points":   "calc(int, default=0, target_type=int)",
+          "wins":     "calc(int, default=0, target_type=int)",
+          "top_10":   "calc(int, default=0, target_type=int)",
+          "top_5":    "calc(int, default=0, target_type=int)",
+          "laps_led": "calc(int, default=0, target_type=int)",
+          "position": "calc(int, default=0, target_type=int)"
+        }
+      }
+    },
+    {
+      "cls_name": "BuschStanding",
+      "incorp_params": { "...same shape as CupStanding, /2/ endpoint": "..." }
+    },
+    {
+      "cls_name": "TruckStanding",
+      "incorp_params": { "...same shape as CupStanding, /3/ endpoint": "..." }
+    },
+    {
+      "cls_name": "LeagueRoster",
+      "incorp_params": {
+        "inc_file":  "config/league_teams.json",
+        "inc_code":  "team_id",
+        "inc_name":  "team_id"
+      },
+      "refresh_params": null
+    }
+  ],
+  "export_params": {
+    "MonthlyRaceSchedule":     {"file_path": "data/nascar_monthly_schedule.ndjson"},
+    "FantasyTeam":             {"file_path": "data/nascar_fantasy_scoreboard.ndjson"},
+    "ManufacturerLeaderboard": {"file_path": "data/nascar_manufacturer_leaderboard.ndjson"}
+  },
+  "refresh_interval": {
+    "Driver":        3600,
+    "Race":          600,
+    "CupStanding":   300,
+    "BuschStanding": 300,
+    "TruckStanding": 300
+  },
+  "export_interval": 60
+}
+```
+
+A few JSON-specific notes:
+
+* **`refresh_params: null`** is the JSON spelling of Python's
+  `refresh_params=None` — opts the source out of the refresh
+  daemon.  Used here for `Track` (tracks never change) and
+  `LeagueRoster` (rosters change rarely; restart the daemon when
+  you edit the file).
+* **`conv_dict` values are quoted strings.**  The token resolver in
+  `cli/tokens.py` parses them at config-load time and substitutes
+  the real callables.  `calc(int, default=0, target_type=int)`
+  becomes the actual converter; same for `inc(datetime)` etc.
+  `link_to(state["…"])` calls live in `inflow(state)` — not in the
+  JSON — because they need the runtime registry handle.
+* **`name_chg` uses arrays not tuples.**  JSON has no tuple
+  literal; `["track_id", "track"]` deserialises to the same shape
+  the Python code uses.
+* **`refresh_interval` as a dict** keyed by class name, exactly
+  like Python — JSON-friendly out of the box.
+* **`export_params` keyed by output class** — multi-output detection
+  is "is there a top-level `file_path` key?  No → multi-output."
+
+### Validate + run
+
+```bash
+incorporator validate config/pipeline.json
+incorporator fjord    config/pipeline.json --logs
+```
+
+`--logs` routes every Wave through the `LoggedIncorporator` queue
+handler into `logs/api.log` (success) and `logs/error.log` (failures
+with redacted URLs).  Add `--heartbeat-file /tmp/inc.beat` to pair
+with Docker's `HEALTHCHECK`.
+
+---
+
+## 🐳 Run It in Docker
+
+The repo's `docker-compose.yml` and `Dockerfile` already work for
+this pipeline.  Three host folders bind-mount into the container:
+
+| Host | Container | What goes here |
+|---|---|---|
+| `./config` | `/app/config` *(read-only)* | `pipeline.json` **and** `league_teams.json` (the `inc_file` source) |
+| `./data` | `/app/data` | Three NDJSON outputs land here |
+| `./logs` | `/app/logs` | Rotating JSON log files (when `--logs` is set) |
+
+The key wrinkle compared to a single-source fjord: **the
+`league_teams.json` file must live where the container can read it**.
+Easiest pattern is to drop it next to `pipeline.json` in `config/`
+and reference it with a container-relative path:
+
+```bash
+# 1. Lay out the host folders.
+mkdir -p config data logs
+cp examples/fjord_code/league_teams.json config/league_teams.json
+
+# 2. Write config/pipeline.json (see the JSON above) with the
+#    container path:
+#         "inc_file": "config/league_teams.json"
+#    NOT  "inc_file": "examples/fjord_code/league_teams.json"
+#    — the container only sees /app/config and /app/data.
+
+# 3. Also drop the inflow/outflow sidecar in config/ so the
+#    container can import it:
+cp examples/fjord_code/nascar_fantasy.py config/nascar_fantasy.py
+#    and point pipeline.json at the container-side path:
+#         "inflow":  "config/nascar_fantasy.py",
+#         "outflow": "config/nascar_fantasy.py"
+
+# 4. Validate + launch.
+incorporator validate config/pipeline.json
+docker compose up -d
+docker compose logs -f
+```
+
+`docker compose up -d` starts the long-running fjord daemon with the
+`refresh_interval` + `export_interval` cadences above.  The
+container's `HEALTHCHECK` watches the heartbeat file (touched after
+every Wave); a stalled daemon is auto-restarted by the orchestrator
+(compose / swarm / k8s).
+
+### Refresh schedule for NASCAR's update cadence
+
+The defaults in the JSON above are tuned for live-season operation:
+
+| Source | Cadence | Rationale |
+|---|---:|---|
+| `Track` | refresh off | Tracks never change mid-season |
+| `Driver` | 1 h | Crew-chief / sponsor swaps occasionally |
+| `Race` | 10 min | Pole winner finalises Saturday; race winner Sunday |
+| `CupStanding` / `BuschStanding` / `TruckStanding` | 5 min | Live points update during/after each race |
+| `LeagueRoster` | refresh off | Edit the JSON + restart the daemon |
+| Outflow tick | 60 s | Fused export every minute |
+
+For an off-season demo (one-shot run with no refresh), set every
+`refresh_params: null` and drop `refresh_interval` / `export_interval`
+entirely — the pipeline exits cleanly after one outflow tick.
+
+### Secrets aren't required
+
+This pipeline calls *only* public NASCAR endpoints — no API keys, no
+auth.  The `${API_KEY}` / `${file:/run/secrets/...}` patterns
+documented in the
+[deployment guide](../deployment.md#secrets--local-vs-production)
+apply if you ever swap one of the sources for a paid feed.
+
+---
+
 ## 🧠 What This Demonstrates
 
 | Pattern | Where to look |
