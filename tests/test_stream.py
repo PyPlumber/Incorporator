@@ -58,25 +58,25 @@ async def test_stream_engine_1_chunking_big_data(
         "code_attr": "id"
     }
 
-    audits: List[Wave] = []
+    waves: List[Wave] = []
 
     # Execute Engine 1 Stream
-    async for audit in StreamTargetModel.stream(
+    async for wave in StreamTargetModel.stream(
             incorp_params=incorp_params,
             stateful_polling=False
     ):
-        audits.append(audit)
+        waves.append(wave)
 
     # Assert O(1) Chunking Mathematics
-    assert len(audits) == 3
-    assert audits[0].rows_processed == 2
-    assert audits[1].rows_processed == 2
-    assert audits[2].rows_processed == 1
+    assert len(waves) == 3
+    assert waves[0].rows_processed == 2
+    assert waves[1].rows_processed == 2
+    assert waves[2].rows_processed == 1
 
     # Verify sequential indexing
-    assert audits[0].chunk_index == 1
-    assert audits[1].chunk_index == 2
-    assert audits[2].chunk_index == 3
+    assert waves[0].chunk_index == 1
+    assert waves[1].chunk_index == 2
+    assert waves[2].chunk_index == 3
     assert paginator.is_exhausted is True
 
 
@@ -100,22 +100,22 @@ async def test_stream_engine_2_stateful_live_data(
         "code_attr": "id"
     }
 
-    audits: List[Wave] = []
+    waves: List[Wave] = []
 
     # Execute Engine 2 Stream (poll_interval=None forces it to break after 1 loop)
-    async for audit in StreamTargetModel.stream(
+    async for wave in StreamTargetModel.stream(
             incorp_params=incorp_params,
             stateful_polling=True,
             poll_interval=None
     ):
-        audits.append(audit)
+        waves.append(wave)
 
     # Assert Stateful Polling Initialization
-    assert len(audits) == 1
-    assert audits[0].chunk_index == 1
+    assert len(waves) == 1
+    assert waves[0].chunk_index == 1
     # It processed the entire live graph (3 items) at once
-    assert audits[0].rows_processed == 3
-    assert audits[0].failed_sources == []
+    assert waves[0].rows_processed == 3
+    assert waves[0].failed_sources == []
 
 
 @pytest.mark.asyncio
@@ -134,18 +134,18 @@ async def test_stream_engine_2_empty_failsafe(
         "inc_file": str(json_file)
     }
 
-    audits: List[Wave] = []
+    waves: List[Wave] = []
 
-    async for audit in StreamTargetModel.stream(
+    async for wave in StreamTargetModel.stream(
             incorp_params=incorp_params,
             stateful_polling=True
     ):
-        audits.append(audit)
+        waves.append(wave)
 
     # Assert Graceful Shutdown
-    assert len(audits) == 1
-    assert audits[0].rows_processed == 0
-    assert "Initial incorp() yielded no data" in audits[0].failed_sources[0]
+    assert len(waves) == 1
+    assert waves[0].rows_processed == 0
+    assert "Initial incorp() yielded no data" in waves[0].failed_sources[0]
 
 
 @pytest.mark.asyncio

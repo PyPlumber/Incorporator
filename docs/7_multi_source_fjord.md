@@ -5,7 +5,7 @@
 `stream()` watches **one** source. `fjord()` watches **N** sources
 concurrently and lets you fuse them through a user-defined
 `outflow(state)` function — the engine handles every concurrent refresh,
-every export tick, the shared lock, the audit queue, and the dynamic
+every export tick, the shared lock, the wave queue, and the dynamic
 output class.
 
 This tutorial builds a live fusion: every minute we refresh both the
@@ -71,7 +71,7 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
 ```
 
 That's the entire `outflow.py`. Two classes + one function. No daemon
-plumbing, no lock acquisition, no audit emission — `fjord()` handles all
+plumbing, no lock acquisition, no wave emission — `fjord()` handles all
 of it.
 
 ---
@@ -87,7 +87,7 @@ from outflow import SpaceXLaunch, SpaceXRocket
 
 
 async def main():
-    async for audit in Incorporator.fjord(
+    async for wave in Incorporator.fjord(
         stream_params=[
             {
                 "cls": SpaceXLaunch,
@@ -109,8 +109,8 @@ async def main():
         refresh_interval=60.0,
         export_interval=120.0,
     ):
-        op = audit.operation         # e.g. "fjord_refresh:SpaceXLaunch" or "outflow:Outflow"
-        print(f"{op:30s} chunk {audit.chunk_index}: {audit.rows_processed} rows")
+        op = wave.operation         # e.g. "fjord_refresh:SpaceXLaunch" or "outflow:Outflow"
+        print(f"{op:30s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
 
 
 if __name__ == "__main__":
@@ -122,7 +122,7 @@ if __name__ == "__main__":
 ## What `fjord()` is doing under the hood
 
 1. **Concurrent seed.** All `stream_params[*].cls.incorp(...)` calls run
-   in parallel via `asyncio.gather`. One audit per source.
+   in parallel via `asyncio.gather`. One wave per source.
 2. **Per-source refresh daemons.** One daemon per entry. Each independently
    re-fetches on its own `refresh_interval` (you can override per entry —
    sources refresh at different cadences naturally).
@@ -137,7 +137,7 @@ if __name__ == "__main__":
 5. **Export.** Same handler dispatch as `stream()` — file extension picks
    the format (Parquet here, but switch to `.ndjson`, `.csv`, `.sqlite`,
    `.avro`, etc., for free).
-6. **Shutdown.** SIGTERM / Ctrl+C cancels every task; the audit queue
+6. **Shutdown.** SIGTERM / Ctrl+C cancels every task; the wave queue
    drains; the `async for` loop exits.
 
 ---

@@ -59,21 +59,21 @@ async def test_chunking_memory_stays_flat(big_csv: Path) -> None:
     }
 
     samples: List[int] = []
-    audits: List[Wave] = []
+    waves: List[Wave] = []
 
     # Warm up + clean baseline
     gc.collect()
     tracemalloc.start()
     try:
-        async for audit in BenchModel.stream(incorp_params=incorp_params, stateful_polling=False):
-            audits.append(audit)
+        async for wave in BenchModel.stream(incorp_params=incorp_params, stateful_polling=False):
+            waves.append(wave)
             current, _ = tracemalloc.get_traced_memory()
             samples.append(current)
     finally:
         tracemalloc.stop()
 
-    # Sanity: we should have got at least 10 chunks of audit data
-    assert len(audits) >= 10, f"Expected many chunks, got {len(audits)}"
+    # Sanity: we should have got at least 10 chunks of wave data
+    assert len(waves) >= 10, f"Expected many chunks, got {len(waves)}"
 
     # Discard the first 2 samples to ignore one-time allocation costs (handler init, etc.)
     stable_samples = samples[2:]

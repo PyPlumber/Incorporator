@@ -131,10 +131,10 @@ async def test_refresh_daemon_single_run_enqueues_wave() -> None:
 
     assert dataset_ref[0] == refreshed
     assert q.qsize() == 1
-    audit = q.get_nowait()
-    assert audit is not None
-    assert audit.operation == "refresh"
-    assert audit.rows_processed == 1
+    wave = q.get_nowait()
+    assert wave is not None
+    assert wave.operation == "refresh"
+    assert wave.rows_processed == 1
 
 
 @pytest.mark.asyncio
@@ -150,10 +150,10 @@ async def test_refresh_daemon_error_enqueues_failure_result() -> None:
 
     await _refresh_daemon(cls, dataset_ref, refresh_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, r_interval=None)
 
-    audit = q.get_nowait()
-    assert audit is not None
-    assert audit.rows_processed == 0
-    assert any("network gone" in s for s in audit.failed_sources)
+    wave = q.get_nowait()
+    assert wave is not None
+    assert wave.rows_processed == 0
+    assert any("network gone" in s for s in wave.failed_sources)
 
 
 # ==========================================
@@ -177,10 +177,10 @@ async def test_export_daemon_single_run_enqueues_wave() -> None:
     )
 
     cls.export.assert_awaited_once()
-    audit = q.get_nowait()
-    assert audit is not None
-    assert audit.operation == "export"
-    assert audit.rows_processed == 2
+    wave = q.get_nowait()
+    assert wave is not None
+    assert wave.operation == "export"
+    assert wave.rows_processed == 2
 
 
 @pytest.mark.asyncio
@@ -196,10 +196,10 @@ async def test_export_daemon_error_enqueues_failure_result() -> None:
 
     await _export_daemon(cls, dataset_ref, export_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, e_interval=None)
 
-    audit = q.get_nowait()
-    assert audit is not None
-    assert audit.rows_processed == 0
-    assert any("disk full" in s for s in audit.failed_sources)
+    wave = q.get_nowait()
+    assert wave is not None
+    assert wave.rows_processed == 0
+    assert any("disk full" in s for s in wave.failed_sources)
 
 
 # ==========================================
@@ -214,10 +214,10 @@ async def test_run_stateful_engine_empty_dataset_exits_early() -> None:
     cls.incorp = AsyncMock(return_value=[])
 
     results = []
-    async for audit in _run_stateful_engine(
+    async for wave in _run_stateful_engine(
         cls, incorp_params={}, refresh_params=None, export_params=None, r_interval=None, e_interval=None
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert len(results) == 1
     assert results[0].rows_processed == 0
@@ -231,10 +231,10 @@ async def test_run_stateful_engine_no_daemons_emits_incorp_result() -> None:
     cls.incorp = AsyncMock(return_value=[{"id": 1}, {"id": 2}])
 
     results = []
-    async for audit in _run_stateful_engine(
+    async for wave in _run_stateful_engine(
         cls, incorp_params={}, refresh_params=None, export_params=None, r_interval=None, e_interval=None
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert len(results) == 1
     assert results[0].operation == "incorp"
@@ -249,7 +249,7 @@ async def test_run_stateful_engine_with_refresh_daemon() -> None:
     cls.refresh = AsyncMock(return_value=[{"id": 99}])
 
     results = []
-    async for audit in _run_stateful_engine(
+    async for wave in _run_stateful_engine(
         cls,
         incorp_params={},
         refresh_params={"new_url": "https://x"},
@@ -257,7 +257,7 @@ async def test_run_stateful_engine_with_refresh_daemon() -> None:
         r_interval=None,  # daemon runs once then exits
         e_interval=None,
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert any(a.operation == "refresh" for a in results)
 
@@ -270,7 +270,7 @@ async def test_run_stateful_engine_with_export_daemon() -> None:
     cls.export = AsyncMock()
 
     results = []
-    async for audit in _run_stateful_engine(
+    async for wave in _run_stateful_engine(
         cls,
         incorp_params={},
         refresh_params=None,
@@ -278,7 +278,7 @@ async def test_run_stateful_engine_with_export_daemon() -> None:
         r_interval=None,
         e_interval=None,  # daemon runs once then exits
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert any(a.operation == "export" for a in results)
     cls.export.assert_awaited_once()
@@ -296,10 +296,10 @@ async def test_run_chunking_engine_single_shot() -> None:
     cls.incorp = AsyncMock(return_value=[{"id": 1}])
 
     results = []
-    async for audit in _run_chunking_engine(
+    async for wave in _run_chunking_engine(
         cls, incorp_params={}, refresh_params=None, export_params=None, poll_interval=None, paginator=None
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert len(results) == 1
     assert results[0].operation == "chunk"
@@ -313,10 +313,10 @@ async def test_run_chunking_engine_empty_dataset_no_paginator() -> None:
     cls.incorp = AsyncMock(return_value=[])
 
     results = []
-    async for audit in _run_chunking_engine(
+    async for wave in _run_chunking_engine(
         cls, incorp_params={}, refresh_params=None, export_params=None, poll_interval=None, paginator=None
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert results == []
 
@@ -328,10 +328,10 @@ async def test_run_chunking_engine_exception_yields_failure() -> None:
     cls.incorp = AsyncMock(side_effect=RuntimeError("fetch failed"))
 
     results = []
-    async for audit in _run_chunking_engine(
+    async for wave in _run_chunking_engine(
         cls, incorp_params={}, refresh_params=None, export_params=None, poll_interval=None, paginator=None
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert len(results) == 1
     assert results[0].rows_processed == 0
@@ -359,7 +359,7 @@ async def test_run_chunking_engine_paginator_reset_called_between_passes() -> No
     results = []
 
     async def collect() -> None:
-        async for audit in _run_chunking_engine(
+        async for wave in _run_chunking_engine(
             cls,
             incorp_params={},
             refresh_params=None,
@@ -367,7 +367,7 @@ async def test_run_chunking_engine_paginator_reset_called_between_passes() -> No
             poll_interval=0.001,
             paginator=paginator,
         ):
-            results.append(audit)
+            results.append(wave)
             if len(results) >= 2:
                 return  # stop collecting after 2 passes
 
@@ -392,7 +392,7 @@ async def test_run_pipeline_routes_to_chunking_engine() -> None:
     cls.incorp = AsyncMock(return_value=[{"id": 1}])
 
     results = []
-    async for audit in run_pipeline(
+    async for wave in run_pipeline(
         cls,
         incorp_params={},
         refresh_params=None,
@@ -400,7 +400,7 @@ async def test_run_pipeline_routes_to_chunking_engine() -> None:
         poll_interval=None,
         stateful_polling=False,
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert len(results) == 1
     assert results[0].operation == "chunk"
@@ -413,7 +413,7 @@ async def test_run_pipeline_routes_to_stateful_engine() -> None:
     cls.incorp = AsyncMock(return_value=[])  # empty → early exit path
 
     results = []
-    async for audit in run_pipeline(
+    async for wave in run_pipeline(
         cls,
         incorp_params={},
         refresh_params=None,
@@ -421,7 +421,7 @@ async def test_run_pipeline_routes_to_stateful_engine() -> None:
         poll_interval=None,
         stateful_polling=True,
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert len(results) == 1
     assert results[0].rows_processed == 0  # empty-dataset early-exit Wave
@@ -435,7 +435,7 @@ async def test_run_pipeline_refresh_interval_falls_back_to_poll_interval() -> No
     cls.refresh = AsyncMock(return_value=[{"id": 2}])
 
     results = []
-    async for audit in run_pipeline(
+    async for wave in run_pipeline(
         cls,
         incorp_params={},
         refresh_params={"new_url": "https://x"},
@@ -445,6 +445,6 @@ async def test_run_pipeline_refresh_interval_falls_back_to_poll_interval() -> No
         refresh_interval=None,  # falls back to poll_interval (also None → daemon runs once)
         export_interval=None,
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert any(a.operation == "refresh" for a in results)

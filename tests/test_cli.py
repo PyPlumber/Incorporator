@@ -170,7 +170,7 @@ def _write_fjord_fixture(tmp_path: Path) -> tuple[Path, Path]:
 
 
 async def mock_fjord(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
-    """Mocks the fjord async generator to yield two audits and exit."""
+    """Mocks the fjord async generator to yield two waves and exit."""
     yield Wave(
         chunk_index=1, operation="fjord_incorp:Coin", rows_processed=10, processing_time_sec=0.1
     )
@@ -180,7 +180,7 @@ async def mock_fjord(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
 
 
 def test_cli_fjord_success(tmp_path: Path) -> None:
-    """fjord subcommand imports the outflow file, resolves source classes, and drains audits.
+    """fjord subcommand imports the outflow file, resolves source classes, and drains waves.
 
     The output class is auto-derived from the filename — no ``output_class``
     JSON key.
@@ -188,7 +188,7 @@ def test_cli_fjord_success(tmp_path: Path) -> None:
     config, _ = _write_fjord_fixture(tmp_path)
 
     # Patch the LoggedIncorporator.fjord wrapper — the CLI now routes through
-    # it so per-tick audits flow through the disk logger when --logs is set.
+    # it so per-tick waves flow through the disk logger when --logs is set.
     with patch(
         "incorporator.cli.LoggedIncorporator.fjord",
         new=mock_fjord,
@@ -384,9 +384,9 @@ def test_cli_stream_json_output_emits_ndjson(tmp_path: Path) -> None:
         result = runner.invoke(app, ["stream", str(cfg), "--json-output"])
 
     assert result.exit_code == 0, result.stdout
-    # Filter for JSON-looking lines and confirm they parse with the audit shape.
+    # Filter for JSON-looking lines and confirm they parse with the wave shape.
     json_lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
-    assert json_lines, f"expected at least one NDJSON audit line, got: {result.stdout!r}"
+    assert json_lines, f"expected at least one NDJSON wave line, got: {result.stdout!r}"
     for line in json_lines:
         record = json.loads(line)
         assert "rows_processed" in record
@@ -400,7 +400,7 @@ def test_cli_stream_json_output_emits_ndjson(tmp_path: Path) -> None:
 
 
 def test_cli_stream_heartbeat_file_touched(tmp_path: Path) -> None:
-    """--heartbeat-file causes the CLI to touch the path after every audit."""
+    """--heartbeat-file causes the CLI to touch the path after every wave."""
     cfg = tmp_path / "pipeline.json"
     cfg.write_text(
         json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8"

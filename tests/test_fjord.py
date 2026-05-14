@@ -139,10 +139,10 @@ def _clean_state() -> Any:
 
 
 async def _drain(gen: AsyncGenerator[Any, None]) -> list:
-    """Collect every audit yielded by an async generator into a list."""
+    """Collect every wave yielded by an async generator into a list."""
     out: list = []
-    async for audit in gen:
-        out.append(audit)
+    async for wave in gen:
+        out.append(wave)
     return out
 
 
@@ -162,7 +162,7 @@ async def test_fjord_one_shot_combines_two_sources(
     outflow_file = _write_outflow(tmp_path)  # coin_market.py → CoinMarket
     out_file = tmp_path / "markets.ndjson"
 
-    audits = await _drain(
+    waves = await _drain(
         Incorporator.fjord(
             stream_params=[
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
@@ -174,15 +174,15 @@ async def test_fjord_one_shot_combines_two_sources(
         )
     )
 
-    # Two seed audits + one outflow audit.
-    operations = [a.operation for a in audits]
+    # Two seed waves + one outflow wave.
+    operations = [a.operation for a in waves]
     assert "fjord_incorp:Coin" in operations
     assert "fjord_incorp:BinanceFutures" in operations
     assert "outflow:CoinMarket" in operations
 
-    outflow_audit = next(a for a in audits if a.operation == "outflow:CoinMarket")
-    assert outflow_audit.rows_processed == 2
-    assert not outflow_audit.failed_sources
+    outflow_wave = next(a for a in waves if a.operation == "outflow:CoinMarket")
+    assert outflow_wave.rows_processed == 2
+    assert not outflow_wave.failed_sources
 
     # Dynamic CoinMarket class was built and its registry populated.
     CoinMarket = _find_dynamic_class("CoinMarket")
@@ -210,7 +210,7 @@ async def test_fjord_derives_class_name_from_stem(
     outflow_file = _write_outflow(tmp_path, filename="crypto_spread.py")
     out_file = tmp_path / "out.ndjson"
 
-    audits = await _drain(
+    waves = await _drain(
         Incorporator.fjord(
             stream_params=[
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
@@ -221,24 +221,24 @@ async def test_fjord_derives_class_name_from_stem(
         )
     )
 
-    operations = [a.operation for a in audits]
+    operations = [a.operation for a in waves]
     assert "outflow:CryptoSpread" in operations
     assert _find_dynamic_class("CryptoSpread") is not None
     assert _find_dynamic_class("CoinMarket") is None
 
 
 @pytest.mark.asyncio
-async def test_fjord_empty_outflow_emits_zero_row_audit(
+async def test_fjord_empty_outflow_emits_zero_row_wave(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """outflow() returning [] → zero-row audit, no export file written, no dynamic class built."""
+    """outflow() returning [] → zero-row wave, no export file written, no dynamic class built."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
 
     outflow_file = _write_outflow(tmp_path, EMPTY_OUTFLOW_SOURCE)
     out_file = tmp_path / "should_not_exist.ndjson"
 
-    audits = await _drain(
+    waves = await _drain(
         Incorporator.fjord(
             stream_params=[
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
@@ -249,26 +249,26 @@ async def test_fjord_empty_outflow_emits_zero_row_audit(
         )
     )
 
-    outflow_audit = next(a for a in audits if a.operation == "outflow:CoinMarket")
-    assert outflow_audit.rows_processed == 0
-    assert not outflow_audit.failed_sources
+    outflow_wave = next(a for a in waves if a.operation == "outflow:CoinMarket")
+    assert outflow_wave.rows_processed == 0
+    assert not outflow_wave.failed_sources
     assert not out_file.exists()
     # No dynamic class is built on a zero-row tick.
     assert _find_dynamic_class("CoinMarket") is None
 
 
 @pytest.mark.asyncio
-async def test_fjord_outflow_error_yields_audit_with_failed_sources(
+async def test_fjord_outflow_error_yields_wave_with_failed_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """outflow() raises → audit has failed_sources populated, no crash."""
+    """outflow() raises → wave has failed_sources populated, no crash."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
 
     outflow_file = _write_outflow(tmp_path, BROKEN_OUTFLOW_SOURCE)
     out_file = tmp_path / "wont-be-written.ndjson"
 
-    audits = await _drain(
+    waves = await _drain(
         Incorporator.fjord(
             stream_params=[
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
@@ -279,11 +279,11 @@ async def test_fjord_outflow_error_yields_audit_with_failed_sources(
         )
     )
 
-    outflow_audit = next(a for a in audits if a.operation == "outflow:CoinMarket")
-    assert outflow_audit.rows_processed == 0
-    assert outflow_audit.failed_sources
-    assert "Outflow Error" in outflow_audit.failed_sources[0]
-    assert "simulated outflow failure" in outflow_audit.failed_sources[0]
+    outflow_wave = next(a for a in waves if a.operation == "outflow:CoinMarket")
+    assert outflow_wave.rows_processed == 0
+    assert outflow_wave.failed_sources
+    assert "Outflow Error" in outflow_wave.failed_sources[0]
+    assert "simulated outflow failure" in outflow_wave.failed_sources[0]
 
 
 @pytest.mark.asyncio
@@ -370,7 +370,7 @@ async def test_fjord_outflow_missing_raises(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_fjord_per_stream_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Per-stream export_params produces its own export file with class-tagged audit."""
+    """Per-stream export_params produces its own export file with class-tagged wave."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
 
@@ -378,7 +378,7 @@ async def test_fjord_per_stream_export(tmp_path: Path, monkeypatch: pytest.Monke
     combined_out = tmp_path / "markets.ndjson"
     coin_out = tmp_path / "coins_only.ndjson"
 
-    audits = await _drain(
+    waves = await _drain(
         Incorporator.fjord(
             stream_params=[
                 {
@@ -393,7 +393,7 @@ async def test_fjord_per_stream_export(tmp_path: Path, monkeypatch: pytest.Monke
         )
     )
 
-    operations = [a.operation for a in audits]
+    operations = [a.operation for a in waves]
     assert "export:Coin" in operations
     assert "outflow:CoinMarket" in operations
     assert coin_out.exists()

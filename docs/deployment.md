@@ -68,7 +68,7 @@ control — copy yours into `config/` per environment.
 The Dockerfile and `docker-compose.yml` both declare a `HEALTHCHECK`
 that watches `/tmp/incorporator.heartbeat`. The CLI's
 `--heartbeat-file` flag (already baked into the default `CMD`)
-`touch`es that file after every audit. If no audits land for 2
+`touch`es that file after every wave. If no waves land for 2
 minutes, the container is reported unhealthy — your orchestrator
 (compose / swarm / k8s) can then restart it automatically.
 
@@ -133,7 +133,7 @@ CMD ["stream", "/app/config/pipeline.json", \
 
 The CLI installs a SIGTERM handler that triggers the same shutdown
 path as Ctrl+C: the engine drains in-flight refresh/export daemons,
-flushes audits, and exits cleanly. `docker stop`, `docker compose
+flushes waves, and exits cleanly. `docker stop`, `docker compose
 down`, and `kubectl delete pod` all send SIGTERM by default — no
 extra config required.
 

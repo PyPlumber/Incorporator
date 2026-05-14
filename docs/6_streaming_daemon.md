@@ -24,7 +24,7 @@ the CLI.
 * **Source:** `https://api.spacexdata.com/v4/launches/latest`
 * **Refresh cadence:** every 60 seconds
 * **Export cadence:** every 5 minutes, into `data/spacex_latest.parquet`
-* **Failure handling:** transient errors logged via the audit stream, not
+* **Failure handling:** transient errors logged via the wave stream, not
   fatal
 * **Shutdown:** Ctrl+C / SIGTERM drains in-flight work and exits cleanly
 
@@ -38,12 +38,12 @@ from incorporator import LoggedIncorporator
 
 
 class Launch(LoggedIncorporator):
-    """SpaceX latest-launch tracker — uses LoggedIncorporator so audits land in JSON logs."""
+    """SpaceX latest-launch tracker — uses LoggedIncorporator so waves land in JSON logs."""
     enable_logging = True
 
 
 async def main():
-    async for audit in Launch.stream(
+    async for wave in Launch.stream(
         incorp_params={
             "inc_url": "https://api.spacexdata.com/v4/launches/latest",
             "inc_code": "id",
@@ -53,10 +53,10 @@ async def main():
         export_params={"file_path": "data/spacex_latest.parquet"},
         export_interval=300.0,                                  # flush every 5 minutes
     ):
-        if audit.failed_sources:
-            print(f"⚠️  {audit.operation} chunk {audit.chunk_index}: {audit.failed_sources}")
+        if wave.failed_sources:
+            print(f"⚠️  {wave.operation} chunk {wave.chunk_index}: {wave.failed_sources}")
         else:
-            print(f"✅ {audit.operation} chunk {audit.chunk_index}: {audit.rows_processed} rows")
+            print(f"✅ {wave.operation} chunk {wave.chunk_index}: {wave.rows_processed} rows")
 
 
 if __name__ == "__main__":
@@ -94,7 +94,7 @@ operator-friendly:
 ### `LoggedIncorporator` → structured logs on disk
 
 By subclassing `LoggedIncorporator` (instead of `Incorporator`) and
-setting `enable_logging = True`, every audit is routed through a
+setting `enable_logging = True`, every wave is routed through a
 `QueueHandler` background thread into rotating JSON-line log files:
 
 ```
