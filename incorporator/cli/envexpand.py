@@ -105,7 +105,9 @@ def _lookup_env(name: str, op: str | None, arg: str | None) -> str:
     if op == ":-":
         return arg or ""
     if op == ":?":
-        raise EnvExpansionError(f"Required environment variable ${{{name}}} is unset: {arg or '(no message provided)'}")
+        raise EnvExpansionError(
+            f"Required environment variable ${{{name}}} is unset: " f"{arg or '(no message provided)'}"
+        )
     # Bare ${VAR} with no default and no error op → strict-fail.
     raise EnvExpansionError(
         f"Required environment variable ${{{name}}} is unset. "

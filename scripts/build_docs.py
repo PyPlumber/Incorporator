@@ -22,7 +22,10 @@ from pathlib import Path
 try:
     import pdoc
 except ImportError:
-    sys.stderr.write('pdoc is not installed. Install the docs extra:\n    pip install -e ".[docs]"\n')
+    sys.stderr.write(
+        "pdoc is not installed. Install the docs extra:\n"
+        '    pip install -e ".[docs]"\n'
+    )
     sys.exit(1)
 
 

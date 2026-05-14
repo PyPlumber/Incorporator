@@ -153,7 +153,7 @@ def apply_code_transform(
     params = list(sig.parameters)
     if len(params) != 1:
         raise ValueError(
-            f"[Incorporator] transform() must accept exactly 1 parameter (instances), got {len(params)}: {params}"
+            f"[Incorporator] transform() must accept exactly 1 parameter (instances), " f"got {len(params)}: {params}"
         )
 
     result = transform_fn(instances)
@@ -198,7 +198,7 @@ def load_outflow_function(outflow: Union[str, Path]) -> Callable[[Any], Any]:
     params = list(sig.parameters)
     if len(params) != 1:
         raise ValueError(
-            f"[Incorporator] outflow() must accept exactly 1 parameter (state), got {len(params)}: {params}"
+            f"[Incorporator] outflow() must accept exactly 1 parameter (state), " f"got {len(params)}: {params}"
         )
 
     return outflow_fn  # type: ignore[no-any-return]
