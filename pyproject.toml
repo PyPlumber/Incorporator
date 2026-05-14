@@ -65,7 +65,14 @@ avro =["fastavro>=1.8"]
 xlsx =["openpyxl>=3.1"]
 # Columnar format for data lakes / warehouses. Pyarrow is ~30 MB — deliberately
 # NOT included in [all] to keep the "everything reasonable" install lean.
-parquet =["pyarrow>=14.0"]
+# tzdata is required on Windows for pyarrow's ORC reader, which hardcodes
+# /usr/share/zoneinfo lookups regardless of platform. Linux/macOS ship the
+# IANA data natively, so the marker keeps the wheel weight off non-Windows
+# installs.
+parquet =[
+    "pyarrow>=14.0",
+    "tzdata>=2024.1; sys_platform == 'win32'",
+]
 # The v2.0 Pipeline Orchestration Upgrades
 orchestrate =[
     "typer>=0.9.0",

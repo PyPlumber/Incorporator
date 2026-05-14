@@ -1,12 +1,31 @@
 """Pytest fixtures and mock data for Incorporator testing."""
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Generator
 from unittest.mock import patch
 
 import pytest
+
+
+# --- ENVIRONMENT BOOTSTRAP (must run before pyarrow.orc imports its tz data) ---
+
+if sys.platform == "win32" and not os.environ.get("TZDIR"):
+    # PyArrow's ORC reader hardcodes /usr/share/zoneinfo lookups regardless of
+    # OS.  On Windows this path doesn't exist, so we point TZDIR at the IANA
+    # data shipped by the `tzdata` PyPI package (installed via the [parquet]
+    # extra on Windows).  Skip silently if tzdata isn't importable — ORC tests
+    # will then fall back to pytest-skip via the marker below.
+    try:
+        import tzdata  # type: ignore[import-not-found]
+
+        _tz_root = Path(tzdata.__file__).parent / "zoneinfo"
+        if _tz_root.is_dir():
+            os.environ["TZDIR"] = str(_tz_root)
+    except ImportError:
+        pass
 
 
 # --- LOGGER STATE FIXTURES ---
