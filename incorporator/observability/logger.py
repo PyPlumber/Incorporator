@@ -102,11 +102,11 @@ def _cleanup_listeners() -> None:
     """
     for listener in _ACTIVE_LISTENERS.values():
         if getattr(listener, "_thread", None) is not None:
+            # atexit must never raise — swallow any stop-time errors (e.g.
+            # listener already stopped on a parallel thread).
             try:
                 listener.stop()
-            except Exception:
-                # atexit must never raise — swallow any stop-time errors
-                # (e.g. listener already stopped on a parallel thread).
+            except Exception:  # noqa: S110, BLE001 — see comment above
                 pass
     _ACTIVE_LISTENERS.clear()
 
@@ -225,10 +225,11 @@ def setup_class_logger(cls: Type[Any]) -> None:
         old_listener = _ACTIVE_LISTENERS.pop(oldest_key)
         # Guard against listeners whose _thread was already cleared (re-stop) —
         # Python 3.11 QueueListener.stop() raises AttributeError in that case.
+        # Eviction must not abort caller, so swallow any stop-time error.
         if getattr(old_listener, "_thread", None) is not None:
             try:
                 old_listener.stop()
-            except Exception:
+            except Exception:  # noqa: S110, BLE001 — see comment above
                 pass
 
     listener = QueueListener(log_queue, debug_fh, error_fh, api_fh, respect_handler_level=True)
