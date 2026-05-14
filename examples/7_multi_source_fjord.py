@@ -40,6 +40,12 @@ async def main() -> None:
                     "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
                     "inc_code": "id",
                 },
+                # refresh_params={} = "yes, run the refresh daemon for this source
+                # with default kwargs".  Omitting the key entirely means "skip
+                # refresh on this source" — outflow ticks would keep firing
+                # against the stale seed data, which is almost never what you
+                # want.  Pass {} (or override-kwargs) on every source.
+                "refresh_params": {},
             },
             {
                 "cls": BinancePair,
@@ -50,6 +56,7 @@ async def main() -> None:
                     "inc_url": "https://api.binance.us/api/v3/ticker/price",
                     "inc_code": "symbol",
                 },
+                "refresh_params": {},
             },
         ],
         outflow=str(HERE / "fjord_code/crypto_spread.py"),

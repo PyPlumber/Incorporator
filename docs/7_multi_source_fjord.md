@@ -118,6 +118,7 @@ async def main():
                     "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
                     "inc_code": "id",
                 },
+                "refresh_params": {},                      # opt into the refresh daemon
             },
             {
                 "cls": BinancePair,
@@ -125,6 +126,7 @@ async def main():
                     "inc_url": "https://api.binance.us/api/v3/ticker/price",
                     "inc_code": "symbol",
                 },
+                "refresh_params": {},
             },
         ],
         outflow="examples/fjord_code/crypto_spread.py",
@@ -156,6 +158,14 @@ if __name__ == "__main__":
 > (`api.binance.com` is blocked in the US — use `api.binance.us`),
 > rate-limit responses, and transient API outages surface visibly
 > instead of looking like a successful run with empty data.
+
+> **Per-source refresh opt-in:** the refresh daemon is enabled
+> per-source by setting `"refresh_params": {}` (empty dict = "yes,
+> refresh with default kwargs") on each entry.  Omitting the key
+> **skips refresh on that source** — outflow ticks keep firing
+> against the stale seed data, which is almost never what you
+> want.  Pass `{}` (or override kwargs) on every entry unless you
+> *intentionally* want a fixed snapshot from that source.
 
 ---
 
