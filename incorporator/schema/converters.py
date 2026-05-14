@@ -180,6 +180,77 @@ def _fallback_float(value: Any) -> float:
     return float(clean_val)
 
 
+# Values that every fallback should treat as "missing" rather than try to parse.
+# Single source of truth so the DX Inspector and the runtime converter agree on
+# what counts as junk.
+GARBAGE_VALUES: frozenset[str] = frozenset(
+    {"unknown", "n/a", "none", "null", "undefined", "nan"}
+)
+
+
+def is_garbage_value(value: Any) -> bool:
+    """Return True when ``value`` should be treated as missing.
+
+    Matches the rejection rule baked into :func:`inc`'s ranked converter:
+    ``None``, empty string, and the canonical garbage-string set
+    (``"unknown"``, ``"n/a"``, ``"none"``, ``"null"``, ``"undefined"``,
+    ``"nan"``) are all treated as missing data and short-circuit to the
+    converter's ``default``.
+
+    Exposed so the DX Inspector (and any future inference tooling) can
+    check "would the runtime ignore this?" without re-implementing the
+    rule.
+    """
+    if value is None or value == "":
+        return True
+    return isinstance(value, str) and value.strip().lower() in GARBAGE_VALUES
+
+
+def parses_as_datetime(value: Any) -> bool:
+    """Return True if :func:`_fallback_date` would successfully parse ``value``.
+
+    The DX Inspector calls this to decide whether to suggest
+    ``inc(datetime)`` in ``conv_dict``. Routes through the same parser the
+    runtime uses, so the inspector's advice is structurally aligned with
+    what an actual ``incorp()`` call would accept.
+    """
+    if is_garbage_value(value):
+        return False
+    try:
+        _fallback_date(value)
+        return True
+    except Exception:
+        return False
+
+
+def parses_as_int(value: Any) -> bool:
+    """Return True if :func:`_fallback_int` would successfully parse ``value``.
+
+    Mirrors :func:`parses_as_datetime` for integer coercion candidates.
+    """
+    if is_garbage_value(value):
+        return False
+    try:
+        _fallback_int(value)
+        return True
+    except Exception:
+        return False
+
+
+def parses_as_float(value: Any) -> bool:
+    """Return True if :func:`_fallback_float` would successfully parse ``value``.
+
+    Mirrors :func:`parses_as_datetime` for float coercion candidates.
+    """
+    if is_garbage_value(value):
+        return False
+    try:
+        _fallback_float(value)
+        return True
+    except Exception:
+        return False
+
+
 # The Global Ranked Dictionary Engine
 RANKED_CONVERTERS: Dict[Any, List[Callable[[Any], Any]]] = {
     bool: [TypeAdapter(bool).validate_python, _fallback_bool],
@@ -251,18 +322,9 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
         ranks = [lambda x: x]  # Failsafe pass-through
 
     def _ranked_converter(val: Any) -> Any:
-        # Instantly catch None, empties, and known API garbage
-        if val is None or val == "":
-            return default
-
-        if isinstance(val, str) and val.strip().lower() in {
-            "unknown",
-            "n/a",
-            "none",
-            "null",
-            "undefined",
-            "nan",
-        }:
+        # Instantly catch None, empties, and known API garbage.  The GARBAGE_VALUES
+        # set is shared with the DX Inspector so suggestions and runtime agree.
+        if is_garbage_value(val):
             return default
 
         last_error = None

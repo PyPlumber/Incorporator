@@ -10,10 +10,15 @@ from incorporator.schema import router
 from incorporator.schema.converters import (
     CalcAllOp,
     CalcOp,
+    GARBAGE_VALUES,
     calc,
     calc_all,
     inc,
+    is_garbage_value,
     new,
+    parses_as_datetime,
+    parses_as_float,
+    parses_as_int,
 )
 from incorporator.schema.extractors import (
     each,
@@ -206,6 +211,112 @@ def test_declarative_post_routing() -> None:
             http_method="POST",  # 🛡️ THE FIX
             json_payload={"ids": join_all(",")},
         )
+
+
+# ==========================================
+# Predicate exports (used by the DX Inspector)
+# ==========================================
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        # Standard sentinels (matches the GARBAGE_VALUES frozenset)
+        ("N/A", True),
+        ("n/a", True),
+        ("Unknown", True),
+        ("null", True),
+        ("none", True),
+        ("undefined", True),
+        ("nan", True),
+        ("  N/A  ", True),  # leading/trailing whitespace tolerated
+        # Empties
+        (None, True),
+        ("", True),
+        # Real values that should NOT be flagged
+        ("0", False),
+        ("false", False),
+        ("Alice", False),
+        ("2022-10-05T12:00:00-04:00", False),
+        (42, False),
+        (0, False),
+    ],
+)
+def test_is_garbage_value(value: Any, expected: bool) -> None:
+    """is_garbage_value mirrors inc()'s internal short-circuit rule."""
+    assert is_garbage_value(value) is expected
+
+
+def test_garbage_values_frozenset_contents() -> None:
+    """The shared GARBAGE_VALUES set must contain the canonical entries."""
+    assert "n/a" in GARBAGE_VALUES
+    assert "null" in GARBAGE_VALUES
+    assert "unknown" in GARBAGE_VALUES
+    assert "undefined" in GARBAGE_VALUES
+    assert "nan" in GARBAGE_VALUES
+    assert "none" in GARBAGE_VALUES
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        # The user's failing case: RFC-3339 with timezone offset
+        ("2022-10-05T12:00:00-04:00", True),
+        # Other common shapes the runtime parser already accepts
+        ("2026-05-12T14:32:00Z", True),
+        ("2008-09-20T17:23:00.000Z", True),
+        ("2008-09-20T17:23:00.123456+0000", True),
+        ("2008-09-20", True),  # plain date
+        ("2008-09-20 17:23:00", True),  # SQL-ish
+        ("December 2, 2013", True),  # custom fallback format
+        # Garbage / non-dates must NOT parse
+        ("not a date", False),
+        ("Alice", False),
+        ("", False),
+        ("N/A", False),
+        (None, False),
+        # Numbers shouldn't be flagged as dates (Phase B precedence safeguard).
+        ("42", False),
+    ],
+)
+def test_parses_as_datetime(value: Any, expected: bool) -> None:
+    """parses_as_datetime routes through _fallback_date — the runtime contract."""
+    assert parses_as_datetime(value) is expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("42", True),
+        ("1,500", True),  # comma-stripping via _fallback_int
+        ("-7", True),
+        ("3.14", True),  # int(float()) coerces
+        ("not a number", False),
+        ("", False),
+        ("N/A", False),
+        (None, False),
+    ],
+)
+def test_parses_as_int(value: Any, expected: bool) -> None:
+    """parses_as_int routes through _fallback_int — the runtime contract."""
+    assert parses_as_int(value) is expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("3.14", True),
+        ("1,500.50", True),
+        ("0.0", True),
+        ("not a number", False),
+        ("", False),
+        ("Unknown", False),
+        (None, False),
+    ],
+)
+def test_parses_as_float(value: Any, expected: bool) -> None:
+    """parses_as_float routes through _fallback_float — the runtime contract."""
+    assert parses_as_float(value) is expected
 
 
 def test_get_url_injection() -> None:
