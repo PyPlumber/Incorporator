@@ -30,6 +30,12 @@ class Launch(LoggedIncorporator):
 
 
 async def main() -> None:
+    # stream() writes incrementally on every export tick, so the export
+    # target must be an append-friendly format: NDJSON, CSV, SQLite, or
+    # Avro.  Parquet / Feather / ORC / Excel / XML / JSON all reject
+    # appends (footer-indexed or monolithic encodings); use one of those
+    # only as a one-shot incorp() + export() round-trip, not a stream
+    # destination.
     async for wave in Launch.stream(
         incorp_params={
             "inc_url": "https://api.spacexdata.com/v4/launches/latest",
@@ -37,7 +43,7 @@ async def main() -> None:
             "inc_name": "name",
         },
         refresh_interval=60.0,                                  # re-fetch every minute
-        export_params={"file_path": "data/spacex_latest.parquet"},
+        export_params={"file_path": "data/spacex_latest.ndjson"},
         export_interval=300.0,                                  # flush every 5 minutes
         enable_logging=True,                                    # opt into JSON-line logs
     ):

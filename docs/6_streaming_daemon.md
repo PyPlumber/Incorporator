@@ -23,7 +23,7 @@ the CLI.
 
 * **Source:** `https://api.spacexdata.com/v4/launches/latest`
 * **Refresh cadence:** every 60 seconds
-* **Export cadence:** every 5 minutes, into `data/spacex_latest.parquet`
+* **Export cadence:** every 5 minutes, into `data/spacex_latest.ndjson`
 * **Failure handling:** transient errors logged via the wave stream, not
   fatal
 * **Shutdown:** Ctrl+C / SIGTERM drains in-flight work and exits cleanly
@@ -49,7 +49,7 @@ async def main():
             "inc_name": "name",
         },
         refresh_interval=60.0,                                  # re-fetch every minute
-        export_params={"file_path": "data/spacex_latest.parquet"},
+        export_params={"file_path": "data/spacex_latest.ndjson"},
         export_interval=300.0,                                  # flush every 5 minutes
         enable_logging=True,                                    # JSON-line logs to disk
     ):
@@ -65,6 +65,14 @@ if __name__ == "__main__":
 
 That's it. **No `while True` loop. No sleep. No try/except.** The engine
 handles cadence, retries, draining, and shutdown.
+
+> **Format constraint:** `stream()` writes incrementally on every
+> export tick, so the export target must be an **append-friendly**
+> format: `.ndjson` / `.csv` / `.sqlite` / `.avro`. Parquet / Feather /
+> ORC / Excel / XML / JSON all reject append mode (footer-indexed or
+> monolithic encodings) — use those only for one-shot `incorp()` →
+> `export()` round-trips, not stream destinations. Pick NDJSON if
+> you're unsure — it's the streaming-native default.
 
 ---
 
@@ -133,7 +141,7 @@ required:
     "inc_name": "name"
   },
   "refresh_params": {},
-  "export_params": {"file_path": "data/spacex_latest.parquet"},
+  "export_params": {"file_path": "data/spacex_latest.ndjson"},
   "stateful_polling": true,
   "refresh_interval": 60.0,
   "export_interval": 300.0
