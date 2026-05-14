@@ -1,9 +1,9 @@
 ***
 
-> 📎 **Appendix** — was previously Tutorial 5. The headline
-> patterns (JSON ↔ Avro / SQLite round-trips, format-agnostic export)
-> are now in [Tutorial 2 — Universal Formats](../2_universal_formats.md).
-> This file kept as reference for the original walkthrough.
+> 📎 **Appendix — JSON ↔ Avro / SQLite round-trip walkthrough.**
+> Long-form reference for the format-agnostic export pattern; see
+> [Tutorial 2 — Universal Formats](../2_universal_formats.md) for
+> the condensed five-format comparison.
 
 ***
 

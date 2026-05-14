@@ -1,10 +1,10 @@
 ***
 
-> 📎 **Appendix** — was previously Tutorial 4. Moved here so the
-> numbered curriculum (Tutorials 1-7) covers the canonical verb arc
-> without an XML/POST detour. The patterns below — XML ingestion +
-> declarative bulk POST + state-carrier graph drilling — are still
-> production-ready; this just isn't where a new user starts.
+> 📎 **Appendix — XML ingestion + declarative bulk POST + fraud
+> audit.**  XML parsing, state-carrier graph drilling, and a
+> templated bulk-POST round-trip against an audit endpoint.  See
+> [Tutorial 4 — Parent-Child Drilling](../4_parent_child_drilling.md)
+> for the canonical parent-child intro before tackling this one.
 
 ***
 

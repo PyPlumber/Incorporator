@@ -84,12 +84,13 @@ await Pair.refresh(instance=my_holdings)
 
 ## Identity-Mapping Memory
 
-Every `Incorporator` subclass remembers the **full** call-context from
-its first `incorp()` — not just `inc_code` / `inc_name`, but the entire
-network and format-handler kwarg set (`params`, `headers`, `rec_path`,
-`conv_dict`, `excl_lst`, `name_chg`, `payload_list`, `sql_query`,
-`parquet_decimal_columns`, …).  That's why `refresh()` "just works"
-without re-declaring anything:
+**Call `refresh()` with no arguments and the framework re-fetches
+with the exact same URL, query params, headers, and converters you
+declared on `incorp()`** — no boilerplate, no re-passing.  The class
+silently remembers its first call-context (`inc_code`, `inc_name`,
+`params`, `headers`, `rec_path`, `conv_dict`, `excl_lst`, `name_chg`,
+`payload_list`, `sql_query`, `parquet_decimal_columns`, …) and merges
+it under whatever you supply to `refresh()`.  Concretely:
 
 ```python
 class Pair(Incorporator):

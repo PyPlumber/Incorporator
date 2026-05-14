@@ -96,7 +96,7 @@ asyncio.run(scrape_api())
 Whether you use a Web Paginator or a Local Paginator, the internal mechanics are identical:
 
 1.  **State Retention:** The `AsyncPaginator` class holds variables like `self.offset`, `self.current_cursor`, or `self._reader` in its `__init__` method.
-2.  **O(1) Orchestration:** When `.stream()` is called, it temporarily forces `call_lim=1`, telling the paginator to yield **exactly one chunk** and pause.
+2.  **O(1) Orchestration:** `.stream()` drives the paginator one chunk at a time — exactly one page is fetched, materialised, exported, and released before the next iteration begins.
 3.  **Daemon Reset:** If you are running an infinite stream with `--poll 3600` (1 hour), the orchestrator automatically calls `paginator.reset()` when it wakes up, starting the extraction loop back at row/page 1 to check for new data.
 
 ### Example: A Self-Resetting Background Daemon
@@ -114,8 +114,9 @@ async def run_infinite_scraper():
     # 1. STATE RETENTION: Paginator holds the URLs and cursors safely.
     paginator = NextUrlPaginator("meta", "next_page_link")
 
-    # 2. O(1) ORCHESTRATION: stream() automatically forces call_lim=1 internally.
-    # It will fetch exactly 1 page, save it, drop RAM, and repeat until the API is exhausted.
+    # 2. O(1) ORCHESTRATION: stream() drives the paginator one page at a time.
+    # Each iteration fetches one page, exports it, releases the RAM, and repeats
+    # until the API is exhausted.
     async for wave in LiveEvent.stream(
         incorp_params={
             "inc_url": "https://api.example.com/live-events",

@@ -1,11 +1,11 @@
 ***
 
-> 📎 **Appendix** — was previously Tutorial 2. Moved here so the
-> numbered curriculum (Tutorials 1-7) covers the canonical verb arc
-> in order of difficulty. The `calc()` reduction patterns and
-> HATEOAS drill below are still production-ready; tutorial 4 covers
-> a cleaner parent-child drill against SpaceX if you're new to the
-> framework.
+> 📎 **Appendix — `calc()` reductions over a HATEOAS drill.**
+> Sums and aggregations across a parent-child fan-out (PokéAPI).
+> If you're new to parent-child, start with
+> [Tutorial 4 — Parent-Child Drilling](../4_parent_child_drilling.md)
+> (SpaceX); reach for this appendix for the `calc()` reduction
+> patterns layered on top.
 
 ***
 

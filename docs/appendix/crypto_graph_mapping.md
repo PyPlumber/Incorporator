@@ -1,10 +1,10 @@
 ***
 
-> 📎 **Appendix** — was previously Tutorial 3. The `link_to`-based
-> in-memory join pattern is still production-ready, but the current
-> Tutorial 7 (Multi-Source Fjord) demonstrates the same crypto fusion
-> as a live daemon. Reach for this appendix when you need the static
-> join pattern without the daemon scaffolding.
+> 📎 **Appendix — Static graph join.**  `link_to`-based one-shot
+> in-memory join across CoinGecko + Binance.  See
+> [Tutorial 7 — Multi-Source Fjord](../7_multi_source_fjord.md) for
+> the same fusion as a live daemon; reach for this appendix when
+> you want the static pattern without the daemon scaffolding.
 
 ***
 

@@ -78,10 +78,9 @@ handles cadence, retries, draining, and shutdown.
 >   has no more chunks. Use this to drain a paginated catalogue once
 >   and walk away.
 >
-> Forgetting `stateful_polling=True` on a single-record endpoint
-> (`/launches/latest` returns one launch) gives you one wave and a
-> clean exit — perfectly valid, but probably not what a "watcher"
-> demo intended.
+> On a single-record endpoint with `stateful_polling=False` the
+> daemon emits one Wave and exits because the source has no more
+> chunks — confirm that's the intent before reaching for `stream()`.
 
 > **Format constraint:** `stream()` writes incrementally on every
 > export tick, so the export target must be an **append-friendly**
@@ -111,7 +110,8 @@ handles cadence, retries, draining, and shutdown.
 >
 > The chunked mode (`stateful_polling=False`, the default) behaves
 > differently: each chunk is NEW data so it *does* accumulate by
-> design.
+> design.  See the [CLI configuration guide](./cli_and_configuration.md#parameter-breakdown)
+> for the mode-aware `export_params` defaults summary.
 
 ---
 

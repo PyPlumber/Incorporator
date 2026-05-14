@@ -189,7 +189,7 @@ async for wave in Incorporator.fjord(
     if wave.failed_sources: print(wave)
 ```
 
-**Two more `fjord()` powers you'll grow into:**
+**Two more `fjord()` patterns:**
 
 * **State-aware `inflow(state)`** — if `inflow.py` defines a top-level
   `inflow(state)` callable, fjord seeds sources sequentially and feeds

@@ -253,13 +253,13 @@ stays serialisable.
 
 ---
 
-## Two Powers You'll Grow Into
+## Two Advanced Patterns
 
 The crypto-spread example above uses the simplest fjord shape:
 N independent sources, one outflow function, one output file.  Two
 extensions handle relational + multi-view cases.
 
-### Power 1 — State-aware `inflow(state)`: live `link_to(...)` across sources
+### Pattern 1 — State-aware `inflow(state)`: live `link_to(...)` across sources
 
 When one source's `conv_dict` needs a reference to another source's
 already-loaded registry (e.g. resolving a foreign-key URL to the
@@ -309,7 +309,7 @@ If `inflow.py` exists but defines *no* `inflow` function, fjord keeps
 the legacy parallel-seed path (zero overhead) — the sidecar simply
 extends the token resolver's allow-list as it always has.
 
-### Power 2 — Multi-output: N derived classes from one outflow
+### Pattern 2 — Multi-output: N derived classes from one outflow
 
 Return a `dict[ClassName, list[dict]]` from `outflow(state)` and
 fjord builds one derived class **per dict key** and exports each to
