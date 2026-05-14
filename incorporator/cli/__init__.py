@@ -141,20 +141,20 @@ def _run_validation(config: Dict[str, Any], config_dir: Path, type_override: Opt
 # ---------------------------------------------------------------------------
 
 
-def _emit_audit(audit: Any, *, json_output: bool, heartbeat_file: Optional[Path]) -> None:
-    """Per-audit side effects: print line + touch the heartbeat file."""
+def _emit_wave(wave: Any, *, json_output: bool, heartbeat_file: Optional[Path]) -> None:
+    """Per-wave side effects: print line + touch the heartbeat file."""
     if json_output:
         # NDJSON on stdout for CI / log shippers.
-        print(audit.model_dump_json(), flush=True)
+        print(wave.model_dump_json(), flush=True)
     else:
         if typer:
             status = (
-                f"Chunk {audit.chunk_index} | {audit.operation} | "
-                f"{audit.rows_processed} rows | {audit.processing_time_sec:.2f}s"
+                f"Chunk {wave.chunk_index} | {wave.operation} | "
+                f"{wave.rows_processed} rows | {wave.processing_time_sec:.2f}s"
             )
             typer.secho(status, fg=typer.colors.CYAN)
-            if audit.failed_sources:
-                typer.secho(f"Failures: {audit.failed_sources}", fg=typer.colors.YELLOW)
+            if wave.failed_sources:
+                typer.secho(f"Failures: {wave.failed_sources}", fg=typer.colors.YELLOW)
 
     if heartbeat_file is not None:
         try:
@@ -216,8 +216,8 @@ async def _run_stream(
     )
 
     try:
-        async for audit in stream_gen:
-            _emit_audit(audit, json_output=json_output, heartbeat_file=heartbeat_file)
+        async for wave in stream_gen:
+            _emit_wave(wave, json_output=json_output, heartbeat_file=heartbeat_file)
             if shutdown.is_set():
                 # Polite exit: cancel the underlying generator to trigger its
                 # finally-block (daemons drained, queue shut down).
@@ -321,8 +321,8 @@ async def _run_fjord(
     )
 
     try:
-        async for audit in fjord_gen:
-            _emit_audit(audit, json_output=json_output, heartbeat_file=heartbeat_file)
+        async for wave in fjord_gen:
+            _emit_wave(wave, json_output=json_output, heartbeat_file=heartbeat_file)
             if shutdown.is_set():
                 await fjord_gen.aclose()
                 break
@@ -352,12 +352,12 @@ if typer:
         json_output: bool = typer.Option(  # noqa: B008
             False,
             "--json-output",
-            help="Emit one NDJSON AuditResult per line on stdout (status text goes to stderr). For CI/CD pipelines.",
+            help="Emit one NDJSON Wave per line on stdout (status text goes to stderr). For CI/CD pipelines.",
         ),
         heartbeat_file: Optional[Path] = typer.Option(  # noqa: B008
             None,
             "--heartbeat-file",
-            help="Touch this path after every audit; pairs with the Docker HEALTHCHECK.",
+            help="Touch this path after every wave; pairs with the Docker HEALTHCHECK.",
         ),
     ) -> None:
         """
@@ -391,12 +391,12 @@ if typer:
         json_output: bool = typer.Option(  # noqa: B008
             False,
             "--json-output",
-            help="Emit one NDJSON AuditResult per line on stdout (status text goes to stderr). For CI/CD pipelines.",
+            help="Emit one NDJSON Wave per line on stdout (status text goes to stderr). For CI/CD pipelines.",
         ),
         heartbeat_file: Optional[Path] = typer.Option(  # noqa: B008
             None,
             "--heartbeat-file",
-            help="Touch this path after every audit; pairs with the Docker HEALTHCHECK.",
+            help="Touch this path after every wave; pairs with the Docker HEALTHCHECK.",
         ),
     ) -> None:
         """

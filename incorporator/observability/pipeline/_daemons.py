@@ -4,7 +4,7 @@ import asyncio
 import time
 from typing import Any, Dict, List, Optional
 
-from ..logger import AuditResult
+from ..logger import Wave
 from ._shared import _interruptible_sleep, _row_count
 
 
@@ -13,7 +13,7 @@ async def _refresh_daemon(
     dataset_ref: List[Any],
     refresh_params: Dict[str, Any],
     lock: asyncio.Lock,
-    audit_queue: "asyncio.Queue[Optional[AuditResult]]",
+    wave_queue: "asyncio.Queue[Optional[Wave]]",
     shutdown_event: asyncio.Event,
     r_interval: Optional[float],
     operation_label: str = "refresh",
@@ -21,13 +21,13 @@ async def _refresh_daemon(
     """Runs the independent refresh loop on its own schedule.
 
     Acquires ``lock`` before mutating ``dataset_ref[0]`` so the export daemon
-    always snapshots a consistent state.  Enqueues one ``AuditResult`` per
+    always snapshots a consistent state.  Enqueues one :class:`Wave` per
     iteration — success or failure — for the drain loop to yield downstream.
 
-    ``operation_label`` overrides the ``AuditResult.operation`` field so the
+    ``operation_label`` overrides the :attr:`Wave.operation` field so the
     fjord engine can tag refreshes per source class
-    (e.g. ``"fjord_refresh:Coin"``). Defaults to ``"refresh"`` so existing
-    callers (``_run_stateful_engine``) are unchanged.
+    (e.g. ``"fjord_refresh:Coin"``). Defaults to ``"refresh"`` for the
+    single-source stateful engine.
     """
     loop_idx = 0
     while not shutdown_event.is_set():
@@ -38,8 +38,8 @@ async def _refresh_daemon(
                 refreshed = await cls.refresh(instance=dataset_ref[0], **refresh_params)
                 if refreshed is not None:
                     dataset_ref[0] = refreshed
-            await audit_queue.put(
-                AuditResult(
+            await wave_queue.put(
+                Wave(
                     chunk_index=loop_idx,
                     operation=operation_label,
                     rows_processed=_row_count(dataset_ref[0]),
@@ -47,8 +47,8 @@ async def _refresh_daemon(
                 )
             )
         except Exception as e:
-            await audit_queue.put(
-                AuditResult(
+            await wave_queue.put(
+                Wave(
                     chunk_index=loop_idx,
                     operation=operation_label,
                     rows_processed=0,
@@ -69,7 +69,7 @@ async def _export_daemon(
     dataset_ref: List[Any],
     export_params: Dict[str, Any],
     lock: asyncio.Lock,
-    audit_queue: "asyncio.Queue[Optional[AuditResult]]",
+    wave_queue: "asyncio.Queue[Optional[Wave]]",
     shutdown_event: asyncio.Event,
     e_interval: Optional[float],
     operation_label: str = "export",
@@ -80,9 +80,9 @@ async def _export_daemon(
     releases the lock before the actual export so ``_refresh_daemon`` can
     proceed concurrently during long I/O writes (e.g. 10 M-row exports).
 
-    ``operation_label`` overrides the ``AuditResult.operation`` field so the
+    ``operation_label`` overrides the :attr:`Wave.operation` field so the
     fjord engine can tag per-source exports (e.g. ``"export:BinanceFutures"``).
-    Defaults to ``"export"`` so existing callers stay unchanged.
+    Defaults to ``"export"`` for the single-source stateful engine.
     """
     loop_idx = 0
     while not shutdown_event.is_set():
@@ -92,8 +92,8 @@ async def _export_daemon(
             async with lock:
                 snapshot = dataset_ref[0]
             await cls.export(instance=snapshot, **export_params)
-            await audit_queue.put(
-                AuditResult(
+            await wave_queue.put(
+                Wave(
                     chunk_index=loop_idx,
                     operation=operation_label,
                     rows_processed=_row_count(snapshot),
@@ -101,8 +101,8 @@ async def _export_daemon(
                 )
             )
         except Exception as e:
-            await audit_queue.put(
-                AuditResult(
+            await wave_queue.put(
+                Wave(
                     chunk_index=loop_idx,
                     operation=operation_label,
                     rows_processed=0,

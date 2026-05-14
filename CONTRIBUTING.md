@@ -83,6 +83,26 @@ or REST API. Keep that lens when picking names and surfacing concepts.
   register in `_HANDLERS`, and ship with throughput benchmarks under
   `tests/benchmarks/`.
 
+## Comment Style
+
+Code comments are durable artifacts.  Write them for a future reader,
+not for the chat or commit that introduced the change.
+
+- **Avoid**:
+  - "Fixed in the May 2026 refactor / commit abc123 / chat session X."
+  - "Was broken when the validator skipped this branch."
+  - "Recent change moved the field out of `incorp_params`."
+- **Prefer**:
+  - The **what** and the **why** of any non-obvious choice.
+  - Time-neutral phrasing — e.g. *"Daemons coordinate via a shared
+    lock so refresh mutations are atomic"*, not *"Recently added lock
+    for refresh atomicity."*
+  - Cross-references to docstrings or `docs/` for deeper background
+    instead of restating debugging history inline.
+
+The same rule applies to commit messages and docstrings: explain the
+design, not the journey to it.
+
 ## Documentation
 
 - **Public docstrings** use Google style and are auto-rendered by `pdoc`

@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from ..logger import AuditResult
+from ..logger import Wave
 from ._daemons import _export_daemon, _refresh_daemon
 from ._outflow import _outflow_daemon
 from ._shared import _row_count
@@ -21,7 +21,7 @@ async def _run_fjord_engine(
     export_params: Dict[str, Any],
     r_interval: Optional[float],
     e_interval: Optional[float],
-) -> AsyncGenerator[AuditResult, None]:
+) -> AsyncGenerator[Wave, None]:
     """Multi-source stateful streaming engine for ``Incorporator.fjord()``.
 
     Generalisation of ``_run_stateful_engine`` to N sources with one
@@ -31,7 +31,7 @@ async def _run_fjord_engine(
 
     Lifecycle:
       1. Seed phase: concurrent ``entry["cls"].incorp(**entry["incorp_params"])``
-         across all entries via ``asyncio.gather``. One ``incorp`` audit yielded
+         across all entries via ``asyncio.gather``. One ``incorp`` wave yielded
          per source.
       2. Daemon phase: per-source refresh daemons (always), per-source export
          daemons (when ``export_params`` is set on the entry), and one outflow
@@ -53,7 +53,7 @@ async def _run_fjord_engine(
     for entry, result in zip(stream_params, seed_results):
         cls_name = entry["cls"].__name__
         if isinstance(result, Exception):
-            yield AuditResult(
+            yield Wave(
                 chunk_index=1,
                 operation=f"fjord_incorp:{cls_name}",
                 rows_processed=0,
@@ -62,7 +62,7 @@ async def _run_fjord_engine(
             )
             return
         if not result:
-            yield AuditResult(
+            yield Wave(
                 chunk_index=1,
                 operation=f"fjord_incorp:{cls_name}",
                 rows_processed=0,
@@ -71,7 +71,7 @@ async def _run_fjord_engine(
             )
             return
         source_refs.append([result])
-        yield AuditResult(
+        yield Wave(
             chunk_index=1,
             operation=f"fjord_incorp:{cls_name}",
             rows_processed=_row_count(result),
@@ -82,7 +82,7 @@ async def _run_fjord_engine(
     # 2. Daemon phase — spawn refresh + per-stream export + outflow tasks.
     # ------------------------------------------------------------------
     lock = asyncio.Lock()
-    audit_queue: asyncio.Queue[Optional[AuditResult]] = asyncio.Queue()
+    wave_queue: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
     shutdown_event = asyncio.Event()
     tasks: List[asyncio.Task[Any]] = []
 
@@ -102,7 +102,7 @@ async def _run_fjord_engine(
                         dataset_ref=source_refs[idx],
                         refresh_params=refresh_params,
                         lock=lock,
-                        audit_queue=audit_queue,
+                        wave_queue=wave_queue,
                         shutdown_event=shutdown_event,
                         r_interval=entry_r_interval,
                         operation_label=f"fjord_refresh:{entry_cls.__name__}",
@@ -118,7 +118,7 @@ async def _run_fjord_engine(
                         dataset_ref=source_refs[idx],
                         export_params=stream_export_params,
                         lock=lock,
-                        audit_queue=audit_queue,
+                        wave_queue=wave_queue,
                         shutdown_event=shutdown_event,
                         e_interval=entry_e_interval,
                         operation_label=f"export:{entry_cls.__name__}",
@@ -137,7 +137,7 @@ async def _run_fjord_engine(
                 outflow_fn=outflow_fn,
                 export_params=export_params,
                 lock=lock,
-                audit_queue=audit_queue,
+                wave_queue=wave_queue,
                 shutdown_event=shutdown_event,
                 e_interval=e_interval,
             )
@@ -146,16 +146,16 @@ async def _run_fjord_engine(
 
     async def _waiter() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
-        await audit_queue.put(None)
+        await wave_queue.put(None)
 
     waiter_task = asyncio.create_task(_waiter())
 
     try:
         while True:
-            audit = await audit_queue.get()
-            if audit is None:
+            wave = await wave_queue.get()
+            if wave is None:
                 break
-            yield audit
+            yield wave
     finally:
         shutdown_event.set()
         for t in tasks:

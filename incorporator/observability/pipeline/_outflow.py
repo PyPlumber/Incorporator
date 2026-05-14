@@ -4,7 +4,7 @@ import asyncio
 import time
 from typing import Any, Dict, List, Optional, cast
 
-from ..logger import AuditResult
+from ..logger import Wave
 from ._shared import _interruptible_sleep
 
 
@@ -16,7 +16,7 @@ async def _outflow_daemon(
     outflow_fn: Any,
     export_params: Dict[str, Any],
     lock: asyncio.Lock,
-    audit_queue: "asyncio.Queue[Optional[AuditResult]]",
+    wave_queue: "asyncio.Queue[Optional[Wave]]",
     shutdown_event: asyncio.Event,
     e_interval: Optional[float],
 ) -> None:
@@ -29,7 +29,7 @@ async def _outflow_daemon(
       2. Outside the lock, invoke the user's ``outflow_fn(state)``.  The return
          value is normalised to ``list[dict]`` (a single ``dict`` is wrapped;
          ``None``/empty is treated as a zero-row tick).
-      3. On an empty return, emit an ``outflow:<ClassName>`` audit with
+      3. On an empty return, emit an ``outflow:<ClassName>`` wave with
          ``rows_processed=0`` and skip the build/export — same behaviour as a
          stream chunk that yielded zero rows.
       4. Otherwise: build (or cache-hit) the dynamic output class via
@@ -43,7 +43,7 @@ async def _outflow_daemon(
          the class to defeat the WeakValueDictionary GC, and export via the
          existing ``DynamicCls.export()`` pipeline.
 
-    Failures in any phase enqueue an audit with ``failed_sources`` populated
+    Failures in any phase enqueue a wave with ``failed_sources`` populated
     but never crash the daemon.
     """
     # Local import keeps the observability layer free of a hard schema dep at
@@ -78,9 +78,9 @@ async def _outflow_daemon(
                 rows = list(rows)
 
             if not rows:
-                # Zero-row tick: audit and continue. No dynamic class needed.
-                await audit_queue.put(
-                    AuditResult(
+                # Zero-row tick: emit a wave and continue. No dynamic class needed.
+                await wave_queue.put(
+                    Wave(
                         chunk_index=loop_idx,
                         operation=operation,
                         rows_processed=0,
@@ -109,8 +109,8 @@ async def _outflow_daemon(
 
                 await DynamicCls.export(instance=instances, **export_params)
 
-                await audit_queue.put(
-                    AuditResult(
+                await wave_queue.put(
+                    Wave(
                         chunk_index=loop_idx,
                         operation=operation,
                         rows_processed=len(instances),
@@ -118,8 +118,8 @@ async def _outflow_daemon(
                     )
                 )
         except Exception as e:
-            await audit_queue.put(
-                AuditResult(
+            await wave_queue.put(
+                Wave(
                     chunk_index=loop_idx,
                     operation=operation,
                     rows_processed=0,

@@ -1,8 +1,8 @@
 """Benchmark: prove the O(1) memory chunking claim.
 
-The chunking engine releases each dataset (``del dataset; gc.collect()``) after
-yielding its ``AuditResult``, so peak memory must NOT grow linearly with the
-total number of chunks processed.
+The chunking engine releases each dataset after yielding its :class:`Wave`,
+so peak memory must NOT grow linearly with the total number of chunks
+processed.
 
 Method: track ``tracemalloc.get_traced_memory()`` per chunk and assert the
 delta between max and min observed values stays bounded by a small constant,
@@ -19,7 +19,7 @@ import pytest
 
 from incorporator import Incorporator
 from incorporator.io.pagination import CSVPaginator
-from incorporator.observability.logger import AuditResult
+from incorporator.observability.logger import Wave
 
 
 # 100 rows × 1000 chunks = 100k total rows. Small enough for CI; large enough
@@ -45,7 +45,7 @@ async def test_chunking_memory_stays_flat(big_csv: Path) -> None:
     """O(1) memory claim: peak memory delta must stay bounded across N chunks.
 
     The test fires up the chunking engine, samples ``tracemalloc.get_traced_memory()``
-    at every yielded ``AuditResult``, and asserts max-min stays below a generous
+    at every yielded ``Wave``, and asserts max-min stays below a generous
     upper bound. A linear-growth regression would push max far past min.
     """
 
@@ -59,7 +59,7 @@ async def test_chunking_memory_stays_flat(big_csv: Path) -> None:
     }
 
     samples: List[int] = []
-    audits: List[AuditResult] = []
+    audits: List[Wave] = []
 
     # Warm up + clean baseline
     gc.collect()

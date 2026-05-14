@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — `AuditResult` renamed to `Wave`
+- **`AuditResult` → `Wave`** on the public surface. The per-tick value
+  yielded by `stream()` and `fjord()` is now named `Wave`, matching the
+  framework's fjord / inflow / outflow vocabulary. Imported as
+  `from incorporator import Wave`. No deprecation alias; the old name
+  is gone.
+- **Log record key `"audit"` → `"wave"`** in the JSON-line log format.
+  When `LoggedIncorporator` is enabled, the structured Pydantic dump
+  appears under `record["wave"]` on disk. Downstream `jq` / log
+  aggregator scripts that read `.audit` need to switch to `.wave`.
+- Internal renames for consistency: `_route_audit_to_log` →
+  `_route_wave_to_log`, `_emit_audit` → `_emit_wave`,
+  `audit_queue` → `wave_queue`.
+
 ### Added — `inflow` / `outflow` sidecar files & `@name` references
 - **`inflow=` kwarg** on `incorp()` / `refresh()` / `stream()`. Points at
   a Python sidecar (`inflow.py`) holding user-defined helpers — `calc`
@@ -34,11 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added — CLI & Production Deployment
 - **`incorporator init / validate / stream / fjord`** CLI subcommands. Drives the same engines from a `pipeline.json` — no Python wrapper required for single- or multi-source ETLs.
 - **Env-var + Secrets-file interpolation in `pipeline.json`**: `${API_KEY}`, `${VAR:-default}`, `${VAR:?required}`, and `${file:/run/secrets/api_key}` for Docker / Kubernetes Secrets mounts.
-- **`--json-output` flag** on `stream` / `fjord` for machine-readable NDJSON audit lines (one per chunk).
+- **`--json-output` flag** on `stream` / `fjord` for machine-readable NDJSON Wave lines (one per chunk).
 - **`--heartbeat-file PATH` flag** + Docker `HEALTHCHECK` so orchestrators can detect a hung daemon and restart automatically.
 - **SIGTERM graceful shutdown** — `docker stop` / `kubectl delete pod` drain in-flight daemons cleanly instead of falling through to KeyboardInterrupt.
 - **`docker-compose.yml` + `.env.example`** shipped with the repo for a 5-minute production deployment.
-- **`LoggedIncorporator.fjord` override** mirroring `stream`'s structured audit routing into the queued JSON log files.
+- **`LoggedIncorporator.fjord` override** mirroring `stream`'s structured Wave routing into the queued JSON log files.
 
 ### Added — New Format Handlers
 - **Apache Parquet** (`[parquet]` extra → `pyarrow`). Columnar format for data lakes / warehouses, with streaming row-group writes (O(1) memory).

@@ -4,7 +4,7 @@ import asyncio
 import time
 from typing import Any, AsyncGenerator, Dict, Optional
 
-from ..logger import AuditResult
+from ..logger import Wave
 from ._shared import _enrich_and_load, _row_count
 
 
@@ -15,11 +15,11 @@ async def _run_chunking_engine(
     export_params: Optional[Dict[str, Any]],
     poll_interval: Optional[float],
     paginator: Any,
-) -> AsyncGenerator[AuditResult, None]:
+) -> AsyncGenerator[Wave, None]:
     """ENGINE 1 — O(1) Chunking (Sequential).
 
     Loops over paginator-driven or single-shot ``incorp()`` calls, calling
-    ``_enrich_and_load`` per chunk and yielding one ``AuditResult`` per chunk.
+    ``_enrich_and_load`` per chunk and yielding one ``Wave`` per chunk.
     Releases each dataset from memory immediately after yielding so RSS stays
     flat regardless of total data volume.  Sleeps ``poll_interval`` between
     full passes when continuous polling is requested.
@@ -53,7 +53,7 @@ async def _run_chunking_engine(
                 if rows > 0:
                     await _enrich_and_load(cls, dataset, refresh_params, export_params, force_append=True)
 
-                yield AuditResult(
+                yield Wave(
                     chunk_index=chunk_idx,
                     operation="chunk",
                     rows_processed=rows,
@@ -70,7 +70,7 @@ async def _run_chunking_engine(
                 if not paginator:
                     break
             except Exception as e:
-                yield AuditResult(
+                yield Wave(
                     chunk_index=chunk_idx,
                     operation="chunk",
                     rows_processed=0,

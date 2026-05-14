@@ -243,10 +243,10 @@ async def test_logged_export_enable_logging(
 
 
 @pytest.mark.asyncio
-async def test_logged_stream_enable_logging_emits_audit_results(
+async def test_logged_stream_enable_logging_emits_waves(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
 ) -> None:
-    """stream() with enable_logging=True must yield AuditResults and log chunk metrics."""
+    """stream() with enable_logging=True must yield Waves and log chunk metrics."""
     monkeypatch.chdir(tmp_path)
 
     class StreamLogModel(LoggedIncorporator):
@@ -256,11 +256,11 @@ async def test_logged_stream_enable_logging_emits_audit_results(
     data_file.write_text('[{"id": 1}, {"id": 2}]', encoding="utf-8")
 
     results = []
-    async for audit in StreamLogModel.stream(
+    async for wave in StreamLogModel.stream(
         incorp_params={"inc_file": str(data_file)},
         enable_logging=True,
     ):
-        results.append(audit)
+        results.append(wave)
 
     assert len(results) >= 1
     assert results[0].rows_processed >= 1
@@ -318,18 +318,18 @@ async def test_get_error_async_reader(
 # ===========================================================================
 
 
-def test_audit_log_meta_shape() -> None:
-    """AuditResult.log_meta() exposes the audit fields in a flat key:value form."""
-    from incorporator.observability.logger import AuditResult
+def test_wave_log_meta_shape() -> None:
+    """Wave.log_meta() exposes the wave's fields in a flat key:value form."""
+    from incorporator.observability.logger import Wave
 
-    audit = AuditResult(
+    wave = Wave(
         chunk_index=3,
         operation="chunk",
         rows_processed=42,
         processing_time_sec=1.234,
         failed_sources=["x", "y"],
     )
-    meta = audit.log_meta()
+    meta = wave.log_meta()
     assert 'operation:"chunk"' in meta
     assert "chunk_index:3" in meta
     assert "rows:42" in meta
@@ -358,71 +358,71 @@ def test_redact_is_noop_on_clean_strings() -> None:
 
 
 @pytest.mark.asyncio
-async def test_route_audit_to_log_writes_structured_audit_to_get_error(
+async def test_route_wave_to_log_writes_structured_wave_to_get_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
 ) -> None:
-    """An AuditResult with failed_sources lands in error.log with an 'audit' key.
+    """A Wave with failed_sources lands in error.log under a structured 'wave' key.
 
-    The Pydantic dump rides on the log record under the new ``audit`` key, so
+    The Pydantic dump rides on the log record under the ``wave`` key, so
     callers of ``Class.get_error()`` can read structured data directly.
     """
     monkeypatch.chdir(tmp_path)
-    from incorporator.observability.logger import AuditResult, _route_audit_to_log
+    from incorporator.observability.logger import Wave, _route_wave_to_log
 
-    class AuditLogModel(LoggedIncorporator):
+    class WaveLogModel(LoggedIncorporator):
         pass
 
-    setup_class_logger(AuditLogModel)
+    setup_class_logger(WaveLogModel)
 
-    audit = AuditResult(
+    wave = Wave(
         chunk_index=1,
         operation="chunk",
         rows_processed=10,
         processing_time_sec=0.5,
         failed_sources=["https://dead.example.com/x?api_key=should_be_redacted"],
     )
-    _route_audit_to_log(AuditLogModel, audit)
+    _route_wave_to_log(WaveLogModel, wave)
 
     # Flush the queue to disk so get_error can read.
-    _ACTIVE_LISTENERS["AuditLogModel"].stop()
+    _ACTIVE_LISTENERS["WaveLogModel"].stop()
 
-    errors = await AuditLogModel.get_error()
-    assert errors, "expected the audit failure to land in error.log"
+    errors = await WaveLogModel.get_error()
+    assert errors, "expected the wave failure to land in error.log"
 
     record = errors[-1]
-    # The structured audit dump should be on the record under "audit".
-    assert "audit" in record
-    audit_dump = record["audit"]
-    assert audit_dump["chunk_index"] == 1
-    assert audit_dump["rows_processed"] == 10
+    # The structured wave dump should be on the record under "wave".
+    assert "wave" in record
+    wave_dump = record["wave"]
+    assert wave_dump["chunk_index"] == 1
+    assert wave_dump["rows_processed"] == 10
     # Failed sources were redacted before being written.
-    assert any("***REDACTED***" in s for s in audit_dump["failed_sources"])
-    assert all("should_be_redacted" not in s for s in audit_dump["failed_sources"])
+    assert any("***REDACTED***" in s for s in wave_dump["failed_sources"])
+    assert all("should_be_redacted" not in s for s in wave_dump["failed_sources"])
     # log_meta() summary on the record.
     assert "operation:" in record["meta"]
 
 
-def test_route_audit_to_log_skips_zero_row_no_failure(
+def test_route_wave_to_log_skips_zero_row_no_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
 ) -> None:
-    """A zero-row, zero-failure audit is treated as no-op (nothing logged)."""
+    """A zero-row, zero-failure wave is treated as no-op (nothing logged)."""
     monkeypatch.chdir(tmp_path)
-    from incorporator.observability.logger import AuditResult, _route_audit_to_log
+    from incorporator.observability.logger import Wave, _route_wave_to_log
 
     class QuietModel(LoggedIncorporator):
         pass
 
     setup_class_logger(QuietModel)
 
-    _route_audit_to_log(
+    _route_wave_to_log(
         QuietModel,
-        AuditResult(chunk_index=1, operation="chunk", rows_processed=0, processing_time_sec=0.01),
+        Wave(chunk_index=1, operation="chunk", rows_processed=0, processing_time_sec=0.01),
     )
 
     _ACTIVE_LISTENERS["QuietModel"].stop()
 
     info_log = tmp_path / "logs" / "QuietModel_api.log"
     error_log = tmp_path / "logs" / "QuietModel_error.log"
-    # Neither path should have been triggered by this no-op audit.
+    # Neither path should have been triggered by this no-op wave.
     assert not info_log.exists() or info_log.read_text(encoding="utf-8").strip() == ""
     assert not error_log.exists() or error_log.read_text(encoding="utf-8").strip() == ""

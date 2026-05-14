@@ -43,7 +43,7 @@ from .schema import router
 from .usercode import apply_code_transform, load_outflow_function, pascal_case_from_stem
 
 if TYPE_CHECKING:
-    from .observability.logger import AuditResult
+    from .observability.logger import Wave
 
 # Type variable for strict IDE hinting on subclass generation
 TIncorporator = TypeVar("TIncorporator", bound="Incorporator")
@@ -866,8 +866,8 @@ class Incorporator(BaseModel):
         export_interval: Optional[float] = None,
         inflow: Optional[Union[str, Path]] = None,
         outflow: Optional[Union[str, Path]] = None,
-    ) -> AsyncGenerator["AuditResult", None]:
-        """Yield :class:`AuditResult` objects from a long-running pipeline.
+    ) -> AsyncGenerator["Wave", None]:
+        """Yield :class:`Wave` objects from a long-running pipeline.
 
         ``stream()`` is the autonomous pipeline verb — an async generator that
         keeps fetching, transforming, and (optionally) exporting until exhausted
@@ -876,7 +876,7 @@ class Incorporator(BaseModel):
         - **Chunking engine** (``stateful_polling=False``, default): Sequential
           chunked ingestion.  Each iteration calls ``incorp(**incorp_params)``,
           then ``refresh()`` and/or ``export()`` per the configured params,
-          then yields one ``AuditResult``.  Memory stays O(1) — each chunk is
+          then yields one ``Wave``.  Memory stays O(1) — each chunk is
           released and ``gc.collect()`` runs before the next.  Best for
           large paginated sources where you want a steady throughput trace.
 
@@ -913,7 +913,7 @@ class Incorporator(BaseModel):
                 daemon period. Falls back to ``poll_interval``.
 
         Yields:
-            :class:`AuditResult`: One per chunk (chunking) or per daemon
+            :class:`Wave`: One per chunk (chunking) or per daemon
             iteration (stateful). Fields:
 
             - ``chunk_index`` (int): Sequential index within the engine.
@@ -927,18 +927,18 @@ class Incorporator(BaseModel):
         Examples:
             Simple chunked stream with paginator::
 
-                async for audit in User.stream(
+                async for wave in User.stream(
                     incorp_params={
                         "inc_url": "https://api.example.com/users",
                         "inc_page": NextUrlPaginator("next"),
                     },
                     export_params={"file_path": "users.ndjson"},
                 ):
-                    print(f"Chunk {audit.chunk_index}: {audit.rows_processed} rows")
+                    print(f"Chunk {wave.chunk_index}: {wave.rows_processed} rows")
 
             Stateful polling — refresh every 5 min, export every 30 s::
 
-                async for audit in User.stream(
+                async for wave in User.stream(
                     incorp_params={"inc_url": "https://api.example.com/users"},
                     refresh_params={},
                     export_params={"file_path": "snapshot.json"},
@@ -946,7 +946,7 @@ class Incorporator(BaseModel):
                     refresh_interval=300.0,
                     export_interval=30.0,
                 ):
-                    handle(audit)
+                    handle(wave)
         """
         from .observability.pipeline import run_pipeline
 
@@ -1003,7 +1003,7 @@ class Incorporator(BaseModel):
 
             load_user_module(inflow, name_hint="_inc_stream_inflow")
 
-        async for audit in run_pipeline(
+        async for wave in run_pipeline(
             cls=receiver_cls,
             incorp_params=incorp_params,
             refresh_params=refresh_params,
@@ -1013,7 +1013,7 @@ class Incorporator(BaseModel):
             refresh_interval=refresh_interval,
             export_interval=export_interval,
         ):
-            yield audit
+            yield wave
 
     @classmethod
     async def fjord(
@@ -1024,7 +1024,7 @@ class Incorporator(BaseModel):
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
         inflow: Optional[Union[str, Path]] = None,
-    ) -> AsyncGenerator["AuditResult", None]:
+    ) -> AsyncGenerator["Wave", None]:
         """Multi-source stateful streaming with a dynamically-built output class.
 
         ``fjord()`` is the multi-source analogue of :meth:`stream` — it ingests
@@ -1083,7 +1083,7 @@ class Incorporator(BaseModel):
                 ``None`` means "one-shot then exit".
 
         Yields:
-            :class:`AuditResult`: One per phase. The ``operation`` field
+            :class:`Wave`: One per phase. The ``operation`` field
             identifies what fired:
 
             - ``"fjord_incorp:<ClassName>"`` — seed phase, one per source.
@@ -1119,7 +1119,7 @@ class Incorporator(BaseModel):
                 from incorporator import Incorporator
                 from coin_market import Coin, BinanceFutures
 
-                async for audit in Incorporator.fjord(
+                async for wave in Incorporator.fjord(
                     stream_params=[
                         {"cls": Coin,
                          "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"},
@@ -1133,7 +1133,7 @@ class Incorporator(BaseModel):
                     refresh_interval=60.0,
                     export_interval=300.0,
                 ):
-                    print(f"{audit.operation}: {audit.rows_processed} rows")
+                    print(f"{wave.operation}: {wave.rows_processed} rows")
         """
         from .observability.pipeline import _run_fjord_engine
 
@@ -1168,7 +1168,7 @@ class Incorporator(BaseModel):
         output_class_name = pascal_case_from_stem(outflow)
         outflow_fn = load_outflow_function(outflow)
 
-        async for audit in _run_fjord_engine(
+        async for wave in _run_fjord_engine(
             output_class_name=output_class_name,
             base_class=Incorporator,
             stream_params=stream_params,
@@ -1177,7 +1177,7 @@ class Incorporator(BaseModel):
             r_interval=refresh_interval,
             e_interval=export_interval,
         ):
-            yield audit
+            yield wave
 
     @classmethod
     async def test(

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, cast
 
 from incorporator import LoggedIncorporator
-from incorporator.observability.logger import AuditResult
+from incorporator.observability.logger import Wave
 
 # 1. ZERO-BLOAT DEPENDENCY SHIELD
 try:
@@ -45,7 +45,7 @@ async def run_incorporator_stream(
     export_params: Optional[Dict[str, Any]] = None,
     poll_interval: Optional[float] = None,
     stateful_polling: bool = False,
-) -> List[AuditResult]:
+) -> List[Wave]:
     """
     Prefect Task executing the O(1) Memory Incorporator Stream.
     Captures telemetry natively into the Prefect dashboard.
@@ -56,10 +56,10 @@ async def run_incorporator_stream(
     logger = get_run_logger()
     logger.info("🚀 Starting Incorporator stream orchestration.")
 
-    results: List[AuditResult] = []
+    results: List[Wave] = []
 
     try:
-        async for audit in LoggedIncorporator.stream(
+        async for wave in LoggedIncorporator.stream(
             incorp_params=incorp_params,
             refresh_params=refresh_params,
             export_params=export_params,
@@ -67,12 +67,12 @@ async def run_incorporator_stream(
             stateful_polling=stateful_polling,
             enable_logging=False,
         ):
-            results.append(audit)
+            results.append(wave)
 
             # Route telemetry to the Prefect Cloud Dashboard
-            status = f"Chunk {audit.chunk_index} | {audit.rows_processed} rows in {audit.processing_time_sec:.2f}s"
-            if audit.failed_sources:
-                logger.warning(f"⚠️ {status} with failures: {audit.failed_sources}")
+            status = f"Chunk {wave.chunk_index} | {wave.rows_processed} rows in {wave.processing_time_sec:.2f}s"
+            if wave.failed_sources:
+                logger.warning(f"⚠️ {status} with failures: {wave.failed_sources}")
             else:
                 logger.info(f"✅ {status}")
 
@@ -85,7 +85,7 @@ async def run_incorporator_stream(
 
 
 @flow(name="incorporator_pipeline_flow")
-async def run_incorporator_flow(config_path: str, poll_interval: Optional[float] = None) -> List[AuditResult]:
+async def run_incorporator_flow(config_path: str, poll_interval: Optional[float] = None) -> List[Wave]:
     """
     Prefect Flow entrypoint. Loads JSON configuration and triggers the stream task.
     """

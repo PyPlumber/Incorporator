@@ -10,7 +10,7 @@ from typing import Any, List, Type
 import pytest
 
 from incorporator import FormatType, LoggedIncorporator
-from incorporator.observability.logger import AuditResult
+from incorporator.observability.logger import Wave
 from incorporator.io.pagination import CSVPaginator
 
 
@@ -58,7 +58,7 @@ async def test_stream_engine_1_chunking_big_data(
         "code_attr": "id"
     }
 
-    audits: List[AuditResult] = []
+    audits: List[Wave] = []
 
     # Execute Engine 1 Stream
     async for audit in StreamTargetModel.stream(
@@ -100,7 +100,7 @@ async def test_stream_engine_2_stateful_live_data(
         "code_attr": "id"
     }
 
-    audits: List[AuditResult] = []
+    audits: List[Wave] = []
 
     # Execute Engine 2 Stream (poll_interval=None forces it to break after 1 loop)
     async for audit in StreamTargetModel.stream(
@@ -134,7 +134,7 @@ async def test_stream_engine_2_empty_failsafe(
         "inc_file": str(json_file)
     }
 
-    audits: List[AuditResult] = []
+    audits: List[Wave] = []
 
     async for audit in StreamTargetModel.stream(
             incorp_params=incorp_params,

@@ -151,16 +151,16 @@ await Launch.export(instance=launches, file_path="launches.parquet")
 
 ### `stream()` — a long-running data pipeline
 
-Periodic fetch + optional stateful refresh + optional periodic export, running as a daemon. The kwargs **are** the pipeline definition. `AuditResult` per chunk is the built-in observability stream — a DX bonus, not the purpose.
+Periodic fetch + optional stateful refresh + optional periodic export, running as a daemon. The kwargs **are** the pipeline definition. A `Wave` per chunk is the built-in observability stream — a DX bonus, not the purpose.
 
 ```python
-async for audit in Launch.stream(
+async for wave in Launch.stream(
     incorp_params={"inc_url": "https://ll.thespacedevs.com/2.2.0/launch/upcoming/"},
     refresh_interval=60,                              # re-fetch every 60s
     export_params={"file_path": "launches.parquet"},
     export_interval=300,                              # flush to disk every 5 min
 ):
-    if audit.failed_sources: print(audit)             # observability bonus
+    if wave.failed_sources: print(wave)               # observability bonus
 ```
 → [Streaming & pagination guide](./docs/streaming_and_pagination.md)
 
@@ -169,7 +169,7 @@ async for audit in Launch.stream(
 Fans out across N concurrent sources, fuses them through a user-defined `outflow(state)` function, exports the combined output.
 
 ```python
-async for audit in Pipeline.fjord(
+async for wave in Pipeline.fjord(
     stream_params=[
         {"cls": Coin,  "incorp_params": {"inc_url": "..."}, "refresh_interval": 30},
         {"cls": Order, "incorp_params": {"inc_url": "..."}, "refresh_interval": 5},
@@ -177,7 +177,7 @@ async for audit in Pipeline.fjord(
     outflow="outflow.py",                             # defines outflow(state) -> list[dict]
     export_params={"file_path": "fusion.parquet"},
 ):
-    if audit.failed_sources: print(audit)
+    if wave.failed_sources: print(wave)
 ```
 → [Multi-graph mapping guide](./docs/3_graph_mapping.md)
 
@@ -222,7 +222,7 @@ Secrets stay out of `pipeline.json` — use `${API_KEY}` for env vars or `${file
 
 * **GIL-free hyperthreading** via the `[speedups]` extra (orjson, lxml). → [Installation](./docs/installation.md)
 * **Invisible decompression** for `.gz`, `.bz2`, `.lzma`, `.zip`, `.tar` payloads — automatic, no extra calls. → [Formats](./docs/formats_and_compression.md)
-* **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity exponential backoff, failed URLs surfaced via `audit.failed_sources`. → [Library reference](./docs/library_reference.md)
+* **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity exponential backoff, failed URLs surfaced via `wave.failed_sources`. → [Library reference](./docs/library_reference.md)
 * **Zero-OOM `IncorporatorList`** backed by a `WeakValueDictionary` for O(1) lookups without GC pressure. → [Streaming](./docs/streaming_and_pagination.md)
 * **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. → [Library reference](./docs/library_reference.md)
 * **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML, all share the same `export()` surface. → [Data lake pivot](./docs/5_data_lake_pivot.md)

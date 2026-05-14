@@ -118,7 +118,7 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     ``inc_dict`` for O(1) primary-key lookup).
 
     Return a ``list[dict]`` — every key becomes a field on the dynamic
-    output class. An empty return yields a zero-row audit and skips export.
+    output class. An empty return yields a zero-row wave and skips export.
     """
     rows: List[Dict[str, Any]] = []
     for a in state["SourceA"]:

@@ -180,7 +180,7 @@ chunking mode.
 
 ```python
 # coin_market.py defines Coin, BinanceFutures, and outflow(state).
-async for audit in Incorporator.fjord(
+async for wave in Incorporator.fjord(
     stream_params=[
         {"cls": Coin,           "incorp_params": {...}, "refresh_params": {}},
         {"cls": BinanceFutures, "incorp_params": {...}, "refresh_params": {}},
@@ -190,7 +190,7 @@ async for audit in Incorporator.fjord(
     refresh_interval=60.0,
     export_interval=300.0,
 ):
-    print(audit)
+    print(wave)
 ```
 
 The CLI ships an equivalent subcommand:

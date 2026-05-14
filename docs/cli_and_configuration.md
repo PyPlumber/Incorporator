@@ -108,7 +108,7 @@ token in a checked-in `pipeline.json`.
 ### Machine-readable Output (`--json-output`)
 
 Both `stream` and `fjord` accept `--json-output`, which switches stdout
-to NDJSON (one `AuditResult` per line). The colorized startup banner
+to NDJSON (one `Wave` per line). The colorized startup banner
 and `🛑/❌` framing messages go to **stderr** so stdout stays parseable.
 
 ```bash
@@ -121,8 +121,8 @@ tool that wants structured progress.
 ### Heartbeat for Healthchecks (`--heartbeat-file`)
 
 When you pass `--heartbeat-file PATH`, the CLI `touch`es that file
-after every audit. Pair it with the Dockerfile's `HEALTHCHECK`
-instruction so the container is marked unhealthy if no audits arrive
+after every wave. Pair it with the Dockerfile's `HEALTHCHECK`
+instruction so the container is marked unhealthy if no waves arrive
 in 2 minutes:
 
 ```bash
@@ -317,12 +317,12 @@ Terminal output is suppressed, and telemetry is routed to non-blocking backgroun
 2.  **`logs/{Class}_error.log`**: The Dead Letter Queue (DLQ). Catches network timeouts, 400/500 status codes, and malformed data schemas.
 3.  **`logs/{Class}_debug.log`**: Deep framework execution traces for local troubleshooting.
 
-Every `AuditResult` yielded by the pipeline is also routed to these
-files: the structured `audit` payload appears as a top-level JSON key
+Every `Wave` yielded by the pipeline is also routed to these
+files: the structured `wave` payload appears as a top-level JSON key
 on every record, so `await MyClass.get_error()` returns rows whose
-`record["audit"]` contains the full Pydantic dump (chunk index,
+`record["wave"]` contains the full Pydantic dump (chunk index,
 operation, rows processed, timing, redacted failed_sources). The same
-routing applies to `fjord` audits — tagged per-source with operations
+routing applies to `fjord` waves — tagged per-source with operations
 like `"fjord_refresh:Coin"` and `"outflow:CoinMarket"`.
 
 URLs with query-string auth (`?api_key=...`, `?token=...`) are redacted
@@ -456,7 +456,7 @@ def outflow(state):
 | Returning `list[dict]` | Exporting the instances via `export()` (format inferred from extension) |
 |  | Audit telemetry, graceful shutdown, weak-ref management |
 
-If `outflow()` returns `[]`, fjord emits an audit with `rows_processed=0`
+If `outflow()` returns `[]`, fjord emits a wave with `rows_processed=0`
 and skips the export for that tick. Useful for "no joined rows this
 iteration" without crashing the daemon.
 

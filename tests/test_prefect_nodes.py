@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from prefect.testing.utilities import prefect_test_harness
 
-from incorporator.observability.logger import AuditResult
+from incorporator.observability.logger import Wave
 from incorporator.integrations.prefect import run_incorporator_flow
 
 
@@ -23,8 +23,8 @@ def prefect_test_fixture():
         yield
 
 
-async def mock_stream(*args: Any, **kwargs: Any) -> AsyncGenerator[AuditResult, None]:
-    yield AuditResult(chunk_index=1, rows_processed=1000, failed_sources=[], processing_time_sec=0.8)
+async def mock_stream(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
+    yield Wave(chunk_index=1, rows_processed=1000, failed_sources=[], processing_time_sec=0.8)
 
 
 @pytest.mark.asyncio
@@ -44,7 +44,7 @@ async def test_prefect_flow_success(tmp_path: Path, prefect_test_fixture: None) 
     )
 
     with patch("incorporator.integrations.prefect.LoggedIncorporator.stream", new=mock_stream):
-        results: List[AuditResult] = await run_incorporator_flow(config_path=str(config_file), poll_interval=None)
+        results: List[Wave] = await run_incorporator_flow(config_path=str(config_file), poll_interval=None)
 
         assert len(results) == 1
         assert results[0].chunk_index == 1

@@ -38,7 +38,7 @@ from .io.pagination import (
     SQLitePaginator,
 )
 from .list import IncorporatorList
-from .observability.logger import AuditResult, LoggedIncorporator, LoggingMixin, setup_class_logger
+from .observability.logger import LoggedIncorporator, LoggingMixin, Wave, setup_class_logger
 from .schema.converters import (
     calc,
     calc_all,
@@ -65,7 +65,7 @@ __all__ = [
     "setup_class_logger",
     "FormatType",
     "CompressionType",
-    "AuditResult",
+    "Wave",
     "inc",
     "calc",
     "calc_all",

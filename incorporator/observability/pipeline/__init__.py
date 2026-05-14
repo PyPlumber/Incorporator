@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Dict, Optional
 # Re-export every previously top-level symbol so existing imports
 # (`from incorporator.observability.pipeline import _refresh_daemon`,
 #  `from .observability.pipeline import run_pipeline`, etc.) keep working.
-from ..logger import AuditResult
+from ..logger import Wave
 from ._daemons import _export_daemon, _refresh_daemon
 from ._outflow import _outflow_daemon
 from ._shared import _enrich_and_load, _interruptible_sleep, _row_count
@@ -50,7 +50,7 @@ async def run_pipeline(
     stateful_polling: bool,
     refresh_interval: Optional[float] = None,
     export_interval: Optional[float] = None,
-) -> AsyncGenerator[AuditResult, None]:
+) -> AsyncGenerator[Wave, None]:
     """Dual-engine pipeline dispatcher.
 
     Routes to :func:`_run_stateful_engine` when ``stateful_polling=True``
@@ -61,7 +61,7 @@ async def run_pipeline(
     paginator = incorp_params.get("inc_page")
 
     if stateful_polling:
-        async for audit in _run_stateful_engine(
+        async for wave in _run_stateful_engine(
             cls=cls,
             incorp_params=incorp_params,
             refresh_params=refresh_params,
@@ -69,9 +69,9 @@ async def run_pipeline(
             r_interval=refresh_interval or poll_interval,
             e_interval=export_interval or poll_interval,
         ):
-            yield audit
+            yield wave
     else:
-        async for audit in _run_chunking_engine(
+        async for wave in _run_chunking_engine(
             cls=cls,
             incorp_params=incorp_params,
             refresh_params=refresh_params,
@@ -79,4 +79,4 @@ async def run_pipeline(
             poll_interval=poll_interval,
             paginator=paginator,
         ):
-            yield audit
+            yield wave

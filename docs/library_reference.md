@@ -71,7 +71,7 @@ and worked examples. The library surface, by verb:
   `CSVPaginator`, `AvroPaginator`
 - `incorporator.cli` — the `incorporator init / validate / stream /
   fjord` Typer subcommands
-- `incorporator.observability` — `LoggedIncorporator`, `AuditResult`,
+- `incorporator.observability` — `LoggedIncorporator`, `Wave`,
   `LoggingMixin`, plus the pipeline engines
 - `incorporator.io.formats` — `FormatType` enum + extension inference
 - `incorporator.io.compression` — `CompressionType` enum + auto-extract

@@ -11,19 +11,19 @@ pytest.importorskip("typer")
 from typer.testing import CliRunner
 
 from incorporator.cli import app
-from incorporator.observability.logger import AuditResult
+from incorporator.observability.logger import Wave
 
 runner = CliRunner()
 
 
-async def mock_stream(*args: Any, **kwargs: Any) -> AsyncGenerator[AuditResult, None]:
+async def mock_stream(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
     """Mocks the async generator to instantly yield 1 successful chunk."""
-    yield AuditResult(chunk_index=1, rows_processed=500, failed_sources=[], processing_time_sec=1.5)
+    yield Wave(chunk_index=1, rows_processed=500, failed_sources=[], processing_time_sec=1.5)
 
 
-async def mock_stream_with_failures(*args: Any, **kwargs: Any) -> AsyncGenerator[AuditResult, None]:
+async def mock_stream_with_failures(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
     """Mocks a stream that yields one chunk with failed sources."""
-    yield AuditResult(
+    yield Wave(
         chunk_index=1,
         rows_processed=10,
         failed_sources=["https://dead.example.com"],
@@ -31,7 +31,7 @@ async def mock_stream_with_failures(*args: Any, **kwargs: Any) -> AsyncGenerator
     )
 
 
-async def mock_stream_raises(*args: Any, **kwargs: Any) -> AsyncGenerator[AuditResult, None]:
+async def mock_stream_raises(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
     """Mocks a stream that raises mid-yield to test the fatal-exception path."""
     raise RuntimeError("simulated network catastrophe")
     yield  # pragma: no cover (unreachable — keeps mypy happy about AsyncGenerator)
@@ -87,7 +87,7 @@ def test_cli_missing_incorp_params(tmp_path: Path) -> None:
 
 
 def test_cli_stream_reports_failed_sources(tmp_path: Path) -> None:
-    """When the stream yields an AuditResult with failed_sources, the CLI must surface them."""
+    """When the stream yields an Wave with failed_sources, the CLI must surface them."""
     config_file = tmp_path / "pipe.json"
     config_file.write_text(json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8")
 
@@ -169,12 +169,12 @@ def _write_fjord_fixture(tmp_path: Path) -> tuple[Path, Path]:
     return config, user_module
 
 
-async def mock_fjord(*args: Any, **kwargs: Any) -> AsyncGenerator[AuditResult, None]:
+async def mock_fjord(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
     """Mocks the fjord async generator to yield two audits and exit."""
-    yield AuditResult(
+    yield Wave(
         chunk_index=1, operation="fjord_incorp:Coin", rows_processed=10, processing_time_sec=0.1
     )
-    yield AuditResult(
+    yield Wave(
         chunk_index=1, operation="outflow:CoinMarket", rows_processed=10, processing_time_sec=0.2
     )
 
@@ -370,7 +370,7 @@ def test_cli_init_refuses_overwrite(tmp_path: Path) -> None:
 
 
 def test_cli_stream_json_output_emits_ndjson(tmp_path: Path) -> None:
-    """--json-output emits one NDJSON AuditResult line per chunk.
+    """--json-output emits one NDJSON Wave line per chunk.
 
     The runner's default behaviour merges stderr into stdout, so we filter
     for lines that look like JSON objects. In real terminal use the

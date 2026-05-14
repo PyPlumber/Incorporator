@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from incorporator.observability.logger import AuditResult
+from incorporator.observability.logger import Wave
 from incorporator.observability.pipeline import (
     _enrich_and_load,
     _export_daemon,
@@ -116,18 +116,18 @@ async def test_enrich_and_load_export_no_force_append() -> None:
 
 
 @pytest.mark.asyncio
-async def test_refresh_daemon_single_run_enqueues_audit_result() -> None:
-    """With r_interval=None, the daemon runs exactly once and enqueues an AuditResult."""
+async def test_refresh_daemon_single_run_enqueues_wave() -> None:
+    """With r_interval=None, the daemon runs exactly once and enqueues an Wave."""
     refreshed: List[Any] = [{"id": 99}]
     cls = MagicMock()
     cls.refresh = AsyncMock(return_value=refreshed)
 
     dataset_ref: List[Any] = [[{"id": 1}]]
     lock = asyncio.Lock()
-    q: asyncio.Queue[Optional[AuditResult]] = asyncio.Queue()
+    q: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
     shutdown = asyncio.Event()
 
-    await _refresh_daemon(cls, dataset_ref, refresh_params={}, lock=lock, audit_queue=q, shutdown_event=shutdown, r_interval=None)
+    await _refresh_daemon(cls, dataset_ref, refresh_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, r_interval=None)
 
     assert dataset_ref[0] == refreshed
     assert q.qsize() == 1
@@ -139,16 +139,16 @@ async def test_refresh_daemon_single_run_enqueues_audit_result() -> None:
 
 @pytest.mark.asyncio
 async def test_refresh_daemon_error_enqueues_failure_result() -> None:
-    """Exception inside refresh must enqueue a failure AuditResult, not propagate."""
+    """Exception inside refresh must enqueue a failure Wave, not propagate."""
     cls = MagicMock()
     cls.refresh = AsyncMock(side_effect=RuntimeError("network gone"))
 
     dataset_ref: List[Any] = [[{"id": 1}]]
     lock = asyncio.Lock()
-    q: asyncio.Queue[Optional[AuditResult]] = asyncio.Queue()
+    q: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
     shutdown = asyncio.Event()
 
-    await _refresh_daemon(cls, dataset_ref, refresh_params={}, lock=lock, audit_queue=q, shutdown_event=shutdown, r_interval=None)
+    await _refresh_daemon(cls, dataset_ref, refresh_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, r_interval=None)
 
     audit = q.get_nowait()
     assert audit is not None
@@ -162,18 +162,18 @@ async def test_refresh_daemon_error_enqueues_failure_result() -> None:
 
 
 @pytest.mark.asyncio
-async def test_export_daemon_single_run_enqueues_audit_result() -> None:
-    """With e_interval=None, daemon exports once and enqueues an AuditResult."""
+async def test_export_daemon_single_run_enqueues_wave() -> None:
+    """With e_interval=None, daemon exports once and enqueues an Wave."""
     cls = MagicMock()
     cls.export = AsyncMock()
 
     dataset_ref: List[Any] = [[{"id": 1}, {"id": 2}]]
     lock = asyncio.Lock()
-    q: asyncio.Queue[Optional[AuditResult]] = asyncio.Queue()
+    q: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
     shutdown = asyncio.Event()
 
     await _export_daemon(
-        cls, dataset_ref, export_params={"file_path": "/tmp/x"}, lock=lock, audit_queue=q, shutdown_event=shutdown, e_interval=None
+        cls, dataset_ref, export_params={"file_path": "/tmp/x"}, lock=lock, wave_queue=q, shutdown_event=shutdown, e_interval=None
     )
 
     cls.export.assert_awaited_once()
@@ -185,16 +185,16 @@ async def test_export_daemon_single_run_enqueues_audit_result() -> None:
 
 @pytest.mark.asyncio
 async def test_export_daemon_error_enqueues_failure_result() -> None:
-    """Export exception must enqueue a failure AuditResult without propagating."""
+    """Export exception must enqueue a failure Wave without propagating."""
     cls = MagicMock()
     cls.export = AsyncMock(side_effect=OSError("disk full"))
 
     dataset_ref: List[Any] = [[{"id": 1}]]
     lock = asyncio.Lock()
-    q: asyncio.Queue[Optional[AuditResult]] = asyncio.Queue()
+    q: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
     shutdown = asyncio.Event()
 
-    await _export_daemon(cls, dataset_ref, export_params={}, lock=lock, audit_queue=q, shutdown_event=shutdown, e_interval=None)
+    await _export_daemon(cls, dataset_ref, export_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, e_interval=None)
 
     audit = q.get_nowait()
     assert audit is not None
@@ -209,7 +209,7 @@ async def test_export_daemon_error_enqueues_failure_result() -> None:
 
 @pytest.mark.asyncio
 async def test_run_stateful_engine_empty_dataset_exits_early() -> None:
-    """incorp() returning empty yields one error AuditResult then stops."""
+    """incorp() returning empty yields one error Wave then stops."""
     cls = MagicMock()
     cls.incorp = AsyncMock(return_value=[])
 
@@ -226,7 +226,7 @@ async def test_run_stateful_engine_empty_dataset_exits_early() -> None:
 
 @pytest.mark.asyncio
 async def test_run_stateful_engine_no_daemons_emits_incorp_result() -> None:
-    """No refresh/export params → emit one incorp AuditResult and exit cleanly."""
+    """No refresh/export params → emit one incorp Wave and exit cleanly."""
     cls = MagicMock()
     cls.incorp = AsyncMock(return_value=[{"id": 1}, {"id": 2}])
 
@@ -243,7 +243,7 @@ async def test_run_stateful_engine_no_daemons_emits_incorp_result() -> None:
 
 @pytest.mark.asyncio
 async def test_run_stateful_engine_with_refresh_daemon() -> None:
-    """refresh_params spawns the refresh daemon; its AuditResult is yielded."""
+    """refresh_params spawns the refresh daemon; its Wave is yielded."""
     cls = MagicMock()
     cls.incorp = AsyncMock(return_value=[{"id": 1}])
     cls.refresh = AsyncMock(return_value=[{"id": 99}])
@@ -264,7 +264,7 @@ async def test_run_stateful_engine_with_refresh_daemon() -> None:
 
 @pytest.mark.asyncio
 async def test_run_stateful_engine_with_export_daemon() -> None:
-    """export_params spawns the export daemon; its AuditResult is yielded."""
+    """export_params spawns the export daemon; its Wave is yielded."""
     cls = MagicMock()
     cls.incorp = AsyncMock(return_value=[{"id": 1}])
     cls.export = AsyncMock()
@@ -291,7 +291,7 @@ async def test_run_stateful_engine_with_export_daemon() -> None:
 
 @pytest.mark.asyncio
 async def test_run_chunking_engine_single_shot() -> None:
-    """No paginator: one incorp call, one chunk AuditResult, then stops."""
+    """No paginator: one incorp call, one chunk Wave, then stops."""
     cls = MagicMock()
     cls.incorp = AsyncMock(return_value=[{"id": 1}])
 
@@ -323,7 +323,7 @@ async def test_run_chunking_engine_empty_dataset_no_paginator() -> None:
 
 @pytest.mark.asyncio
 async def test_run_chunking_engine_exception_yields_failure() -> None:
-    """Exception in incorp() during chunking → failure AuditResult, loop exits."""
+    """Exception in incorp() during chunking → failure Wave, loop exits."""
     cls = MagicMock()
     cls.incorp = AsyncMock(side_effect=RuntimeError("fetch failed"))
 
@@ -424,7 +424,7 @@ async def test_run_pipeline_routes_to_stateful_engine() -> None:
         results.append(audit)
 
     assert len(results) == 1
-    assert results[0].rows_processed == 0  # empty-dataset early-exit AuditResult
+    assert results[0].rows_processed == 0  # empty-dataset early-exit Wave
 
 
 @pytest.mark.asyncio

@@ -23,10 +23,13 @@ _ACTIVE_LISTENERS: Dict[str, QueueListener] = {}
 MAX_LOG_THREADS = 50  # Hard OS limit constraint
 
 
-class AuditResult(BaseModel):
-    """
-    Structured telemetry payload for pipeline observability.
-    Merged into the logging module to unify all non-blocking IO metrics.
+class Wave(BaseModel):
+    """A single tick of pipeline telemetry yielded by ``stream()`` / ``fjord()``.
+
+    Each ``Wave`` reports one cycle of work in the engine — a chunk in
+    the chunking pipeline, or one refresh / export tick in the stateful
+    daemons.  Frozen Pydantic model so callers can pass instances
+    around without worrying about mutation.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -41,9 +44,9 @@ class AuditResult(BaseModel):
     def log_meta(self) -> str:
         """Compact, single-line meta string mirroring :meth:`LoggingMixin.log_meta`.
 
-        Used by :func:`_route_audit_to_log` so audit records share the
+        Used by :func:`_route_wave_to_log` so Wave records share the
         flat ``meta`` shape with instance-level log records. The full
-        Pydantic dump is also attached as a structured ``audit`` field
+        Pydantic dump is also attached as a structured ``wave`` field
         on every record (see :class:`JSONFormatter`).
         """
         return (
@@ -73,43 +76,43 @@ def _redact(text: str) -> str:
     once they enter ``exc_info``.
 
     Returns ``text`` unchanged when no patterns match — cheap fast path
-    for typical audit lines.
+    for typical wave lines.
     """
     return _REDACT_QS_PATTERN.sub(r"\1=***REDACTED***", text)
 
 
-def _route_audit_to_log(cls: Type[Any], audit: "AuditResult") -> None:
+def _route_wave_to_log(cls: Type[Any], wave: "Wave") -> None:
     """Adapter shared by :meth:`LoggedIncorporator.stream` and ``fjord``.
 
-    - Routes audits with ``failed_sources`` to ``error.log``.
-    - Routes audits with ``rows_processed > 0`` (and no failures) to ``info``.
-    - Zero-row, zero-failure audits are skipped (noise).
-    - Attaches the structured ``audit`` dump as a record extra so
+    - Routes waves with ``failed_sources`` to ``error.log``.
+    - Routes waves with ``rows_processed > 0`` (and no failures) to ``info``.
+    - Zero-row, zero-failure waves are skipped (noise).
+    - Attaches the structured ``wave`` dump as a record extra so
       :class:`JSONFormatter` writes it as a top-level JSON key alongside
       ``meta`` — :meth:`LoggingMixin.get_error` callers can read
-      ``record["audit"]`` directly.
+      ``record["wave"]`` directly.
     - Applies :func:`_redact` to the human-readable message *and* the
-      ``failed_sources`` list inside the dumped audit. The ``AuditResult``
+      ``failed_sources`` list inside the dumped wave. The ``Wave``
       yielded back to the caller is untouched.
     """
-    dump = audit.model_dump(mode="json")
+    dump = wave.model_dump(mode="json")
     dump["failed_sources"] = [_redact(s) for s in dump.get("failed_sources", [])]
 
     extra = {
-        "meta": audit.log_meta(),
-        "audit": dump,
+        "meta": wave.log_meta(),
+        "wave": dump,
         "is_api": False,
     }
 
-    if audit.failed_sources:
-        msg = f"{audit.operation} chunk {audit.chunk_index} encountered failures: " f"{dump['failed_sources']}"
+    if wave.failed_sources:
+        msg = f"{wave.operation} chunk {wave.chunk_index} encountered failures: " f"{dump['failed_sources']}"
         cls_logger = cls._get_cls_logger() if hasattr(cls, "_get_cls_logger") else logging.getLogger(cls.__name__)
         if cls_logger.isEnabledFor(logging.ERROR):
             cls_logger.error(msg, extra=extra)
-    elif audit.rows_processed > 0:
+    elif wave.rows_processed > 0:
         msg = (
-            f"{audit.operation} chunk {audit.chunk_index} complete: "
-            f"{audit.rows_processed} rows in {audit.processing_time_sec:.3f}s."
+            f"{wave.operation} chunk {wave.chunk_index} complete: "
+            f"{wave.rows_processed} rows in {wave.processing_time_sec:.3f}s."
         )
         cls_logger = cls._get_cls_logger() if hasattr(cls, "_get_cls_logger") else logging.getLogger(cls.__name__)
         if cls_logger.isEnabledFor(logging.INFO):
@@ -147,10 +150,10 @@ class JSONFormatter(logging.Formatter):
         }
         if hasattr(record, "meta"):
             log_obj["meta"] = record.meta
-        # Structured audit payload attached by _route_audit_to_log — surfaces as
-        # a top-level JSON key so get_error() consumers can read record["audit"].
-        if hasattr(record, "audit"):
-            log_obj["audit"] = record.audit
+        # Structured wave payload attached by _route_wave_to_log — surfaces as
+        # a top-level JSON key so get_error() consumers can read record["wave"].
+        if hasattr(record, "wave"):
+            log_obj["wave"] = record.wave
         if record.exc_info:
             log_obj["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(log_obj)
@@ -396,17 +399,19 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         inflow: Optional[Any] = None,
         outflow: Optional[Any] = None,
         enable_logging: bool = False,
-    ) -> AsyncGenerator[AuditResult, None]:
-        """
-        Autonomous Pipeline Runner with background Telemetry Logging.
-        Intercepts the chunk generator to push Audit metrics to non-blocking disk queues.
+    ) -> AsyncGenerator[Wave, None]:
+        """Autonomous pipeline runner with background telemetry logging.
+
+        Intercepts the engine's wave generator to push throughput / failure
+        metrics into the non-blocking disk loggers before yielding each
+        :class:`Wave` downstream.
         """
         if enable_logging:
             setup_class_logger(cls)
             cls.log_cls_info("Initiating autonomous stream orchestration.")
 
         try:
-            async for audit in super().stream(
+            async for wave in super().stream(
                 incorp_params=incorp_params,
                 refresh_params=refresh_params,
                 export_params=export_params,
@@ -418,10 +423,10 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
                 outflow=outflow,
             ):
                 if enable_logging:
-                    _route_audit_to_log(cls, audit)
+                    _route_wave_to_log(cls, wave)
 
                 # Yield downstream to the caller natively
-                yield audit
+                yield wave
 
             if enable_logging:
                 cls.log_cls_info("Stream process completed gracefully.")
@@ -442,20 +447,20 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         export_interval: Optional[float] = None,
         inflow: Optional[Any] = None,
         enable_logging: bool = False,
-    ) -> AsyncGenerator[AuditResult, None]:
-        """Fjord wrapper that routes per-tick audits through the disk loggers.
+    ) -> AsyncGenerator[Wave, None]:
+        """Fjord wrapper that routes per-tick waves through the disk loggers.
 
         Mirrors :meth:`stream` — when ``enable_logging`` is set, every
-        :class:`AuditResult` yielded by the fjord engine is also routed
-        through :func:`_route_audit_to_log` so:
+        :class:`Wave` yielded by the fjord engine is also routed
+        through :func:`_route_wave_to_log` so:
 
-        - throughput audits land in the calling class's ``info.log`` /
+        - throughput waves land in the calling class's ``info.log`` /
           ``api.log``,
         - failures land in ``error.log``, retrievable via :meth:`get_error`,
-        - the structured ``audit`` dump rides on every JSON record.
+        - the structured ``wave`` dump rides on every JSON record.
 
         For per-source operations (``"fjord_refresh:Coin"``, ``"outflow:CoinMarket"``)
-        the audit is logged under the calling class for retrieval simplicity.
+        the wave is logged under the calling class for retrieval simplicity.
         Per-source loggers are still set up by :meth:`incorp` on first use.
         """
         if enable_logging:
@@ -463,7 +468,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             cls.log_cls_info("Initiating fjord orchestration.")
 
         try:
-            async for audit in super().fjord(
+            async for wave in super().fjord(
                 stream_params=stream_params,
                 outflow=outflow,
                 export_params=export_params,
@@ -472,9 +477,9 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
                 inflow=inflow,
             ):
                 if enable_logging:
-                    _route_audit_to_log(cls, audit)
+                    _route_wave_to_log(cls, wave)
 
-                yield audit
+                yield wave
 
             if enable_logging:
                 cls.log_cls_info("Fjord process completed gracefully.")
