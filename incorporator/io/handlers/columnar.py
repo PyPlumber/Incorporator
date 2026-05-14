@@ -204,6 +204,13 @@ class ParquetHandler(BaseFormatHandler):
     """
 
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+        """Read a Parquet file or byte buffer and yield rows as dicts.
+
+        Uses ``pq.read_table().to_pylist()`` for the single-shot read path,
+        then routes through ``_table_to_dicts`` for vectorised JSON-prefix
+        detection — only string columns that actually contain JSON-encoded
+        nested data pay the per-row Python parse cost.
+        """
         try:
             import pyarrow.parquet as pq
         except ImportError:
@@ -230,6 +237,15 @@ class ParquetHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"Parquet Read Error: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Stream rows to a Parquet file in 1024-row Arrow batches.
+
+        Uses ``ParquetWriter`` so memory holds at most one row group at a
+        time — O(1) regardless of total dataset size. Honours
+        ``parquet_compression`` (default ``"snappy"``) and ``pydantic_schema``
+        (drives explicit Arrow types; without it, schema is inferred from
+        the first batch). Append mode is rejected — Parquet's footer index
+        makes safe appends require Hive-style partitioning.
+        """
         # Empty guard handled centrally by _peek_iterable in handlers/__init__.py.
         # Parquet files have a footer index — safe append requires Hive-style
         # partitioning, which is out of scope. Users who need append should
@@ -326,6 +342,13 @@ class FeatherHandler(BaseFormatHandler):
     """
 
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+        """Read a Feather V2 file or byte buffer and yield rows as dicts.
+
+        Uses memory-mapped reads where possible (Feather's headline feature).
+        Routes through the same ``_table_to_dicts`` helper as Parquet/ORC so
+        JSON-encoded nested cells re-hydrate consistently across columnar
+        formats.
+        """
         try:
             import pyarrow.feather as feather
         except ImportError:
@@ -348,6 +371,12 @@ class FeatherHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"Feather Read Error: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Materialize rows into a pyarrow Table and write a Feather V2 file.
+
+        Honours ``feather_compression`` (default ``"lz4"``, Feather V2's
+        native default) and ``pydantic_schema`` (drives explicit Arrow types).
+        Append mode is rejected — Feather V2 has no streaming writer.
+        """
         # Empty guard handled centrally by _peek_iterable in handlers/__init__.py.
         # Feather V2 has no streaming writer — append is not supported.
         _raise_if_append_unsupported(kwargs, "Feather/Arrow IPC")
@@ -382,6 +411,11 @@ class OrcHandler(BaseFormatHandler):
     """
 
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+        """Read an ORC file or byte buffer and yield rows as dicts.
+
+        Routes through the same ``_table_to_dicts`` helper as Parquet/Feather
+        for consistent JSON-encoded nested-cell re-hydration.
+        """
         try:
             from pyarrow import orc
         except ImportError:
@@ -409,6 +443,11 @@ class OrcHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"ORC Read Error: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Materialize rows into a pyarrow Table and write an ORC file.
+
+        Honours ``pydantic_schema`` (drives explicit Arrow types). Append mode
+        is rejected — pyarrow's ORC API has no streaming writer.
+        """
         # Empty guard handled centrally by _peek_iterable in handlers/__init__.py.
         # ORC has no streaming writer in pyarrow — append is not supported.
         _raise_if_append_unsupported(kwargs, "ORC")

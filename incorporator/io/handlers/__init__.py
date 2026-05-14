@@ -40,6 +40,13 @@ _HANDLERS: Dict[FormatType, BaseFormatHandler] = {
 async def parse_source_data(
     source: Union[str, bytes, Path, List[Any], Dict[str, Any]], format_type: FormatType, **kwargs: Any
 ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    """Central parse dispatcher — routes the payload to the matching format handler.
+
+    Pre-parsed ``list`` / ``dict`` sources pass through untouched. File / byte
+    / string sources are dispatched to the registered :class:`BaseFormatHandler`
+    for ``format_type`` and parsed inside ``asyncio.to_thread`` so disk I/O
+    and CPU-heavy decoding never block the event loop.
+    """
     if isinstance(source, list):
         return cast(List[Dict[str, Any]], source)
     if isinstance(source, dict):
@@ -85,6 +92,13 @@ def _peek_iterable(data: Iterable[Dict[str, Any]]) -> Tuple[bool, Iterator[Dict[
 async def write_destination_data(
     data: Iterable[Dict[str, Any]], file_path: Union[str, Path], format_type: FormatType, **kwargs: Any
 ) -> None:
+    """Central write dispatcher — routes the row stream to the matching format handler.
+
+    Empty-input guard runs once here via ``_peek_iterable`` so individual
+    handlers don't need to repeat it. The handler's ``write`` runs inside
+    ``asyncio.to_thread`` so disk I/O and CPU-heavy encoding never block
+    the event loop.
+    """
     handler = _HANDLERS.get(format_type)
     if not handler:
         raise IncorporatorFormatError(f"Unsupported export format: '{format_type}'.")

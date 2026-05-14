@@ -29,7 +29,24 @@ def coerce_avro_value(val: Any, avro_type: str) -> Any:
 
 
 class SQLiteHandler(BaseFormatHandler):
+    """Parse and write SQLite ``.db`` / ``.sqlite`` files.
+
+    Reads require a physical file path (SQLite has no in-memory wire format)
+    and a ``sql_query`` kwarg selecting the rows to materialize. Writes target
+    a table named by the ``sql_table`` kwarg (default ``incorporator_export``)
+    and honour ``if_exists`` semantics (``"replace"`` / ``"append"`` / ``"fail"``).
+
+    SQLite has no native ``BOOLEAN`` type: ``True``/``False`` are stored as
+    integers ``1``/``0``. Reading the column back yields integers — consumers
+    that need bools should cast explicitly.
+    """
+
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+        """Execute ``sql_query`` against the SQLite file and return rows as dicts.
+
+        Iterates the cursor directly (no ``fetchall()`` memory bomb), so the
+        read path is bounded regardless of result-set size.
+        """
         if not isinstance(source, Path):
             raise IncorporatorFormatError("SQLiteHandler requires a physical Path object.")
 
@@ -60,6 +77,13 @@ class SQLiteHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"SQLite Read Error: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Stream rows into a SQLite table via ``executemany``.
+
+        Honours ``sql_table``, ``if_exists`` (``"replace"`` / ``"append"`` /
+        ``"fail"``), and ``all_field_names`` (column order hint). Rows are
+        yielded one-by-one to the C driver so memory stays O(1) for arbitrarily
+        large input streams.
+        """
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         table_name = sanitize_json_key(kwargs.get("sql_table", "incorporator_export"))
         if_exists = kwargs.get("if_exists", "replace")
@@ -122,7 +146,21 @@ class SQLiteHandler(BaseFormatHandler):
 
 
 class AvroHandler(BaseFormatHandler):
+    """Parse and write Apache Avro binary files via ``fastavro``.
+
+    Lazy-imports ``fastavro`` on first use. Raises a clear
+    ``IncorporatorFormatError`` pointing to ``pip install incorporator[avro]``
+    when the optional dep is missing. Append mode is supported natively via
+    ``fastavro``'s ``a+b`` writer.
+    """
+
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+        """Read an Avro file or byte buffer and yield rows as dicts.
+
+        Iterates the ``fastavro.reader`` block-by-block — no ``list()``
+        materialisation — so memory stays bounded for arbitrarily large Avro
+        files.
+        """
         try:
             import fastavro  # type: ignore[import-untyped, import-not-found, unused-ignore]
         except ImportError:
@@ -152,6 +190,13 @@ class AvroHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"Avro Read Error: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Stream rows into an Avro file using the dataset's Pydantic schema.
+
+        Builds the Avro record schema from ``pydantic_schema`` via the
+        JSON-schema→Avro type bridge, then yields rows one-by-one to
+        ``fastavro.writer`` so memory stays O(1). When ``if_exists="append"``
+        and the file already exists, uses ``fastavro``'s native ``a+b`` mode.
+        """
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         try:
             import fastavro  # type: ignore[import-untyped, import-not-found, unused-ignore]

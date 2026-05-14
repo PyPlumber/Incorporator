@@ -39,6 +39,7 @@ class SQLitePaginator(AsyncPaginator):
         self._cursor: Optional[sqlite3.Cursor] = None
 
     def reset(self) -> None:
+        """Close any open file/cursor and clear state for daemon polling reuse."""
         self.is_exhausted = False
         if self._conn is not None:
             self._conn.close()
@@ -51,6 +52,12 @@ class SQLitePaginator(AsyncPaginator):
             conn.close()
 
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, List[Any], Dict[str, Any]], None]:
+        """Yield ``chunk_size`` rows per iteration from the local source.
+
+        ``start_url`` is unused — local paginators carry their own
+        ``db_path`` / ``file_path`` state. Honours ``call_lim`` so
+        ``stream()`` can force exactly one chunk per tick.
+        """
         if self.is_exhausted:
             return
 
@@ -113,6 +120,7 @@ class CSVPaginator(AsyncPaginator):
         self._reader: Optional[Any] = None
 
     def reset(self) -> None:
+        """Close any open file/cursor and clear state for daemon polling reuse."""
         self.is_exhausted = False
         if self._file is not None:
             self._file.close()
@@ -125,6 +133,12 @@ class CSVPaginator(AsyncPaginator):
             file_obj.close()
 
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, List[Any], Dict[str, Any]], None]:
+        """Yield ``chunk_size`` rows per iteration from the local source.
+
+        ``start_url`` is unused — local paginators carry their own
+        ``db_path`` / ``file_path`` state. Honours ``call_lim`` so
+        ``stream()`` can force exactly one chunk per tick.
+        """
         if self.is_exhausted:
             return
 
@@ -184,6 +198,7 @@ class AvroPaginator(AsyncPaginator):
         self._reader: Optional[Any] = None
 
     def reset(self) -> None:
+        """Close any open file/cursor and clear state for daemon polling reuse."""
         self.is_exhausted = False
         if self._file is not None:
             self._file.close()
@@ -196,6 +211,12 @@ class AvroPaginator(AsyncPaginator):
             file_obj.close()
 
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, List[Any], Dict[str, Any]], None]:
+        """Yield ``chunk_size`` rows per iteration from the local source.
+
+        ``start_url`` is unused — local paginators carry their own
+        ``db_path`` / ``file_path`` state. Honours ``call_lim`` so
+        ``stream()`` can force exactly one chunk per tick.
+        """
         if self.is_exhausted:
             return
 

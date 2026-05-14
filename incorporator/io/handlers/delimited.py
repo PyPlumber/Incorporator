@@ -14,6 +14,16 @@ logger = logging.getLogger(__name__)
 
 
 class CSVHandler(BaseFormatHandler):
+    """Parse and write delimiter-separated text files (CSV / TSV / PSV).
+
+    A single handler covers all three families — the ``delimiter`` ctor
+    arg is the only thing that varies. Reads use ``csv.DictReader``;
+    writes use ``csv.DictWriter`` with ``extrasaction="ignore"`` so
+    out-of-schema keys are silently dropped rather than raising.
+    Append mode is supported natively: subsequent writes skip the header
+    row when the target file already exists with non-zero size.
+    """
+
     def __init__(self, delimiter: str = ",") -> None:
         self.delimiter = delimiter
 
@@ -33,6 +43,12 @@ class CSVHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"Invalid Delimited Format: {e}") from e
 
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """Read a delimited file or byte buffer and yield rows as dicts.
+
+        Cells are passed through ``deserialize_nested`` so any JSON-encoded
+        list/dict cells (written by ``serialize_nested``) round-trip back to
+        native Python types.
+        """
         if isinstance(source, Path):
             with open(source, "rt", encoding="utf-8") as f:
                 return self._parse_stream(f, **kwargs)
@@ -41,6 +57,13 @@ class CSVHandler(BaseFormatHandler):
             return self._parse_stream(io.StringIO(raw_data), **kwargs)
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Stream rows to a delimited file using a generator pipeline.
+
+        Honours ``all_field_names`` (column order) and ``if_exists="append"``
+        (skips the header row when the target file already exists with
+        non-zero size). Nested dict/list values are JSON-encoded via
+        ``serialize_nested``.
+        """
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         try:
             path = Path(file_path).resolve()

@@ -62,6 +62,17 @@ class AsyncPaginator:
         return await parse_source_data(response.read(), fmt)
 
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, List[Any], Dict[str, Any]], None]:
+        """Async-generate one chunk per yield until the source is exhausted.
+
+        Subclasses implement source-specific traversal — Link headers,
+        cursors, offset windows, file pointers, etc. The contract:
+
+        * Yield raw bytes / strings / pre-parsed rows per page or chunk.
+        * Respect ``self.call_lim`` if set (used by ``stream()`` to force
+          O(1) memory by yielding exactly one chunk per tick).
+        * Set ``self.is_exhausted = True`` when no more data is available
+          so the orchestrator can flip to its idle / poll state.
+        """
         if False:
             yield b""
         raise NotImplementedError

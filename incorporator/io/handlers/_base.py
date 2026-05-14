@@ -20,8 +20,21 @@ class BaseFormatHandler(ABC):
 
     @abstractmethod
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """Parse a byte buffer, string, or Path into a dict or list of dicts.
+
+        Each subclass implements its own format-specific parsing (JSON, XML,
+        CSV, Parquet, etc.). Failures must raise :class:`IncorporatorFormatError`
+        so the central dispatch can surface a uniform error shape.
+        """
         pass
 
     @abstractmethod
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Stream rows from an iterable to a file in the subclass's format.
+
+        Subclasses honour standard kwargs where applicable: ``if_exists``
+        (``"replace"`` / ``"append"`` / ``"fail"``), ``all_field_names``
+        (column order hint), and format-specific tuning kwargs. Failures
+        must raise :class:`IncorporatorFormatError`.
+        """
         pass

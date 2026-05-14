@@ -19,6 +19,21 @@ from .formats import FormatType
 
 
 class CompressionType(str, Enum):
+    """Every compression / archive format Incorporator can transparently decompress.
+
+    Members fall into three families:
+
+    * **Native streams** (always available): ``GZIP``, ``BZ2``, ``XZ``, ``LZMA``.
+    * **Native archives** (always available): ``ZIP``, ``TAR``, ``TGZ`` —
+      multi-file archives; pass ``archive_target="name"`` to select a specific
+      member, or rely on extension-based auto-selection.
+    * **Cramjam plugins** (requires ``[cramjam]`` extra): ``ZSTD``, ``LZ4``,
+      ``SNAPPY``, ``BROTLI`` — Rust-backed for throughput.
+
+    The enum value is the canonical file-extension suffix (without the dot)
+    used by :func:`infer_compression` to detect compression from a path.
+    """
+
     # Native Streams
     GZIP = "gz"
     BZ2 = "bz2"
@@ -45,6 +60,12 @@ _CRAMJAM_MODULE_MAP: Dict[CompressionType, str] = {
 
 
 def infer_compression(path_or_url: str) -> Optional[CompressionType]:
+    """Detect the compression type from a file path or URL by its extension.
+
+    Returns the matching :class:`CompressionType` member, or ``None`` when the
+    path has no recognised compression suffix (e.g. plain ``.json`` /
+    ``.csv``). Case-insensitive — ``data.JSON.GZ`` resolves to ``GZIP``.
+    """
     path_lower = str(path_or_url).lower()
     for comp in CompressionType:
         if path_lower.endswith(f".{comp.value}"):

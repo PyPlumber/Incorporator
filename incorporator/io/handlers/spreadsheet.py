@@ -36,6 +36,13 @@ class ExcelHandler(BaseFormatHandler):
     """
 
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+        """Read an ``.xlsx`` file and yield rows as dicts.
+
+        Opens the workbook in ``read_only=True`` + ``data_only=True`` mode so
+        memory stays bounded and formula cells return their evaluated values.
+        Reads from the first sheet by default; pass ``sheet_name="..."`` to
+        target a specific sheet. Header row is always row 1.
+        """
         try:
             from openpyxl import load_workbook  # type: ignore[import-untyped]
         except ImportError:
@@ -85,6 +92,14 @@ class ExcelHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"Excel Read Error: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Stream rows to an ``.xlsx`` file using openpyxl's write-only mode.
+
+        Uses ``Workbook(write_only=True)`` so only the current row is held
+        in RAM — same O(1) memory profile as ``CSVHandler``. Honours
+        ``sheet_name`` (default ``"Sheet1"``) and ``all_field_names``
+        (column order hint). Append mode is rejected: xlsx is a zip-of-XML
+        monolith with no safe O(1) append.
+        """
         # Empty guard handled centrally by _peek_iterable in handlers/__init__.py.
         # Append mode is rejected: xlsx is a zip-of-XML monolith — there is no
         # safe O(1) append. Users who need append should stream to NDJSON/CSV.

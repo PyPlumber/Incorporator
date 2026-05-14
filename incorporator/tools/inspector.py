@@ -50,6 +50,22 @@ def _print_tree(data: Any, prefix: str = "", depth: int = 0, max_depth: int = 3)
 
 
 def analyze_data(parsed_data: List[Any], provided_kwargs: Dict[str, Any]) -> None:
+    """Print the DX Inspector report for a freshly-fetched payload.
+
+    Three sections, each actionable:
+
+    1. **Payload structure** — a tree-view of every key Python sees, with
+       types and sample values. Warns when the root shape doesn't match
+       common API conventions (e.g. recommends ``rec_path=`` when the root is
+       a dict wrapping an array).
+    2. **Identity mapping** — regex-scored candidates for ``inc_code``
+       (UUIDs, integer IDs, slugs) and ``inc_name`` (display strings).
+    3. **Type-casting suggestions** — detects ISO-8601 timestamps and emits
+       a ready-to-paste ``conv_dict={...}`` snippet.
+
+    Called by ``Incorporator.test()`` after the safe single-page fetch.
+    Prints directly to stdout; returns ``None``.
+    """
     if not parsed_data:
         print("\n🔍 INCORPORATOR INSPECTOR: No data returned to inspect.\n")
         return

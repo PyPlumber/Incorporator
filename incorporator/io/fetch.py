@@ -63,6 +63,14 @@ class HTTPClientBuilder:
         timeout: float = 15.0,
         headers: Optional[Dict[str, str]] = None,
     ) -> httpx.AsyncClient:
+        """Construct the shared ``httpx.AsyncClient`` used by every fetch.
+
+        HTTP/2 multiplexing is enabled so one TCP/TLS connection carries every
+        concurrent request, eliminating per-batch handshake overhead. The
+        keepalive pool is decoupled from ``concurrency_limit``: a small pool
+        of persistent connections is reused by all workers, while
+        ``max_connections`` caps total sockets to prevent runaway exhaustion.
+        """
         # Decouple keepalive pool from worker count: a small pool of persistent
         # connections is reused by all concurrent workers, amortising TCP/TLS
         # handshakes across the session.  max_connections is still capped at

@@ -81,6 +81,14 @@ class HTMLHandler(BaseFormatHandler):
     """Parse-only HTML table handler. Requires lxml (ships in ``[speedups]``)."""
 
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+        """Extract ``<table>`` rows from an HTML payload and return them as dicts.
+
+        By default returns the first table on the page. Pass ``table_index=N``
+        to select the Nth table, or ``table_index=-1`` to flatten every table
+        on the page into one stream. Header cells are auto-detected from the
+        first ``<tr>`` containing ``<th>`` elements; falls back to row 0 if no
+        ``<th>`` is present.
+        """
         try:
             import lxml.html  # type: ignore[import-untyped]
         except ImportError:
@@ -117,6 +125,11 @@ class HTMLHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"HTML Parse Error: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Always raises — HTML write is intentionally out of scope.
+
+        See the module docstring for the design rationale. Export to JSON,
+        CSV, or Parquet for structured output instead.
+        """
         # HTML write is intentionally out of scope — see module docstring.
         raise IncorporatorFormatError(
             "HTML write is not supported. Export to JSON, CSV, or Parquet for structured output."

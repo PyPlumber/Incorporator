@@ -12,7 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 class JSONHandler(BaseFormatHandler):
+    """Parse and write standard JSON files.
+
+    Prefers ``orjson`` (installed via the ``[speedups]`` extra) for GIL-free
+    parsing and writes; transparently falls back to the stdlib ``json``
+    module when ``orjson`` is missing. Append mode is rejected — JSON is a
+    monolithic format with no safe O(1) append. Use NDJSON for streaming.
+    """
+
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """Read a JSON file or byte buffer and return the decoded structure."""
         try:
             import orjson  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
@@ -38,6 +47,12 @@ class JSONHandler(BaseFormatHandler):
                 raise IncorporatorFormatError(f"Invalid JSON: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Stream rows into a JSON array file one record at a time.
+
+        Writes ``[\\n``, then yields each record's serialised bytes, then
+        ``\\n]`` — no full-list materialisation, so memory stays O(1) for
+        arbitrarily large input streams. Append mode is rejected.
+        """
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         _raise_if_append_unsupported(kwargs, "JSON")
         path = Path(file_path).resolve()
@@ -76,6 +91,13 @@ class JSONHandler(BaseFormatHandler):
 
 
 class NDJSONHandler(BaseFormatHandler):
+    """Parse and write newline-delimited JSON (one JSON object per line).
+
+    NDJSON is the streaming-native JSON format — each line is an
+    independent record, so reads and writes are both O(1) memory.
+    Append mode is supported natively.
+    """
+
     def _parse_stream(self, stream: Union[TextIO, List[str]]) -> List[Dict[str, Any]]:
         import json
 
@@ -91,6 +113,11 @@ class NDJSONHandler(BaseFormatHandler):
         return rows
 
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """Read an NDJSON file or byte buffer line-by-line and return parsed rows.
+
+        Empty / whitespace-only lines are skipped. Invalid JSON on any line
+        raises :class:`IncorporatorFormatError` with the offending line number.
+        """
         if isinstance(source, Path):
             with open(source, "rt", encoding="utf-8") as f:
                 return self._parse_stream(f)
@@ -99,6 +126,11 @@ class NDJSONHandler(BaseFormatHandler):
             return self._parse_stream(raw_data.splitlines())
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Stream rows to an NDJSON file, one ``json.dumps()`` line per row.
+
+        Append mode is supported natively — set ``if_exists="append"`` to
+        extend an existing file rather than overwrite.
+        """
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         import json
 
@@ -138,7 +170,23 @@ def _build_xml_root(data: List[Dict[str, Any]], ET: Any) -> Any:
 
 
 class XMLHandler(BaseFormatHandler):
+    """Parse and write XML files with built-in XXE protection.
+
+    Prefers ``lxml`` (installed via ``[speedups]``) for performance; falls
+    back to the stdlib ``xml.etree.ElementTree`` when missing. Every payload
+    runs through ``check_xml_security`` before parsing — defense-in-depth
+    against XXE / billion-laughs / external-entity attacks regardless of
+    which parser is active. Append mode is rejected — XML requires a full
+    DOM in memory for safe writes.
+    """
+
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """Read an XML file or byte buffer and return its tree as nested dicts.
+
+        Always runs ``check_xml_security`` first — even with lxml's
+        ``resolve_entities=False``, the framework needs a consistent
+        rejection point so attacks never silently no-op.
+        """
         # Defense-in-depth: run check_xml_security BEFORE either parser path.
         # lxml's resolve_entities=False silently drops XXE entities (good!) but
         # also silently returns success — so the framework would never know an
@@ -180,6 +228,13 @@ class XMLHandler(BaseFormatHandler):
                     raise IncorporatorFormatError(f"Invalid XML: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Build an XML DOM from the row iterable and write it to disk.
+
+        XML cannot be streamed safely — ElementTree has no incremental
+        writer, so the full DOM is materialised before flushing. Append
+        mode is rejected. Element names are sanitised (spaces → underscores,
+        digit prefixes guarded) and cached for O(1) per-row reuse.
+        """
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         _raise_if_append_unsupported(kwargs, "XML")
         # XML requires a full DOM in memory — intentionally materialize here.
