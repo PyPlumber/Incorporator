@@ -74,6 +74,8 @@ and worked examples. The library surface, by verb:
 - `incorporator.observability` — `LoggedIncorporator`, `Wave`,
   `LoggingMixin`, plus the pipeline engines
 - `incorporator.io.formats` — `FormatType` enum + extension inference
+  *(see the [Cross-Format Type Bridge](./formats_and_compression.md#-cross-format-type-bridge)
+  for how every Python type round-trips through every supported format)*
 - `incorporator.io.compression` — `CompressionType` enum + auto-extract
 
 ---
