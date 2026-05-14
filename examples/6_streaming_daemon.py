@@ -5,9 +5,9 @@ Companion script for `docs/6_streaming_daemon.md`.
 
 Demonstrates `stream()` — a long-running daemon that periodically refreshes
 a single source and flushes snapshots to disk on its own cadence. Subclass
-`LoggedIncorporator` so every wave is captured in rotating JSON-line log
-files (logs/api.log, logs/error.log, logs/debug.log) — disk I/O never
-blocks the event loop.
+`LoggedIncorporator` and pass `enable_logging=True` on the verb call so
+every wave is captured in rotating JSON-line log files (logs/api.log,
+logs/error.log, logs/debug.log) — disk I/O never blocks the event loop.
 
 Run with:
     python examples/6_streaming_daemon.py
@@ -21,10 +21,12 @@ from incorporator import LoggedIncorporator
 
 
 class Launch(LoggedIncorporator):
-    """SpaceX latest-launch tracker. enable_logging=True routes every wave
-    through the background QueueHandler so the event loop stays unblocked."""
+    """SpaceX latest-launch tracker.
 
-    enable_logging = True
+    Passing ``enable_logging=True`` to ``stream()`` below routes every
+    wave through the background QueueHandler so the event loop stays
+    unblocked.
+    """
 
 
 async def main() -> None:
@@ -37,6 +39,7 @@ async def main() -> None:
         refresh_interval=60.0,                                  # re-fetch every minute
         export_params={"file_path": "data/spacex_latest.parquet"},
         export_interval=300.0,                                  # flush every 5 minutes
+        enable_logging=True,                                    # opt into JSON-line logs
     ):
         if wave.failed_sources:
             print(f"⚠️  {wave.operation} chunk {wave.chunk_index}: {wave.failed_sources}")

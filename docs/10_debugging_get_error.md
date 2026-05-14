@@ -7,10 +7,10 @@ multi-GB log. You want a structured list of failures you can iterate,
 filter, and feed back into a retry loop.
 
 That's what `LoggedIncorporator` + `get_error()` give you. Subclass
-`LoggedIncorporator`, set `enable_logging = True`, and every failure
-this class encounters lands in `logs/<ClassName>_error.log` as JSON
-lines — readable from any other process, retrievable in your own
-Python with one async call.
+`LoggedIncorporator` and pass `enable_logging=True` on each verb call,
+and every failure that class encounters lands in
+`logs/<ClassName>_error.log` as JSON lines — readable from any other
+process, retrievable in your own Python with one async call.
 
 ---
 
@@ -36,21 +36,23 @@ the **durable** view (everything this class has ever logged).
 
 ---
 
-## Step 1: Enable Logging on Your Class
+## Step 1: Subclass `LoggedIncorporator`
 
 ```python
 from incorporator import LoggedIncorporator
 
 
 class Webhook(LoggedIncorporator):
-    """Production webhook ingester — every failure hits disk."""
-
-    enable_logging = True
+    """Production webhook ingester — every failure hits disk when
+    enable_logging=True is passed on each verb call."""
 ```
 
-That's the only required change. `LoggedIncorporator` configures the
-class's `QueueHandler` background thread on first use, so disk I/O
-never blocks your event loop.
+That's the structural setup. `LoggedIncorporator` configures the
+class's `QueueHandler` background thread the first time you pass
+`enable_logging=True` to one of its verbs, so disk I/O never blocks
+your event loop. Logging stays **opt-in per call** — pass
+`enable_logging=True` when you want the disk trail, omit it for
+quick exploratory calls.
 
 ---
 
@@ -62,7 +64,7 @@ from incorporator import LoggedIncorporator
 
 
 class Webhook(LoggedIncorporator):
-    enable_logging = True
+    pass
 
 
 async def main():
@@ -72,7 +74,7 @@ async def main():
         "https://jsonplaceholder.typicode.com/users/2",
         "https://this-host-does-not-exist.example.invalid/data",
     ]
-    webhooks = await Webhook.incorp(inc_url=sources, inc_code="id")
+    webhooks = await Webhook.incorp(inc_url=sources, inc_code="id", enable_logging=True)
 
     print(f"Loaded {len(webhooks)} records.")
     print(f"failed_sources (live view): {webhooks.failed_sources}")
@@ -130,7 +132,7 @@ async def retry_failed_webhooks():
     # Dedup before retry — the same URL may appear across multiple ticks.
     dlq_urls = list(set(dlq_urls))
     print(f"♻️  Retrying {len(dlq_urls)} previously-failed URLs.")
-    return await Webhook.incorp(inc_url=dlq_urls, inc_code="id")
+    return await Webhook.incorp(inc_url=dlq_urls, inc_code="id", enable_logging=True)
 ```
 
 That's the entire DLQ retry shape. No external queue service, no log

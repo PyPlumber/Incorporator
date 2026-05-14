@@ -5,7 +5,7 @@ Companion script for `docs/10_debugging_get_error.md`.
 
 Demonstrates the durable-error retrieval loop:
 
-    1. Subclass LoggedIncorporator + set enable_logging = True
+    1. Subclass LoggedIncorporator + pass enable_logging=True on each verb call
     2. Run incorp() against a mix of good and deliberately-broken URLs
     3. Read failed_sources off the live result (the per-tick view)
     4. Call await Class.get_error() for the durable, structured view
@@ -21,9 +21,8 @@ from incorporator import LoggedIncorporator
 
 
 class Webhook(LoggedIncorporator):
-    """Production-shaped ingester — every failure lands in logs/Webhook_error.log."""
-
-    enable_logging = True
+    """Production-shaped ingester — pass ``enable_logging=True`` on each verb
+    call to land every failure in ``logs/Webhook_error.log``."""
 
 
 async def main() -> None:
@@ -35,7 +34,7 @@ async def main() -> None:
         "https://jsonplaceholder.typicode.com/users/2",
         "https://this-host-does-not-exist.example.invalid/data",
     ]
-    webhooks = await Webhook.incorp(inc_url=sources, inc_code="id")
+    webhooks = await Webhook.incorp(inc_url=sources, inc_code="id", enable_logging=True)
     print(f"✅ Loaded {len(webhooks)} records from {len(sources)} sources.")
     print(f"📋 failed_sources (live view): {webhooks.failed_sources}")
 
@@ -62,7 +61,7 @@ async def main() -> None:
     if dlq_urls:
         print(f"\n♻️  Retrying {len(dlq_urls)} previously-failed URLs...")
         # In production you'd reissue them through incorp():
-        # retried = await Webhook.incorp(inc_url=dlq_urls, inc_code="id")
+        # retried = await Webhook.incorp(inc_url=dlq_urls, inc_code="id", enable_logging=True)
         # (Commented out so the example exits cleanly — the bad URL still fails.)
     else:
         print("\n✅ DLQ empty — nothing to retry.")

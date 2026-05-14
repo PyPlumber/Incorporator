@@ -38,8 +38,7 @@ from incorporator import LoggedIncorporator
 
 
 class Launch(LoggedIncorporator):
-    """SpaceX latest-launch tracker — uses LoggedIncorporator so waves land in JSON logs."""
-    enable_logging = True
+    """SpaceX latest-launch tracker — pass enable_logging=True to stream() so waves land in JSON logs."""
 
 
 async def main():
@@ -52,6 +51,7 @@ async def main():
         refresh_interval=60.0,                                  # re-fetch every minute
         export_params={"file_path": "data/spacex_latest.parquet"},
         export_interval=300.0,                                  # flush every 5 minutes
+        enable_logging=True,                                    # JSON-line logs to disk
     ):
         if wave.failed_sources:
             print(f"⚠️  {wave.operation} chunk {wave.chunk_index}: {wave.failed_sources}")
@@ -94,8 +94,9 @@ operator-friendly:
 ### `LoggedIncorporator` → structured logs on disk
 
 By subclassing `LoggedIncorporator` (instead of `Incorporator`) and
-setting `enable_logging = True`, every wave is routed through a
-`QueueHandler` background thread into rotating JSON-line log files:
+passing `enable_logging=True` to the verb call, every wave is routed
+through a `QueueHandler` background thread into rotating JSON-line log
+files:
 
 ```
 logs/api.log      # successful chunks
