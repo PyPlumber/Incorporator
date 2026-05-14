@@ -26,7 +26,7 @@ We are going to build a "Gen 1 Power Ranking" table. To do this, we need to:
 import asyncio
 from typing import Any
 from incorporator import Incorporator, NextUrlPaginator
-from incorporator.methods.converters import calc
+from incorporator.schema.converters import calc
 
 # --- EXPLICIT SUBCLASSING ---
 class Nav(Incorporator): pass

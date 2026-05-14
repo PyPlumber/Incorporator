@@ -21,7 +21,7 @@ For the top 100 cryptocurrencies, we want to see their Global Price, their Binan
 ```python
 import asyncio
 from incorporator import Incorporator, link_to
-from incorporator.methods.converters import calc
+from incorporator.schema.converters import calc
 
 # ==========================================
 # 1. DECLARATIVE ETL FACTORY

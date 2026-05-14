@@ -38,7 +38,7 @@ Create a file called `audit_jimmy.py`. We are going to use Incorporator's native
 import asyncio
 from typing import Any
 from incorporator import Incorporator
-from incorporator.methods.converters import join_all
+from incorporator.schema.extractors import join_all
 
 # ==========================================
 # 1. DEFINE OUR OBJECTS

@@ -9,11 +9,14 @@ from incorporator import FormatType, Incorporator
 
 @pytest.mark.asyncio
 async def test_csv_etl_type_conversions(csv_users_payload: str, tmp_path: Path) -> None:
-    """Tests that Incorporator successfully parses CSV and applies conv_dict to string data."""
+    """Subclass parses CSV and applies conv_dict to coerce the string payload."""
     mock_file = tmp_path / "users.csv"
     mock_file.write_text(csv_users_payload)
 
-    users = await Incorporator.incorp(
+    class User(Incorporator):
+        pass
+
+    users = await User.incorp(
         inc_file=str(mock_file),
         format_type=FormatType.CSV,
         inc_code="id",
@@ -38,11 +41,14 @@ async def test_csv_etl_type_conversions(csv_users_payload: str, tmp_path: Path) 
 
 @pytest.mark.asyncio
 async def test_xml_etl_rpath_and_renaming(xml_catalog_payload: str, tmp_path: Path) -> None:
-    """Tests that Incorporator parses nested XML, drills down via rec_path, and renames tags."""
+    """Subclass parses nested XML, drills via rec_path, and renames tags."""
     mock_file = tmp_path / "catalog.xml"
     mock_file.write_text(xml_catalog_payload)
 
-    books = await Incorporator.incorp(
+    class Book(Incorporator):
+        pass
+
+    books = await Book.incorp(
         inc_file=str(mock_file),
         format_type=FormatType.XML,
         # Drill straight through the catalog wrapper into the book array!

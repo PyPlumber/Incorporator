@@ -87,7 +87,7 @@ from outflow import SpaceXLaunch, SpaceXRocket
 
 
 async def main():
-    async for wave in Incorporator.fjord(
+    async for wave in SpaceXLaunch.fjord(
         stream_params=[
             {
                 "cls": SpaceXLaunch,

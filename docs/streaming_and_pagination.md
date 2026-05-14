@@ -20,29 +20,31 @@ Incorporator treats massive local files exactly like paginated web APIs. These p
 ```python
 import asyncio
 from incorporator import LoggedIncorporator, FormatType
-from incorporator.methods.paginate import SQLitePaginator
+from incorporator.io.pagination import SQLitePaginator
+
+class User(LoggedIncorporator): pass
 
 async def run_massive_export():
     # 1. Initialize the Stateful Paginator
     db_streamer = SQLitePaginator(
-        db_path="massive_database.db", 
-        sql_query="SELECT * FROM users_table", 
-        chunk_size=10000
+        db_path="massive_database.db",
+        sql_query="SELECT * FROM users_table",
+        chunk_size=10000,
     )
 
     # 2. Start the Autonomous O(1) Stream
-    async for metric in LoggedIncorporator.stream(
+    async for wave in User.stream(
         incorp_params={
             "inc_url": "local_database_stream", # Satisfies origin tracking
             "inc_page": db_streamer,            # Hands control to the Paginator
-            "format_type": FormatType.JSON      # Local paginators yield JSON bytes
+            "format_type": FormatType.JSON,     # Local paginators yield JSON bytes
         },
         export_params={
-            "file_path": "output/users_export.csv" 
+            "file_path": "output/users_export.csv"
             # Note: stream() automatically forces if_exists="append"
-        }
+        },
     ):
-        print(f"Exported chunk {metric.chunk_index}: {metric.rows_processed} rows")
+        print(f"Exported chunk {wave.chunk_index}: {wave.rows_processed} rows")
 
 asyncio.run(run_massive_export())
 ```
@@ -68,14 +70,16 @@ You can use paginators with the standard `incorp()` method for simple array accu
 ```python
 import asyncio
 from incorporator import Incorporator
-from incorporator.methods.paginate import PageNumberPaginator
+from incorporator.io.pagination import PageNumberPaginator
+
+class Item(Incorporator): pass
 
 async def scrape_api():
     # Setup the paginator to increment '?page='
     paginator = PageNumberPaginator(page_param="page", start_page=1)
-    
+
     # incorp() will automatically loop until the API returns no more data
-    dataset = await Incorporator.incorp(
+    dataset = await Item.incorp(
         inc_url="https://api.example.com/items",
         inc_page=paginator
     )
@@ -102,29 +106,29 @@ If you want to run a continuous data scraper in the background (e.g., pulling li
 ```python
 import asyncio
 from incorporator import LoggedIncorporator
-from incorporator.methods.paginate import NextUrlPaginator
+from incorporator.io.pagination import NextUrlPaginator
+
+class LiveEvent(LoggedIncorporator): pass
 
 async def run_infinite_scraper():
     # 1. STATE RETENTION: Paginator holds the URLs and cursors safely.
     paginator = NextUrlPaginator("meta", "next_page_link")
-    
+
     # 2. O(1) ORCHESTRATION: stream() automatically forces call_lim=1 internally.
     # It will fetch exactly 1 page, save it, drop RAM, and repeat until the API is exhausted.
-    async for metric in LoggedIncorporator.stream(
+    async for wave in LiveEvent.stream(
         incorp_params={
             "inc_url": "https://api.example.com/live-events",
-            "inc_page": paginator
+            "inc_page": paginator,
         },
-        export_params={
-            "file_path": "output/live_events.csv"
-        },
+        export_params={"file_path": "output/live_events.csv"},
         poll_interval=600.0,  # Sleep for 10 minutes when the API runs out of pages
-        enable_logging=True
+        enable_logging=True,
     ):
-        print(f"Processed chunk {metric.chunk_index}: {metric.rows_processed} events.")
-        
-        # 3. DAEMON RESET: After exhaustion, it sleeps for 600s. 
-        # When it wakes up, stream() calls paginator.reset() behind the scenes 
+        print(f"Processed chunk {wave.chunk_index}: {wave.rows_processed} events.")
+
+        # 3. DAEMON RESET: After exhaustion, it sleeps for 600s.
+        # When it wakes up, stream() calls paginator.reset() behind the scenes
         # and starts pulling from page 1 all over again!
 
 if __name__ == "__main__":
@@ -180,7 +184,9 @@ chunking mode.
 
 ```python
 # coin_market.py defines Coin, BinanceFutures, and outflow(state).
-async for wave in Incorporator.fjord(
+from coin_market import Coin, BinanceFutures
+
+async for wave in Coin.fjord(
     stream_params=[
         {"cls": Coin,           "incorp_params": {...}, "refresh_params": {}},
         {"cls": BinanceFutures, "incorp_params": {...}, "refresh_params": {}},

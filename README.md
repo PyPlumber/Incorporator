@@ -57,9 +57,11 @@ Feed it the unpredictable JSON. Incorporator dynamically unifies the changing st
 import asyncio
 from incorporator import Incorporator
 
+class System(Incorporator): pass     # Subclass; everything else hangs off it.
+
 async def main():
     # 1. Parse unpredictable JSON directly into Python objects. No models defined!
-    systems = await Incorporator.incorp(
+    systems = await System.incorp(
         inc_file="telemetry.json",
         inc_code="id" # Sets 'id' as the O(1) Memory Registry lookup key
     )
@@ -84,11 +86,11 @@ Out of the box: **JSON, NDJSON, CSV, TSV, PSV, XML, SQLite, and HTML** (HTML is 
 If that exact same telemetry data comes from a legacy system as XML or CSV:
 ```python
 # The syntax doesn't change for XML...
-systems_xml = await Incorporator.incorp(inc_file="telemetry.xml", inc_code="id")
+systems_xml = await System.incorp(inc_file="telemetry.xml", inc_code="id")
 print(systems_xml.inc_dict["NAV"].st.pos) # Output:['12', '44']
 
 # ...and it works instantly for CSV, TSV, or streaming NDJSON logs!
-systems_csv = await Incorporator.incorp(inc_file="telemetry.csv", inc_code="id")
+systems_csv = await System.incorp(inc_file="telemetry.csv", inc_code="id")
 ```
 
 ---

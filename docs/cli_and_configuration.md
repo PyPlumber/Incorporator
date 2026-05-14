@@ -14,7 +14,7 @@ pip install "incorporator[orchestrate]"
 
 ## 2. The Configuration File (`pipeline.json`)
 
-The CLI is driven entirely by a JSON configuration file. This file maps directly to the "Holy Trinity" API parameters (`incorp`, `refresh`, and `export`) and allows you to toggle the execution engine.
+The CLI is driven entirely by a JSON configuration file. This file maps directly to the trinity verbs (`incorp`, `refresh`, `export`) and lets you toggle the execution engine.
 
 Here is a standard `pipeline.json` designed to scrape an API, enrich it, and append it to a local CSV file:
 
@@ -86,7 +86,7 @@ incorporator stream pipeline.json --poll 60.0
 
 ### Authentication Headers
 
-Every kwarg accepted by `Incorporator.incorp()` is also accepted under
+Every kwarg accepted by your subclass's `incorp()` is also accepted under
 `incorp_params` in the JSON. The most common production knob is custom
 headers — auth, content negotiation, user-agents:
 

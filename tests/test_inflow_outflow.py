@@ -32,7 +32,7 @@ def test_fjord_no_longer_accepts_code_file_kwarg(tmp_path: Path) -> None:
         pass
 
     async def attempt() -> None:
-        gen = Incorporator.fjord(
+        gen = Sample.fjord(
             stream_params=[{"cls": Sample, "incorp_params": {"inc_url": "https://x"}}],
             code_file=tmp_path / "outflow.py",
             export_params={"file_path": str(tmp_path / "out.ndjson")},

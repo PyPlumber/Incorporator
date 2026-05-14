@@ -1,4 +1,4 @@
-"""Unit tests for Incorporator.fjord() — multi-source stateful streaming.
+"""Unit tests for Coin.fjord() — multi-source stateful streaming.
 
 The output class is **derived dynamically** from the ``outflow`` filename
 (snake_case → PascalCase). The developer never declares it. Each test seeds
@@ -163,7 +163,7 @@ async def test_fjord_one_shot_combines_two_sources(
     out_file = tmp_path / "markets.ndjson"
 
     waves = await _drain(
-        Incorporator.fjord(
+        Coin.fjord(
             stream_params=[
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
                 {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}},
@@ -211,7 +211,7 @@ async def test_fjord_derives_class_name_from_stem(
     out_file = tmp_path / "out.ndjson"
 
     waves = await _drain(
-        Incorporator.fjord(
+        Coin.fjord(
             stream_params=[
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
                 {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}},
@@ -239,7 +239,7 @@ async def test_fjord_empty_outflow_emits_zero_row_wave(
     out_file = tmp_path / "should_not_exist.ndjson"
 
     waves = await _drain(
-        Incorporator.fjord(
+        Coin.fjord(
             stream_params=[
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
                 {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}},
@@ -269,7 +269,7 @@ async def test_fjord_outflow_error_yields_wave_with_failed_sources(
     out_file = tmp_path / "wont-be-written.ndjson"
 
     waves = await _drain(
-        Incorporator.fjord(
+        Coin.fjord(
             stream_params=[
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
                 {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}},
@@ -293,7 +293,7 @@ async def test_fjord_validates_stream_params(tmp_path: Path) -> None:
 
     # Empty list
     with pytest.raises(ValueError, match="requires at least one stream"):
-        async for _ in Incorporator.fjord(
+        async for _ in Coin.fjord(
             stream_params=[],
             outflow=outflow_file,
             export_params={"file_path": str(tmp_path / "x.ndjson")},
@@ -302,7 +302,7 @@ async def test_fjord_validates_stream_params(tmp_path: Path) -> None:
 
     # Missing 'cls'
     with pytest.raises(ValueError, match="missing required key 'cls'"):
-        async for _ in Incorporator.fjord(
+        async for _ in Coin.fjord(
             stream_params=[{"incorp_params": {}}],
             outflow=outflow_file,
             export_params={"file_path": str(tmp_path / "x.ndjson")},
@@ -311,7 +311,7 @@ async def test_fjord_validates_stream_params(tmp_path: Path) -> None:
 
     # Wrong type for 'cls'
     with pytest.raises(TypeError, match="must be an Incorporator subclass"):
-        async for _ in Incorporator.fjord(
+        async for _ in Coin.fjord(
             stream_params=[{"cls": str, "incorp_params": {}}],
             outflow=outflow_file,
             export_params={"file_path": str(tmp_path / "x.ndjson")},
@@ -320,7 +320,7 @@ async def test_fjord_validates_stream_params(tmp_path: Path) -> None:
 
     # Missing 'incorp_params'
     with pytest.raises(ValueError, match="missing required key 'incorp_params'"):
-        async for _ in Incorporator.fjord(
+        async for _ in Coin.fjord(
             stream_params=[{"cls": Coin}],
             outflow=outflow_file,
             export_params={"file_path": str(tmp_path / "x.ndjson")},
@@ -334,7 +334,7 @@ async def test_fjord_outflow_file_must_define_outflow(tmp_path: Path) -> None:
     bad_file = _write_outflow(tmp_path, NO_OUTFLOW_SOURCE)
 
     with pytest.raises(ValueError, match="must define a top-level outflow"):
-        async for _ in Incorporator.fjord(
+        async for _ in Coin.fjord(
             stream_params=[{"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL}}],
             outflow=bad_file,
             export_params={"file_path": str(tmp_path / "x.ndjson")},
@@ -348,7 +348,7 @@ async def test_fjord_outflow_arity_enforced(tmp_path: Path) -> None:
     bad_file = _write_outflow(tmp_path, BAD_ARITY_OUTFLOW)
 
     with pytest.raises(ValueError, match="must accept exactly 1 parameter"):
-        async for _ in Incorporator.fjord(
+        async for _ in Coin.fjord(
             stream_params=[{"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL}}],
             outflow=bad_file,
             export_params={"file_path": str(tmp_path / "x.ndjson")},
@@ -360,7 +360,7 @@ async def test_fjord_outflow_arity_enforced(tmp_path: Path) -> None:
 async def test_fjord_outflow_missing_raises(tmp_path: Path) -> None:
     """Non-existent outflow file raises FileNotFoundError."""
     with pytest.raises(FileNotFoundError, match="not found"):
-        async for _ in Incorporator.fjord(
+        async for _ in Coin.fjord(
             stream_params=[{"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL}}],
             outflow=tmp_path / "does_not_exist.py",
             export_params={"file_path": str(tmp_path / "x.ndjson")},
@@ -379,7 +379,7 @@ async def test_fjord_per_stream_export(tmp_path: Path, monkeypatch: pytest.Monke
     coin_out = tmp_path / "coins_only.ndjson"
 
     waves = await _drain(
-        Incorporator.fjord(
+        Coin.fjord(
             stream_params=[
                 {
                     "cls": Coin,
