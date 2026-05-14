@@ -101,7 +101,7 @@ def atomic_write_path(target: Union[str, Path]) -> Iterator[Path]:
 # subsequent chunks/ticks or to fall back to "replace" so monolithic formats
 # stay readable (the alternative would crash mid-pipeline or silently lose
 # pre-tick data).  Source of truth for the append-fallback contract.
-APPEND_FRIENDLY_FORMATS: set = {
+APPEND_FRIENDLY_FORMATS: set[FormatType] = {
     FormatType.NDJSON,
     FormatType.CSV,
     FormatType.TSV,
@@ -128,7 +128,7 @@ def supports_append(format_type: FormatType) -> bool:
 # interpret the cell as a formula and execute it on open.  Industry-standard
 # mitigation (per OWASP "Formula Injection") is to prefix the cell with a
 # single-quote so the spreadsheet renders the raw text instead of evaluating.
-_FORMULA_INJECTION_PREFIXES: tuple = ("=", "@", "+", "-", "\t", "\r")
+_FORMULA_INJECTION_PREFIXES: tuple[str, ...] = ("=", "@", "+", "-", "\t", "\r")
 
 
 def _neutralise_formula_injection(value: Any) -> Any:

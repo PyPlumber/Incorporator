@@ -5,7 +5,7 @@ import inspect
 import logging
 import time
 from types import ModuleType
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 
 from ..logger import Wave
 from ._daemons import _export_daemon, _refresh_daemon
@@ -120,7 +120,10 @@ def _resolve_per_source_interval(
          framework default (60 s for refresh, 300 s for export).
     """
     if key in entry:
-        return entry[key]
+        # ``entry`` is typed ``Dict[str, Any]`` so the lookup widens to
+        # ``Any``; narrow back to the function's declared return type so
+        # mypy strict mode stays happy.
+        return cast(Optional[float], entry[key])
     if isinstance(top_level, dict):
         cls = entry.get("cls")
         if cls is not None and cls in top_level:

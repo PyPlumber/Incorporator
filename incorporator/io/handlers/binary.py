@@ -72,7 +72,7 @@ class SQLiteHandler(BaseFormatHandler):
             raise IncorporatorFormatError("Reading from SQLite requires an 'sql_query' kwarg.")
 
         sql_params = kwargs.get("sql_params", ())
-        bool_columns: frozenset = frozenset(kwargs.get("sql_bool_columns", ()))
+        bool_columns: frozenset[str] = frozenset(kwargs.get("sql_bool_columns", ()))
 
         try:
             conn = sqlite3.connect(source)

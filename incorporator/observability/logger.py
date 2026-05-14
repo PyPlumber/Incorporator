@@ -498,7 +498,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     async def stream(
         cls: Type[TLoggedIncorporator],
         incorp_params: Dict[str, Any],
-        refresh_params: Optional[Dict[str, Any]] = _UNSET,  # type: ignore[assignment]
+        refresh_params: Optional[Dict[str, Any]] = _UNSET,
         export_params: Optional[Dict[str, Any]] = None,
         poll_interval: Optional[float] = None,
         stateful_polling: bool = False,

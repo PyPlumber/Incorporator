@@ -207,6 +207,13 @@ class Incorporator(BaseModel):
     #: ``inc_name`` display field.
     _inc_name_attr: ClassVar[Optional[str]] = None
 
+    #: Network + format-handler call-context preserved from the first
+    #: :meth:`incorp` call so :meth:`refresh` can replay the same fetch
+    #: (``params``, ``headers``, ``rec_path``, ``conv_dict``, etc.) without
+    #: the caller re-declaring anything.  User-supplied ``refresh_params``
+    #: still win on key conflict.
+    _incorp_kwargs: ClassVar[Dict[str, Any]] = {}
+
     # ------------------------------------------------------------------
     # Universal instance attributes — present on every Incorporator object.
     # ------------------------------------------------------------------
@@ -688,10 +695,13 @@ class Incorporator(BaseModel):
         # Re-source mode: refresh("new_url") or refresh(new_url=...) /
         # refresh(new_file=...) should update the class's origin tracking
         # so subsequent in-state refreshes hit the new source, not the old one.
+        # ``target_url`` / ``target_file`` are typed ``str | list[str] | None``
+        # to accept the multi-URL refresh shape, but the class attr is a
+        # single ``Optional[str]`` — narrow on assignment.
         if target_url:
-            cls.inc_url = target_url
+            cls.inc_url = target_url if isinstance(target_url, str) else target_url[0]
         elif target_file:
-            cls.inc_file = target_file
+            cls.inc_file = target_file if isinstance(target_file, str) else target_file[0]
 
         if not inst_list:
             logger.warning(
@@ -963,7 +973,7 @@ class Incorporator(BaseModel):
     async def stream(
         cls: Type[TIncorporator],
         incorp_params: Dict[str, Any],
-        refresh_params: Optional[Dict[str, Any]] = _UNSET,  # type: ignore[assignment]
+        refresh_params: Optional[Dict[str, Any]] = _UNSET,
         export_params: Optional[Dict[str, Any]] = None,
         poll_interval: Optional[float] = None,
         stateful_polling: bool = False,
