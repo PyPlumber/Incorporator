@@ -37,7 +37,7 @@ async def test_live_post_tokens() -> None:
         inc_url="https://jsonplaceholder.typicode.com/posts",
         inc_parent=users,
         inc_child="id",
-        method="POST",
+        http_method="POST",
         json_payload={
             "userId": each(),  # <--- THE TOKEN: Spawns 10 concurrent HTTPX calls
             "title": "Automated Incorporator Post",
@@ -61,7 +61,7 @@ async def test_live_post_tokens() -> None:
         inc_url="https://postman-echo.com/post",
         inc_parent=users,
         inc_child="id",
-        method="POST",
+        http_method="POST",
         json_payload={
             "framework": "Incorporator v1.0.0",
             "batch_ids": as_list(),  # <--- THE TOKEN: Injects [1,2,3,4...10] into the JSON body

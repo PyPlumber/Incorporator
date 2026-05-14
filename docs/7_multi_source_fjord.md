@@ -192,7 +192,7 @@ stays serialisable.
 | Joining two REST APIs that update at different rates | Independent per-source refresh cadences |
 | Computing a derived dataset live (e.g. price spreads, latency joins) | `outflow()` runs CPU-heavy joins off the event loop |
 | Needing a strong-typed output class without declaring one | `infer_dynamic_schema()` builds it from the rows |
-| Production observability across a fan-out pipeline | One `AuditResult` per source per tick + per outflow tick |
+| Production observability across a fan-out pipeline | One `Wave` per source per tick + per outflow tick |
 
 For the single-source pipeline equivalent, see
 [Streaming Daemon](./6_streaming_daemon.md). For the full method signature,

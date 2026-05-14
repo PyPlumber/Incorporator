@@ -75,7 +75,7 @@ async def run_audit() -> None:
     govt_specs = await NHTSASpec.incorp(
         inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
         inc_parent=invoices,
-        method="POST",
+        http_method="POST",
         payload_type="form",        
         form_payload={
             "format": "json",
@@ -140,7 +140,7 @@ if __name__ == "__main__":
 Parsing XML in standard Python usually requires messy libraries like `xml.etree.ElementTree` and writing recursive loops. Incorporator auto-detects the `.xml` extension, drills through the `rec_path`, and dynamically builds nested Python objects (like `inv.Vehicle.VIN`) implicitly.
 
 ### 2. The Explicit State Carrier (`inc_child`)
-Instead of relying on implicitly mapped URLs or dummy strings, Incorporator v1.0.0 uses the **State Carrier** pattern. By declaring `inc_child="Vehicle.VIN"` in Phase 1, the returned `invoices` list securely memorizes that path. When passed into Phase 2, Incorporator instantly knows exactly where to drill to retrieve the primary keys for the next network request.
+Instead of relying on implicitly mapped URLs or dummy strings, Incorporator uses the **State Carrier** pattern. By declaring `inc_child="Vehicle.VIN"` in Phase 1, the returned `invoices` list securely memorizes that path. When passed into Phase 2, Incorporator instantly knows exactly where to drill to retrieve the primary keys for the next network request.
 
 ### 3. Declarative Bulk POST Execution (`join_all`)
 The NHTSA endpoint is a "Batch" processor—it expects a single string of VINs separated by semicolons. Instead of forcing you to write `for` loops, extraction lambdas, or punishing the government servers with 500 individual concurrent requests, Incorporator solves this declaratively:

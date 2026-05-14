@@ -112,7 +112,7 @@ async def test_shady_jimmy_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     live_records = await NHTSARecord.incorp(
         inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
-        method="POST",
+        http_method="POST",
         form_payload={"format": "json", "DATA": vin_batch_string},
         rec_path="Results",
         inc_code="VIN",

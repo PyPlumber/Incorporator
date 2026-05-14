@@ -78,7 +78,7 @@ handles cadence, retries, draining, and shutdown.
    * An **export daemon** wakes every `export_interval` seconds, snapshots
      the registry under the same lock, and calls `Launch.export(...)` to
      write the file.
-3. **Audit stream.** Each daemon yields an `AuditResult` per tick into a
+3. **Wave stream.** Each daemon yields a `Wave` per tick into a
    shared queue. Your `async for` loop consumes them — that's how you
    observe the pipeline without polling it yourself.
 4. **Shutdown.** Ctrl+C / SIGTERM sets a shutdown event; daemons drain,

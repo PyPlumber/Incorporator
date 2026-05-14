@@ -149,7 +149,7 @@ pip install "incorporator[orchestrate]"
 ```
 
 ### Deploying a Flow
-Incorporator includes a pre-built `@flow` wrapper that automatically pipes our `AuditResult` telemetry metrics directly into the Prefect Cloud UI.
+Incorporator includes a pre-built `@flow` wrapper that automatically pipes our `Wave` telemetry metrics directly into the Prefect Cloud UI.
 
 Create a tiny deployment script (`deploy.py`):
 ```python
