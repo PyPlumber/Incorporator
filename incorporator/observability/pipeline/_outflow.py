@@ -270,9 +270,15 @@ async def _outflow_daemon(
                         row_count_holder[0] = len(instances)
                         continue
 
+                    # Stateful fjord semantics: each derived class is
+                    # rebuilt from scratch every outflow tick (Phase 8
+                    # ``inc_dict.clear()`` + re-materialise), so we
+                    # always replace.  Users wanting forensic
+                    # accumulation can pass ``if_exists="append"``
+                    # explicitly in the per-class export_params.
                     resolved = _resolve_if_exists_for_export(
                         file_path=class_export.get("file_path"),
-                        force_append=(loop_idx > 1),
+                        force_append=False,
                         user_override=class_export.get("if_exists"),
                     )
                     params = (

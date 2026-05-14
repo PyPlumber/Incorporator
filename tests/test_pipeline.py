@@ -212,6 +212,85 @@ async def test_export_daemon_single_run_enqueues_wave() -> None:
 
 
 @pytest.mark.asyncio
+async def test_export_daemon_stateful_does_not_append_on_subsequent_ticks() -> None:
+    """Regression — stateful daemon must REPLACE on every tick, never append.
+
+    The same registry is re-exported every tick (rows are updated in place
+    by ``refresh()``), so appending would duplicate records.  Pre-fix:
+    ``force_append=(loop_idx > 1)`` injected ``if_exists="append"`` on
+    tick 2+ for append-friendly formats — example 6's
+    ``spacex_upcoming.ndjson`` grew by 18 rows per tick.  Post-fix:
+    every tick uses handler default (replace), so the file always holds
+    the latest snapshot.
+    """
+    cls = MagicMock()
+    cls.export = AsyncMock()
+    dataset_ref: List[Any] = [[{"id": 1}, {"id": 2}]]
+    lock = asyncio.Lock()
+    q: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
+    shutdown = asyncio.Event()
+
+    # Drive three ticks via a tight refresh-interval, then shutdown.
+    # The interruptible-sleep in the daemon will exit on shutdown.set().
+    async def _three_ticks_then_shutdown() -> None:
+        # Yield control three times so the daemon loop runs three exports.
+        for _ in range(3):
+            await asyncio.sleep(0)
+        shutdown.set()
+
+    daemon = asyncio.create_task(
+        _export_daemon(
+            cls=cls,
+            dataset_ref=dataset_ref,
+            export_params={"file_path": "/tmp/snapshot.ndjson"},   # append-friendly fmt
+            lock=lock,
+            wave_queue=q,
+            shutdown_event=shutdown,
+            e_interval=0.001,
+        )
+    )
+    await asyncio.gather(_three_ticks_then_shutdown(), daemon)
+
+    # Every call must have used the handler's default mode (NOT if_exists="append")
+    # because we're re-exporting the same registry.  ``if_exists`` should
+    # therefore be absent from every call's kwargs.
+    for call in cls.export.await_args_list:
+        kwargs = call.kwargs
+        assert kwargs.get("if_exists") != "append", (
+            f"Stateful daemon must not append on tick (kwargs={kwargs}); "
+            "appending would duplicate the re-exported registry."
+        )
+
+
+@pytest.mark.asyncio
+async def test_export_daemon_user_can_opt_into_append() -> None:
+    """User-supplied ``if_exists="append"`` in export_params still wins.
+
+    Forensic archive use case: 'log every snapshot to NDJSON for audit'.
+    The daemon must honour the explicit override on every tick.
+    """
+    cls = MagicMock()
+    cls.export = AsyncMock()
+    dataset_ref: List[Any] = [[{"id": 1}]]
+    lock = asyncio.Lock()
+    q: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
+    shutdown = asyncio.Event()
+
+    await _export_daemon(
+        cls=cls,
+        dataset_ref=dataset_ref,
+        export_params={"file_path": "/tmp/audit.ndjson", "if_exists": "append"},
+        lock=lock,
+        wave_queue=q,
+        shutdown_event=shutdown,
+        e_interval=None,   # single-shot
+    )
+
+    cls.export.assert_awaited_once()
+    assert cls.export.await_args.kwargs["if_exists"] == "append"
+
+
+@pytest.mark.asyncio
 async def test_export_daemon_error_enqueues_failure_result() -> None:
     """Export exception must enqueue a failure Wave without propagating."""
     cls = MagicMock()

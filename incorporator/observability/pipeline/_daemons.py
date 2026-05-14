@@ -88,13 +88,23 @@ async def _export_daemon(
         ):
             async with lock:
                 snapshot[0] = dataset_ref[0]
-            # Resolve if_exists per tick: first tick uses handler default
-            # (replace); subsequent ticks append on append-friendly formats
-            # or replace again on monolithic formats (Parquet/Excel/XML/JSON).
-            # Honour an explicit user-supplied if_exists verbatim.
+            # Stateful daemon semantics: every tick re-exports the SAME
+            # registry (same rows updated in place by refresh()), so the
+            # destination file should always hold the latest snapshot,
+            # never accumulate duplicates of the same records.  We
+            # therefore force ``replace`` semantics on every tick unless
+            # the user explicitly asks for ``if_exists="append"`` (e.g.
+            # "log every snapshot to a forensic NDJSON archive").
+            #
+            # The ``_resolve_if_exists_for_export`` helper with
+            # ``force_append=False`` returns None for "use handler
+            # default", which is "replace" for every append-friendly
+            # format (NDJSON / CSV / SQLite / Avro) and the only
+            # supported mode for monolithic formats (Parquet / Excel /
+            # XML / JSON).
             resolved = _resolve_if_exists_for_export(
                 file_path=export_params.get("file_path"),
-                force_append=(loop_idx > 1),
+                force_append=False,
                 user_override=export_params.get("if_exists"),
             )
             params = export_params if resolved is None else {**export_params, "if_exists": resolved}

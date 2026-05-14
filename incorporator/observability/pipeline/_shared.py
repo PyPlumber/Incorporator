@@ -79,12 +79,24 @@ def _resolve_if_exists_for_export(
 
     Pipeline behaviour contract:
       * User passed ``if_exists`` explicitly → honour it verbatim.
-      * ``force_append=False`` (first tick / single-shot) → return None,
-        let the handler use its default ("replace" semantics).
-      * ``force_append=True`` AND format supports append → "append".
-      * ``force_append=True`` AND format CANNOT append → "replace" so the
-        monolithic file always holds the latest registry snapshot rather
-        than crashing on the second tick.
+      * ``force_append=False`` (single-shot, OR every tick in a
+        **stateful daemon** where the SAME registry is re-exported)
+        → return None, let the handler use its default ("replace"
+        semantics).
+      * ``force_append=True`` (subsequent ticks of the **chunked
+        engine** where each tick brings NEW data) AND format
+        supports append → "append".
+      * ``force_append=True`` AND format CANNOT append → "replace" so
+        the monolithic file always holds the latest registry snapshot
+        rather than crashing on the second tick.
+
+    Callers:
+      * Chunked engine (``_enrich_and_load``) — uses
+        ``force_append=True`` after chunk 1.
+      * Stateful daemons (``_export_daemon``, ``_outflow_daemon``) —
+        ALWAYS use ``force_append=False`` so each tick replaces (the
+        same records were just re-exported in place, appending would
+        duplicate).
 
     Returns the chosen ``if_exists`` value, or None when no override is
     needed (handler default applies).
