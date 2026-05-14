@@ -189,6 +189,17 @@ class Incorporator(BaseModel):
     #: from. Same fallback semantics as :attr:`inc_url`.
     inc_file: ClassVar[Optional[str]] = None
 
+    #: Identity-mapping memory — the ``inc_code`` field name passed to the
+    #: first :meth:`incorp` call.  :meth:`refresh` defaults to this when the
+    #: caller doesn't re-pass ``inc_code=`` so the in-state refresh contract
+    #: ("re-hit the source and update existing records by their primary key")
+    #: actually works on a no-args call.
+    _inc_code_attr: ClassVar[Optional[str]] = None
+
+    #: Identity-mapping memory — same as :attr:`_inc_code_attr` but for the
+    #: ``inc_name`` display field.
+    _inc_name_attr: ClassVar[Optional[str]] = None
+
     # ------------------------------------------------------------------
     # Universal instance attributes — present on every Incorporator object.
     # ------------------------------------------------------------------
@@ -473,6 +484,13 @@ class Incorporator(BaseModel):
             else:
                 cls.inc_url = source
 
+        # Remember identity-mapping kwargs so refresh() can reuse them without
+        # forcing the caller to re-pass inc_code= / inc_name= on every tick.
+        if inc_code is not None:
+            cls._inc_code_attr = inc_code
+        if inc_name is not None:
+            cls._inc_name_attr = inc_name
+
         # Extract control flags before network call so they don't pollute handlers
         __inspect = kwargs.pop("__inspect", False)
         payload_list = kwargs.pop("payload_list", None)
@@ -601,6 +619,14 @@ class Incorporator(BaseModel):
         target_url = new_url
         target_file = new_file
 
+        # Fall back to the identity-mapping kwargs the class was first loaded
+        # with — so callers can use ``await Cls.refresh()`` without re-passing
+        # the same inc_code / inc_name they passed to ``incorp()``.
+        if inc_code is None:
+            inc_code = getattr(cls, "_inc_code_attr", None)
+        if inc_name is None:
+            inc_name = getattr(cls, "_inc_name_attr", None)
+
         # Unrolled instance resolution for DX traceability
         if instance is None:
             inst_list = cast(List[TIncorporator], list(cls.inc_dict.values()))
@@ -642,7 +668,12 @@ class Incorporator(BaseModel):
         target = target_url or target_file
         source_urls = network._normalize_source_list(target, None)
 
-        if not target_file and extracted_data:
+        # Declarative routing only fires when there's something declarative to
+        # route — a `new_url` (URL-template / POST-token injection) or a
+        # `child_path` (parent → child drill).  Pure in-state refresh (no
+        # args, no inc_child) skips this and falls through to the origin-URL
+        # fallback below, which reads each instance's stored `inc_url`.
+        if not target_file and extracted_data and (target_url or child_path):
             # Use the Router to build declarative payloads
             kwargs = router.resolve_declarative_routing(cls.__name__, extracted_data, source_urls, **kwargs)
             raw_url = kwargs.pop("inc_url", source_urls)
