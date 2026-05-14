@@ -1,11 +1,12 @@
 """Per-source refresh and export daemons used by stateful and fjord engines."""
 
 import asyncio
-import time
 from typing import Any, Dict, List, Optional
 
-from ..logger import Wave
-from ._shared import _interruptible_sleep, _resolve_if_exists_for_export, _row_count
+from ..logger import Wave  # re-exported for callers that still import it from here
+from ._shared import _daemon_tick, _interruptible_sleep, _resolve_if_exists_for_export, _row_count
+
+__all__ = ["Wave", "_refresh_daemon", "_export_daemon"]
 
 
 async def _refresh_daemon(
@@ -32,30 +33,17 @@ async def _refresh_daemon(
     loop_idx = 0
     while not shutdown_event.is_set():
         loop_idx += 1
-        start_time = time.perf_counter()
-        try:
+        async with _daemon_tick(
+            wave_queue,
+            chunk_index=loop_idx,
+            operation=operation_label,
+            error_prefix="Refresh Error",
+            row_count_fn=lambda: _row_count(dataset_ref[0]),
+        ):
             async with lock:  # ENSURE ATOMIC MUTATION
                 refreshed = await cls.refresh(instance=dataset_ref[0], **refresh_params)
                 if refreshed is not None:
                     dataset_ref[0] = refreshed
-            await wave_queue.put(
-                Wave(
-                    chunk_index=loop_idx,
-                    operation=operation_label,
-                    rows_processed=_row_count(dataset_ref[0]),
-                    processing_time_sec=time.perf_counter() - start_time,
-                )
-            )
-        except Exception as e:
-            await wave_queue.put(
-                Wave(
-                    chunk_index=loop_idx,
-                    operation=operation_label,
-                    rows_processed=0,
-                    failed_sources=[f"Refresh Error: {e}"],
-                    processing_time_sec=0.0,
-                )
-            )
 
         if r_interval is None:
             break
@@ -85,12 +73,21 @@ async def _export_daemon(
     Defaults to ``"export"`` for the single-source stateful engine.
     """
     loop_idx = 0
+    # The export body re-binds ``snapshot`` per tick — capture it via a
+    # nullable closure so ``row_count_fn`` sees the latest value without
+    # passing it through the helper's signature.
+    snapshot: List[Any] = [None]
     while not shutdown_event.is_set():
         loop_idx += 1
-        start_time = time.perf_counter()
-        try:
+        async with _daemon_tick(
+            wave_queue,
+            chunk_index=loop_idx,
+            operation=operation_label,
+            error_prefix="Export Error",
+            row_count_fn=lambda: _row_count(snapshot[0]),
+        ):
             async with lock:
-                snapshot = dataset_ref[0]
+                snapshot[0] = dataset_ref[0]
             # Resolve if_exists per tick: first tick uses handler default
             # (replace); subsequent ticks append on append-friendly formats
             # or replace again on monolithic formats (Parquet/Excel/XML/JSON).
@@ -101,25 +98,7 @@ async def _export_daemon(
                 user_override=export_params.get("if_exists"),
             )
             params = export_params if resolved is None else {**export_params, "if_exists": resolved}
-            await cls.export(instance=snapshot, **params)
-            await wave_queue.put(
-                Wave(
-                    chunk_index=loop_idx,
-                    operation=operation_label,
-                    rows_processed=_row_count(snapshot),
-                    processing_time_sec=time.perf_counter() - start_time,
-                )
-            )
-        except Exception as e:
-            await wave_queue.put(
-                Wave(
-                    chunk_index=loop_idx,
-                    operation=operation_label,
-                    rows_processed=0,
-                    failed_sources=[f"Export Error: {e}"],
-                    processing_time_sec=0.0,
-                )
-            )
+            await cls.export(instance=snapshot[0], **params)
 
         if e_interval is None:
             break

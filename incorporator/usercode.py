@@ -36,7 +36,7 @@ import inspect as _inspect
 import re
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 
 def load_user_module(path: Union[str, Path], *, name_hint: str = "_inc_user_module") -> ModuleType:
@@ -202,6 +202,91 @@ def load_outflow_function(outflow: Union[str, Path]) -> Callable[[Any], Any]:
         )
 
     return outflow_fn  # type: ignore[no-any-return]
+
+
+def load_outflow_module(outflow: Union[str, Path]) -> Tuple[Callable[[Any], Any], ModuleType]:
+    """Load ``outflow.py``; return both its ``outflow`` callable AND its module.
+
+    Sibling of :func:`load_outflow_function` for Phase 10's multi-output
+    fjord: the engine needs the module object so it can probe for
+    user-pre-declared Incorporator subclasses whose names match the
+    keys returned by ``outflow(state)``.  When such a subclass exists,
+    the engine uses it as the derived class instead of building one
+    via :func:`infer_dynamic_schema` (edge case B9).
+
+    Reuses :func:`load_user_module`'s ``sys.modules`` cache so calling
+    this AND :func:`load_outflow_function` on the same path costs one
+    file-read total.
+
+    Raises:
+        FileNotFoundError: ``outflow`` does not exist.
+        ImportError: The file cannot be loaded as a Python module.
+        ValueError: ``outflow`` is missing the top-level ``outflow(state)``
+            function or it has the wrong arity.
+    """
+    module = load_user_module(outflow, name_hint="_inc_fjord_outflow")
+
+    outflow_fn = getattr(module, "outflow", None)
+    if outflow_fn is None:
+        raise ValueError(
+            f"[Incorporator] outflow file must define a top-level outflow(state) function: {outflow}"
+        )
+
+    sig = _inspect.signature(outflow_fn)
+    params = list(sig.parameters)
+    if len(params) != 1:
+        raise ValueError(
+            f"[Incorporator] outflow() must accept exactly 1 parameter (state), got {len(params)}: {params}"
+        )
+
+    return outflow_fn, module
+
+
+def load_inflow_callable(inflow: Union[str, Path]) -> Optional[Callable[[Any], Any]]:
+    """Return the OPTIONAL state-aware ``inflow(state)`` callable from ``inflow.py``.
+
+    Phase 10 Design A: when ``inflow.py`` defines a top-level callable
+    named ``inflow`` accepting one parameter (``state``), the fjord
+    engine runs it before each source's ``incorp()`` to obtain
+    per-source ``conv_dict`` overrides.  Without this callable
+    (the historical use case where ``inflow.py`` is a passive
+    name-bag for ``calc_bst()``-style reducers), the engine keeps
+    today's parallel ``asyncio.gather`` seed path.
+
+    Sync OR async callables are both accepted — the caller is
+    responsible for detecting and awaiting if needed via
+    ``inspect.iscoroutinefunction``.
+
+    Args:
+        inflow: Path to an ``inflow.py`` file.
+
+    Returns:
+        The ``inflow`` callable when present; ``None`` when the
+        file exists but defines no such function.
+
+    Raises:
+        FileNotFoundError: ``inflow`` does not exist.
+        ImportError: The file cannot be loaded as a Python module.
+        ValueError: ``inflow`` is defined but has the wrong arity.
+    """
+    module = load_user_module(inflow, name_hint="_inc_fjord_inflow")
+    inflow_fn = getattr(module, "inflow", None)
+    if inflow_fn is None:
+        return None
+
+    if not callable(inflow_fn):
+        raise ValueError(
+            f"[Incorporator] inflow file's top-level 'inflow' attribute must be callable: {inflow}"
+        )
+
+    sig = _inspect.signature(inflow_fn)
+    params = list(sig.parameters)
+    if len(params) != 1:
+        raise ValueError(
+            f"[Incorporator] inflow() must accept exactly 1 parameter (state), got {len(params)}: {params}"
+        )
+
+    return inflow_fn  # type: ignore[no-any-return]
 
 
 def pascal_case_from_stem(outflow: Union[str, Path]) -> str:

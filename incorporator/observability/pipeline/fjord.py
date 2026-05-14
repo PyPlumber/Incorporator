@@ -1,9 +1,11 @@
 """Fjord engine (Engine 3): multi-source stateful streaming with combined outflow."""
 
 import asyncio
+import inspect
 import logging
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from types import ModuleType
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 
 from ..logger import Wave
 from ._daemons import _export_daemon, _refresh_daemon
@@ -11,6 +13,93 @@ from ._outflow import _outflow_daemon
 from ._shared import _row_count
 
 logger = logging.getLogger(__name__)
+
+
+async def _maybe_await(fn: Callable[[Any], Any], state: Dict[str, Any]) -> Any:
+    """Call ``fn(state)``; await the result if ``fn`` is a coroutine function.
+
+    Lets users define ``inflow(state)`` as either sync or async.  Pays
+    one ``iscoroutinefunction`` check per call — negligible against the
+    network I/O the inflow function typically gates.
+    """
+    if inspect.iscoroutinefunction(fn):
+        return await fn(state)
+    return fn(state)
+
+
+def _resolve_seed_order(
+    stream_params: List[Dict[str, Any]],
+    refresh_interval: Union[float, Dict[Any, float], None],
+) -> List[Dict[str, Any]]:
+    """Return ``stream_params`` re-ordered for the sequential-seed phase.
+
+    Order resolution (matches the user's "DX knows the best order"):
+      1. When ``refresh_interval`` is a ``dict[ClassName | Class, float]``,
+         that dict's key insertion order drives the seed sequence.  Any
+         stream_params entry whose class isn't keyed in the dict is
+         appended at the end in declaration order (defensive — don't
+         drop sources just because their interval was omitted).
+      2. Otherwise (scalar or None), fall back to ``stream_params``
+         declaration order — what the user wrote in the JSON list.
+    """
+    if not isinstance(refresh_interval, dict):
+        return list(stream_params)
+
+    def _entry_keys(entry: Dict[str, Any]) -> List[Any]:
+        cls = entry.get("cls")
+        return [cls, getattr(cls, "__name__", None)]
+
+    ordered: List[Dict[str, Any]] = []
+    remaining = list(stream_params)
+    for key in refresh_interval.keys():
+        for entry in remaining:
+            if key in _entry_keys(entry):
+                ordered.append(entry)
+                remaining.remove(entry)
+                break
+    ordered.extend(remaining)  # append anything not keyed in the dict
+    return ordered
+
+
+async def _seed_one_source(
+    entry: Dict[str, Any],
+    state: Dict[str, Any],
+    inflow_callable: Optional[Callable[[Any], Any]],
+) -> Any:
+    """Run a single source's ``incorp()`` with optional state-aware inflow overrides.
+
+    Calls ``inflow(state)`` first (if defined) and merges any
+    ``{ClassName: {conv_dict: {...}}}`` override into the source's
+    ``incorp_params``.  Inflow-returned conv_dict values WIN on
+    conflicting keys (the user's framing: inflow is the state-aware
+    override; stream_params is the static baseline).
+    """
+    cls = entry["cls"]
+    base_params: Dict[str, Any] = dict(entry["incorp_params"])
+
+    if inflow_callable is not None:
+        overrides = await _maybe_await(inflow_callable, state)
+        if not isinstance(overrides, dict):
+            raise TypeError(
+                f"inflow(state) must return a dict[ClassName, dict], got {type(overrides).__name__}"
+            )
+        extra = overrides.get(cls.__name__, {})
+        if not isinstance(extra, dict):
+            raise TypeError(
+                f"inflow(state)[{cls.__name__!r}] must be a dict (got {type(extra).__name__}); "
+                f"expected shape {{'conv_dict': {{...}}}}"
+            )
+        extra_conv = extra.get("conv_dict")
+        if extra_conv is not None:
+            if not isinstance(extra_conv, dict):
+                raise TypeError(
+                    f"inflow(state)[{cls.__name__!r}]['conv_dict'] must be a dict, "
+                    f"got {type(extra_conv).__name__}"
+                )
+            merged_conv = {**base_params.get("conv_dict", {}), **extra_conv}
+            base_params["conv_dict"] = merged_conv
+
+    return await cls.incorp(**base_params)
 
 
 def _resolve_per_source_interval(
@@ -51,6 +140,8 @@ async def _run_fjord_engine(
     export_params: Dict[str, Any],
     r_interval: Optional[float],
     e_interval: Optional[float],
+    outflow_module: Optional[ModuleType] = None,
+    inflow_callable: Optional[Callable[[Any], Any]] = None,
 ) -> AsyncGenerator[Wave, None]:
     """Multi-source stateful streaming engine for ``Incorporator.fjord()``.
 
@@ -60,28 +151,69 @@ async def _run_fjord_engine(
     plumbs the name + base class through.
 
     Lifecycle:
-      1. Seed phase: concurrent ``entry["cls"].incorp(**entry["incorp_params"])``
-         across all entries via ``asyncio.gather``. One ``incorp`` wave yielded
-         per source.
+      1. Seed phase:
+         * **No inflow callable** → concurrent ``entry["cls"].incorp(**...)``
+           across all entries via ``asyncio.gather`` (today's behaviour;
+           zero added latency).
+         * **inflow callable present** → sequential seed in the order
+           established by ``refresh_interval`` (when dict) or
+           ``stream_params`` declaration order.  Before each source's
+           ``incorp()`` the engine calls ``inflow(state)`` with the
+           cumulative state-so-far and merges any returned ``conv_dict``
+           overrides into that source's ``incorp_params`` — this is how
+           ``link_to(state["Planet"], …)`` gets a live registry handle.
+         One ``incorp`` wave yielded per source.
       2. Daemon phase: per-source refresh daemons (always), per-source export
          daemons (when ``export_params`` is set on the entry), and one outflow
          daemon. All coordinate via a single shared ``asyncio.Lock``.
       3. Shutdown: ``shutdown_event.set()`` → cancel tasks → drain queue → exit.
+
+    Phase 10 additions are optional kwargs (``inflow_callable``,
+    ``outflow_module``) — both default to ``None`` so existing callers
+    keep working unchanged.
     """
     # ------------------------------------------------------------------
-    # 1. Seed phase — concurrent incorp() across all sources.
+    # 1. Seed phase
     # ------------------------------------------------------------------
     source_classes: List[Any] = [entry["cls"] for entry in stream_params]
-    seed_tasks = [asyncio.create_task(entry["cls"].incorp(**entry["incorp_params"])) for entry in stream_params]
+    source_refs: List[List[Any]] = [[None] for _ in stream_params]
+    seed_order = _resolve_seed_order(stream_params, r_interval)
 
     seed_start = time.perf_counter()
-    seed_results = await asyncio.gather(*seed_tasks, return_exceptions=True)
+    if inflow_callable is None:
+        # Today's parallel seed — pure async, no ordering, no latency cost.
+        seed_results = await asyncio.gather(
+            *[entry["cls"].incorp(**entry["incorp_params"]) for entry in stream_params],
+            return_exceptions=True,
+        )
+        results_by_idx: Dict[int, Any] = dict(enumerate(seed_results))
+    else:
+        # Sequential seed in resolved order so each source can ``link_to``
+        # its predecessors via ``state[...]``.  State is built up tick by
+        # tick; refresh daemons re-run ``inflow(state)`` later when they
+        # fire (so peer snapshots stay current across refresh cycles).
+        state: Dict[str, Any] = {}
+        # Map original stream_params index → result so the wave-yield loop
+        # below stays in declaration order.
+        results_by_idx = dict.fromkeys(range(len(stream_params)))
+        for entry in seed_order:
+            idx = stream_params.index(entry)
+            try:
+                result = await _seed_one_source(entry, state, inflow_callable)
+                results_by_idx[idx] = result
+                state[entry["cls"].__name__] = result
+            except Exception as exc:
+                results_by_idx[idx] = exc
+                # Don't break — co-equal peers later in seed_order may not
+                # depend on this source's state.  Their ``inflow(state)``
+                # call will simply KeyError if they DO depend on it, which
+                # surfaces as a clean per-source failure wave.
     seed_elapsed = time.perf_counter() - seed_start
 
     # Validate seed phase — every source must have produced data.
-    source_refs: List[List[Any]] = []
-    for entry, result in zip(stream_params, seed_results):
+    for original_idx, entry in enumerate(stream_params):
         cls_name = entry["cls"].__name__
+        result = results_by_idx[original_idx]
         if isinstance(result, Exception):
             yield Wave(
                 chunk_index=1,
@@ -100,7 +232,7 @@ async def _run_fjord_engine(
                 processing_time_sec=seed_elapsed,
             )
             return
-        source_refs.append([result])
+        source_refs[original_idx][0] = result
         yield Wave(
             chunk_index=1,
             operation=f"fjord_incorp:{cls_name}",
@@ -140,6 +272,15 @@ async def _run_fjord_engine(
         )
 
         if refresh_params is not None:
+            # Note on refresh + inflow(state): refresh re-uses the original
+            # ``conv_dict`` (with its captured ``link_to(state["X"], …)``
+            # closures).  Because ``link_to`` holds a reference to the live
+            # ``IncorporatorList`` object, in-place mutations on the peer's
+            # registry are visible automatically — no per-tick re-resolution
+            # needed for the common refresh-by-mutate case.  Pipelines that
+            # actually swap the peer's IncorporatorList wholesale on refresh
+            # are an edge case; document on the inflow.py docstring rather
+            # than rebuilding state every refresh tick.
             tasks.append(
                 asyncio.create_task(
                     _refresh_daemon(
@@ -172,6 +313,9 @@ async def _run_fjord_engine(
             )
 
     # Always spawn the outflow daemon — it's the whole point of fjord.
+    # Phase 10 Design B: pass the outflow MODULE so the daemon can probe
+    # it for user-pre-declared Incorporator subclasses matching the keys
+    # returned by ``outflow(state)`` (edge case B9).
     tasks.append(
         asyncio.create_task(
             _outflow_daemon(
@@ -185,6 +329,7 @@ async def _run_fjord_engine(
                 wave_queue=wave_queue,
                 shutdown_event=shutdown_event,
                 e_interval=e_interval,
+                outflow_module=outflow_module,
             )
         )
     )

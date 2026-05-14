@@ -1,29 +1,64 @@
 """
 Command Line Interface for the Incorporator Orchestration Platform.
 Requires the `[orchestrate]` extras (Typer).
+
+Implementation note: the heavy async runners and config-loading helpers live
+in :mod:`incorporator.cli.runners` so this file can stay focused on Typer
+app construction + command registration.  The legacy private symbols
+(``_load_pipeline_config``, ``_run_validation``, ``_emit_wave``,
+``_install_sigterm_handler``, ``_err``, ``_run_stream``, ``_run_fjord``,
+``_load_user_module``, ``_resolve_incorporator_class``, ``_JSON_OUTPUT_MODE``)
+are re-exported below for backwards compatibility with any tests that
+import them directly from this module.
 """
 
 import asyncio
-import json
 import logging
-import signal
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, cast
+from typing import Any, Optional
 
 try:
     import typer
 except ImportError:
     typer = None  # type: ignore[assignment]
 
-from incorporator import Incorporator, LoggedIncorporator
-
-from .envexpand import EnvExpansionError, expand_env
+from .. import Incorporator, LoggedIncorporator  # re-exports preserved for test patching
+from .runners import (
+    _JSON_OUTPUT_MODE,
+    _emit_wave,
+    _err,
+    _install_sigterm_handler,
+    _load_pipeline_config,
+    _load_user_module,
+    _resolve_incorporator_class,
+    _run_fjord,
+    _run_stream,
+    _run_validation,
+    set_json_output_mode,
+)
 from .scaffold import write_scaffold
-from .tokens import TokenResolutionError, resolve_tokens
-from .validate import validate_config
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "app",
+    "main",
+    # Re-exports for backwards compatibility with existing test imports.
+    "Incorporator",
+    "LoggedIncorporator",
+    "_emit_wave",
+    "_err",
+    "_install_sigterm_handler",
+    "_JSON_OUTPUT_MODE",
+    "_load_pipeline_config",
+    "_load_user_module",
+    "_resolve_incorporator_class",
+    "_run_fjord",
+    "_run_stream",
+    "_run_validation",
+]
+
 
 if typer:
     app: Any = typer.Typer(
@@ -39,298 +74,6 @@ if typer:
 else:
     # Failsafe for entrypoint if Typer is missing
     app = None
-
-
-# ---------------------------------------------------------------------------
-# stderr / stdout split for --json-output mode
-# ---------------------------------------------------------------------------
-
-# Set to True by stream / fjord when --json-output is requested. Routes the
-# status banners + error messages to stderr so stdout stays pure NDJSON.
-# Outside --json-output mode (default) everything goes to stdout — back-
-# compat with the original CLI output and with tests that read result.stdout.
-_JSON_OUTPUT_MODE: bool = False
-
-
-def _err(msg: str, fg: Any = None) -> None:
-    """Print a status or error message.
-
-    Routes to **stderr** when ``--json-output`` is active (so NDJSON on
-    stdout stays parseable); otherwise prints to stdout — back-compat
-    default for human terminal users and existing test assertions.
-    """
-    if typer:
-        typer.secho(msg, fg=fg, err=_JSON_OUTPUT_MODE)
-
-
-# ---------------------------------------------------------------------------
-# Config loading + env expansion
-# ---------------------------------------------------------------------------
-
-
-def _load_pipeline_config(config_path: Path) -> Dict[str, Any]:
-    """Load and env-expand a pipeline JSON configuration.
-
-    Env-var and ``${file:...}`` references are resolved at load time so the
-    rest of the CLI (and the validators) work against a fully-resolved
-    config. Missing references surface here with a clear error.
-    """
-    if not config_path.is_file():
-        _err(f"Error: Configuration file not found at {config_path}", fg=typer.colors.RED if typer else None)
-        sys.exit(1)
-
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            parsed = cast(Dict[str, Any], json.load(f))
-    except json.JSONDecodeError as e:
-        _err(f"Error: Invalid JSON in {config_path}: {e}", fg=typer.colors.RED if typer else None)
-        sys.exit(1)
-
-    try:
-        expanded = cast(Dict[str, Any], expand_env(parsed))
-    except EnvExpansionError as e:
-        _err(f"Error: env-var expansion failed: {e}", fg=typer.colors.RED if typer else None)
-        sys.exit(1)
-
-    # Load the optional inflow= sidecar once.  Its public symbols extend the
-    # token resolver's allow-list, so JSON strings like "@calc_bst" or
-    # "calc(my_reducer, 'stats')" resolve to real callables before the engine
-    # ever sees the config.  importlib's sys.modules cache absorbs any
-    # later re-load via the same path.
-    extra_names: Dict[str, Any] = {}
-    inflow_field = expanded.get("inflow")
-    if inflow_field:
-        try:
-            from ..usercode import extract_public_names, load_user_module
-
-            inflow_path = (config_path.parent / str(inflow_field)).resolve()
-            module = load_user_module(inflow_path, name_hint="_inc_cli_inflow")
-            extra_names = extract_public_names(module)
-        except (FileNotFoundError, ImportError, SyntaxError) as e:
-            _err(
-                f"Error: failed to load inflow file {inflow_field!r}: {e}",
-                fg=typer.colors.RED if typer else None,
-            )
-            sys.exit(1)
-
-    # Resolve JSON-text tokens (e.g. "@my_pager", "inc(datetime)",
-    # "join_all(';')") into real Python objects before the config reaches
-    # the engine.  Tokens needing user-defined classes still require an
-    # outflow file (fjord pattern).
-    try:
-        return cast(Dict[str, Any], resolve_tokens(expanded, extra_names=extra_names))
-    except TokenResolutionError as e:
-        _err(f"Error: token resolution failed: {e}", fg=typer.colors.RED if typer else None)
-        sys.exit(1)
-
-
-def _run_validation(config: Dict[str, Any], config_dir: Path, type_override: Optional[str]) -> str:
-    """Run validators, print results, and return the detected type. Exits on error."""
-    requested_type = cast(Any, type_override) if type_override else None
-    detected, errors = validate_config(config, config_dir, requested_type)
-    if errors:
-        _err(f"Config invalid (detected type: {detected}):", fg=typer.colors.RED if typer else None)
-        for err in errors:
-            _err(f"  - {err}", fg=typer.colors.RED if typer else None)
-        sys.exit(1)
-    return detected
-
-
-# ---------------------------------------------------------------------------
-# Audit emit / heartbeat
-# ---------------------------------------------------------------------------
-
-
-def _emit_wave(wave: Any, *, json_output: bool, heartbeat_file: Optional[Path]) -> None:
-    """Per-wave side effects: print line + touch the heartbeat file."""
-    if json_output:
-        # NDJSON on stdout for CI / log shippers.
-        print(wave.model_dump_json(), flush=True)
-    else:
-        if typer:
-            status = (
-                f"Chunk {wave.chunk_index} | {wave.operation} | "
-                f"{wave.rows_processed} rows | {wave.processing_time_sec:.2f}s"
-            )
-            typer.secho(status, fg=typer.colors.CYAN)
-            if wave.failed_sources:
-                typer.secho(f"Failures: {wave.failed_sources}", fg=typer.colors.YELLOW)
-
-    if heartbeat_file is not None:
-        try:
-            heartbeat_file.touch()
-        except OSError as exc:
-            # Logged once but never fatal — heartbeat is best-effort.
-            logger.warning("Could not update heartbeat file %s: %s", heartbeat_file, exc)
-
-
-# ---------------------------------------------------------------------------
-# SIGTERM handling
-# ---------------------------------------------------------------------------
-
-
-def _install_sigterm_handler(shutdown_signal: asyncio.Event) -> None:
-    """Wire SIGTERM to set ``shutdown_signal``. Best-effort on Windows."""
-    try:
-        loop = asyncio.get_running_loop()
-        loop.add_signal_handler(signal.SIGTERM, shutdown_signal.set)
-    except (NotImplementedError, RuntimeError):
-        # Windows: add_signal_handler isn't supported on the proactor/selector
-        # event loops. Falls back to KeyboardInterrupt at the asyncio.run layer.
-        pass
-
-
-# ---------------------------------------------------------------------------
-# Stream runner
-# ---------------------------------------------------------------------------
-
-
-async def _run_stream(
-    config: Dict[str, Any],
-    poll_interval: Optional[float],
-    enable_logging: bool,
-    json_output: bool,
-    heartbeat_file: Optional[Path],
-) -> None:
-    incorp_params = config.get("incorp_params", {})
-    refresh_params = config.get("refresh_params")
-    export_params = config.get("export_params")
-    stateful_polling = config.get("stateful_polling", False)
-    refresh_interval = config.get("refresh_interval")
-    export_interval = config.get("export_interval")
-
-    shutdown = asyncio.Event()
-    _install_sigterm_handler(shutdown)
-
-    _err("🚀 Starting Incorporator Stream...", fg=typer.colors.GREEN if typer else None)
-
-    stream_gen = LoggedIncorporator.stream(
-        incorp_params=incorp_params,
-        refresh_params=refresh_params,
-        export_params=export_params,
-        poll_interval=poll_interval,
-        stateful_polling=stateful_polling,
-        refresh_interval=refresh_interval,
-        export_interval=export_interval,
-        enable_logging=enable_logging,
-    )
-
-    try:
-        async for wave in stream_gen:
-            _emit_wave(wave, json_output=json_output, heartbeat_file=heartbeat_file)
-            if shutdown.is_set():
-                # Polite exit: cancel the underlying generator to trigger its
-                # finally-block (daemons drained, queue shut down).
-                await stream_gen.aclose()
-                break
-    except asyncio.CancelledError:
-        _err("\n🛑 Stream stopped by user.", fg=typer.colors.YELLOW if typer else None)
-    except Exception as e:
-        _err(f"\n❌ Fatal Pipeline Error: {e}", fg=typer.colors.RED if typer else None)
-        sys.exit(1)
-
-
-# ---------------------------------------------------------------------------
-# Fjord runner — resolves cls_name strings, then delegates to LoggedIncorporator
-# ---------------------------------------------------------------------------
-
-
-def _load_user_module(outflow_path: Path) -> Any:
-    """Import the user's outflow.py once; return its module object.
-
-    Thin CLI-friendly wrapper around :func:`incorporator.usercode.load_user_module`:
-    exits with code 1 + a readable diagnostic instead of raising.  The fjord
-    CLI uses this to resolve ``cls_name`` strings back to Incorporator
-    subclasses and to make the ``outflow(state)`` function available to
-    :meth:`Incorporator.fjord`.
-    """
-    from ..usercode import load_user_module as _ucm_load_user_module
-
-    try:
-        return _ucm_load_user_module(outflow_path, name_hint="_inc_fjord_user_module")
-    except (FileNotFoundError, ImportError, SyntaxError) as exc:
-        _err(f"Error: failed to load outflow file {outflow_path}: {exc}", fg=typer.colors.RED if typer else None)
-        sys.exit(1)
-
-
-def _resolve_incorporator_class(module: Any, class_name: str, module_path: Path) -> Any:
-    """Resolve a class name string to an Incorporator subclass, or exit 1."""
-    target = getattr(module, class_name, None)
-    if target is None:
-        _err(f"Error: class '{class_name}' not found in {module_path}", fg=typer.colors.RED if typer else None)
-        sys.exit(1)
-    if not isinstance(target, type) or not issubclass(target, Incorporator):
-        _err(
-            f"Error: '{class_name}' in {module_path} is not an Incorporator subclass.",
-            fg=typer.colors.RED if typer else None,
-        )
-        sys.exit(1)
-    return target
-
-
-async def _run_fjord(
-    config: Dict[str, Any],
-    config_dir: Path,
-    enable_logging: bool,
-    json_output: bool,
-    heartbeat_file: Optional[Path],
-) -> None:
-    """Resolve source classes from the outflow file, then drive Incorporator.fjord().
-
-    The output class is built dynamically from the outflow file's filename
-    (snake_case → PascalCase); there is no ``output_class`` JSON key.
-    """
-    outflow_raw = config.get("outflow")
-    if outflow_raw is None:
-        _err(
-            "Error: pipeline.json must declare 'outflow' (path to outflow.py).",
-            fg=typer.colors.RED if typer else None,
-        )
-        sys.exit(1)
-
-    stream_params_cfg = config["stream_params"]
-    export_params = config["export_params"]
-    refresh_interval = config.get("refresh_interval")
-    export_interval = config.get("export_interval")
-
-    outflow_path = Path(outflow_raw)
-    if not outflow_path.is_absolute():
-        outflow_path = (config_dir / outflow_path).resolve()
-
-    user_module = _load_user_module(outflow_path)
-
-    resolved_streams: list[Dict[str, Any]] = []
-    for entry in stream_params_cfg:
-        cls_name = entry["cls_name"]
-        resolved_entry = {k: v for k, v in entry.items() if k != "cls_name"}
-        resolved_entry["cls"] = _resolve_incorporator_class(user_module, cls_name, outflow_path)
-        resolved_streams.append(resolved_entry)
-
-    shutdown = asyncio.Event()
-    _install_sigterm_handler(shutdown)
-
-    _err("🌊 Starting Incorporator Fjord...", fg=typer.colors.GREEN if typer else None)
-
-    fjord_gen = LoggedIncorporator.fjord(
-        stream_params=resolved_streams,
-        outflow=outflow_path,
-        export_params=export_params,
-        refresh_interval=refresh_interval,
-        export_interval=export_interval,
-        enable_logging=enable_logging,
-    )
-
-    try:
-        async for wave in fjord_gen:
-            _emit_wave(wave, json_output=json_output, heartbeat_file=heartbeat_file)
-            if shutdown.is_set():
-                await fjord_gen.aclose()
-                break
-    except asyncio.CancelledError:
-        _err("\n🛑 Fjord stopped by user.", fg=typer.colors.YELLOW if typer else None)
-    except Exception as e:
-        _err(f"\n❌ Fatal Fjord Error: {e}", fg=typer.colors.RED if typer else None)
-        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -363,8 +106,7 @@ if typer:
         """
         Execute an Autonomous Pipeline Stream from a JSON configuration file.
         """
-        global _JSON_OUTPUT_MODE
-        _JSON_OUTPUT_MODE = json_output
+        set_json_output_mode(json_output)
 
         pipeline_config = _load_pipeline_config(config)
         _run_validation(pipeline_config, config.parent.resolve(), type_override="stream")
@@ -410,8 +152,7 @@ if typer:
           - export_params (dict): destination for the combined output.
           - refresh_interval / export_interval (floats, optional): daemon cadence.
         """
-        global _JSON_OUTPUT_MODE
-        _JSON_OUTPUT_MODE = json_output
+        set_json_output_mode(json_output)
 
         pipeline_config = _load_pipeline_config(config)
         _run_validation(pipeline_config, config.parent.resolve(), type_override="fjord")

@@ -6,15 +6,13 @@ import json
 import logging
 import queue
 import re
-from datetime import datetime, timezone
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Type, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from ..base import Incorporator, _UNSET
+from ..base import _UNSET, Incorporator
 from ..list import IncorporatorList
+from .wave import Wave  # re-exported — ``from .logger import Wave`` keeps working
 
 TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
 
@@ -22,38 +20,13 @@ TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
 _ACTIVE_LISTENERS: Dict[str, QueueListener] = {}
 MAX_LOG_THREADS = 50  # Hard OS limit constraint
 
-
-class Wave(BaseModel):
-    """A single tick of pipeline telemetry yielded by ``stream()`` / ``fjord()``.
-
-    Each ``Wave`` reports one cycle of work in the engine — a chunk in
-    the chunking pipeline, or one refresh / export tick in the stateful
-    daemons.  Frozen Pydantic model so callers can pass instances
-    around without worrying about mutation.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    chunk_index: int = Field(..., description="Sequential index of the current chunk.")
-    operation: str = Field("stream", description="The phase: 'incorp', 'refresh', or 'export'.")
-    rows_processed: int = Field(..., description="Number of rows successfully processed.")
-    failed_sources: List[str] = Field(default_factory=list, description="Failed source URIs.")
-    processing_time_sec: float = Field(..., description="Chunk processing duration in seconds.")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    def log_meta(self) -> str:
-        """Compact, single-line meta string mirroring :meth:`LoggingMixin.log_meta`.
-
-        Used by :func:`_route_wave_to_log` so Wave records share the
-        flat ``meta`` shape with instance-level log records. The full
-        Pydantic dump is also attached as a structured ``wave`` field
-        on every record (see :class:`JSONFormatter`).
-        """
-        return (
-            f'operation:"{self.operation}", chunk_index:{self.chunk_index}, '
-            f"rows:{self.rows_processed}, time_sec:{self.processing_time_sec:.3f}, "
-            f"failed:{len(self.failed_sources)}"
-        )
+__all__ = [
+    "LoggedIncorporator",
+    "Wave",
+    # The remaining public symbols are picked up automatically by ``from logger import *``
+    # if any caller uses that pattern; explicit list keeps Wave + LoggedIncorporator
+    # discoverable in IDE auto-import suggestions.
+]
 
 
 # ---------------------------------------------------------------------------

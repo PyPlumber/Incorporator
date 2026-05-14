@@ -5,8 +5,10 @@ and asynchronous connection-pooling for maximum throughput.
 """
 
 import asyncio
+import ipaddress
 import logging
 import re
+import socket
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
@@ -62,6 +64,7 @@ class HTTPClientBuilder:
         ignore_ssl: bool = False,
         timeout: float = 15.0,
         headers: Optional[Dict[str, str]] = None,
+        block_internal_redirects: bool = False,
     ) -> httpx.AsyncClient:
         """Construct the shared ``httpx.AsyncClient`` used by every fetch.
 
@@ -70,6 +73,12 @@ class HTTPClientBuilder:
         keepalive pool is decoupled from ``concurrency_limit``: a small pool
         of persistent connections is reused by all workers, while
         ``max_connections`` caps total sockets to prevent runaway exhaustion.
+
+        Pass ``block_internal_redirects=True`` for an opt-in SSRF guard: any
+        3xx redirect whose Location header resolves to an RFC1918 / loopback /
+        link-local / metadata-endpoint IP is rejected before httpx follows it.
+        Default is False to preserve the existing behaviour for pipelines
+        that legitimately call internal services.
         """
         # Decouple keepalive pool from worker count: a small pool of persistent
         # connections is reused by all concurrent workers, amortising TCP/TLS
@@ -79,6 +88,9 @@ class HTTPClientBuilder:
             max_keepalive_connections=10,
             max_connections=concurrency_limit,
         )
+        event_hooks: Dict[str, List[Any]] = {}
+        if block_internal_redirects:
+            event_hooks["response"] = [_block_internal_redirect_hook]
         return httpx.AsyncClient(
             http2=True,  # HTTP/2 multiplexing (pip install httpx[http2])
             follow_redirects=True,
@@ -86,6 +98,7 @@ class HTTPClientBuilder:
             limits=client_limits,
             verify=not ignore_ssl,
             headers=headers,
+            event_hooks=event_hooks if event_hooks else None,
         )
 
 
@@ -93,6 +106,111 @@ def _validate_url(url: str) -> None:
     parsed = urlparse(url.strip())
     if parsed.scheme not in ("http", "https"):
         raise IncorporatorNetworkError(f"Security Policy Violation: Unsupported scheme '{parsed.scheme}'.")
+
+
+# Hosts that always resolve to instance/cloud metadata endpoints — flagged
+# even when the IP-based check might not match (e.g. DNS rebinding tricks).
+_METADATA_HOSTS = frozenset(
+    {
+        "169.254.169.254",       # AWS/Azure/OpenStack IMDS, GCP metadata.google.internal
+        "metadata.google.internal",
+        "metadata",
+        "fd00:ec2::254",         # AWS IMDS over IPv6
+    }
+)
+
+
+def _host_is_internal(host: str) -> bool:
+    """Return True when ``host`` resolves to an RFC1918 / loopback / link-local IP.
+
+    The lookup is performed via ``socket.getaddrinfo`` so DNS-resolved
+    hostnames (``localhost``, ``my-internal.local``) are caught alongside
+    bare IP literals.  Each returned address is checked against the standard
+    ``ipaddress`` private/loopback/link-local properties plus an explicit
+    cloud-metadata blocklist (the ``169.254.169.254`` family).
+
+    Failure to resolve (NXDOMAIN, transient DNS error) is treated as
+    **non-internal** — we don't want a DNS hiccup to make a legitimate
+    redirect look malicious.  The subsequent HTTP request will fail
+    naturally if the host genuinely doesn't exist.
+    """
+    if not host:
+        return False
+    host_l = host.lower()
+    if host_l in _METADATA_HOSTS:
+        return True
+    try:
+        # Try parsing as IP literal first — avoids a DNS round-trip for the
+        # common SSRF case where the attacker uses raw IPs.
+        ip = ipaddress.ip_address(host)
+        return _ip_is_internal(ip)
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, OSError):
+        return False
+    for info in infos:
+        addr_raw = info[4][0]
+        # ``info[4]`` is ``(host, port)`` for AF_INET and ``(host, port, flowinfo, scopeid)``
+        # for AF_INET6; ``host`` is always a str — coerce defensively so the
+        # IPv6 scope-id suffix split below is well-typed under mypy.
+        addr = str(addr_raw).split("%", 1)[0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if _ip_is_internal(ip):
+            return True
+    return False
+
+
+def _ip_is_internal(ip: Any) -> bool:
+    """Return True for any IP that should be treated as ``not safe to follow``."""
+    return bool(
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+async def _block_internal_redirect_hook(response: httpx.Response) -> None:
+    """httpx response hook — reject any 3xx whose Location points at an internal host.
+
+    Fires on every response.  For non-redirect status codes it's a single
+    integer check and an immediate return, so the per-request overhead is
+    negligible.  On a redirect we parse the Location header and run the
+    DNS-aware ``_host_is_internal`` check; if internal, we raise
+    :class:`IncorporatorNetworkError` BEFORE httpx itself follows the
+    redirect — that's the security guarantee.
+
+    Relative redirects (no scheme) are resolved against the original
+    request URL so a ``Location: /admin`` from an external host still
+    targets the external host, not an internal one.
+    """
+    if not (300 <= response.status_code < 400):
+        return
+    location = response.headers.get("Location") or response.headers.get("location")
+    if not location:
+        return
+    # httpx resolves redirects against the request URL; mirror that resolution
+    # here so relative Locations are checked against the correct authority.
+    try:
+        target = response.request.url.join(location)
+    except Exception:
+        # If the URL is malformed enough that httpx can't resolve it, let httpx
+        # surface the parse error rather than hiding it behind our SSRF check.
+        return
+    host = target.host
+    if _host_is_internal(host):
+        raise IncorporatorNetworkError(
+            f"Security Policy Violation: blocked redirect to internal host '{host}' "
+            f"(full URL: {target}). Disable with block_internal_redirects=False if "
+            f"the destination is intentional."
+        )
 
 
 # ==========================================
@@ -349,6 +467,11 @@ async def fetch_concurrent_payloads(
     _timeout = kwargs.pop("timeout", 15.0)
     _headers = kwargs.pop("headers", None)
     _requests_per_second = kwargs.pop("requests_per_second", 15.0)
+    # SSRF defence: opt-in.  When True, redirects whose Location header
+    # resolves to a private / loopback / link-local / metadata IP are
+    # rejected before httpx follows them.  Pipelines that legitimately
+    # call internal services keep the default False.
+    _block_internal_redirects = kwargs.pop("block_internal_redirects", False)
     should_close = False
 
     if not is_file_mode and _client is None:
@@ -357,6 +480,7 @@ async def fetch_concurrent_payloads(
             ignore_ssl=_ignore_ssl,
             timeout=_timeout,
             headers=_headers,
+            block_internal_redirects=_block_internal_redirects,
         )
         _rate_limiter = RateLimiter(_requests_per_second)
         should_close = True

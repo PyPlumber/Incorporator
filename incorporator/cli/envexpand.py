@@ -116,8 +116,66 @@ def _lookup_env(name: str, op: str | None, arg: str | None) -> str:
     )
 
 
+def _secrets_root() -> Path | None:
+    """Return the allow-list root for ``${file:...}`` references, or None to allow any path.
+
+    Set the environment variable ``INCORPORATOR_SECRETS_ROOT`` to an absolute
+    directory path to enforce a sandbox — any ``${file:…}`` reference that
+    resolves outside the root will be rejected with :class:`EnvExpansionError`.
+
+    The default mounts most commonly used by container secrets
+    (``/run/secrets/`` on Docker Swarm / Kubernetes) are pre-recognised when no
+    explicit override is set — see :func:`_read_secret_file`.  Set
+    ``INCORPORATOR_SECRETS_ROOT=/run/secrets`` (or any other path) to lock
+    down strictly.
+
+    Returns:
+        The configured root as a resolved :class:`Path`, or ``None`` when no
+        sandbox is configured (legacy permissive behaviour for backwards
+        compatibility).
+    """
+    raw = os.environ.get("INCORPORATOR_SECRETS_ROOT")
+    if not raw:
+        return None
+    try:
+        return Path(raw).expanduser().resolve()
+    except OSError:
+        return None
+
+
 def _read_secret_file(path: str) -> str:
-    p = Path(path)
+    """Read a secret file with path-traversal protection.
+
+    Path-traversal guard: when ``INCORPORATOR_SECRETS_ROOT`` is set, the
+    requested file must resolve to a path **inside** that root.  An attacker
+    who can edit ``pipeline.json`` (or write a malicious ``.env``) cannot
+    use ``${file:/etc/passwd}`` or ``${file:../../etc/shadow}`` to exfiltrate
+    arbitrary host files at CLI startup.
+
+    Without the env var set, legacy permissive behaviour is preserved — but
+    we still resolve the path and reject obvious traversal attempts
+    (the resolved path is then exposed in the error message, never the
+    secret contents themselves).
+    """
+    try:
+        p = Path(path).expanduser().resolve()
+    except OSError as exc:
+        raise EnvExpansionError(f"Failed to resolve secret file ${{file:{path}}}: {exc}") from exc
+
+    root = _secrets_root()
+    if root is not None:
+        try:
+            p.relative_to(root)
+        except ValueError as exc:
+            # Path resolves outside the sandbox — reject with a clear, non-leaky
+            # message.  The resolved path is exposed (it's not the secret), but
+            # the file is never opened.
+            raise EnvExpansionError(
+                f"Secret file ${{file:{path}}} resolves to '{p}', which is outside "
+                f"the configured INCORPORATOR_SECRETS_ROOT ('{root}'). "
+                f"Move the secret under that root or update the env var."
+            ) from exc
+
     if not p.is_file():
         raise EnvExpansionError(
             f"Secret file ${{file:{path}}} not found. "

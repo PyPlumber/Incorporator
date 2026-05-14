@@ -139,3 +139,108 @@ def test_xml_to_dict_force_list_only_affects_named_tags() -> None:
     result = xml_to_dict(ET.fromstring(xml), force_list={"item"})
     assert isinstance(result["root"]["item"], list)
     assert result["root"]["other"] == "b"           # other stays scalar
+
+
+# ==========================================
+# 3d (Phase 8) — Avro field-name round-trip via schema metadata
+# ==========================================
+
+
+def test_avro_original_field_names_round_trip(tmp_path: Path) -> None:
+    """Writer stores original-name map in schema metadata; reader restores it.
+
+    Avro requires field names to match ``[A-Za-z_][A-Za-z0-9_]*``, so a key
+    like ``user-id`` is sanitised to ``user_id`` on write.  The
+    ``__incorporator_original_names__`` schema attribute preserves the
+    mapping so the reader can re-hydrate the user's column names.
+    """
+    fastavro = pytest.importorskip("fastavro")
+    from incorporator.io.handlers.binary import AvroHandler
+
+    avro_path = tmp_path / "names.avro"
+    # Field name with a hyphen — Avro rejects it directly, must be sanitised.
+    rows = [{"user-id": 1, "name": "Alice"}, {"user-id": 2, "name": "Bob"}]
+    schema = {
+        "properties": {
+            "user-id": {"type": "integer"},
+            "name": {"type": "string"},
+        }
+    }
+    AvroHandler().write(rows, avro_path, pydantic_schema=schema, all_field_names=["user-id", "name"])
+
+    parsed = AvroHandler().parse(avro_path)
+    assert isinstance(parsed, list)
+    # Reader restored the original hyphenated key — not the sanitised user_id.
+    assert parsed[0]["user-id"] == 1
+    assert "user_id" not in parsed[0]
+    assert parsed[1]["name"] == "Bob"
+
+    # And we can confirm the metadata is actually in the file (defensive check).
+    with open(avro_path, "rb") as fh:
+        reader = fastavro.reader(fh)
+        assert "__incorporator_original_names__" in reader.writer_schema
+
+
+def test_avro_round_trip_unchanged_names_omits_metadata(tmp_path: Path) -> None:
+    """Names that don't need sanitising should NOT bloat the schema with a map."""
+    fastavro = pytest.importorskip("fastavro")
+    from incorporator.io.handlers.binary import AvroHandler
+
+    avro_path = tmp_path / "clean.avro"
+    rows = [{"id": 1, "name": "Alice"}]
+    schema = {"properties": {"id": {"type": "integer"}, "name": {"type": "string"}}}
+    AvroHandler().write(rows, avro_path, pydantic_schema=schema, all_field_names=["id", "name"])
+
+    with open(avro_path, "rb") as fh:
+        reader = fastavro.reader(fh)
+        # Map should be absent when every key was already Avro-safe.
+        assert "__incorporator_original_names__" not in reader.writer_schema
+
+
+# ==========================================
+# Phase 8 F — Parquet decimal128 / timestamp[tz] round-trip
+# ==========================================
+
+
+def test_parquet_decimal_columns_kwarg_round_trip(tmp_path: Path) -> None:
+    """Decimal columns survive Parquet write/read at the precision/scale the user requested.
+
+    Without the opt-in kwarg, ``Decimal("123.4567890123456789")`` would be
+    coerced to ``pa.string()`` via the JSON-schema bridge (Pydantic emits
+    ``"type": "number"`` for Decimal) — losing arbitrary precision OR
+    becoming an unhelpful stringified value.  With
+    ``parquet_decimal_columns=["amount"]`` we encode as
+    ``pa.decimal128(precision=38, scale=18)`` and round-trip the exact value.
+    """
+    pytest.importorskip("pyarrow")
+    from decimal import Decimal
+
+    from incorporator.io.handlers.columnar import ParquetHandler
+
+    parquet_path = tmp_path / "money.parquet"
+    rows = [
+        {"id": 1, "amount": Decimal("123.4567890123456789")},
+        {"id": 2, "amount": Decimal("-0.000000000000000001")},
+    ]
+    # Pydantic-style JSON schema for the two fields.  ``amount`` is "number"
+    # which would normally fall back to pa.string() — the kwarg overrides.
+    schema = {"properties": {"id": {"type": "integer"}, "amount": {"type": "number"}}}
+    ParquetHandler().write(
+        iter(rows),
+        parquet_path,
+        pydantic_schema=schema,
+        all_field_names=["id", "amount"],
+        parquet_decimal_columns=["amount"],
+        parquet_decimal_precision=38,
+        parquet_decimal_scale=18,
+    )
+
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(parquet_path)
+    schema_str = str(table.schema.field("amount").type)
+    assert "decimal128" in schema_str, f"expected decimal128 column, got {schema_str}"
+    # Values come back as Decimal — same precision, same sign.
+    col = table.column("amount").to_pylist()
+    assert col[0] == Decimal("123.4567890123456789")
+    assert col[1] == Decimal("-0.000000000000000001")

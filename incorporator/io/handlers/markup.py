@@ -27,7 +27,7 @@ from typing import Any, Dict, Iterable, List, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import ensure_string
-from ._base import BaseFormatHandler
+from ._base import BaseFormatHandler, _require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -89,17 +89,14 @@ class HTMLHandler(BaseFormatHandler):
         first ``<tr>`` containing ``<th>`` elements; falls back to row 0 if no
         ``<th>`` is present.
         """
-        try:
-            import lxml.html  # type: ignore[import-untyped]
-        except ImportError:
-            raise IncorporatorFormatError("lxml not installed. Run: pip install incorporator[speedups]") from None
+        lxml_html = _require_optional("lxml.html")
 
         try:
             raw_text = source.read_text(encoding="utf-8") if isinstance(source, Path) else ensure_string(source)
 
             # fromstring handles partial/fragment HTML gracefully; for full
             # documents it auto-detects the body. No external entity resolution.
-            doc = lxml.html.fromstring(raw_text)
+            doc = lxml_html.fromstring(raw_text)
             all_tables = doc.xpath("//table")
             if not all_tables:
                 raise IncorporatorFormatError("HTML payload contains no <table> elements to extract.")

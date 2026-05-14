@@ -1,6 +1,7 @@
 """Abstract base handler and shared utilities for format I/O."""
 
 import os
+import sys
 import uuid
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -9,6 +10,53 @@ from typing import Any, Dict, Iterable, Iterator, List, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType
+
+# Mapping from optional-import module name to the install-extra users need.
+# Every entry is a single source of truth — when a new optional dep ships,
+# add one row here and every handler that needs it is covered automatically.
+_OPTIONAL_INSTALL_EXTRAS: Dict[str, str] = {
+    "orjson": "speedups",
+    "lxml": "speedups",
+    "lxml.etree": "speedups",
+    "lxml.html": "speedups",
+    "pyarrow": "parquet",
+    "pyarrow.parquet": "parquet",
+    "pyarrow.feather": "parquet",
+    "pyarrow.orc": "parquet",
+    "pyarrow.ipc": "parquet",
+    "fastavro": "avro",
+    "openpyxl": "xlsx",
+    "bs4": "speedups",
+}
+
+
+def _require_optional(module_name: str, install_extra: Union[str, None] = None) -> Any:
+    """Lazy-import an optional dep, raising a uniform install-message on miss.
+
+    Centralises the ~20 ``try: import X; except ImportError: raise
+    IncorporatorFormatError("X not installed. Run: pip install ...")`` blocks
+    that previously lived in every handler.  Two upsides:
+
+    1. The install-extra → message mapping lives in
+       ``_OPTIONAL_INSTALL_EXTRAS`` (a single dict).  Renaming an extra is
+       a one-line change instead of 5 file-touches.
+    2. Handlers shrink to one-liner imports — ``pa = _require_optional("pyarrow")``.
+    """
+    # Call ``__import__`` directly (not ``importlib.import_module``) so test
+    # fixtures that monkeypatch ``builtins.__import__`` reach this code path
+    # whether or not the module is already cached in ``sys.modules``.
+    # ``importlib.import_module`` short-circuits on cache hits and would
+    # therefore silently bypass the patch.
+    try:
+        __import__(module_name)
+    except ImportError as exc:
+        extra = install_extra or _OPTIONAL_INSTALL_EXTRAS.get(module_name, module_name)
+        raise IncorporatorFormatError(
+            f"{module_name} not installed. Run: pip install incorporator[{extra}]"
+        ) from exc
+    # ``__import__("foo.bar")`` returns ``foo``, not ``foo.bar``.  Reach into
+    # ``sys.modules`` for the actual submodule the caller asked for.
+    return sys.modules[module_name]
 
 
 @contextmanager

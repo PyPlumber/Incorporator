@@ -22,7 +22,13 @@ from typing import Any, Dict, Iterable, List, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import deserialize_nested, serialize_nested
-from ._base import BaseFormatHandler, _neutralise_formula_injection, _raise_if_append_unsupported, atomic_write_path
+from ._base import (
+    BaseFormatHandler,
+    _neutralise_formula_injection,
+    _raise_if_append_unsupported,
+    _require_optional,
+    atomic_write_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +49,8 @@ class ExcelHandler(BaseFormatHandler):
         Reads from the first sheet by default; pass ``sheet_name="..."`` to
         target a specific sheet. Header row is always row 1.
         """
-        try:
-            from openpyxl import load_workbook  # type: ignore[import-untyped]
-        except ImportError:
-            raise IncorporatorFormatError("openpyxl not installed. Run: pip install incorporator[xlsx]") from None
+        openpyxl_mod = _require_optional("openpyxl")
+        load_workbook = openpyxl_mod.load_workbook
 
         if not isinstance(source, Path):
             raise IncorporatorFormatError("ExcelHandler requires a physical Path object.")
@@ -105,12 +109,11 @@ class ExcelHandler(BaseFormatHandler):
         # safe O(1) append. Users who need append should stream to NDJSON/CSV.
         _raise_if_append_unsupported(kwargs, "Excel/.xlsx")
 
-        try:
-            from openpyxl import Workbook
-        except ImportError:
-            raise IncorporatorFormatError("openpyxl not installed. Run: pip install incorporator[xlsx]") from None
+        Workbook = _require_optional("openpyxl").Workbook
 
-        path = Path(file_path).resolve()
+        # Phase 6c: dispatcher pre-resolves the path; handlers receive an
+        # already-absolute Path.  ``Path()`` is a no-op on a Path instance.
+        path = file_path if isinstance(file_path, Path) else Path(file_path)
         sheet_name = kwargs.get("sheet_name", "Sheet1")
         explicit_fieldnames: List[str] = kwargs.get("all_field_names") or []
         # Formula-injection mitigation defaults ON — cells starting with

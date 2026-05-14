@@ -1,14 +1,107 @@
 """Text-based format handlers: JSON, NDJSON, and XML."""
 
+import json as _stdlib_json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, TextIO, Union, cast
+from typing import Any, Dict, Iterable, List, TextIO, Tuple, Union, cast
 
 from ...exceptions import IncorporatorFormatError
-from ..formats import check_xml_security, ensure_string, serialize_nested, xml_to_dict
+from ..formats import check_xml_security, ensure_bytes, ensure_string, serialize_nested, xml_to_dict
 from ._base import BaseFormatHandler, _raise_if_append_unsupported, atomic_write_path
 
 logger = logging.getLogger(__name__)
+
+
+# ── Speedup probes (runtime-aware) ─────────────────────────────────────
+# JSON and XML each support an optional fast path (orjson / lxml) that
+# falls back to the stdlib when the dep is missing.  These helpers
+# re-import per call — after the first import the lookup is a
+# sub-microsecond ``sys.modules`` dict hit, so the cost is negligible
+# and tests can transparently force the fallback path via
+# ``patch.dict(sys.modules, {"orjson": None, "lxml": None})``.
+
+
+def _try_import_orjson() -> Any:
+    try:
+        import orjson  # type: ignore[import-untyped, import-not-found, unused-ignore]
+
+        return orjson
+    except ImportError:
+        return None
+
+
+def _try_import_lxml_etree() -> Any:
+    try:
+        import lxml.etree as lxml_etree  # type: ignore[import-untyped, import-not-found, unused-ignore]
+
+        return lxml_etree
+    except ImportError:
+        return None
+
+
+def _dumps_json_bytes(item: Any, *, indent: int) -> bytes:
+    """Serialise one JSON record to bytes, preferring orjson when available."""
+    orjson = _try_import_orjson()
+    if orjson is not None:
+        opt = orjson.OPT_INDENT_2 if indent else 0
+        return cast(bytes, orjson.dumps(item, option=opt))
+    return _stdlib_json.dumps(item, indent=indent or None).encode("utf-8")
+
+
+def _loads_json(raw: Union[bytes, str]) -> Any:
+    """Decode a JSON document, preferring orjson when available."""
+    orjson = _try_import_orjson()
+    if orjson is not None:
+        return orjson.loads(raw)
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    return _stdlib_json.loads(raw)
+
+
+def _parse_xml(raw_bytes: bytes, raw_str: str) -> Any:
+    """Parse XML bytes/string through whichever parser is available.
+
+    Prefers lxml (``resolve_entities=False``, ``no_network=True``) for both
+    speed and explicit XXE protection.  Falls back to stdlib ElementTree.
+    Either way ``check_xml_security`` runs first for defence-in-depth.
+    Both branches transparently retry on ``ParseError`` after ``.strip()``
+    to handle XML payloads with whitespace preambles.
+    """
+    lxml_etree = _try_import_lxml_etree()
+    if lxml_etree is not None:
+        parser = lxml_etree.XMLParser(resolve_entities=False, no_network=True)
+        try:
+            return lxml_etree.fromstring(raw_bytes, parser=parser)
+        except lxml_etree.ParseError:
+            return lxml_etree.fromstring(raw_bytes.strip(), parser=parser)
+    import xml.etree.ElementTree as ET
+
+    try:
+        return ET.fromstring(raw_str)  # noqa: S314
+    except ET.ParseError:
+        return ET.fromstring(raw_str.strip())  # noqa: S314
+
+
+def _xml_parse_error_types() -> Tuple[type, ...]:
+    """Return the parse-error class(es) currently in play.
+
+    lxml's ParseError is its own type; stdlib ET has its own.  Callers
+    catch the union so a fixture-forced fallback still raises the right
+    type-name in error messages.
+    """
+    types: List[type] = []
+    lxml_etree = _try_import_lxml_etree()
+    if lxml_etree is not None:
+        types.append(lxml_etree.ParseError)
+    import xml.etree.ElementTree as ET
+
+    types.append(ET.ParseError)
+    return tuple(types)
+
+
+def _resolved_path(file_path: Union[str, Path]) -> Path:
+    """Trust the dispatcher's pre-resolution; coerce to Path without a syscall."""
+    return file_path if isinstance(file_path, Path) else Path(file_path)
 
 
 class JSONHandler(BaseFormatHandler):
@@ -23,74 +116,55 @@ class JSONHandler(BaseFormatHandler):
     def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         """Read a JSON file or byte buffer and return the decoded structure."""
         try:
-            import orjson  # type: ignore[import-untyped, import-not-found, unused-ignore]
+            return cast(Union[Dict[str, Any], List[Dict[str, Any]]], _loads_json(ensure_bytes(source)))
+        except Exception as exc:
+            raise IncorporatorFormatError(f"Invalid JSON: {exc}") from exc
 
-            if isinstance(source, Path):
-                raw_data = source.read_bytes()
-            elif isinstance(source, str):
-                raw_data = source.encode("utf-8")
-            else:
-                raw_data = source
-
-            try:
-                return cast(Union[Dict[str, Any], List[Dict[str, Any]]], orjson.loads(raw_data))
-            except Exception as e:
-                raise IncorporatorFormatError(f"Invalid JSON: {e}") from e
-
-        except ImportError:
-            import json
-
-            raw_text = ensure_string(source)
-            try:
-                return cast(Union[Dict[str, Any], List[Dict[str, Any]]], json.loads(raw_text))
-            except json.JSONDecodeError as e:
-                raise IncorporatorFormatError(f"Invalid JSON: {e}") from e
-
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[Any], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Stream rows into a JSON array file one record at a time.
 
         Writes ``[\\n``, then yields each record's serialised bytes, then
         ``\\n]`` — no full-list materialisation, so memory stays O(1) for
         arbitrarily large input streams. Append mode is rejected.
+
+        Fast path: when the iterable yields Pydantic BaseModel instances
+        (the upstream ``export()`` pipeline does this for JSON / NDJSON
+        formats), each row is serialised via ``model_dump_json()`` —
+        Pydantic v2's Rust core writes JSON bytes without allocating the
+        intermediate dict.  Plain ``dict`` rows fall back to ``orjson``/
+        ``json``.  The behaviour is transparent: callers can mix both.
         """
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         _raise_if_append_unsupported(kwargs, "JSON")
-        path = Path(file_path).resolve()
+        path = _resolved_path(file_path)
+        # orjson formats with a 2-space indent (its only indent option); the
+        # stdlib path stays at the historical 4-space default — both produce
+        # valid JSON, the difference is purely cosmetic.
+        indent = 2 if _try_import_orjson() is not None else 4
+
+        # Streaming JSON array: write one record at a time — no full-list
+        # materialisation.  Atomic write: build to a sibling tempfile then
+        # rename on success so a crash mid-stream leaves no partial file.
         try:
-            import orjson  # type: ignore[import-untyped, import-not-found, unused-ignore]
-
-            # Streaming JSON array: write one record at a time — no full-list materialization.
-            # Atomic write: build to a sibling tempfile then rename on success.
-            try:
-                with atomic_write_path(path) as tmp_path:
-                    with open(tmp_path, "wb") as f:
-                        f.write(b"[\n")
-                        first = True
-                        for item in data:
-                            if not first:
-                                f.write(b",\n")
-                            f.write(orjson.dumps(item, option=orjson.OPT_INDENT_2))
-                            first = False
-                        f.write(b"\n]")
-            except OSError as e:
-                raise IncorporatorFormatError(f"JSON File IO Error on {file_path}: {e}") from e
-
-        except ImportError:
-            import json
-
-            try:
-                with atomic_write_path(path) as tmp_path:
-                    with open(tmp_path, "w", encoding="utf-8") as f:
-                        f.write("[\n")
-                        first = True
-                        for item in data:
-                            if not first:
-                                f.write(",\n")
-                            f.write(json.dumps(item, indent=4))
-                            first = False
-                        f.write("\n]")
-            except OSError as e:
-                raise IncorporatorFormatError(f"JSON File IO Error on {file_path}: {e}") from e
+            with atomic_write_path(path) as tmp_path:
+                with open(tmp_path, "wb") as f:
+                    f.write(b"[\n")
+                    first = True
+                    for item in data:
+                        if not first:
+                            f.write(b",\n")
+                        # Pydantic v2 fast path — Rust serialiser skips the
+                        # intermediate dict allocation that ``orjson.dumps
+                        # (model_dump())`` would otherwise pay for.
+                        dump_json = getattr(item, "model_dump_json", None)
+                        if callable(dump_json):
+                            f.write(dump_json(by_alias=True, indent=indent).encode("utf-8"))
+                        else:
+                            f.write(_dumps_json_bytes(item, indent=indent))
+                        first = False
+                    f.write(b"\n]")
+        except OSError as e:
+            raise IncorporatorFormatError(f"JSON File IO Error on {file_path}: {e}") from e
 
 
 class NDJSONHandler(BaseFormatHandler):
@@ -128,21 +202,31 @@ class NDJSONHandler(BaseFormatHandler):
             raw_data = ensure_string(source)
             return self._parse_stream(raw_data.splitlines())
 
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
-        """Stream rows to an NDJSON file, one ``json.dumps()`` line per row.
+    def write(self, data: Iterable[Any], file_path: Union[str, Path], **kwargs: Any) -> None:
+        """Stream rows to an NDJSON file, one JSON object per line.
 
         Append mode is supported natively — set ``if_exists="append"`` to
         extend an existing file rather than overwrite.
+
+        Fast path: when the iterable yields Pydantic BaseModel instances
+        (the upstream ``export()`` pipeline does this for JSON / NDJSON
+        formats), each row is serialised via ``model_dump_json()`` —
+        Pydantic v2's Rust core writes JSON bytes without allocating the
+        intermediate dict.  Plain ``dict`` rows fall back to ``json.dumps``.
         """
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
-        import json
-
+        path = _resolved_path(file_path)
+        mode = "a" if kwargs.get("if_exists") == "append" else "w"
         try:
-            path = Path(file_path).resolve()
-            mode = "a" if kwargs.get("if_exists") == "append" else "w"
             with open(path, mode, encoding="utf-8") as f:
                 for item in data:
-                    f.write(json.dumps(item) + "\n")
+                    dump_json = getattr(item, "model_dump_json", None)
+                    if callable(dump_json):
+                        # Pydantic v2 Rust serialiser — skips dict allocation.
+                        f.write(dump_json(by_alias=True))
+                    else:
+                        f.write(_stdlib_json.dumps(item))
+                    f.write("\n")
         except OSError as e:
             raise IncorporatorFormatError(f"NDJSON File IO Error on {file_path}: {e}") from e
 
@@ -195,48 +279,38 @@ class XMLHandler(BaseFormatHandler):
         sometimes single and sometimes multiple across documents, which
         otherwise causes downstream schema-inference shape drift.
         """
-        # Defense-in-depth: run check_xml_security BEFORE either parser path.
+        # Defence-in-depth: run check_xml_security BEFORE either parser path.
         # lxml's resolve_entities=False silently drops XXE entities (good!) but
-        # also silently returns success — so the framework would never know an
-        # attack was attempted. Stdlib ElementTree has no XXE protection at
-        # all. Centralizing the security check here gives us a single,
-        # consistent rejection point regardless of which parser is installed.
-        raw_str_for_check = source.read_text(encoding="utf-8") if isinstance(source, Path) else ensure_string(source)
-        check_xml_security(raw_str_for_check)
+        # also silently returns success — so without an explicit pre-check the
+        # framework would never know an attack was attempted.  Stdlib
+        # ElementTree has no XXE protection at all.  Centralising the security
+        # check here gives a single, consistent rejection point regardless of
+        # which parser is installed.
+        # Read once as bytes, then decode for the security check — avoids the
+        # double filesystem hit that calling both ``ensure_string`` and
+        # ``ensure_bytes`` on a ``Path`` source would incur.
+        raw_bytes = ensure_bytes(source)
+        raw_str = raw_bytes.decode("utf-8", errors="replace")
+        check_xml_security(raw_str)
 
         force_list_kwarg = kwargs.get("xml_force_list") or []
         force_list_set = set(force_list_kwarg) if force_list_kwarg else None
 
         try:
-            import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]
-
-            if isinstance(source, Path):
-                raw_bytes = source.read_bytes()
-            elif isinstance(source, str):
-                raw_bytes = source.encode("utf-8")
-            else:
-                raw_bytes = source
-            parser = lxml_ET.XMLParser(resolve_entities=False, no_network=True)
-
-            try:
-                root = lxml_ET.fromstring(raw_bytes, parser=parser)
-                return xml_to_dict(root, force_list=force_list_set)
-            except lxml_ET.ParseError:
-                root = lxml_ET.fromstring(raw_bytes.strip(), parser=parser)
-                return xml_to_dict(root, force_list=force_list_set)
-
-        except ImportError:
-            import xml.etree.ElementTree as ET
-
-            try:
-                root = ET.fromstring(raw_str_for_check)  # noqa: S314
-                return xml_to_dict(root, force_list=force_list_set)
-            except ET.ParseError:
-                try:
-                    root = ET.fromstring(raw_str_for_check.strip())  # noqa: S314
-                    return xml_to_dict(root, force_list=force_list_set)
-                except ET.ParseError as e:
-                    raise IncorporatorFormatError(f"Invalid XML: {e}") from e
+            root = _parse_xml(raw_bytes, raw_str)
+        except Exception as e:
+            # ``_parse_xml`` only raises ParseError variants (lxml's or stdlib
+            # ElementTree's).  We catch Exception rather than a runtime-built
+            # tuple because mypy can't statically prove the tuple shape —
+            # narrowing the except clause to the parse-error classes happens
+            # implicitly: any other exception type would have already
+            # surfaced from ``_parse_xml`` to the caller without the chance
+            # to reach this clause in normal use.
+            parse_errors = _xml_parse_error_types()
+            if not isinstance(e, parse_errors):
+                raise
+            raise IncorporatorFormatError(f"Invalid XML: {e}") from e
+        return xml_to_dict(root, force_list=force_list_set)
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Build an XML DOM from the row iterable and write it to disk.
@@ -248,28 +322,23 @@ class XMLHandler(BaseFormatHandler):
         """
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         _raise_if_append_unsupported(kwargs, "XML")
-        # XML requires a full DOM in memory — intentionally materialize here.
+        # XML requires a full DOM in memory — intentionally materialise here.
         # ElementTree cannot write a streaming element tree incrementally.
         data_list: List[Dict[str, Any]] = list(data)
-        path = Path(file_path).resolve()
+        path = _resolved_path(file_path)
+        lxml_etree = _try_import_lxml_etree()
         try:
-            import lxml.etree as lxml_ET  # type: ignore[import-untyped, import-not-found, unused-ignore]
-
-            root = _build_xml_root(data_list, lxml_ET)
-            # Atomic write: build to tempfile, rename on success so an
-            # interrupted write doesn't leave a malformed XML on disk.
             with atomic_write_path(path) as tmp_path:
-                lxml_ET.ElementTree(root).write(
-                    str(tmp_path), encoding="utf-8", xml_declaration=True, pretty_print=True
-                )
+                if lxml_etree is not None:
+                    root = _build_xml_root(data_list, lxml_etree)
+                    lxml_etree.ElementTree(root).write(
+                        str(tmp_path), encoding="utf-8", xml_declaration=True, pretty_print=True
+                    )
+                else:
+                    import xml.etree.ElementTree as ET
 
-        except ImportError:
-            import xml.etree.ElementTree as ET
-
-            try:
-                with atomic_write_path(path) as tmp_path:
                     with open(tmp_path, "w", encoding="utf-8") as f:
                         root = _build_xml_root(data_list, ET)
                         ET.ElementTree(root).write(f, encoding="unicode")
-            except OSError as e:
-                raise IncorporatorFormatError(f"XML File IO Error on {file_path}: {e}") from e
+        except OSError as e:
+            raise IncorporatorFormatError(f"XML File IO Error on {file_path}: {e}") from e

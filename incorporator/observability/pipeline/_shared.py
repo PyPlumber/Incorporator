@@ -1,7 +1,64 @@
 """Cross-engine helpers shared by chunked / stateful / fjord engines."""
 
 import asyncio
-from typing import Any, Dict, Optional
+import time
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Callable, Dict, Optional
+
+from ..logger import Wave
+
+
+@asynccontextmanager
+async def _daemon_tick(
+    wave_queue: "asyncio.Queue[Optional[Wave]]",
+    *,
+    chunk_index: int,
+    operation: str,
+    error_prefix: str,
+    row_count_fn: Callable[[], int],
+) -> AsyncIterator[None]:
+    """Wrap a daemon tick in uniform timing + Wave-enqueue + error handling.
+
+    Use this from any daemon body that follows the standard pattern:
+
+        async with _daemon_tick(wave_queue, chunk_index=i, operation="export",
+                                 error_prefix="Export Error",
+                                 row_count_fn=lambda: _row_count(snapshot)):
+            ...  # the work — may raise, may mutate state
+
+    On clean exit it emits a success :class:`Wave` carrying the row count
+    and elapsed time.  On exception it converts the error to a failed
+    :class:`Wave` (``rows_processed=0``, prefixed message in
+    ``failed_sources``) and **suppresses the raise** so the daemon's outer
+    loop can keep ticking — that matches the long-standing
+    "never crash the daemon on a transient error" contract.
+
+    ``row_count_fn`` is invoked AFTER the body succeeds, so it sees any
+    post-mutation state the body produced (e.g. ``_refresh_daemon``
+    rebinding ``dataset_ref[0]``).
+    """
+    start = time.perf_counter()
+    try:
+        yield
+    except Exception as exc:
+        await wave_queue.put(
+            Wave(
+                chunk_index=chunk_index,
+                operation=operation,
+                rows_processed=0,
+                failed_sources=[f"{error_prefix}: {exc}"],
+                processing_time_sec=0.0,
+            )
+        )
+        return
+    await wave_queue.put(
+        Wave(
+            chunk_index=chunk_index,
+            operation=operation,
+            rows_processed=row_count_fn(),
+            processing_time_sec=time.perf_counter() - start,
+        )
+    )
 
 
 async def _interruptible_sleep(event: asyncio.Event, timeout: Optional[float]) -> bool:

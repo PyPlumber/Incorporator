@@ -69,7 +69,7 @@ async def parse_source_data(
         ) from e
 
 
-def _peek_iterable(data: Iterable[Dict[str, Any]]) -> Tuple[bool, Iterator[Dict[str, Any]]]:
+def _peek_iterable(data: Iterable[Any]) -> Tuple[bool, Iterator[Any]]:
     """Non-destructively probe any Iterable for emptiness.
 
     Consumes one item from the iterator and chains it back, so the caller
@@ -90,7 +90,7 @@ def _peek_iterable(data: Iterable[Dict[str, Any]]) -> Tuple[bool, Iterator[Dict[
 
 
 async def write_destination_data(
-    data: Iterable[Dict[str, Any]], file_path: Union[str, Path], format_type: FormatType, **kwargs: Any
+    data: Iterable[Any], file_path: Union[str, Path], format_type: FormatType, **kwargs: Any
 ) -> None:
     """Central write dispatcher — routes the row stream to the matching format handler.
 
@@ -100,6 +100,12 @@ async def write_destination_data(
     the user passes ``data/foo.ndjson`` without pre-creating ``data/``.
     The handler's ``write`` runs inside ``asyncio.to_thread`` so disk I/O
     and CPU-heavy encoding never block the event loop.
+
+    Row type: ``Iterable[Any]`` rather than ``Iterable[Dict]`` because the
+    upstream pipeline yields Pydantic ``BaseModel`` instances directly for
+    text formats (JSON / NDJSON), letting the handler call
+    ``model_dump_json()`` and skip the intermediate dict allocation.  Other
+    handlers still receive plain dicts.
     """
     handler = _HANDLERS.get(format_type)
     if not handler:

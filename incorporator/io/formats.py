@@ -233,6 +233,22 @@ def ensure_string(source: Union[str, bytes, Path]) -> str:
     return source
 
 
+def ensure_bytes(source: Union[str, bytes, Path]) -> bytes:
+    """Coerce any accepted parse-source shape into ``bytes``.
+
+    Mirror of :func:`ensure_string` for handlers whose parser accepts raw
+    bytes natively (orjson, lxml, pyarrow).  Centralises the same
+    ``isinstance(source, Path | str | bytes)`` ladder that every handler
+    previously open-coded — a single edit point for adding new source
+    shapes (e.g. ``memoryview``, ``BytesIO``) in the future.
+    """
+    if isinstance(source, Path):
+        return source.read_bytes()
+    if isinstance(source, str):
+        return source.encode("utf-8")
+    return source
+
+
 def serialize_nested(val: Any) -> Any:
     """Safely serializes nested lists/dicts to JSON strings for flat format exports."""
     if isinstance(val, (dict, list)):

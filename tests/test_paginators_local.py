@@ -164,3 +164,67 @@ async def test_avro_paginator_reads_blocks(tmp_path: Path) -> None:
     assert [len(c) for c in chunks] == [2, 2, 1]
     assert p.is_exhausted is True
     assert chunks[0][0]["name"] == "row0"
+
+
+# ==========================================
+# 4. Regression: truncated mid-row CSV
+# ==========================================
+
+
+@pytest.mark.asyncio
+async def test_csv_paginator_truncated_midrow(tmp_path: Path) -> None:
+    """A CSV that ends mid-row must yield clean chunks + the truncated last row,
+    NOT raise and NOT corrupt the file handle.
+
+    Real-world failure: a partially-uploaded CSV (interrupted download, killed
+    rsync, etc.) lands on disk with the final row missing one or more columns.
+    The paginator should:
+      * yield the cleanly-terminated rows as a normal chunk,
+      * yield the truncated final row with the missing columns absent (or None),
+      * exhaust without raising,
+      * close the underlying file handle on exhaustion.
+    """
+    csv_path = tmp_path / "truncated.csv"
+    # Three full rows + one row missing the last column (no trailing newline).
+    csv_path.write_text(
+        "id,name,score\n"
+        "1,alice,90\n"
+        "2,bob,80\n"
+        "3,carol,70\n"
+        "4,dave",  # missing "score" column and trailing newline
+        encoding="utf-8",
+    )
+
+    p = CSVPaginator(file_path=str(csv_path), chunk_size=2)
+    chunks = [chunk async for chunk in p.paginate(str(csv_path))]
+
+    # 4 rows in 2-row chunks → [2, 2]
+    assert [len(c) for c in chunks] == [2, 2]
+    assert p.is_exhausted is True
+
+    # The truncated row is yielded with the missing column absent or None — the
+    # important contract is "no exception, no half-corrupt chunk".  csv.DictReader
+    # supplies None for missing trailing fields in 3.13.
+    last_row = chunks[-1][-1]
+    assert last_row["id"] == "4"
+    assert last_row["name"] == "dave"
+    assert last_row.get("score") in (None, "")
+
+    # Underlying file handle must be released after exhaustion so daemon-mode
+    # polling (`reset()` then re-paginate) can re-open cleanly.
+    assert p._file is None
+
+
+@pytest.mark.asyncio
+async def test_csv_paginator_reset_reopens_cleanly(tmp_path: Path) -> None:
+    """After reset(), the paginator must re-open the file from the top."""
+    csv_path = tmp_path / "small.csv"
+    csv_path.write_text("id,name\n1,a\n2,b\n3,c\n", encoding="utf-8")
+
+    p = CSVPaginator(file_path=str(csv_path), chunk_size=10)
+    chunks1 = [chunk async for chunk in p.paginate(str(csv_path))]
+    assert sum(len(c) for c in chunks1) == 3
+
+    p.reset()
+    chunks2 = [chunk async for chunk in p.paginate(str(csv_path))]
+    assert sum(len(c) for c in chunks2) == 3, "reset() did not re-open at the start of the file"

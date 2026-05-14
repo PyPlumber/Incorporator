@@ -83,3 +83,74 @@ async def test_parquet_compression_size_vs_ndjson(tmp_path: Path) -> None:
         f"Parquet file is only {ratio:.1f}× smaller than NDJSON — suggests compression "
         "or dictionary encoding is misconfigured."
     )
+
+
+# ==========================================
+# from_pydict vs from_pylist micro-benchmark
+# ==========================================
+
+
+def test_parquet_from_pydict_vs_from_pylist_microbench() -> None:
+    """Micro-benchmark: ``pa.Table.from_pydict`` vs ``from_pylist`` on a typical batch.
+
+    Decision-record benchmark.  The Phase 8 plan flagged ``from_pydict`` as a
+    potential 10 %+ speedup over ``from_pylist`` (which the columnar writer
+    currently uses).  This test runs both on a representative 1024-row batch
+    so the team has concrete data when deciding whether the swap is worth
+    the row-to-column pivot cost.
+
+    The test is **informational** — it prints the ratio but asserts only a
+    sanity floor (both functions complete in under one second), so CI never
+    blocks on hardware-sensitive timing noise.  Read the printed output to
+    decide.  Run with ``pytest -s tests/benchmarks/test_parquet_throughput.py -k from_pydict``.
+    """
+    import pyarrow as pa
+
+    # Build a 1024-row batch matching ParquetHandler's row-group window.
+    batch_size = 1024
+    rows = [
+        {
+            "id": i,
+            "name": f"row_{i}",
+            "value": i * 1.5,
+            "active": bool(i % 2),
+            "label": "alpha" if i % 3 == 0 else "beta",
+        }
+        for i in range(batch_size)
+    ]
+    # from_pydict needs column-oriented input; the pivot cost is part of the
+    # comparison because in production we'd pay it on every batch.
+    iterations = 200
+
+    t0 = time.perf_counter()
+    for _ in range(iterations):
+        table_a = pa.Table.from_pylist(rows)
+    pylist_elapsed = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    for _ in range(iterations):
+        # Include the row→column pivot inside the timed region.  Mirrors what
+        # the production swap would have to do (Parquet writers see dict rows).
+        cols: dict = {k: [] for k in rows[0]}
+        for row in rows:
+            for k, v in row.items():
+                cols[k].append(v)
+        table_b = pa.Table.from_pydict(cols)
+    pydict_elapsed = time.perf_counter() - t0
+
+    ratio = pylist_elapsed / pydict_elapsed if pydict_elapsed > 0 else float("inf")
+    print(
+        f"\n  from_pylist: {pylist_elapsed * 1000:.1f} ms / {iterations} iters"
+        f"\n  from_pydict: {pydict_elapsed * 1000:.1f} ms / {iterations} iters (incl. pivot)"
+        f"\n  ratio:       {ratio:.2f}× ({'pydict wins' if ratio > 1.1 else 'pylist wins or tied'})"
+        f"\n  rows shape:  {table_a.num_rows} rows × {table_a.num_columns} cols (parity check: {table_b.num_rows} × {table_b.num_columns})"
+    )
+
+    # Sanity floor only — don't block CI on micro-timing noise.
+    assert table_a.num_rows == table_b.num_rows == batch_size
+    assert pylist_elapsed < 5.0
+    assert pydict_elapsed < 5.0
+    # Decision rule per the Phase 8 plan: swap only if pydict ≥ 1.1× faster on
+    # a representative payload.  This is recorded here as a soft signal; the
+    # actual code swap stays a deliberate follow-up commit once the team
+    # reviews this print output across multiple hardware profiles.

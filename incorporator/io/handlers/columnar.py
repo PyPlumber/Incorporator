@@ -34,11 +34,11 @@ Design choices:
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType, convert_type, serialize_nested
-from ._base import BaseFormatHandler, _raise_if_append_unsupported, atomic_write_path
+from ._base import BaseFormatHandler, _raise_if_append_unsupported, _require_optional, atomic_write_path
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +48,90 @@ logger = logging.getLogger(__name__)
 _WRITE_BATCH_ROWS = 1024
 
 
-def _arrow_type_for(name: str, properties: Dict[str, Any]) -> Any:
+def _coerce_columnar_source(source: Any, handler_name: str) -> Any:
+    """Coerce ``Path``/``bytes`` parse sources into a pyarrow-readable handle.
+
+    Shared by Parquet/Feather/ORC parse() — pyarrow's columnar readers accept
+    a filesystem path or a binary file-like object.  Centralising the
+    ``isinstance`` ladder here means one place to add new source shapes (e.g.
+    ``memoryview``) and a single uniform error message when the caller passes
+    something unsupported.  We do **not** read the file via ``ensure_bytes``
+    here because pyarrow's path-based readers memory-map the file, which is
+    materially cheaper than a full Python-side read for multi-GB inputs.
+    """
+    if isinstance(source, Path):
+        return source
+    if isinstance(source, bytes):
+        import io
+
+        return io.BytesIO(source)
+    raise IncorporatorFormatError(f"{handler_name} requires raw bytes or a physical Path object.")
+
+
+def _extract_logical_type_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Pull the opt-in Parquet/Feather/ORC logical-type kwargs into a single dict.
+
+    Shared by ParquetHandler, FeatherHandler, and OrcHandler so all three
+    columnar formats accept the same vocabulary for decimal128 and
+    timezone-aware timestamps.  Absent kwargs fall back to defaults that
+    match pyarrow's own conventions (precision 38 / scale 18, microseconds,
+    UTC) — the user only sets what they care about.
+    """
+    decimal_cols = kwargs.get("parquet_decimal_columns")
+    timestamp_cols = kwargs.get("parquet_timestamp_columns")
+    return {
+        "decimal_columns": set(decimal_cols) if decimal_cols else None,
+        "decimal_precision": int(kwargs.get("parquet_decimal_precision", 38)),
+        "decimal_scale": int(kwargs.get("parquet_decimal_scale", 18)),
+        "timestamp_columns": set(timestamp_cols) if timestamp_cols else None,
+        "timestamp_unit": kwargs.get("parquet_timestamp_unit", "us"),
+        "timestamp_tz": kwargs.get("parquet_timestamp_tz", "UTC"),
+    }
+
+
+def _arrow_type_for(
+    name: str,
+    properties: Dict[str, Any],
+    *,
+    decimal_columns: Optional[Set[str]] = None,
+    decimal_precision: int = 38,
+    decimal_scale: int = 18,
+    timestamp_columns: Optional[Set[str]] = None,
+    timestamp_unit: str = "us",
+    timestamp_tz: Optional[str] = "UTC",
+) -> Any:
     """Map a Pydantic JSON-schema property to a pyarrow DataType.
 
     Falls back to pa.string() for unknown/nullable-union shapes. We route via
     the FORMAT bridge in formats.py so adding new logical types is a one-line
     change to the bridge tables rather than this function.
+
+    **Logical-type kwargs** (optional, opt-in by column name):
+
+    - ``decimal_columns``: column names that should be encoded as
+      ``pa.decimal128(precision, scale)`` instead of falling back to
+      string-via-JSON-schema-number. Without this hint, ``Decimal`` Pydantic
+      fields lose precision (Arrow's ``float64`` can't represent
+      ``Decimal("123.4567890123456789")`` faithfully).  Default
+      precision 38 / scale 18 covers all real-world monetary data.
+    - ``timestamp_columns``: column names to encode as
+      ``pa.timestamp(unit, tz)`` rather than letting Pydantic's
+      ``"format": "date-time"`` collapse to ``pa.string()``.  Preserves
+      timezone information across the Parquet round-trip; without it,
+      ``datetime(..., tzinfo=timezone.utc)`` writes as ISO string and
+      reads back as ``str``.
+
+    Both are pure additive opt-ins — handlers that don't pass the kwargs
+    behave exactly as before.
     """
     import pyarrow as pa
+
+    # Explicit logical-type hints win over JSON-schema introspection.  Users
+    # know their Pydantic schema better than we can guess from the dict.
+    if decimal_columns and name in decimal_columns:
+        return pa.decimal128(decimal_precision, decimal_scale)
+    if timestamp_columns and name in timestamp_columns:
+        return pa.timestamp(timestamp_unit, tz=timestamp_tz)
 
     prop = properties.get(name, {})
     json_type = prop.get("type")
@@ -161,24 +237,55 @@ def _table_to_dicts(table: Any) -> List[Dict[str, Any]]:
     return rows
 
 
+def _build_columnar_schema(
+    explicit_keys: List[str],
+    properties: Dict[str, Any],
+    kwargs: Dict[str, Any],
+) -> Optional[Any]:
+    """Build an explicit pyarrow schema from the Pydantic JSON-schema properties.
+
+    Returns ``None`` when no JSON-schema hint is available — callers fall
+    back to native pyarrow type inference on the first batch in that case.
+    """
+    if not properties:
+        return None
+    import pyarrow as pa
+
+    logical_kwargs = _extract_logical_type_kwargs(kwargs)
+    return pa.schema(
+        [pa.field(k, _arrow_type_for(k, properties, **logical_kwargs), nullable=True) for k in explicit_keys]
+    )
+
+
+def _coerce_batch(batch: List[Dict[str, Any]], explicit_keys: List[str]) -> List[Dict[str, Any]]:
+    """Apply serialize_nested to one batch — nested lists/dicts → JSON strings."""
+    return [
+        {k: (serialize_nested(row.get(k)) if row.get(k) is not None else None) for k in explicit_keys}
+        for row in batch
+    ]
+
+
+def _batched_dicts(
+    rows: Iterable[Dict[str, Any]], explicit_keys: List[str], batch_size: int
+) -> Iterator[List[Dict[str, Any]]]:
+    """Yield ``batch_size``-row windows of coerced dicts; holds one batch in RAM."""
+    batch: List[Dict[str, Any]] = []
+    for row in rows:
+        batch.append(row)
+        if len(batch) >= batch_size:
+            yield _coerce_batch(batch, explicit_keys)
+            batch = []
+    if batch:
+        yield _coerce_batch(batch, explicit_keys)
+
+
 def _materialize_table(data: Iterable[Dict[str, Any]], kwargs: Dict[str, Any]) -> Any:
-    """Coerce an iterable of dicts into a single pyarrow.Table.
+    """**DEPRECATED** — retained for any external caller; new code should stream.
 
-    Shared by FeatherHandler and OrcHandler — both formats are written
-    one-shot (no streaming writer API exposed by pyarrow), so we
-    materialise once.  ParquetHandler does NOT use this helper; it
-    streams via ParquetWriter for O(1) memory.
-
-    **RAM caveat:** Feather V2 and ORC require the full dataset
-    in-memory at write time because pyarrow's ``feather.write_feather``
-    and ``orc.write_table`` APIs accept a Table, not a record-batch
-    stream.  For multi-GB outputs, switch to ``.parquet`` (streaming
-    row-group writes) or ``.ndjson`` (line-per-row text streaming).
-    The framework can't smuggle around the format-level constraint.
-
-    Honours the same kwargs as ParquetHandler.write:
-        * pydantic_schema → explicit Arrow schema
-        * all_field_names → explicit column order
+    Coerce an iterable of dicts into a single pyarrow.Table.  Loads the full
+    dataset into memory before returning, so multi-GB inputs OOM.  The
+    streaming pattern in ``_stream_arrow_batches`` is the preferred path —
+    it holds at most one row-group in RAM regardless of total size.
     """
     import pyarrow as pa
 
@@ -192,15 +299,90 @@ def _materialize_table(data: Iterable[Dict[str, Any]], kwargs: Dict[str, Any]) -
     if not explicit_keys:
         explicit_keys = list(dict.fromkeys(k for row in rows_list for k in row))
 
-    coerced = [
-        {k: (serialize_nested(row.get(k)) if row.get(k) is not None else None) for k in explicit_keys}
-        for row in rows_list
-    ]
-
-    if properties:
-        schema = pa.schema([pa.field(k, _arrow_type_for(k, properties), nullable=True) for k in explicit_keys])
+    coerced = _coerce_batch(rows_list, explicit_keys)
+    schema = _build_columnar_schema(explicit_keys, properties, kwargs)
+    if schema is not None:
         return pa.Table.from_pylist(coerced, schema=schema)
     return pa.Table.from_pylist(coerced)
+
+
+def _batched_columns(
+    rows: Iterable[Dict[str, Any]], explicit_keys: List[str], batch_size: int
+) -> Iterator[Dict[str, List[Any]]]:
+    """Yield ``batch_size``-row windows as **column-oriented** dicts.
+
+    Why column-oriented: ``pa.Table.from_pydict`` is materially faster than
+    the row-oriented ``from_pylist`` (~2.4× on a representative payload —
+    see ``tests/benchmarks/test_parquet_throughput.py``) because Arrow's
+    internal memory layout is columnar.  Even paying the row→column pivot
+    cost here (one append per cell) we come out well ahead because Arrow
+    avoids the per-row dict-unpack on its side.  Used by Parquet, Feather
+    and ORC writers so all three columnar formats share the same speedup.
+    """
+    cols: Dict[str, List[Any]] = {k: [] for k in explicit_keys}
+    batch_rows = 0
+    for row in rows:
+        for k in explicit_keys:
+            v = row.get(k)
+            cols[k].append(serialize_nested(v) if v is not None else None)
+        batch_rows += 1
+        if batch_rows >= batch_size:
+            yield cols
+            cols = {k: [] for k in explicit_keys}
+            batch_rows = 0
+    if batch_rows:
+        yield cols
+
+
+def _stream_arrow_batches(
+    data: Iterable[Dict[str, Any]],
+    kwargs: Dict[str, Any],
+) -> Iterator[Any]:
+    """Yield ``pyarrow.Table`` batches, each capped at ``_WRITE_BATCH_ROWS`` rows.
+
+    Shared by every columnar write path (Parquet / Feather / ORC) so all
+    three formats share one batching, one schema-inference, and one
+    row→column pivot.  Holds at most one batch (1024 rows by default) in
+    RAM at any moment — multi-GB inputs no longer OOM.
+
+    Schema handling:
+    - If ``pydantic_schema`` is present, build an explicit Arrow schema
+      up-front and apply it to every batch.  Fastest path, deterministic
+      types, no per-batch inference cost.
+    - Without it, the first batch carries the inferred schema and every
+      subsequent batch reuses that inference path (pyarrow promotes types
+      naturally across batches via ``Table.from_pydict``).
+
+    Empty input yields nothing.
+    """
+    import pyarrow as pa
+
+    pydantic_schema = kwargs.get("pydantic_schema", {})
+    properties: Dict[str, Any] = pydantic_schema.get("properties", {})
+    explicit_keys: List[str] = kwargs.get("all_field_names") or list(properties.keys())
+
+    # Iterator-vs-list dance: when we don't have an explicit-keys hint we
+    # need to peek at the first row to discover its columns.  Pulling one row
+    # with ``next()`` and chaining it back keeps the rest of the iterator
+    # untouched and streaming.
+    data_iter: Iterator[Dict[str, Any]] = iter(data)
+    if not explicit_keys:
+        try:
+            first_row = next(data_iter)
+        except StopIteration:
+            return
+        explicit_keys = list(first_row.keys())
+        import itertools
+
+        data_iter = itertools.chain([first_row], data_iter)
+
+    explicit_schema = _build_columnar_schema(explicit_keys, properties, kwargs)
+
+    for batch_cols in _batched_columns(data_iter, explicit_keys, _WRITE_BATCH_ROWS):
+        if explicit_schema is not None:
+            yield pa.Table.from_pydict(batch_cols, schema=explicit_schema)
+        else:
+            yield pa.Table.from_pydict(batch_cols)
 
 
 class ParquetHandler(BaseFormatHandler):
@@ -219,20 +401,10 @@ class ParquetHandler(BaseFormatHandler):
         detection — only string columns that actually contain JSON-encoded
         nested data pay the per-row Python parse cost.
         """
-        try:
-            import pyarrow.parquet as pq
-        except ImportError:
-            raise IncorporatorFormatError("pyarrow not installed. Run: pip install incorporator[parquet]") from None
+        pq = _require_optional("pyarrow.parquet")
 
         try:
-            if isinstance(source, Path):
-                table = pq.read_table(source)  # type: ignore[no-untyped-call]
-            elif isinstance(source, bytes):
-                import io
-
-                table = pq.read_table(io.BytesIO(source))  # type: ignore[no-untyped-call]
-            else:
-                raise IncorporatorFormatError("ParquetHandler requires raw bytes or a physical Path object.")
+            table = pq.read_table(_coerce_columnar_source(source, "ParquetHandler"))
 
             # _table_to_dicts mutates the dicts to_pylist() already allocated
             # and only touches string columns (where serialize_nested could
@@ -260,84 +432,30 @@ class ParquetHandler(BaseFormatHandler):
         # stream to NDJSON instead.
         _raise_if_append_unsupported(kwargs, "Parquet")
 
-        try:
-            import pyarrow as pa
-            import pyarrow.parquet as pq
-        except ImportError:
-            raise IncorporatorFormatError("pyarrow not installed. Run: pip install incorporator[parquet]") from None
+        _require_optional("pyarrow")  # dep-presence sentinel — same error as feather/orc
+        pq = _require_optional("pyarrow.parquet")
 
-        path = Path(file_path).resolve()
+        # Phase 6c: dispatcher pre-resolves; handlers receive an absolute Path.
+        path = file_path if isinstance(file_path, Path) else Path(file_path)
         compression = kwargs.get("parquet_compression", "snappy")  # pyarrow's default
-        pydantic_schema = kwargs.get("pydantic_schema", {})
-        properties: Dict[str, Any] = pydantic_schema.get("properties", {})
-        explicit_keys: List[str] = kwargs.get("all_field_names") or list(properties.keys())
-
-        data_iter: Iterable[Dict[str, Any]]
-
-        if not explicit_keys:
-            # No schema hint: materialize first batch to discover columns. We
-            # could use Arrow's schema inference on a single chunk, but a single
-            # materialization of the first batch keeps the code mirror-image
-            # of the SQLite/CSV handlers.
-            rows_list: List[Dict[str, Any]] = list(data)
-            if not rows_list:
-                return
-            explicit_keys = list(dict.fromkeys(k for row in rows_list for k in row))
-            data_iter = iter(rows_list)
-        else:
-            data_iter = data
-
-        # Two-mode schema strategy:
-        #   1. Pydantic schema present → build an explicit Arrow schema up-front
-        #      from the JSON-schema type bridge. Fastest, deterministic types.
-        #   2. No hint → infer the schema from the first batch via pyarrow's
-        #      native inference. Slightly slower but always type-correct.
-        explicit_schema = (
-            pa.schema([pa.field(k, _arrow_type_for(k, properties), nullable=True) for k in explicit_keys])
-            if properties
-            else None
-        )
-
-        def _coerce_row(row: Dict[str, Any]) -> Dict[str, Any]:
-            """Flatten nested types to JSON strings; preserve scalars + None."""
-            out: Dict[str, Any] = {}
-            for k in explicit_keys:
-                val = row.get(k)
-                # serialize_nested flattens dict/list to JSON; passes scalars through.
-                out[k] = serialize_nested(val) if val is not None else None
-            return out
-
-        def _batched_iter(rows: Iterable[Dict[str, Any]], batch_size: int) -> Iterator[List[Dict[str, Any]]]:
-            """Yield batches of size <= batch_size. Holds only the current batch in RAM."""
-            batch: List[Dict[str, Any]] = []
-            for row in rows:
-                batch.append(_coerce_row(row))
-                if len(batch) >= batch_size:
-                    yield batch
-                    batch = []
-            if batch:
-                yield batch
 
         try:
+            batches_iter = _stream_arrow_batches(data, kwargs)
+            try:
+                first_batch = next(batches_iter)
+            except StopIteration:
+                return  # nothing to write — empty input
             # Atomic write: build to a sibling tempfile, rename on success.
             # A crash mid-write leaves the prior path intact (or absent)
             # instead of a half-written Parquet with a corrupt footer.
             with atomic_write_path(path) as tmp_path:
-                writer: Any = None
+                writer = pq.ParquetWriter(tmp_path, first_batch.schema, compression=compression)
                 try:
-                    for batch in _batched_iter(data_iter, _WRITE_BATCH_ROWS):
-                        if explicit_schema is not None:
-                            table = pa.Table.from_pylist(batch, schema=explicit_schema)
-                        else:
-                            # Native inference from the first batch — its schema seeds
-                            # the writer and is reused for every subsequent batch.
-                            table = pa.Table.from_pylist(batch)
-                        if writer is None:
-                            writer = pq.ParquetWriter(tmp_path, table.schema, compression=compression)  # type: ignore[no-untyped-call]
-                        writer.write_table(table)
+                    writer.write_table(first_batch)
+                    for batch in batches_iter:
+                        writer.write_table(batch)
                 finally:
-                    if writer is not None:
-                        writer.close()
+                    writer.close()
         except Exception as e:
             raise IncorporatorFormatError(f"Parquet Write Error on {file_path}: {e}") from e
 
@@ -361,21 +479,10 @@ class FeatherHandler(BaseFormatHandler):
         JSON-encoded nested cells re-hydrate consistently across columnar
         formats.
         """
-        try:
-            import pyarrow.feather as feather
-        except ImportError:
-            raise IncorporatorFormatError("pyarrow not installed. Run: pip install incorporator[parquet]") from None
+        feather = _require_optional("pyarrow.feather")
 
         try:
-            if isinstance(source, Path):
-                table = feather.read_table(source)  # type: ignore[no-untyped-call]
-            elif isinstance(source, bytes):
-                import io
-
-                table = feather.read_table(io.BytesIO(source))  # type: ignore[no-untyped-call]
-            else:
-                raise IncorporatorFormatError("FeatherHandler requires raw bytes or a physical Path object.")
-
+            table = feather.read_table(_coerce_columnar_source(source, "FeatherHandler"))
             return _table_to_dicts(table)
         except IncorporatorFormatError:
             raise
@@ -383,31 +490,52 @@ class FeatherHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"Feather Read Error: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
-        """Materialize rows into a pyarrow Table and write a Feather V2 file.
+        """Stream rows into a Feather V2 (Arrow IPC) file in 1024-row batches.
+
+        Feather V2 is Arrow IPC file format under the hood — pyarrow exposes a
+        ``RecordBatchFileWriter`` via :func:`pyarrow.ipc.new_file` that
+        accepts incremental batches.  Memory stays O(1) regardless of total
+        dataset size, matching the Parquet write path.
 
         Honours ``feather_compression`` (default ``"lz4"``, Feather V2's
         native default) and ``pydantic_schema`` (drives explicit Arrow types).
-        Append mode is rejected — Feather V2 has no streaming writer.
+        Append mode is rejected — the IPC file format has no streaming
+        append API; users who need accumulating writes should use NDJSON.
         """
         # Empty guard handled centrally by _peek_iterable in handlers/__init__.py.
-        # Feather V2 has no streaming writer — append is not supported.
+        # Feather V2 has no append-friendly format spec — the file header is
+        # written before the data and contains a footer index at close time.
         _raise_if_append_unsupported(kwargs, "Feather/Arrow IPC")
 
-        try:
-            import pyarrow.feather as feather
-        except ImportError:
-            raise IncorporatorFormatError("pyarrow not installed. Run: pip install incorporator[parquet]") from None
+        pa = _require_optional("pyarrow")
+        _require_optional("pyarrow.feather")  # dep-presence sentinel — same error message as the read path
 
-        path = Path(file_path).resolve()
-        compression = kwargs.get("feather_compression", "lz4")  # Feather V2 default
+        # Phase 6c: dispatcher pre-resolves; handlers receive an absolute Path.
+        path = file_path if isinstance(file_path, Path) else Path(file_path)
+        compression_str = kwargs.get("feather_compression", "lz4")  # Feather V2 default
+        # pyarrow.ipc.new_file accepts an ipc.IpcWriteOptions struct rather than a
+        # raw compression string.  Build it here so the kwarg API stays identical
+        # to the previous feather.write_feather call site.
+        options = pa.ipc.IpcWriteOptions(compression=compression_str) if compression_str else None
 
         try:
-            table = _materialize_table(data, kwargs)
-            if table is None:
-                return  # nothing to write
-            # Atomic write — build to tempfile, rename on success.
+            batches_iter = _stream_arrow_batches(data, kwargs)
+            try:
+                first_batch = next(batches_iter)
+            except StopIteration:
+                return  # nothing to write — empty input
+            # Atomic write — build to tempfile, rename on success.  A
+            # mid-stream crash leaves the prior file intact instead of a
+            # half-written Feather with a missing footer.
             with atomic_write_path(path) as tmp_path:
-                feather.write_feather(table, str(tmp_path), compression=compression)  # type: ignore[no-untyped-call]
+                with pa.OSFile(str(tmp_path), "wb") as sink:
+                    writer = pa.ipc.new_file(sink, first_batch.schema, options=options)
+                    try:
+                        writer.write_table(first_batch)
+                        for batch in batches_iter:
+                            writer.write_table(batch)
+                    finally:
+                        writer.close()
         except Exception as e:
             raise IncorporatorFormatError(f"Feather Write Error on {file_path}: {e}") from e
 
@@ -440,15 +568,7 @@ class OrcHandler(BaseFormatHandler):
             ) from None
 
         try:
-            if isinstance(source, Path):
-                orc_file = orc.ORCFile(source)  # type: ignore[no-untyped-call]
-            elif isinstance(source, bytes):
-                import io
-
-                orc_file = orc.ORCFile(io.BytesIO(source))  # type: ignore[no-untyped-call]
-            else:
-                raise IncorporatorFormatError("OrcHandler requires raw bytes or a physical Path object.")
-
+            orc_file = orc.ORCFile(_coerce_columnar_source(source, "OrcHandler"))  # type: ignore[no-untyped-call]
             table = orc_file.read()  # type: ignore[no-untyped-call]
             return _table_to_dicts(table)
         except IncorporatorFormatError:
@@ -457,13 +577,16 @@ class OrcHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"ORC Read Error: {e}") from e
 
     def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
-        """Materialize rows into a pyarrow Table and write an ORC file.
+        """Stream rows into an ORC file in 1024-row batches.
+
+        pyarrow's ``ORCWriter`` accepts incremental ``write_table`` calls,
+        so memory stays O(1) regardless of total dataset size — matching
+        the Parquet and Feather streaming write paths.
 
         Honours ``pydantic_schema`` (drives explicit Arrow types). Append mode
-        is rejected — pyarrow's ORC API has no streaming writer.
+        is rejected — ORC's stripe layout requires a single writer session.
         """
         # Empty guard handled centrally by _peek_iterable in handlers/__init__.py.
-        # ORC has no streaming writer in pyarrow — append is not supported.
         _raise_if_append_unsupported(kwargs, "ORC")
 
         try:
@@ -474,14 +597,31 @@ class OrcHandler(BaseFormatHandler):
                 "(ORC support requires pyarrow with libarrow_orc)."
             ) from None
 
-        path = Path(file_path).resolve()
+        # Phase 6c: dispatcher pre-resolves; handlers receive an absolute Path.
+        path = file_path if isinstance(file_path, Path) else Path(file_path)
 
         try:
-            table = _materialize_table(data, kwargs)
-            if table is None:
-                return  # nothing to write
-            # Atomic write — build to tempfile, rename on success.
+            batches_iter = _stream_arrow_batches(data, kwargs)
+            try:
+                first_batch = next(batches_iter)
+            except StopIteration:
+                return  # nothing to write — empty input
+            # Atomic write — build to tempfile, rename on success.  A
+            # mid-stream crash leaves the prior file intact instead of a
+            # half-written ORC with a missing footer.
             with atomic_write_path(path) as tmp_path:
-                orc.write_table(table, str(tmp_path))  # type: ignore[no-untyped-call]
+                # pyarrow's ORCWriter signature is ``ORCWriter(where, *, ...)`` —
+                # schema is inferred from the first ``write()`` call rather than
+                # passed in __init__.  All subsequent batches must match that
+                # schema, which is guaranteed by ``_stream_arrow_batches`` when
+                # an explicit pydantic_schema is present, and by pyarrow's own
+                # promotion rules in the inference path.
+                writer = orc.ORCWriter(str(tmp_path))  # type: ignore[no-untyped-call]
+                try:
+                    writer.write(first_batch)  # type: ignore[no-untyped-call]
+                    for batch in batches_iter:
+                        writer.write(batch)  # type: ignore[no-untyped-call]
+                finally:
+                    writer.close()  # type: ignore[no-untyped-call]
         except Exception as e:
             raise IncorporatorFormatError(f"ORC Write Error on {file_path}: {e}") from e
