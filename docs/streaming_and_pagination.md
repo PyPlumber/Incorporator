@@ -184,9 +184,12 @@ chunking mode.
 
 ```python
 # coin_market.py defines Coin, BinanceFutures, and outflow(state).
+# The fjord output class is built dynamically from the outflow file's
+# stem ("coin_market.py" -> "CoinMarket"), so the receiver class below
+# is just the orchestrator entry point — not the output type.
 from coin_market import Coin, BinanceFutures
 
-async for wave in Coin.fjord(
+async for wave in Incorporator.fjord(
     stream_params=[
         {"cls": Coin,           "incorp_params": {...}, "refresh_params": {}},
         {"cls": BinanceFutures, "incorp_params": {...}, "refresh_params": {}},
