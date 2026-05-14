@@ -93,9 +93,21 @@ def _route_wave_to_log(cls: Type[Any], wave: "Wave") -> None:
 
 
 def _cleanup_listeners() -> None:
-    """Gracefully shuts down all background logging threads on application exit."""
+    """Gracefully shuts down all background logging threads on application exit.
+
+    Guards against listeners that were registered but never started
+    (``_thread is None``) or already stopped — Python 3.11's
+    ``QueueListener.stop()`` unconditionally calls ``self._thread.join()``
+    and raises ``AttributeError`` in both cases.
+    """
     for listener in _ACTIVE_LISTENERS.values():
-        listener.stop()
+        if getattr(listener, "_thread", None) is not None:
+            try:
+                listener.stop()
+            except Exception:
+                # atexit must never raise — swallow any stop-time errors
+                # (e.g. listener already stopped on a parallel thread).
+                pass
     _ACTIVE_LISTENERS.clear()
 
 
@@ -211,7 +223,13 @@ def setup_class_logger(cls: Type[Any]) -> None:
             cls_name,
         )
         old_listener = _ACTIVE_LISTENERS.pop(oldest_key)
-        old_listener.stop()
+        # Guard against listeners whose _thread was already cleared (re-stop) —
+        # Python 3.11 QueueListener.stop() raises AttributeError in that case.
+        if getattr(old_listener, "_thread", None) is not None:
+            try:
+                old_listener.stop()
+            except Exception:
+                pass
 
     listener = QueueListener(log_queue, debug_fh, error_fh, api_fh, respect_handler_level=True)
     listener.start()

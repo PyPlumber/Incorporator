@@ -29,7 +29,15 @@ def reset_active_listeners() -> Generator[None, None, None]:
     finally:
         for key in list(_ACTIVE_LISTENERS.keys()):
             if key not in snapshot:
-                _ACTIVE_LISTENERS[key].stop()
+                listener = _ACTIVE_LISTENERS[key]
+                # Python 3.11 QueueListener.stop() raises AttributeError if
+                # _thread is None (already-stopped or never-started); guard so
+                # one bad listener doesn't abort cleanup of the rest.
+                if getattr(listener, "_thread", None) is not None:
+                    try:
+                        listener.stop()
+                    except Exception:
+                        pass
                 del _ACTIVE_LISTENERS[key]
 
 # --- JSON FIXTURES ---
