@@ -44,7 +44,10 @@ async def main() -> None:
             {
                 "cls": BinancePair,
                 "incorp_params": {
-                    "inc_url": "https://api.binance.com/api/v3/ticker/price",
+                    # api.binance.com is geo-blocked in many regions (US, UK, Singapore).
+                    # api.binance.us is the US-licensed mirror with the same v3 endpoint
+                    # shape; swap back to api.binance.com if you're outside those regions.
+                    "inc_url": "https://api.binance.us/api/v3/ticker/price",
                     "inc_code": "symbol",
                 },
             },
@@ -55,7 +58,12 @@ async def main() -> None:
         export_interval=60.0,                               # fused spread rows write every 60 s
     ):
         op = wave.operation                                 # e.g. "fjord_refresh:CoinGecko"
-        print(f"{op:40s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
+        if wave.failed_sources:
+            # Surface the reason fjord might abort — empty seeds (geo-blocks,
+            # rate limits, transient outages) cause the engine to bail early.
+            print(f"⚠️  {op:40s} chunk {wave.chunk_index}: {wave.failed_sources}")
+        else:
+            print(f"✅ {op:40s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
 
 
 if __name__ == "__main__":

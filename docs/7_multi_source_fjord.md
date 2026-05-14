@@ -22,7 +22,7 @@ independently every 30 seconds.
 
 * **Source A:** `https://api.coingecko.com/api/v3/coins/markets`
   (USD prices, top 100 by market cap)
-* **Source B:** `https://api.binance.com/api/v3/ticker/price`
+* **Source B:** `https://api.binance.us/api/v3/ticker/price`
   (USDT prices for every trading pair)
 * **Fusion:** for each CoinGecko coin where a matching `{SYMBOL}USDT`
   exists in Binance, emit a row with both prices + the basis-point spread
@@ -122,7 +122,7 @@ async def main():
             {
                 "cls": BinancePair,
                 "incorp_params": {
-                    "inc_url": "https://api.binance.com/api/v3/ticker/price",
+                    "inc_url": "https://api.binance.us/api/v3/ticker/price",
                     "inc_code": "symbol",
                 },
             },
@@ -147,6 +147,15 @@ if __name__ == "__main__":
 > **append-friendly** format: `.ndjson` / `.csv` / `.sqlite` / `.avro`.
 > Parquet / Feather / ORC / Excel / XML / JSON all reject append mode.
 > Pick NDJSON if unsure.
+
+> **Seed-empty abort:** if *any* source yields zero records on the
+> initial seed, the engine aborts the whole pipeline with a
+> `fjord_incorp:<ClassName>` wave whose `failed_sources` explains
+> why.  No daemons spawn, the `async for` loop exits cleanly with
+> code 0.  Always print `wave.failed_sources` so geo-blocks
+> (`api.binance.com` is blocked in the US — use `api.binance.us`),
+> rate-limit responses, and transient API outages surface visibly
+> instead of looking like a successful run with empty data.
 
 ---
 
@@ -197,7 +206,7 @@ The same pipeline as a `pipeline.json`:
     {
       "cls_name": "BinancePair",
       "incorp_params": {
-        "inc_url": "https://api.binance.com/api/v3/ticker/price",
+        "inc_url": "https://api.binance.us/api/v3/ticker/price",
         "inc_code": "symbol"
       },
       "refresh_params": {}
