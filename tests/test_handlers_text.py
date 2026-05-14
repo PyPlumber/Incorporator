@@ -235,6 +235,16 @@ async def test_write_destination_data_creates_missing_parent_dir(tmp_path: Path)
 
     assert target.exists()
     assert target.parent.is_dir()
-    text = target.read_text(encoding="utf-8")
-    assert '"id": "X"' in text
-    assert '"id": "Y"' in text
+    # Round-trip the rows back via the NDJSON parser — both orjson (no
+    # whitespace) and stdlib json (default separators) produce valid
+    # NDJSON, so we assert on the parsed shape rather than the literal
+    # bytes.
+    import json as _stdlib_json
+
+    rows = [
+        _stdlib_json.loads(line)
+        for line in target.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert {r["id"] for r in rows} == {"X", "Y"}
+    assert {r["v"] for r in rows} == {1, 2}
