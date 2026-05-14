@@ -49,7 +49,12 @@ async def _run_stateful_engine(
     shutdown_event = asyncio.Event()
 
     tasks = []
-    if refresh_params:
+    # ``is not None`` rather than truthy: empty dict ``{}`` MUST opt into the
+    # daemon (= "run with default kwargs").  Pre-fix, ``if refresh_params:``
+    # silently skipped because Python treats ``{}`` as falsy — contradicting
+    # the documented contract and matching the bug the user hit when refresh
+    # didn't fire on tutorial 7.
+    if refresh_params is not None:
         tasks.append(
             asyncio.create_task(
                 _refresh_daemon(
@@ -63,7 +68,7 @@ async def _run_stateful_engine(
                 )
             )
         )
-    if export_params:
+    if export_params is not None:
         tasks.append(
             asyncio.create_task(
                 _export_daemon(

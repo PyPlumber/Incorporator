@@ -21,10 +21,13 @@ async def _enrich_and_load(
     force_append: bool,
 ) -> None:
     """Atomic helper for the Enrich (Refresh) and Load (Export) phases."""
-    if refresh_params:
+    # ``is not None`` rather than truthy: empty dict ``{}`` MUST opt into the
+    # call ("run with default kwargs"); a truthy check treats ``{}`` as falsy
+    # and silently skips, contradicting the documented contract.
+    if refresh_params is not None:
         await cls.refresh(instance=dataset, **refresh_params)
 
-    if export_params:
+    if export_params is not None:
         params = export_params.copy() if force_append else export_params
         if force_append:
             params["if_exists"] = "append"

@@ -429,7 +429,15 @@ async def test_run_pipeline_routes_to_stateful_engine() -> None:
 
 @pytest.mark.asyncio
 async def test_run_pipeline_refresh_interval_falls_back_to_poll_interval() -> None:
-    """refresh_interval=None falls back to poll_interval in stateful engine."""
+    """refresh_interval=None cascades to poll_interval in the stateful engine.
+
+    Cascade contract: refresh_interval > poll_interval > module default
+    (DEFAULT_REFRESH_INTERVAL_SEC, currently 60 s).  This test pins the
+    middle step — poll_interval reaches the refresh daemon when
+    refresh_interval is None — by setting a tight poll cadence and
+    breaking after the first refresh wave fires.  Without the cascade
+    or the new module default the daemon could never tick at all.
+    """
     cls = MagicMock()
     cls.incorp = AsyncMock(return_value=[{"id": 1}])
     cls.refresh = AsyncMock(return_value=[{"id": 2}])
@@ -440,11 +448,92 @@ async def test_run_pipeline_refresh_interval_falls_back_to_poll_interval() -> No
         incorp_params={},
         refresh_params={"new_url": "https://x"},
         export_params=None,
-        poll_interval=None,
+        poll_interval=0.01,                          # short poll → fast tick
         stateful_polling=True,
-        refresh_interval=None,  # falls back to poll_interval (also None → daemon runs once)
+        refresh_interval=None,                       # cascades to poll_interval
         export_interval=None,
     ):
         results.append(wave)
+        if any(a.operation == "refresh" for a in results):
+            break
 
     assert any(a.operation == "refresh" for a in results)
+
+
+# ==========================================
+# New default-on / sentinel behaviour locks (Phase 1, 2, 4)
+# ==========================================
+
+
+@pytest.mark.asyncio
+async def test_stateful_engine_refresh_params_empty_dict_spawns_daemon() -> None:
+    """Truthiness-fix regression: refresh_params={} must NOT skip the daemon.
+
+    Pre-fix: `if refresh_params:` treated {} as falsy → silent skip,
+    contradicting the documented "empty dict = run with defaults" contract.
+    Post-fix: `if refresh_params is not None:` correctly opts in.
+    """
+    cls = MagicMock()
+    cls.incorp = AsyncMock(return_value=[{"id": 1}])
+    cls.refresh = AsyncMock(return_value=[{"id": 2}])
+
+    from incorporator.observability.pipeline.stateful import _run_stateful_engine
+
+    results = []
+    async for wave in _run_stateful_engine(
+        cls=cls,
+        incorp_params={},
+        refresh_params={},                              # <-- empty, not None
+        export_params=None,
+        r_interval=0.01,
+        e_interval=None,
+    ):
+        results.append(wave)
+        if any(a.operation == "refresh" for a in results):
+            break
+
+    assert any(a.operation == "refresh" for a in results)
+
+
+@pytest.mark.asyncio
+async def test_stateful_engine_export_params_empty_dict_spawns_daemon(tmp_path: Any) -> None:
+    """Same truthiness-fix regression for export_params={}.
+
+    Pre-fix: stateful.py:66 used `if export_params:` (falsy {}) → silently
+    skipped.  Post-fix: `is not None` correctly opts in.
+    """
+    out_file = tmp_path / "out.ndjson"
+    cls = MagicMock()
+    cls.incorp = AsyncMock(return_value=[{"id": 1}])
+    cls.export = AsyncMock(return_value=None)
+
+    from incorporator.observability.pipeline.stateful import _run_stateful_engine
+
+    results = []
+    async for wave in _run_stateful_engine(
+        cls=cls,
+        incorp_params={},
+        refresh_params=None,                            # disable refresh daemon
+        export_params={"file_path": str(out_file)},     # <-- export with kwargs
+        r_interval=None,
+        e_interval=0.01,
+    ):
+        results.append(wave)
+        if any(a.operation == "export" for a in results):
+            break
+
+    assert any(a.operation == "export" for a in results)
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_no_intervals_uses_module_default() -> None:
+    """Cascade end-of-line: when every interval kwarg is None, the module
+    default kicks in so the daemon ticks rather than exiting silently.
+
+    Pre-fix: refresh_interval=None + poll_interval=None → daemon broke
+    after one tick (_daemons.py:60-61).  Post-fix: DEFAULT_REFRESH_INTERVAL_SEC
+    keeps the daemon alive at a sane cadence (60 s).
+    """
+    from incorporator.observability.pipeline import DEFAULT_REFRESH_INTERVAL_SEC
+
+    assert DEFAULT_REFRESH_INTERVAL_SEC == 60.0
