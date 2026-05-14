@@ -60,9 +60,12 @@ async def test_stream_engine_1_chunking_big_data(
 
     waves: List[Wave] = []
 
-    # Execute Engine 1 Stream
+    # Execute Engine 1 Stream — refresh_params=None opts out of the
+    # default refresh-after-each-chunk behaviour; this test asserts the
+    # pure chunked-pagination yield count.
     async for wave in StreamTargetModel.stream(
             incorp_params=incorp_params,
+            refresh_params=None,
             stateful_polling=False
     ):
         waves.append(wave)
@@ -102,9 +105,13 @@ async def test_stream_engine_2_stateful_live_data(
 
     waves: List[Wave] = []
 
-    # Execute Engine 2 Stream (poll_interval=None forces it to break after 1 loop)
+    # Execute Engine 2 Stream — refresh_params=None opts out of the
+    # refresh daemon (under the new default it would tick at 60 s).
+    # No export_params either, so the engine emits the seed wave then
+    # exits cleanly.
     async for wave in StreamTargetModel.stream(
             incorp_params=incorp_params,
+            refresh_params=None,
             stateful_polling=True,
             poll_interval=None
     ):

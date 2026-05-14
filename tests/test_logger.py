@@ -258,6 +258,7 @@ async def test_logged_stream_enable_logging_emits_waves(
     results = []
     async for wave in StreamLogModel.stream(
         incorp_params={"inc_file": str(data_file)},
+        refresh_params=None,                          # one-shot: skip refresh daemon
         enable_logging=True,
     ):
         results.append(wave)

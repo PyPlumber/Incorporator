@@ -52,6 +52,13 @@ logger = logging.getLogger(__name__)
 _INSPECTION_LIMIT = 3
 _counter_lock = threading.Lock()
 
+# Sentinel that distinguishes "kwarg never passed" from "kwarg passed as None".
+# Used by stream() so the default behaviour is "refresh runs with no kwargs"
+# (the common case) while still letting callers opt out via explicit
+# ``refresh_params=None``.  Module-private; treat any external comparison
+# against this object as undefined behaviour.
+_UNSET: Any = object()
+
 
 def _apply_inflow_resolution(
     inflow: Union[str, Path],
@@ -904,7 +911,7 @@ class Incorporator(BaseModel):
     async def stream(
         cls: Type[TIncorporator],
         incorp_params: Dict[str, Any],
-        refresh_params: Optional[Dict[str, Any]] = None,
+        refresh_params: Optional[Dict[str, Any]] = _UNSET,  # type: ignore[assignment]
         export_params: Optional[Dict[str, Any]] = None,
         poll_interval: Optional[float] = None,
         stateful_polling: bool = False,
@@ -1056,6 +1063,14 @@ class Incorporator(BaseModel):
             from .usercode import load_user_module
 
             load_user_module(inflow, name_hint="_inc_stream_inflow")
+
+        # Translate the _UNSET sentinel to "{}" (run refresh with defaults).
+        # Callers that explicitly want to skip refresh pass refresh_params=None,
+        # which propagates through unchanged.  This makes the common case
+        # ("just refresh the same source") the default rather than requiring
+        # boilerplate refresh_params={} on every stream() call.
+        if refresh_params is _UNSET:
+            refresh_params = {}
 
         async for wave in run_pipeline(
             cls=receiver_cls,

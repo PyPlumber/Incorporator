@@ -138,11 +138,25 @@ def _clean_state() -> Any:
             del SCHEMA_REGISTRY[key]
 
 
-async def _drain(gen: AsyncGenerator[Any, None]) -> list:
-    """Collect every wave yielded by an async generator into a list."""
+async def _drain(
+    gen: AsyncGenerator[Any, None],
+    until_ops: Optional[set[str]] = None,
+) -> list:
+    """Collect waves yielded by an async generator.
+
+    When ``until_ops`` is provided, drain stops as soon as every operation
+    name in the set has been seen at least once.  Useful for daemon-mode
+    tests where the generator never exits on its own.  Without
+    ``until_ops``, drain runs to completion (legacy one-shot tests).
+    """
     out: list = []
+    seen: set[str] = set()
     async for wave in gen:
         out.append(wave)
+        if until_ops is not None:
+            seen.add(wave.operation)
+            if until_ops.issubset(seen):
+                break
     return out
 
 
@@ -165,8 +179,13 @@ async def test_fjord_one_shot_combines_two_sources(
     waves = await _drain(
         Incorporator.fjord(
             stream_params=[
-                {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
-                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}},
+                # refresh_params=None opts each source OUT of the refresh
+                # daemon — tests want one-shot seed+outflow, not a running
+                # daemon.  See plan: post-refactor, missing refresh_params
+                # defaults to {} (refresh runs); tests using one-shot must
+                # opt out explicitly.
+                {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
+                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}, "refresh_params": None},
             ],
             outflow=outflow_file,
             export_params={"file_path": str(out_file)},
@@ -213,8 +232,13 @@ async def test_fjord_derives_class_name_from_stem(
     waves = await _drain(
         Incorporator.fjord(
             stream_params=[
-                {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
-                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}},
+                # refresh_params=None opts each source OUT of the refresh
+                # daemon — tests want one-shot seed+outflow, not a running
+                # daemon.  See plan: post-refactor, missing refresh_params
+                # defaults to {} (refresh runs); tests using one-shot must
+                # opt out explicitly.
+                {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
+                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}, "refresh_params": None},
             ],
             outflow=outflow_file,
             export_params={"file_path": str(out_file)},
@@ -241,8 +265,13 @@ async def test_fjord_empty_outflow_emits_zero_row_wave(
     waves = await _drain(
         Incorporator.fjord(
             stream_params=[
-                {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
-                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}},
+                # refresh_params=None opts each source OUT of the refresh
+                # daemon — tests want one-shot seed+outflow, not a running
+                # daemon.  See plan: post-refactor, missing refresh_params
+                # defaults to {} (refresh runs); tests using one-shot must
+                # opt out explicitly.
+                {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
+                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}, "refresh_params": None},
             ],
             outflow=outflow_file,
             export_params={"file_path": str(out_file)},
@@ -271,8 +300,13 @@ async def test_fjord_outflow_error_yields_wave_with_failed_sources(
     waves = await _drain(
         Incorporator.fjord(
             stream_params=[
-                {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}},
-                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}},
+                # refresh_params=None opts each source OUT of the refresh
+                # daemon — tests want one-shot seed+outflow, not a running
+                # daemon.  See plan: post-refactor, missing refresh_params
+                # defaults to {} (refresh runs); tests using one-shot must
+                # opt out explicitly.
+                {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
+                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}, "refresh_params": None},
             ],
             outflow=outflow_file,
             export_params={"file_path": str(out_file)},
@@ -385,12 +419,19 @@ async def test_fjord_per_stream_export(tmp_path: Path, monkeypatch: pytest.Monke
                     "cls": Coin,
                     "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"},
                     "export_params": {"file_path": str(coin_out)},
+                    "refresh_params": None,                # opt out of refresh daemon
+                    "export_interval": 0.01,               # tight tick — we break after first wave
                 },
-                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}},
+                {
+                    "cls": BinanceFutures,
+                    "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             export_params={"file_path": str(combined_out)},
-        )
+        ),
+        until_ops={"export:Coin", "outflow:CoinMarket"},      # break once both seen
     )
 
     operations = [a.operation for a in waves]
@@ -418,3 +459,52 @@ def test_pascal_case_from_stem_rejects_invalid() -> None:
         pascal_case_from_stem(Path("123.py"))
     with pytest.raises(ValueError, match="Cannot derive a valid Python class name"):
         pascal_case_from_stem(Path("_.py"))
+
+
+# ==========================================
+# Per-source interval dict-shape (Phase 3)
+# ==========================================
+
+
+def test_resolve_per_source_interval_per_entry_override_wins() -> None:
+    """Per-entry refresh_interval beats the top-level dict and top-level scalar."""
+    from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
+
+    entry = {"cls": Coin, "refresh_interval": 5.0}
+    assert _resolve_per_source_interval(60.0, entry, "refresh_interval") == 5.0
+    assert _resolve_per_source_interval({"Coin": 30.0}, entry, "refresh_interval") == 5.0
+
+
+def test_resolve_per_source_interval_top_level_dict_by_name() -> None:
+    """Top-level dict keyed by class name resolves per-source."""
+    from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
+
+    entry = {"cls": Coin}
+    top = {"Coin": 30.0, "BinanceFutures": 5.0}
+    assert _resolve_per_source_interval(top, entry, "refresh_interval") == 30.0
+
+
+def test_resolve_per_source_interval_top_level_dict_by_class_object() -> None:
+    """Top-level dict keyed by class object (Python ergonomics) also resolves."""
+    from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
+
+    entry = {"cls": Coin}
+    top = {Coin: 30.0}
+    assert _resolve_per_source_interval(top, entry, "refresh_interval") == 30.0
+
+
+def test_resolve_per_source_interval_top_level_scalar() -> None:
+    """Scalar top-level applies to every entry."""
+    from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
+
+    entry = {"cls": Coin}
+    assert _resolve_per_source_interval(60.0, entry, "refresh_interval") == 60.0
+
+
+def test_resolve_per_source_interval_dict_miss_returns_none() -> None:
+    """Top-level dict missing the class name returns None (cascade falls to default)."""
+    from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
+
+    entry = {"cls": Coin}
+    top = {"BinanceFutures": 5.0}              # no entry for Coin
+    assert _resolve_per_source_interval(top, entry, "refresh_interval") is None

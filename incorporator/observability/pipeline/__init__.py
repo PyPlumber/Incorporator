@@ -29,6 +29,8 @@ from .stateful import _run_stateful_engine
 
 __all__ = [
     "run_pipeline",
+    "DEFAULT_REFRESH_INTERVAL_SEC",
+    "DEFAULT_EXPORT_INTERVAL_SEC",
     "_enrich_and_load",
     "_export_daemon",
     "_interruptible_sleep",
@@ -39,6 +41,14 @@ __all__ = [
     "_run_fjord_engine",
     "_run_stateful_engine",
 ]
+
+
+# Module-level cadence defaults — applied at the bottom of the cascade
+# (per-entry override > top-level kwarg > poll_interval > these).  These
+# prevent the silent "daemon ticks once and exits" failure mode when a
+# stateful pipeline is started with no interval kwargs at all.
+DEFAULT_REFRESH_INTERVAL_SEC: float = 60.0
+DEFAULT_EXPORT_INTERVAL_SEC: float = 300.0
 
 
 async def run_pipeline(
@@ -61,13 +71,18 @@ async def run_pipeline(
     paginator = incorp_params.get("inc_page")
 
     if stateful_polling:
+        # Cascade: explicit kwarg > poll_interval > module default.  The
+        # final fallback to DEFAULT_*_INTERVAL_SEC prevents a daemon
+        # spawned with no interval kwargs from ticking once and exiting
+        # silently (a real failure mode users hit when refresh_interval
+        # was left at None).
         async for wave in _run_stateful_engine(
             cls=cls,
             incorp_params=incorp_params,
             refresh_params=refresh_params,
             export_params=export_params,
-            r_interval=refresh_interval or poll_interval,
-            e_interval=export_interval or poll_interval,
+            r_interval=refresh_interval or poll_interval or DEFAULT_REFRESH_INTERVAL_SEC,
+            e_interval=export_interval or poll_interval or DEFAULT_EXPORT_INTERVAL_SEC,
         ):
             yield wave
     else:

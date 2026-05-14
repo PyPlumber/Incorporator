@@ -13,7 +13,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Type, TypeVar, Uni
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..base import Incorporator
+from ..base import Incorporator, _UNSET
 from ..list import IncorporatorList
 
 TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
@@ -525,7 +525,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     async def stream(
         cls: Type[TLoggedIncorporator],
         incorp_params: Dict[str, Any],
-        refresh_params: Optional[Dict[str, Any]] = None,
+        refresh_params: Optional[Dict[str, Any]] = _UNSET,  # type: ignore[assignment]
         export_params: Optional[Dict[str, Any]] = None,
         poll_interval: Optional[float] = None,
         stateful_polling: bool = False,

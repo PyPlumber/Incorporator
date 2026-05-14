@@ -79,10 +79,26 @@ def validate_stream_config(config: Dict[str, Any], config_dir: Path) -> List[str
         if key in config and not isinstance(config[key], dict):
             errors.append(f"'{key}', if present, must be a JSON object.")
 
-    # Optional interval/poll values must be numeric.
-    for key in ("poll_interval", "refresh_interval", "export_interval"):
-        if key in config and not isinstance(config[key], (int, float)):
-            errors.append(f"'{key}', if present, must be a number (seconds).")
+    # Optional interval/poll values must be numeric or, for fjord/stream
+    # refresh_interval and export_interval, a dict keyed by class name with
+    # numeric values (per-source cadence).  poll_interval is always scalar.
+    if "poll_interval" in config and not isinstance(config["poll_interval"], (int, float)):
+        errors.append("'poll_interval', if present, must be a number (seconds).")
+    for key in ("refresh_interval", "export_interval"):
+        if key not in config:
+            continue
+        val = config[key]
+        if isinstance(val, dict):
+            for src, secs in val.items():
+                if not isinstance(secs, (int, float)):
+                    errors.append(
+                        f"'{key}[{src!r}]' must be a number (seconds); got {type(secs).__name__}."
+                    )
+        elif not isinstance(val, (int, float)):
+            errors.append(
+                f"'{key}', if present, must be a number (seconds) "
+                f"or a dict of {{class_name: seconds}}."
+            )
 
     if "stateful_polling" in config and not isinstance(config["stateful_polling"], bool):
         errors.append("'stateful_polling', if present, must be a boolean.")

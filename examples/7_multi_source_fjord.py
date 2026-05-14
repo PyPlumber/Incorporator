@@ -31,6 +31,11 @@ HERE = Path(__file__).parent
 
 
 async def main() -> None:
+    # Refresh + export daemons are ON by default — no need for boilerplate
+    # `refresh_params={}` on each source.  Pass `refresh_params=None` to
+    # opt OUT of refresh on a specific source.  Top-level intervals can be
+    # a scalar (applies to every source) OR a dict keyed by class name for
+    # different cadences per source.
     async for wave in Incorporator.fjord(
         stream_params=[
             {
@@ -40,12 +45,6 @@ async def main() -> None:
                     "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
                     "inc_code": "id",
                 },
-                # refresh_params={} = "yes, run the refresh daemon for this source
-                # with default kwargs".  Omitting the key entirely means "skip
-                # refresh on this source" — outflow ticks would keep firing
-                # against the stale seed data, which is almost never what you
-                # want.  Pass {} (or override-kwargs) on every source.
-                "refresh_params": {},
             },
             {
                 "cls": BinancePair,
@@ -56,13 +55,15 @@ async def main() -> None:
                     "inc_url": "https://api.binance.us/api/v3/ticker/price",
                     "inc_code": "symbol",
                 },
-                "refresh_params": {},
             },
         ],
         outflow=str(HERE / "fjord_code/crypto_spread.py"),
         export_params={"file_path": str(HERE.parent / "data/crypto_spread.ndjson")},
-        refresh_interval=30.0,                              # each source re-fetches every 30 s
-        export_interval=60.0,                               # fused spread rows write every 60 s
+        refresh_interval={                                  # per-source cadences
+            "CoinGecko": 60,                                # CoinGecko's free tier is rate-limited
+            "BinancePair": 30,                              # Binance is faster
+        },
+        export_interval=60.0,                               # fused output: every 60 s
     ):
         op = wave.operation                                 # e.g. "fjord_refresh:CoinGecko"
         if wave.failed_sources:

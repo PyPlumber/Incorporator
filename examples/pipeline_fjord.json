@@ -3,22 +3,22 @@
 
   "outflow": "fjord_code/outflow_example.py",
 
+  "_dx_note_": "Refresh is on by default — no need for refresh_params on each entry. Set refresh_params: null to opt out of refresh on a specific source. refresh_interval can be a number (applies to all sources) or a {ClassName: seconds} dict for per-source cadences.",
+
   "stream_params": [
     {
       "cls_name": "SpaceXLaunch",
       "incorp_params": {
         "inc_url": "https://api.spacexdata.com/v4/launches/latest",
         "inc_code": "id"
-      },
-      "refresh_params": {}
+      }
     },
     {
       "cls_name": "SpaceXRocket",
       "incorp_params": {
         "inc_url": "https://api.spacexdata.com/v4/rockets",
         "inc_code": "id"
-      },
-      "refresh_params": {}
+      }
     }
   ],
 
@@ -26,6 +26,6 @@
     "file_path": "data/launch_with_rocket.ndjson"
   },
 
-  "refresh_interval": 60.0,
+  "refresh_interval": {"SpaceXLaunch": 60, "SpaceXRocket": 600},
   "export_interval": 120.0
 }

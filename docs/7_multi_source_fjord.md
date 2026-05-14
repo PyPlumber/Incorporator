@@ -118,7 +118,6 @@ async def main():
                     "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
                     "inc_code": "id",
                 },
-                "refresh_params": {},                      # opt into the refresh daemon
             },
             {
                 "cls": BinancePair,
@@ -126,13 +125,12 @@ async def main():
                     "inc_url": "https://api.binance.us/api/v3/ticker/price",
                     "inc_code": "symbol",
                 },
-                "refresh_params": {},
             },
         ],
         outflow="examples/fjord_code/crypto_spread.py",
         export_params={"file_path": "data/crypto_spread.ndjson"},
-        refresh_interval=30.0,                              # each source re-fetches every 30 s
-        export_interval=60.0,                               # fused output writes every 60 s
+        refresh_interval={"CoinGecko": 60, "BinancePair": 30},   # per-source cadences
+        export_interval=60.0,                                    # fused output every 60 s
     ):
         op = wave.operation
         print(f"{op:40s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
@@ -159,13 +157,26 @@ if __name__ == "__main__":
 > rate-limit responses, and transient API outages surface visibly
 > instead of looking like a successful run with empty data.
 
-> **Per-source refresh opt-in:** the refresh daemon is enabled
-> per-source by setting `"refresh_params": {}` (empty dict = "yes,
-> refresh with default kwargs") on each entry.  Omitting the key
-> **skips refresh on that source** — outflow ticks keep firing
-> against the stale seed data, which is almost never what you
-> want.  Pass `{}` (or override kwargs) on every entry unless you
-> *intentionally* want a fixed snapshot from that source.
+> **Refresh is on by default.**  Every fjord source automatically
+> spawns a refresh daemon — you don't need `"refresh_params": {}`
+> boilerplate on each entry.  To **opt OUT** of refresh on a specific
+> source (e.g. a static catalogue that never changes), set
+> `"refresh_params": None` on that entry.
+>
+> **Per-source intervals — two equivalent shapes:**
+>
+> ```python
+> # Top-level dict by class name (one place, easy to scan):
+> refresh_interval={"CoinGecko": 60, "BinancePair": 30}
+>
+> # OR inline per-entry (overrides the dict if both are set):
+> {"cls": CoinGecko, "incorp_params": {...}, "refresh_interval": 60}
+> ```
+>
+> The dict shape is JSON-friendly (works in `pipeline.json` too) and
+> reads at a glance.  Inline overrides take priority when both are
+> set on the same source.  Defaults: 60 s refresh, 300 s export, when
+> nothing is specified.
 
 ---
 
@@ -210,20 +221,18 @@ The same pipeline as a `pipeline.json`:
         "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
         "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
         "inc_code": "id"
-      },
-      "refresh_params": {}
+      }
     },
     {
       "cls_name": "BinancePair",
       "incorp_params": {
         "inc_url": "https://api.binance.us/api/v3/ticker/price",
         "inc_code": "symbol"
-      },
-      "refresh_params": {}
+      }
     }
   ],
   "export_params": {"file_path": "data/crypto_spread.ndjson"},
-  "refresh_interval": 30.0,
+  "refresh_interval": {"CoinGecko": 60, "BinancePair": 30},
   "export_interval": 60.0
 }
 ```
