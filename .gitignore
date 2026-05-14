@@ -75,6 +75,13 @@ final_*.json
 *.xml
 *.avro
 
+# Sample fixtures intentionally committed (override the above patterns).
+!examples/**/*.xml
+!examples/**/*.json
+!tests/**/*.xml
+!tests/**/*.json
+!tests/**/*.csv
+
 # 10. Private Developer Scripts
 real_*.py
 /tests/demo/
