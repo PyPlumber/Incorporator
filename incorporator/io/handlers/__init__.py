@@ -105,11 +105,19 @@ async def write_destination_data(
     if not handler:
         raise IncorporatorFormatError(f"Unsupported export format: '{format_type}'.")
 
+    # Resolve the destination path ONCE here so every downstream consumer
+    # (mkdir, atomic_write_path inside the handler, the handler's own
+    # Path.resolve()) reuses the same syscall.  Pre-fix, each handler
+    # called Path(file_path).resolve() independently — a redundant stat
+    # syscall per write that adds up under streaming daemons ticking
+    # hundreds of times per minute.
+    resolved_path = Path(file_path).resolve()
+
     # Auto-create the parent directory.  Streaming pipelines often target
     # paths like "data/<name>.ndjson" — failing every export tick because
     # the user didn't mkdir is hostile DX for zero benefit.  Run pre-write
     # so the empty-input case below short-circuits without a mkdir burn.
-    parent = Path(file_path).resolve().parent
+    parent = resolved_path.parent
     if parent and not parent.exists():
         try:
             parent.mkdir(parents=True, exist_ok=True)
@@ -122,4 +130,6 @@ async def write_destination_data(
     if is_empty:
         return
 
-    await asyncio.to_thread(handler.write, safe_iter, file_path, **kwargs)
+    # Pass the already-resolved path so the handler's internal Path.resolve()
+    # is effectively a no-op (Path.resolve on an absolute path returns itself).
+    await asyncio.to_thread(handler.write, safe_iter, resolved_path, **kwargs)

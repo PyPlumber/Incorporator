@@ -5,6 +5,8 @@ Contains purely functional data sanitization, recursion, and format inference.
 
 import json
 import re
+from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple, Union
@@ -58,6 +60,15 @@ FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {
     (FormatType.PARQUET, "string"): str,
     (FormatType.PARQUET, "binary"): bytes,
     (FormatType.PARQUET, "null"): type(None),
+    # Logical-type round-trips for Parquet — decimal128 preserves arbitrary
+    # precision (no float-precision loss); timestamp_tz / timestamp_naive
+    # keep tz info distinct from naive datetimes.  The columnar writer
+    # currently falls back to pa.string() when these miss — listing them
+    # here unblocks future _arrow_type_for() integration without breaking
+    # the existing scalar path.
+    (FormatType.PARQUET, "decimal128"): Decimal,
+    (FormatType.PARQUET, "timestamp_tz"): datetime,
+    (FormatType.PARQUET, "timestamp_naive"): datetime,
     # Feather (Arrow IPC) and ORC share the same Arrow logical type system.
     (FormatType.FEATHER, "bool"): bool,
     (FormatType.FEATHER, "int32"): int,
@@ -107,6 +118,12 @@ PYTHON_TO_FORMAT: Dict[Tuple[FormatType, type], str] = {
     (FormatType.PARQUET, int): "int64",
     (FormatType.PARQUET, float): "double",
     (FormatType.PARQUET, str): "string",
+    # Logical-type round-trips — emit Parquet decimal/timestamp encodings
+    # rather than collapsing to string.  Wired but not yet auto-detected
+    # from Pydantic schema by ParquetHandler._arrow_type_for — listing the
+    # canonical encoding here so the future integration step can pick it up.
+    (FormatType.PARQUET, Decimal): "decimal128",
+    (FormatType.PARQUET, datetime): "timestamp_tz",
     (FormatType.PARQUET, bytes): "binary",
     (FormatType.PARQUET, list): "string",
     (FormatType.PARQUET, dict): "string",

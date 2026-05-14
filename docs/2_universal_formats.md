@@ -179,6 +179,28 @@ file is consumable by pandas / DuckDB / Snowflake / BigQuery. The
 SQLite file is consumable by `sqlite3` or any ORM. Both came from the
 same Pydantic instances in memory — no schema duplication.
 
+> **For files larger than RAM:** the synchronous `incorp(inc_file=...)`
+> path materialises the whole file before parsing — fine for the typical
+> "a few hundred MB" case, but it OOMs on multi-GB CSV / SQLite / Avro
+> inputs.  Use the **local paginators** in
+> [`incorporator.io.pagination`](./streaming_and_pagination.md):
+>
+> ```python
+> from incorporator.io.pagination import CSVPaginator
+>
+> # Stream the file in 10,000-row chunks — peak memory is one chunk.
+> chunked = CSVPaginator(file_path="huge.csv", chunk_size=10_000)
+> async for wave in MyClass.stream(
+>     incorp_params={"inc_url": "huge.csv", "inc_page": chunked},
+>     export_params={"file_path": "data/processed.ndjson"},
+> ):
+>     print(wave)
+> ```
+>
+> `SQLitePaginator` and `AvroPaginator` follow the same shape.  See
+> the [streaming guide](./streaming_and_pagination.md) for the full
+> paginator catalogue.
+
 ---
 
 ## Format-Specific Kwargs
