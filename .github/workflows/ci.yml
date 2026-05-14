@@ -14,7 +14,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-          cache: pip
       - name: Install dev extras
         run: pip install -e .[dev]
       - name: ruff check
@@ -32,7 +31,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-          cache: pip
       - name: Install with all optional extras
         run: pip install -e .[all,parquet,dev]
       - name: mypy
@@ -51,7 +49,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
       - name: Install with all optional extras
         run: pip install -e .[all,parquet,dev]
       - name: pytest
