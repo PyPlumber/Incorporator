@@ -143,6 +143,13 @@ await Launch.test(inc_url="https://api.unknown.com/v1/users")
 await Launch.refresh(instance=launches)
 ```
 
+The seed call's network context — `params`, `headers`, `rec_path`,
+`conv_dict`, `payload_list`, `sql_query`, etc. — is auto-replayed on
+every refresh, so stateful polling against a URL that needed query
+parameters (CoinGecko's `?vs_currency=usd`, paginated SQL, custom
+POST bodies) works without re-declaring anything. Caller-supplied
+kwargs win on conflicts.
+
 ### `export()` — serialise to any format
 
 CSV, JSON, NDJSON, XML, SQLite, Parquet, Feather, ORC, Avro, XLSX. All share the same call.
@@ -171,16 +178,29 @@ async for wave in Launch.stream(
 Fans out across N concurrent sources, fuses them through a user-defined `outflow(state)` function, exports the combined output.
 
 ```python
-async for wave in Pipeline.fjord(
+async for wave in Incorporator.fjord(
     stream_params=[
         {"cls": Coin,  "incorp_params": {"inc_url": "..."}, "refresh_interval": 30},
         {"cls": Order, "incorp_params": {"inc_url": "..."}, "refresh_interval": 5},
     ],
-    outflow="outflow.py",                             # defines outflow(state) -> list[dict]
-    export_params={"file_path": "fusion.parquet"},
+    outflow="outflow.py",                             # outflow(state) -> list[dict] OR dict[name, list[dict]]
+    export_params={"file_path": "fusion.parquet"},   # single output
 ):
     if wave.failed_sources: print(wave)
 ```
+
+**Two more `fjord()` powers you'll grow into:**
+
+* **State-aware `inflow(state)`** — if `inflow.py` defines a top-level
+  `inflow(state)` callable, fjord seeds sources sequentially and feeds
+  each one the prior sources' loaded snapshots. That's how
+  `link_to(state["Planet"], …)` and `link_to_list(state["Film"], …)`
+  resolve foreign-key URLs to real Pydantic instances at incorp time.
+* **Multi-output fjord** — return `dict[ClassName, list[dict]]` from
+  `outflow(state)` and fjord builds N derived classes and writes N
+  export files in one tick, with per-class
+  `export_params={"JediArchive": {...}, "Demographics": {...}}`.
+
 → [Tutorial 7 — Multi-Source Fjord](./docs/7_multi_source_fjord.md)
 
 ### `display()` — REPL debug print
@@ -214,7 +234,7 @@ cp .env.example .env && mkdir -p config data logs && mv pipeline.json config/
 docker compose up -d && docker compose logs -f
 ```
 
-Secrets stay out of `pipeline.json` — use `${API_KEY}` for env vars or `${file:/run/secrets/api_key}` for Docker / Kubernetes Secrets mounts.
+Secrets stay out of `pipeline.json` — use `${API_KEY}` for env vars or `${file:/run/secrets/api_key}` for Docker / Kubernetes Secrets mounts. Set `INCORPORATOR_SECRETS_ROOT=/run/secrets` to sandbox `${file:...}` references against directory-traversal at startup.
 
 → [CLI reference](./docs/cli_and_configuration.md) · [Deployment & secrets guide](./docs/deployment.md)
 
@@ -223,11 +243,13 @@ Secrets stay out of `pipeline.json` — use `${API_KEY}` for env vars or `${file
 ## 🛠 Resilience & Batteries Included
 
 * **GIL-free hyperthreading** via the `[speedups]` extra (orjson, lxml). → [Installation](./docs/installation.md)
-* **Invisible decompression** for `.gz`, `.bz2`, `.lzma`, `.zip`, `.tar` payloads — automatic, no extra calls. → [Formats](./docs/formats_and_compression.md)
-* **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity exponential backoff, failed URLs surfaced via `wave.failed_sources`. → [Library reference](./docs/library_reference.md)
+* **Invisible decompression** for `.gz`, `.bz2`, `.lzma`, `.zip`, `.tar` payloads — automatic, no extra calls; ZIP/TAR member paths are validated against directory-traversal attacks and a 1 GB decompression-bomb cap. → [Formats](./docs/formats_and_compression.md)
+* **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity exponential backoff, failed URLs surfaced via `wave.failed_sources`. Opt-in `block_internal_redirects=True` rejects 3xx Locations to RFC1918 / loopback / cloud-metadata IPs. → [Library reference](./docs/library_reference.md)
+* **Atomic writes for monolithic formats** — Parquet, Feather, ORC, JSON, XML, and XLSX all build to a sibling tempfile and `os.replace()` on success, so a crash mid-write never leaves a corrupt-footer file. → [Formats](./docs/formats_and_compression.md)
+* **Spreadsheet-injection guard** — CSV / XLSX cells starting with `=` / `@` / `+` / `-` are prefixed with `'` on export so consumers in Excel / LibreOffice / Sheets render the literal text instead of evaluating formulas (OWASP-recommended default; opt out via `csv_safe_formulas=False`).
 * **Zero-OOM `IncorporatorList`** backed by a `WeakValueDictionary` for O(1) lookups without GC pressure. → [Streaming](./docs/streaming_and_pagination.md)
 * **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. → [Library reference](./docs/library_reference.md)
-* **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML, all share the same `export()` surface. → [Tutorial 2 — Universal Formats](./docs/2_universal_formats.md)
+* **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML, all share the same `export()` surface, governed by a small hand-maintained type bridge that turns adding a new format into a 2-row dict change. → [Tutorial 2 — Universal Formats](./docs/2_universal_formats.md) · [Cross-format type bridge](./docs/formats_and_compression.md#-cross-format-type-bridge)
 
 ---
 
