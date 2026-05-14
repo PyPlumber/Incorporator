@@ -38,6 +38,7 @@ from examples.fjord_code.nascar_fantasy import (
     BuschStanding,
     CupStanding,
     Driver,
+    LeagueRoster,
     Race,
     Track,
     TruckStanding,
@@ -51,17 +52,26 @@ CFC_BASE = "https://cf.nascar.com/cacher"
 PROD_BASE = f"https://cf.nascar.com/data/cacher/production/{CURRENT_YEAR}"
 STANDINGS_BASE = "racinginsights-points-feed.json"
 
-# Shared between all three standings sources — keep the conv_dict
-# definition local to the driver since it's not relational.
+# Standings exclusion list — drop only the genuinely-noisy fields.
+# Phase-11 enrichment keeps ``position``, ``top_5``, ``laps_led``,
+# ``delta_leader``, ``poles``, ``starts``, ``manufacturer``, and
+# ``playoff_eligible`` because the FantasyTeam roster + the new
+# ManufacturerLeaderboard view need them.
 _STANDINGS_EXCL = [
-    "delta_playoff", "is_clinch", "starts", "poles",
+    "is_clinch",
     "driver_first_name", "driver_last_name", "driver_suffix",
+    "playoff_stage_wins",
 ]
 _STANDINGS_CONV = {
-    "points": calc(int, default=0, target_type=int),
-    "wins":   calc(int, default=0, target_type=int),
-    "top_10": calc(int, default=0, target_type=int),
+    "points":   calc(int, default=0, target_type=int),
+    "wins":     calc(int, default=0, target_type=int),
+    "top_10":   calc(int, default=0, target_type=int),
+    "top_5":    calc(int, default=0, target_type=int),
+    "laps_led": calc(int, default=0, target_type=int),
+    "position": calc(int, default=0, target_type=int),
 }
+# Driver exclusion list — keep ``Manufacturer``, ``Hometown_City``,
+# ``Hometown_State`` (used by the enriched FantasyTeam roster).
 _DRIVER_EXCL = [
     "Series_Logo", "Short_Name", "Description", "Hobbies", "Children",
     "Residing_City", "Residing_State", "Residing_Country", "Image_Transparent",
@@ -149,6 +159,20 @@ async def main() -> None:
                 },
                 "refresh_params": None,
             },
+            # ── Local-file source: the fantasy league rosters ──
+            # ``inc_file=`` routes through the same handler dispatch
+            # as the API sources above — JSON format is inferred from
+            # the file extension.  Rosters rarely change, so refresh
+            # is opted out.
+            {
+                "cls": LeagueRoster,
+                "incorp_params": {
+                    "inc_file": str(HERE / "fjord_code/league_teams.json"),
+                    "inc_code": "team_id",
+                    "inc_name": "team_id",
+                },
+                "refresh_params": None,
+            },
         ],
 
         # The state-aware inflow + outflow sidecar.
@@ -158,8 +182,9 @@ async def main() -> None:
         # Per-class export_params — one entry per dict-key returned
         # by outflow(state).  Detection: nested dict shape = multi-output.
         export_params={
-            "MonthlyRaceSchedule": {"file_path": str(DATA / "nascar_monthly_schedule.ndjson")},
-            "FantasyTeam":         {"file_path": str(DATA / "nascar_fantasy_scoreboard.ndjson")},
+            "MonthlyRaceSchedule":     {"file_path": str(DATA / "nascar_monthly_schedule.ndjson")},
+            "FantasyTeam":             {"file_path": str(DATA / "nascar_fantasy_scoreboard.ndjson")},
+            "ManufacturerLeaderboard": {"file_path": str(DATA / "nascar_manufacturer_leaderboard.ndjson")},
         },
 
         # This is a one-shot test run — every source has
@@ -188,6 +213,7 @@ async def main() -> None:
     print("\n✅ Pipeline complete.")
     print(f"   • {DATA / 'nascar_monthly_schedule.ndjson'}")
     print(f"   • {DATA / 'nascar_fantasy_scoreboard.ndjson'}")
+    print(f"   • {DATA / 'nascar_manufacturer_leaderboard.ndjson'}")
 
 
 if __name__ == "__main__":

@@ -7,26 +7,39 @@
 
 ***
 
-# 🕸️ Graph-Map Fjord: NASCAR Fantasy League (6 sources, 2 outputs, 1 config)
+# 🕸️ Graph-Map Fjord: NASCAR Fantasy League (7 sources, 3 outputs, 1 config)
 
 Tutorial 7's crypto-spread example is the *minimum viable fjord*: two
 co-equal sources, one outflow, one export file.  Real production
 joins are messier.  You have **dependent sources** (one source's
-foreign keys reference another), **multiple analytical views** to
-publish from the same fused state, and **sentinel values** in raw
-APIs that need filtering at the graph boundary.
+foreign keys reference another), **mixed API + local-file inputs**
+(market data on the wire, business config in version control),
+**multiple analytical views** from the same fused state, and
+**sentinel values** in raw APIs that need filtering at the graph
+boundary.
 
-This appendix walks all three by porting a working NASCAR fantasy
+This appendix walks all four by porting a working NASCAR fantasy
 league ETL to a single fjord pipeline.
 
-* **6 sources** seeded concurrently — `Track`, `Driver`, `Race`,
-  `CupStanding`, `BuschStanding`, `TruckStanding`.
-* **State-aware inflow** — `Race.track_id` and
-  `Race.pole_winner_driver_id` resolve to live `Track` and `Driver`
-  Pydantic instances via `link_to(state["…"])` at the inflow layer.
-* **Multi-output outflow** — one `outflow(state)` call emits **two**
-  derived classes (`MonthlyRaceSchedule`, `FantasyTeam`), each
-  written to its own NDJSON file.
+* **7 sources** — 6 NASCAR APIs (`Track`, `Driver`, `Race`,
+  `CupStanding`, `BuschStanding`, `TruckStanding`) + 1 local JSON
+  file (`LeagueRoster`).  All seven seed concurrently; Race waits on
+  Track + Driver via inflow's declared state dependency.
+* **State-aware inflow** — `Race.track_id`,
+  `Race.pole_winner_driver_id`, and `Race.winner_driver_id` resolve
+  to live `Track` and `Driver` Pydantic instances via
+  `link_to(state["…"])` at the inflow layer.
+* **API + file source mixing** — `LeagueRoster` is loaded with
+  `inc_file=str(HERE / "league_teams.json")`; every other source
+  uses `inc_url=`.  Fjord's handler dispatch routes both through the
+  same code path — no special casing.
+* **Multi-output outflow** — one `outflow(state)` call emits **three**
+  derived classes (`MonthlyRaceSchedule`, `FantasyTeam`,
+  `ManufacturerLeaderboard`), each written to its own NDJSON file.
+* **Field harvesting** — every output column traces back to a field
+  already pulled in the seed.  Adding `track_type`, `manufacturer`,
+  `winner`, `top_5`, `laps_led` cost zero extra HTTP calls — payoff
+  of the framework's eager-fetch + centralised-state model.
 * **Sentinel filter** — NASCAR's API returns `pole_winner_driver_id = 0`
   for races whose qualifying hasn't happened yet.  Driver ID 0
   happens to be a real driver in the registry ("Kris Wright"), so a
@@ -51,47 +64,63 @@ and [`examples/nascar_fantasy_fjord.py`](../../examples/nascar_fantasy_fjord.py)
 For the current NASCAR Cup, Busch, and Truck seasons:
 
 1. Build a **monthly race schedule** for the Cup series, with each
-   race's track name and pole-winner name resolved from the live
-   driver/track registries.  Skip future races' pole winners
-   (qualifying hasn't happened yet — show "TBD").
-2. Compute a **fantasy-league scoreboard** for 8 hardcoded teams.
-   Each team picks one Cup driver, one Busch driver, six more Cup
-   drivers, etc.  Sum their season points by series, rank teams by
-   grand total, emit one row per team with their full resolved
-   roster (driver name, team, wins, top-10s, points-by-series,
-   percentages).
-3. Export both views as NDJSON, in **one** fjord call.
+   race's track name, **track type**, **track length**, **city/state**,
+   pole winner, **pole speed**, **race winner** (past races), car count,
+   **TV broadcaster**, and **playoff flag** all resolved from the live
+   registries.  Future races' pole / winner / speed columns are
+   `null` (qualifying / race hasn't happened yet).
+2. Compute a **fantasy-league scoreboard** for the 8 teams in
+   `league_teams.json`.  Sum each team's season points by series,
+   rank teams by grand total, emit one row per team with their full
+   resolved roster — every per-driver row includes **manufacturer**,
+   **hometown**, **current series rank**, **wins**, **top-5s**,
+   **top-10s**, **laps led**, **points**, and **points back**.  The
+   team summary also carries a **manufacturer mix** counter (Chevy
+   vs Ford vs Toyota distribution) and a total-wins tally.
+3. Compute a **manufacturer leaderboard** — Chevrolet / Ford /
+   Toyota — with driver count, total points, total wins, playoff
+   seats, and the top driver per make.  Demonstrates a third
+   analytical view that's "free" because the Standings data is
+   already in memory.
+4. Export all three views as NDJSON, in **one** fjord call.
 
-Six APIs, one outflow function, two output files, no daemons, no
-manual joins.
+Seven sources (six API + one local JSON), one outflow function,
+three output files, no daemons, no manual joins.
 
 ---
 
 ## 🧱 The Sources
 
-The naive Python ETL hits six endpoints and reassembles the graph by
-hand:
+Six HTTP endpoints + one local JSON file:
 
 ```text
-https://cf.nascar.com/cacher/tracks.json                    →  Track
-https://cf.nascar.com/cacher/drivers.json                   →  Driver
-https://cf.nascar.com/cacher/{YEAR}/race_list_basic.json    →  Race
-https://cf.nascar.com/data/cacher/production/{YEAR}/1/...   →  CupStanding
-https://cf.nascar.com/data/cacher/production/{YEAR}/2/...   →  BuschStanding
-https://cf.nascar.com/data/cacher/production/{YEAR}/3/...   →  TruckStanding
+https://cf.nascar.com/cacher/tracks.json                    →  Track          (49 rows)
+https://cf.nascar.com/cacher/drivers.json                   →  Driver         (917 rows)
+https://cf.nascar.com/cacher/{YEAR}/race_list_basic.json    →  Race           (40 rows)
+https://cf.nascar.com/data/cacher/production/{YEAR}/1/...   →  CupStanding    (39 rows)
+https://cf.nascar.com/data/cacher/production/{YEAR}/2/...   →  BuschStanding  (59 rows)
+https://cf.nascar.com/data/cacher/production/{YEAR}/3/...   →  TruckStanding  (61 rows)
+examples/fjord_code/league_teams.json                       →  LeagueRoster   (8 rows)
 ```
 
-`Race` has foreign keys into both `Track` (`track_id`) and `Driver`
-(`pole_winner_driver_id`).  The three standings endpoints share the
-same response shape but **must** be distinct classes so their
-registries don't collide on a shared `inc_dict`.
+**`Race` has three foreign keys** into the registries — `track_id`
+into `Track`, `pole_winner_driver_id` and `winner_driver_id` into
+`Driver`.  The three standings endpoints share the same response
+shape but **must** be distinct classes so their registries don't
+collide on a shared `inc_dict`.
+
+**`LeagueRoster`** is the seventh source — a hand-curated JSON file
+that lives next to the outflow code.  Fjord's handler dispatch
+routes the `inc_file=` and `inc_url=` paths through the same code,
+so the file source registers as a normal `Incorporator` subclass
+indistinguishable from the API-fed ones.
 
 Fjord's parallel-seed phase loads any source whose `inflow(state)`
 return doesn't reference its peers; only the ones that do reference
-peers wait.  `Track`, `Driver`, and the three Standings classes load
-concurrently; `Race` waits for `Track` + `Driver` to land so its
-`link_to(state["Track"])` and `link_to(state["Driver"])` resolve
-correctly.
+peers wait.  Six of the seven (`Track`, `Driver`, `LeagueRoster`,
+and the three Standings classes) load concurrently; `Race` waits
+for `Track` + `Driver` so its three `link_to(state["…"])` resolvers
+land correctly.
 
 ---
 
@@ -321,32 +350,103 @@ A single tick against the live NASCAR endpoints:
 ✅ fjord_incorp:CupStanding            chunk 1: 39 rows
 ✅ fjord_incorp:BuschStanding          chunk 1: 59 rows
 ✅ fjord_incorp:TruckStanding          chunk 1: 61 rows
+✅ fjord_incorp:LeagueRoster           chunk 1: 8 rows
 ✅ outflow:MonthlyRaceSchedule         chunk 1: 5 rows
 ✅ outflow:FantasyTeam                 chunk 1: 8 rows
+✅ outflow:ManufacturerLeaderboard     chunk 1: 3 rows
 
 ✅ Pipeline complete.
 ```
 
-`data/nascar_monthly_schedule.ndjson` — verified pole-winner fix:
+### Output 1 — `nascar_monthly_schedule.ndjson`
+
+Per-race row with resolved track + driver context.  Past races have
+real `pole_winner`, `pole_speed`, and `winner`; future races have
+all three as `null` (sentinel filter + outflow `getattr` fallbacks):
 
 ```jsonc
-{"date":"2026-05-03", "race_name":"Würth 400 …",          "pole_winner":"Carson Hocevar"}     // past, real
-{"date":"2026-05-10", "race_name":"Go Bowling at The Glen", "pole_winner":"Shane van Gisbergen"} // past, real
-{"date":"2026-05-17", "race_name":"NASCAR All-Star Race",   "pole_winner":"TBD"}                // future
-{"date":"2026-05-24", "race_name":"Coca-Cola 600",          "pole_winner":"TBD"}                // future
-{"date":"2026-05-31", "race_name":"Cracker Barrel 400",     "pole_winner":"TBD"}                // future
+{
+  "race_id":     5606,
+  "date":        "2026-05-03",
+  "race_name":   "Würth 400 presented by LIQUI MOLY",
+  "track":       "Texas Motor Speedway",
+  "track_type":  "Intermediate",
+  "track_miles": 1.5,
+  "track_loc":   "Fort Worth, TX",
+  "pole_winner": "Carson Hocevar",
+  "pole_speed":  191.34,
+  "winner":      "Chase Elliott",        // ← past race: known winner
+  "cars":        38,
+  "tv":          "FS1",
+  "playoff":     false
+}
+{
+  "race_id":     5611,
+  "date":        "2026-05-31",
+  "race_name":   "Cracker Barrel 400",
+  "track":       "Nashville Superspeedway",
+  "track_type":  "Intermediate",
+  "track_miles": 1.333,
+  "track_loc":   "Lebanon, TN",
+  "pole_winner": null,                   // ← future race
+  "pole_speed":  null,
+  "winner":      null,
+  "cars":        40,
+  "tv":          "PRIME VIDEO",
+  "playoff":     false
+}
 ```
 
-`data/nascar_fantasy_scoreboard.ndjson` — one row per team, sorted
-by total score descending:
+### Output 2 — `nascar_fantasy_scoreboard.ndjson`
+
+One row per team, sorted by total score.  Each roster row carries
+the driver's manufacturer, hometown, current series rank, and the
+full season stats (top-5, top-10, laps led, points, gap to leader).
+The team summary block carries the manufacturer mix and total wins:
 
 ```jsonc
-{"team_id":"Intim'tor", "total_score":3058, "roster":[
-    {"series":"Cup", "car_idx":1, "name":"Kyle Larson", "car":"5",
-     "team":"Hendrick Motorsports", "wins":0, "t10":6, "points":332},
-    ...
-]}
+{
+  "team_id":          "Intim'tor",
+  "total_score":      3058,
+  "total_wins":       10,
+  "manufacturer_mix": {"Chevrolet": 3, "Ford": 3, "Toyota": 2},
+  "roster": [
+    {
+      "series":       "Cup",
+      "car_idx":      1,
+      "name":         "Kyle Larson",
+      "car":          "5",
+      "team":         "Hendrick Motorsports",
+      "manufacturer": "Chevrolet",
+      "hometown":     "Elk Grove, California",
+      "rank":         8,
+      "wins":         0,
+      "t10":          6,
+      "top_5":        3,
+      "laps_led":     499,
+      "points":       332,
+      "points_back":  235
+    },
+    // ... 7 more roster rows
+  ],
+  "points": [...]
+}
 ```
+
+### Output 3 — `nascar_manufacturer_leaderboard.ndjson`
+
+Cup-series manufacturer rollup — one row per Chevrolet / Ford /
+Toyota, sorted by total points:
+
+```jsonc
+{"manufacturer":"Chevrolet", "drivers":20, "total_points":3941, "total_wins":4, "playoff_seats":20, "top_driver":"Chase Elliott", "top_points":422}
+{"manufacturer":"Toyota",    "drivers":9,  "total_points":2867, "total_wins":7, "playoff_seats":9,  "top_driver":"Tyler Reddick", "top_points":567}
+{"manufacturer":"Ford",      "drivers":10, "total_points":2677, "total_wins":1, "playoff_seats":10, "top_driver":"Ryan Blaney",   "top_points":405}
+```
+
+Note how **Toyota has fewer drivers than Chevrolet (9 vs 20) but
+nearly twice the wins (7 vs 4)** — that's the kind of insight a
+manufacturer leaderboard surfaces and the legacy ETL hid in memory.
 
 ---
 
@@ -354,14 +454,17 @@ by total score descending:
 
 | Pattern | Where to look |
 |---|---|
-| **Concurrent seed of N independent sources** | The six `stream_params` entries — all incorp calls fire via `asyncio.gather` |
+| **Concurrent seed of N independent sources** | The seven `stream_params` entries — six API + one file all start in parallel via `asyncio.gather` |
+| **API + file source mixing** | `LeagueRoster` uses `inc_file=`; the other six use `inc_url=`.  Same handler dispatch routes both transparently |
 | **Sequential seed when state matters** | `Race` waits for `Track` + `Driver` because its `inflow(state)` return references them; the others stay parallel |
-| **Live foreign-key resolution** | `link_to(state["Track"])` / `link_to(state["Driver"])` in the inflow's `conv_dict` |
-| **Sentinel-ID filter** | `extractor=_pole_id_or_none` short-circuits ID 0 to `None` at the graph boundary |
-| **Multi-output dict return** | `outflow(state) -> {"MonthlyRaceSchedule": ..., "FantasyTeam": ...}` → two derived classes |
+| **Live foreign-key resolution** | `link_to(state["Track"])` / `link_to(state["Driver"], extractor=…)` in the inflow's `conv_dict` |
+| **Sentinel-ID filter** | `extractor=_driver_id_or_none` short-circuits ID 0 to `None` at the graph boundary — applied to BOTH `pole_winner_driver_id` and `winner_driver_id` |
+| **Multi-output dict return** | `outflow(state) -> {"MonthlyRaceSchedule": …, "FantasyTeam": …, "ManufacturerLeaderboard": …}` → three derived classes, three files |
 | **Per-class export config** | Top-level `export_params` keyed by class name |
+| **Field harvesting** | Every output column traces back to a field already pulled in the seed; no extra API call to add `track_type` / `manufacturer` / `winner`.  Payoff for the framework's eager-fetch / centralised-state model |
+| **Config externalisation** | Fantasy rosters live in `league_teams.json`, not Python — editing the league no longer requires touching code |
 | **Single-tick test mode** | `refresh_params=None` on every entry, no `export_interval` → the pipeline exits after one outflow tick |
-| **Pure-data outflow function** | The 100-line `outflow(state)` is a normal Python function — no async, no daemon plumbing, no lock acquisition. Fjord takes care of all that |
+| **Pure-data outflow function** | The `outflow(state)` is a normal Python function — no async, no daemon plumbing, no lock acquisition. Fjord takes care of all that |
 
 ---
 

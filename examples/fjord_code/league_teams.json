@@ -1,0 +1,106 @@
+[
+  {
+    "team_id": "Queen",
+    "roster": [
+      {"series_id": 3, "driver_id": 4235},
+      {"series_id": 2, "driver_id": 4441},
+      {"series_id": 1, "driver_id": 3989},
+      {"series_id": 1, "driver_id": 4062},
+      {"series_id": 1, "driver_id": 4123},
+      {"series_id": 1, "driver_id": 4272},
+      {"series_id": 1, "driver_id": 3859},
+      {"series_id": 1, "driver_id": 4481}
+    ]
+  },
+  {
+    "team_id": "Intim'tor",
+    "roster": [
+      {"series_id": 3, "driver_id": 4312},
+      {"series_id": 2, "driver_id": 34},
+      {"series_id": 1, "driver_id": 4030},
+      {"series_id": 1, "driver_id": 4023},
+      {"series_id": 1, "driver_id": 3989},
+      {"series_id": 1, "driver_id": 4153},
+      {"series_id": 1, "driver_id": 4065},
+      {"series_id": 1, "driver_id": 4481}
+    ]
+  },
+  {
+    "team_id": "WonderBoy",
+    "roster": [
+      {"series_id": 3, "driver_id": 4235},
+      {"series_id": 2, "driver_id": 4133},
+      {"series_id": 1, "driver_id": 4153},
+      {"series_id": 1, "driver_id": 4030},
+      {"series_id": 1, "driver_id": 1816},
+      {"series_id": 1, "driver_id": 4065},
+      {"series_id": 1, "driver_id": 3859},
+      {"series_id": 1, "driver_id": 4481}
+    ]
+  },
+  {
+    "team_id": "AlabamaG",
+    "roster": [
+      {"series_id": 3, "driver_id": 4446},
+      {"series_id": 2, "driver_id": 34},
+      {"series_id": 1, "driver_id": 4030},
+      {"series_id": 1, "driver_id": 454},
+      {"series_id": 1, "driver_id": 4023},
+      {"series_id": 1, "driver_id": 4153},
+      {"series_id": 1, "driver_id": 4065},
+      {"series_id": 1, "driver_id": 4481}
+    ]
+  },
+  {
+    "team_id": "Jaws",
+    "roster": [
+      {"series_id": 3, "driver_id": 4446},
+      {"series_id": 2, "driver_id": 34},
+      {"series_id": 1, "driver_id": 4065},
+      {"series_id": 1, "driver_id": 4030},
+      {"series_id": 1, "driver_id": 4153},
+      {"series_id": 1, "driver_id": 3859},
+      {"series_id": 1, "driver_id": 4001},
+      {"series_id": 1, "driver_id": 4481}
+    ]
+  },
+  {
+    "team_id": "Seven",
+    "roster": [
+      {"series_id": 3, "driver_id": 4235},
+      {"series_id": 2, "driver_id": 4133},
+      {"series_id": 1, "driver_id": 1816},
+      {"series_id": 1, "driver_id": 454},
+      {"series_id": 1, "driver_id": 4062},
+      {"series_id": 1, "driver_id": 1361},
+      {"series_id": 1, "driver_id": 3859},
+      {"series_id": 1, "driver_id": 4481}
+    ]
+  },
+  {
+    "team_id": "Cale",
+    "roster": [
+      {"series_id": 3, "driver_id": 4427},
+      {"series_id": 2, "driver_id": 4133},
+      {"series_id": 1, "driver_id": 4023},
+      {"series_id": 1, "driver_id": 4001},
+      {"series_id": 1, "driver_id": 4153},
+      {"series_id": 1, "driver_id": 4030},
+      {"series_id": 1, "driver_id": 4065},
+      {"series_id": 1, "driver_id": 4481}
+    ]
+  },
+  {
+    "team_id": "Confused",
+    "roster": [
+      {"series_id": 3, "driver_id": 4235},
+      {"series_id": 2, "driver_id": 34},
+      {"series_id": 1, "driver_id": 4023},
+      {"series_id": 1, "driver_id": 3989},
+      {"series_id": 1, "driver_id": 4062},
+      {"series_id": 1, "driver_id": 4153},
+      {"series_id": 1, "driver_id": 4469},
+      {"series_id": 1, "driver_id": 4481}
+    ]
+  }
+]
