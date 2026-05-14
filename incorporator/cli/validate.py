@@ -8,11 +8,11 @@ they ran ``validate`` standalone or hit a failure mid-execution.
 Validation is intentionally **structural**, not behavioural:
 
 - We never make network calls.
-- We *do* import the user's ``outflow`` and ``inflow`` files (Step 1 of
-  fjord is "load and resolve classes anyway"; running it here surfaces
-  ImportErrors at validate-time instead of pipeline-startup-time).
-- For ``fjord`` we confirm the ``outflow(state)`` function is defined
-  with the right arity using ``usercode.load_outflow_function``.
+- We *do* import the user's ``code_file`` (Step 1 of fjord is "load and
+  resolve classes anyway"; running it here surfaces ImportErrors at
+  validate-time instead of pipeline-startup-time).
+- For ``fjord`` we confirm ``outflow`` is defined with the right arity
+  using the existing ``usercode.load_outflow_function``.
 
 The two configs are auto-detected by their distinctive top-level keys —
 the developer can override with ``--type stream|fjord``.
@@ -36,12 +36,12 @@ _STREAM_SOURCE_KEYS = {"inc_url", "inc_file", "inc_parent", "payload_list"}
 def autodetect_type(config: Dict[str, Any]) -> ConfigType:
     """Infer 'stream' vs 'fjord' from the JSON's distinguishing top-level keys.
 
-    Fjord configs always declare ``outflow`` and a list ``stream_params``;
+    Fjord configs always declare ``code_file`` and a list ``stream_params``;
     stream configs declare a dict ``incorp_params``. If neither pattern is
     a clean match we default to 'stream' (the older, simpler shape) — the
     validator will then surface the missing keys.
     """
-    if "outflow" in config and isinstance(config.get("stream_params"), list):
+    if "code_file" in config and isinstance(config.get("stream_params"), list):
         return "fjord"
     return "stream"
 
@@ -87,51 +87,19 @@ def validate_stream_config(config: Dict[str, Any], config_dir: Path) -> List[str
     if "stateful_polling" in config and not isinstance(config["stateful_polling"], bool):
         errors.append("'stateful_polling', if present, must be a boolean.")
 
-    # Optional inflow file — must import cleanly if specified.
-    inflow_raw = config.get("inflow")
-    if inflow_raw:
-        if not isinstance(inflow_raw, str):
-            errors.append("'inflow', if present, must be a string path.")
-        else:
-            inflow_path = _resolve_outflow_file(inflow_raw, config_dir)
-            if not inflow_path.is_file():
-                errors.append(f"inflow file not found: {inflow_path}")
-            else:
-                load_err = _try_import(inflow_path)
-                if load_err:
-                    errors.append(f"inflow file failed to import: {load_err}")
-
-    # Optional outflow — stateful-polling pipelines only.
-    outflow_raw = config.get("outflow")
-    if outflow_raw:
-        if not config.get("stateful_polling"):
-            errors.append(
-                "'outflow' requires 'stateful_polling': true.  Chunking-mode streams "
-                "release per-chunk state and have no persistent registry for a "
-                "user-defined Incorporator subclass to attach to.  Drop 'outflow', "
-                "or switch to stateful polling."
-            )
-        else:
-            outflow_path = _resolve_outflow_file(str(outflow_raw), config_dir)
-            if not outflow_path.is_file():
-                errors.append(f"outflow file not found: {outflow_path}")
-            else:
-                load_err = _try_import(outflow_path)
-                if load_err:
-                    errors.append(f"outflow file failed to import: {load_err}")
-
-    # Optional export_params.outflow — confirm the file loads (transform optional).
+    # Optional export code_file — confirm the file loads, but `transform` is
+    # optional so we don't enforce it.
     export_params = config.get("export_params")
     if isinstance(export_params, dict):
-        export_outflow = export_params.get("outflow")
-        if export_outflow:
-            resolved = _resolve_outflow_file(export_outflow, config_dir)
+        code_file = export_params.get("code_file")
+        if code_file:
+            resolved = _resolve_code_file(code_file, config_dir)
             if not resolved.is_file():
-                errors.append(f"export_params.outflow not found: {resolved}")
+                errors.append(f"export_params.code_file not found: {resolved}")
             else:
                 load_err = _try_import(resolved)
                 if load_err:
-                    errors.append(f"export_params.outflow failed to import: {load_err}")
+                    errors.append(f"export_params.code_file failed to import: {load_err}")
 
     return errors
 
@@ -140,12 +108,12 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
     """Structural validation for an ``incorporator fjord`` pipeline.json."""
     errors: List[str] = []
 
-    outflow_raw = config.get("outflow")
+    code_file_raw = config.get("code_file")
     stream_params = config.get("stream_params")
     export_params = config.get("export_params")
 
-    if not outflow_raw:
-        errors.append("'outflow' (path to outflow.py) is required.")
+    if not code_file_raw:
+        errors.append("'code_file' (path) is required.")
     if not isinstance(stream_params, list) or not stream_params:
         errors.append("'stream_params' must be a non-empty JSON array.")
     if not isinstance(export_params, dict):
@@ -156,32 +124,18 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
     if errors:
         return errors
 
-    # Optional inflow file — must import cleanly if specified.
-    inflow_raw = config.get("inflow")
-    if inflow_raw:
-        if not isinstance(inflow_raw, str):
-            errors.append("'inflow', if present, must be a string path.")
-        else:
-            inflow_path = _resolve_outflow_file(inflow_raw, config_dir)
-            if not inflow_path.is_file():
-                errors.append(f"inflow file not found: {inflow_path}")
-            else:
-                load_err_inflow = _try_import(inflow_path)
-                if load_err_inflow:
-                    errors.append(f"inflow file failed to import: {load_err_inflow}")
-
-    outflow_path = _resolve_outflow_file(str(outflow_raw), config_dir)
-    if not outflow_path.is_file():
-        errors.append(f"outflow not found: {outflow_path}")
+    code_file_path = _resolve_code_file(str(code_file_raw), config_dir)
+    if not code_file_path.is_file():
+        errors.append(f"code_file not found: {code_file_path}")
         return errors
 
-    load_err = _try_import(outflow_path)
+    load_err = _try_import(code_file_path)
     if load_err:
-        errors.append(f"outflow failed to import: {load_err}")
+        errors.append(f"code_file failed to import: {load_err}")
         return errors
 
     # Reload via importlib for symbol access (cheap — same module spec).
-    module = _import_module(outflow_path)
+    module = _import_module(code_file_path)
 
     # outflow() arity check via usercode.load_outflow_function — it already
     # raises with the right diagnostic if the function is missing or has the
@@ -189,7 +143,7 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
     from ..usercode import load_outflow_function
 
     try:
-        load_outflow_function(outflow_path)
+        load_outflow_function(code_file_path)
     except (FileNotFoundError, ImportError, ValueError) as exc:
         errors.append(str(exc))
 
@@ -208,10 +162,10 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
             continue
         target = getattr(module, cls_name, None)
         if target is None:
-            errors.append(f"stream_params[{idx}].cls_name='{cls_name}' is not defined in " f"{outflow_path}.")
+            errors.append(f"stream_params[{idx}].cls_name='{cls_name}' is not defined in " f"{code_file_path}.")
         elif not (isinstance(target, type) and issubclass(target, Incorporator)):
             errors.append(
-                f"stream_params[{idx}].cls_name='{cls_name}' in {outflow_path} " "is not an Incorporator subclass."
+                f"stream_params[{idx}].cls_name='{cls_name}' in {code_file_path} " "is not an Incorporator subclass."
             )
 
         if not isinstance(entry.get("incorp_params"), dict):
@@ -225,8 +179,8 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
 # ---------------------------------------------------------------------------
 
 
-def _resolve_outflow_file(raw: str, config_dir: Path) -> Path:
-    """Resolve a sidecar (inflow/outflow) path either as absolute or relative to the config."""
+def _resolve_code_file(raw: str, config_dir: Path) -> Path:
+    """Resolve a code_file path either as absolute or relative to the config."""
     p = Path(raw)
     if not p.is_absolute():
         p = (config_dir / p).resolve()
