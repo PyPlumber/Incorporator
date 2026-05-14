@@ -104,6 +104,11 @@ async def main():
         kwargs = {"inc_file": path, "inc_code": "trade_id"}
         if path.endswith(".sqlite"):
             kwargs["sql_query"] = "SELECT * FROM trades"
+        elif path.endswith(".xml"):
+            # xml_to_dict wraps every doc in {<root_tag>: ...} and groups
+            # identically-named children into a list — drill the dotted path
+            # to the leaf array.
+            kwargs["rec_path"] = "root.item"
         trades = await Trade.incorp(**kwargs)
 
         print(f"{path:20s} → {len(trades)} rows; AAPL qty: {Trade.inc_dict['T001'].qty}")

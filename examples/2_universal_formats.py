@@ -82,15 +82,27 @@ async def main() -> None:
         print(f"📁 Wrote fixtures to {tmp}\n")
 
         # The universal call shape — same kwargs across every format.
+        # Two format-specific kwargs are needed:
+        #   * SQLite needs sql_query=... because the format is execution-shaped.
+        #   * XML needs rec_path="item" to drill past the <root> wrapper that
+        #     xml_to_dict produces when every child shares a tag.
         for label, path in fixtures.items():
             kwargs: dict = {"inc_file": str(path), "inc_code": "trade_id"}
             if label == "sqlite":
                 kwargs["sql_query"] = "SELECT * FROM trades"
+            elif label == "xml":
+                # xml_to_dict wraps every payload in {<root_tag>: ...}, then
+                # collapses identically-named children into a list. Drill the
+                # dotted path to reach the trade items.
+                kwargs["rec_path"] = "root.item"
 
             trades = await Trade.incorp(**kwargs)
+            # Some formats / shapes return a single instance instead of a list;
+            # normalise so len() works regardless.
+            count = len(trades) if isinstance(trades, list) else 1
             aapl = Trade.inc_dict["T001"]
             print(
-                f"{label:8s} → {len(trades)} rows; "
+                f"{label:8s} → {count} rows; "
                 f"AAPL qty={aapl.qty:>3}, price={aapl.price}"
             )
 
