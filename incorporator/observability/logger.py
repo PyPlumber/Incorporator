@@ -78,7 +78,7 @@ def _route_wave_to_log(cls: Type[Any], wave: "Wave") -> None:
     }
 
     if wave.failed_sources:
-        msg = f"{wave.operation} chunk {wave.chunk_index} encountered failures: " f"{dump['failed_sources']}"
+        msg = f"{wave.operation} chunk {wave.chunk_index} encountered failures: {dump['failed_sources']}"
         cls_logger = cls._get_cls_logger() if hasattr(cls, "_get_cls_logger") else logging.getLogger(cls.__name__)
         if cls_logger.isEnabledFor(logging.ERROR):
             cls_logger.error(msg, extra=extra)

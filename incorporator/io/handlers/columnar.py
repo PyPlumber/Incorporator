@@ -260,8 +260,7 @@ def _build_columnar_schema(
 def _coerce_batch(batch: List[Dict[str, Any]], explicit_keys: List[str]) -> List[Dict[str, Any]]:
     """Apply serialize_nested to one batch — nested lists/dicts → JSON strings."""
     return [
-        {k: (serialize_nested(row.get(k)) if row.get(k) is not None else None) for k in explicit_keys}
-        for row in batch
+        {k: (serialize_nested(row.get(k)) if row.get(k) is not None else None) for k in explicit_keys} for row in batch
     ]
 
 

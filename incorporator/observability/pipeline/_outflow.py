@@ -227,16 +227,8 @@ async def _outflow_daemon(
                     # Edge case B9: prefer a user-pre-declared Incorporator
                     # subclass with the matching name if outflow.py defined
                     # one.  Lets DX have full type control on derived classes.
-                    user_cls = (
-                        getattr(outflow_module, derived_name, None)
-                        if outflow_module is not None
-                        else None
-                    )
-                    if (
-                        user_cls is not None
-                        and isinstance(user_cls, type)
-                        and issubclass(user_cls, base_class)
-                    ):
+                    user_cls = getattr(outflow_module, derived_name, None) if outflow_module is not None else None
+                    if user_cls is not None and isinstance(user_cls, type) and issubclass(user_cls, base_class):
                         DerivedCls = cast(Any, user_cls)
                     else:
                         DerivedCls = cast(
@@ -255,16 +247,13 @@ async def _outflow_daemon(
                     DerivedCls._fjord_snapshot = instances
 
                     # Per-class export_params lookup + per-tick if_exists.
-                    class_export = _resolve_export_params_for(
-                        derived_name, export_params, is_multi
-                    )
+                    class_export = _resolve_export_params_for(derived_name, export_params, is_multi)
                     if not class_export:
                         # B5: outflow returned a class with no matching export
                         # config.  Skip the export but record the build count
                         # so the user sees what they produced.
                         logger.warning(
-                            "outflow(state) emitted class %r but export_params "
-                            "has no matching key; skipping export.",
+                            "outflow(state) emitted class %r but export_params has no matching key; skipping export.",
                             derived_name,
                         )
                         row_count_holder[0] = len(instances)
@@ -281,21 +270,14 @@ async def _outflow_daemon(
                         force_append=False,
                         user_override=class_export.get("if_exists"),
                     )
-                    params = (
-                        class_export
-                        if resolved is None
-                        else {**class_export, "if_exists": resolved}
-                    )
+                    params = class_export if resolved is None else {**class_export, "if_exists": resolved}
                     await DerivedCls.export(instance=instances, **params)
                     row_count_holder[0] = len(instances)
 
             # B6: warn about export_params keys that outflow didn't fill.
             if is_multi:
                 produced = set(grouped.keys())
-                configured = {
-                    k for k, v in export_params.items()
-                    if k != "if_exists" and isinstance(v, dict)
-                }
+                configured = {k for k, v in export_params.items() if k != "if_exists" and isinstance(v, dict)}
                 orphan = configured - produced
                 if orphan:
                     logger.warning(

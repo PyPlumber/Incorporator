@@ -51,9 +51,7 @@ def _require_optional(module_name: str, install_extra: Union[str, None] = None) 
         __import__(module_name)
     except ImportError as exc:
         extra = install_extra or _OPTIONAL_INSTALL_EXTRAS.get(module_name, module_name)
-        raise IncorporatorFormatError(
-            f"{module_name} not installed. Run: pip install incorporator[{extra}]"
-        ) from exc
+        raise IncorporatorFormatError(f"{module_name} not installed. Run: pip install incorporator[{extra}]") from exc
     # ``__import__("foo.bar")`` returns ``foo``, not ``foo.bar``.  Reach into
     # ``sys.modules`` for the actual submodule the caller asked for.
     return sys.modules[module_name]

@@ -121,7 +121,7 @@ def _find_target_in_archive(names: list[str], active_format: FormatType, archive
 # bombs (gzip / zstd / brotli payloads where 1 KB of compressed data expands
 # to gigabytes).  Override via the INCORPORATOR_MAX_DECOMPRESSED_BYTES env
 # var when the workload legitimately exceeds 1 GB; default is conservative.
-import os as _os
+import os as _os  # noqa: E402
 
 DEFAULT_MAX_DECOMPRESSED_BYTES: int = 1 * 1024 * 1024 * 1024  # 1 GB
 
@@ -232,14 +232,10 @@ def _validate_archive_member_names(names: List[str], archive_kind: str) -> None:
             # collapses POSIX absolutes ("/etc/passwd") into safe_dir on
             # some platforms; reject them up-front for clarity.
             if name.startswith(("/", "\\")) or (len(name) >= 2 and name[1] == ":"):
-                raise IncorporatorFormatError(
-                    f"{archive_kind} path traversal blocked (absolute path): {name!r}"
-                )
+                raise IncorporatorFormatError(f"{archive_kind} path traversal blocked (absolute path): {name!r}")
             member_path = (safe_dir / name).resolve()
             if not str(member_path).startswith(str(safe_dir)):
-                raise IncorporatorFormatError(
-                    f"{archive_kind} path traversal blocked: {name!r}"
-                )
+                raise IncorporatorFormatError(f"{archive_kind} path traversal blocked: {name!r}")
     finally:
         # Clean up the temp directory immediately — we only needed it for resolve()
         shutil.rmtree(safe_dir, ignore_errors=True)

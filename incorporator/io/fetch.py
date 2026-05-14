@@ -112,10 +112,10 @@ def _validate_url(url: str) -> None:
 # even when the IP-based check might not match (e.g. DNS rebinding tricks).
 _METADATA_HOSTS = frozenset(
     {
-        "169.254.169.254",       # AWS/Azure/OpenStack IMDS, GCP metadata.google.internal
+        "169.254.169.254",  # AWS/Azure/OpenStack IMDS, GCP metadata.google.internal
         "metadata.google.internal",
         "metadata",
-        "fd00:ec2::254",         # AWS IMDS over IPv6
+        "fd00:ec2::254",  # AWS IMDS over IPv6
     }
 )
 
@@ -168,12 +168,7 @@ def _host_is_internal(host: str) -> bool:
 def _ip_is_internal(ip: Any) -> bool:
     """Return True for any IP that should be treated as ``not safe to follow``."""
     return bool(
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
+        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
     )
 
 

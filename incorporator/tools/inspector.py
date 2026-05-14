@@ -21,8 +21,8 @@ _ASSET_URL_RE = re.compile(
     r"^https?://.*\.(?:jpg|jpeg|png|gif|webp|svg|bmp|ico|mp4|mov|webm|avi|mp3|wav|pdf|zip|tar|gz)(?:\?.*)?$",
     re.I,
 )
-_HEAVY_FIELD_BYTES = 2048              # strings larger than this look like blobs
-_ASSET_URL_FIELD_BYTES = 200           # _url / _uri suffix + long value heuristic
+_HEAVY_FIELD_BYTES = 2048  # strings larger than this look like blobs
+_ASSET_URL_FIELD_BYTES = 200  # _url / _uri suffix + long value heuristic
 
 # Pagination signal keys (Phase C).  Mapped to the matching paginator class
 # name exported from incorporator/__init__.py.
@@ -119,9 +119,7 @@ def analyze_data(parsed_data: List[Any], provided_kwargs: Dict[str, Any]) -> Non
         target_obj = sample
         if not provided_kwargs.get("rec_path"):
             list_children = [
-                (k, len(v))
-                for k, v in sample.items()
-                if isinstance(v, list) and v and isinstance(v[0], dict)
+                (k, len(v)) for k, v in sample.items() if isinstance(v, list) and v and isinstance(v[0], dict)
             ]
             if list_children:
                 # Sort by size desc so the biggest list reads first.

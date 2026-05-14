@@ -102,19 +102,19 @@ def _resolve_if_exists_for_export(
     needed (handler default applies).
     """
     if user_override is not None:
-        return user_override                       # explicit user wins
+        return user_override  # explicit user wins
     if not force_append:
-        return None                                # first tick / single-shot
+        return None  # first tick / single-shot
     # Subsequent tick: prefer append on supported formats, else replace.
     from ...io.formats import infer_format
     from ...io.handlers._base import supports_append
 
     if file_path is None:
-        return "append"                            # no path to inspect; legacy default
+        return "append"  # no path to inspect; legacy default
     try:
         fmt = infer_format(file_path)
     except Exception:
-        return "append"                            # unknowable → assume append-friendly
+        return "append"  # unknowable → assume append-friendly
     return "append" if supports_append(fmt) else "replace"
 
 

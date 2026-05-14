@@ -673,10 +673,7 @@ class Incorporator(BaseModel):
         # Network / handler kwargs (params, headers, rec_path, sql_query,
         # parquet_* etc.).  Filter out the three explicit-param slots we
         # already handled so they don't double-feed.
-        persisted_net = {
-            k: v for k, v in persisted.items()
-            if k not in ("conv_dict", "excl_lst", "name_chg")
-        }
+        persisted_net = {k: v for k, v in persisted.items() if k not in ("conv_dict", "excl_lst", "name_chg")}
         kwargs = {**persisted_net, **kwargs}
 
         # Unrolled instance resolution for DX traceability

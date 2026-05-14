@@ -183,9 +183,7 @@ def _fallback_float(value: Any) -> float:
 # Values that every fallback should treat as "missing" rather than try to parse.
 # Single source of truth so the DX Inspector and the runtime converter agree on
 # what counts as junk.
-GARBAGE_VALUES: frozenset[str] = frozenset(
-    {"unknown", "n/a", "none", "null", "undefined", "nan"}
-)
+GARBAGE_VALUES: frozenset[str] = frozenset({"unknown", "n/a", "none", "null", "undefined", "nan"})
 
 
 def is_garbage_value(value: Any) -> bool:

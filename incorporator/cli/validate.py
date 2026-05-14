@@ -72,7 +72,7 @@ def validate_stream_config(config: Dict[str, Any], config_dir: Path) -> List[str
     else:
         source_keys = _STREAM_SOURCE_KEYS & set(incorp_params)
         if not source_keys:
-            errors.append("'incorp_params' must contain at least one source key: " f"{sorted(_STREAM_SOURCE_KEYS)}.")
+            errors.append(f"'incorp_params' must contain at least one source key: {sorted(_STREAM_SOURCE_KEYS)}.")
 
     # Optional refresh/export params must be dicts when present.
     for key in ("refresh_params", "export_params"):
@@ -91,14 +91,9 @@ def validate_stream_config(config: Dict[str, Any], config_dir: Path) -> List[str
         if isinstance(val, dict):
             for src, secs in val.items():
                 if not isinstance(secs, (int, float)):
-                    errors.append(
-                        f"'{key}[{src!r}]' must be a number (seconds); got {type(secs).__name__}."
-                    )
+                    errors.append(f"'{key}[{src!r}]' must be a number (seconds); got {type(secs).__name__}.")
         elif not isinstance(val, (int, float)):
-            errors.append(
-                f"'{key}', if present, must be a number (seconds) "
-                f"or a dict of {{class_name: seconds}}."
-            )
+            errors.append(f"'{key}', if present, must be a number (seconds) or a dict of {{class_name: seconds}}.")
 
     if "stateful_polling" in config and not isinstance(config["stateful_polling"], bool):
         errors.append("'stateful_polling', if present, must be a boolean.")
@@ -224,10 +219,10 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
             continue
         target = getattr(module, cls_name, None)
         if target is None:
-            errors.append(f"stream_params[{idx}].cls_name='{cls_name}' is not defined in " f"{outflow_path}.")
+            errors.append(f"stream_params[{idx}].cls_name='{cls_name}' is not defined in {outflow_path}.")
         elif not (isinstance(target, type) and issubclass(target, Incorporator)):
             errors.append(
-                f"stream_params[{idx}].cls_name='{cls_name}' in {outflow_path} " "is not an Incorporator subclass."
+                f"stream_params[{idx}].cls_name='{cls_name}' in {outflow_path} is not an Incorporator subclass."
             )
 
         if not isinstance(entry.get("incorp_params"), dict):

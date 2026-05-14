@@ -80,9 +80,7 @@ async def _seed_one_source(
     if inflow_callable is not None:
         overrides = await _maybe_await(inflow_callable, state)
         if not isinstance(overrides, dict):
-            raise TypeError(
-                f"inflow(state) must return a dict[ClassName, dict], got {type(overrides).__name__}"
-            )
+            raise TypeError(f"inflow(state) must return a dict[ClassName, dict], got {type(overrides).__name__}")
         extra = overrides.get(cls.__name__, {})
         if not isinstance(extra, dict):
             raise TypeError(
@@ -93,8 +91,7 @@ async def _seed_one_source(
         if extra_conv is not None:
             if not isinstance(extra_conv, dict):
                 raise TypeError(
-                    f"inflow(state)[{cls.__name__!r}]['conv_dict'] must be a dict, "
-                    f"got {type(extra_conv).__name__}"
+                    f"inflow(state)[{cls.__name__!r}]['conv_dict'] must be a dict, got {type(extra_conv).__name__}"
                 )
             merged_conv = {**base_params.get("conv_dict", {}), **extra_conv}
             base_params["conv_dict"] = merged_conv
@@ -266,12 +263,10 @@ async def _run_fjord_engine(
         from . import DEFAULT_EXPORT_INTERVAL_SEC, DEFAULT_REFRESH_INTERVAL_SEC
 
         entry_r_interval = (
-            _resolve_per_source_interval(r_interval, entry, "refresh_interval")
-            or DEFAULT_REFRESH_INTERVAL_SEC
+            _resolve_per_source_interval(r_interval, entry, "refresh_interval") or DEFAULT_REFRESH_INTERVAL_SEC
         )
         entry_e_interval = (
-            _resolve_per_source_interval(e_interval, entry, "export_interval")
-            or DEFAULT_EXPORT_INTERVAL_SEC
+            _resolve_per_source_interval(e_interval, entry, "export_interval") or DEFAULT_EXPORT_INTERVAL_SEC
         )
 
         if refresh_params is not None:

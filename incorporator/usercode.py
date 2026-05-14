@@ -153,7 +153,7 @@ def apply_code_transform(
     params = list(sig.parameters)
     if len(params) != 1:
         raise ValueError(
-            f"[Incorporator] transform() must accept exactly 1 parameter (instances), " f"got {len(params)}: {params}"
+            f"[Incorporator] transform() must accept exactly 1 parameter (instances), got {len(params)}: {params}"
         )
 
     result = transform_fn(instances)
@@ -198,7 +198,7 @@ def load_outflow_function(outflow: Union[str, Path]) -> Callable[[Any], Any]:
     params = list(sig.parameters)
     if len(params) != 1:
         raise ValueError(
-            f"[Incorporator] outflow() must accept exactly 1 parameter (state), " f"got {len(params)}: {params}"
+            f"[Incorporator] outflow() must accept exactly 1 parameter (state), got {len(params)}: {params}"
         )
 
     return outflow_fn  # type: ignore[no-any-return]
@@ -228,9 +228,7 @@ def load_outflow_module(outflow: Union[str, Path]) -> Tuple[Callable[[Any], Any]
 
     outflow_fn = getattr(module, "outflow", None)
     if outflow_fn is None:
-        raise ValueError(
-            f"[Incorporator] outflow file must define a top-level outflow(state) function: {outflow}"
-        )
+        raise ValueError(f"[Incorporator] outflow file must define a top-level outflow(state) function: {outflow}")
 
     sig = _inspect.signature(outflow_fn)
     params = list(sig.parameters)
@@ -275,9 +273,7 @@ def load_inflow_callable(inflow: Union[str, Path]) -> Optional[Callable[[Any], A
         return None
 
     if not callable(inflow_fn):
-        raise ValueError(
-            f"[Incorporator] inflow file's top-level 'inflow' attribute must be callable: {inflow}"
-        )
+        raise ValueError(f"[Incorporator] inflow file's top-level 'inflow' attribute must be callable: {inflow}")
 
     sig = _inspect.signature(inflow_fn)
     params = list(sig.parameters)

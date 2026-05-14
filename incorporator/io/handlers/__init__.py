@@ -128,9 +128,7 @@ async def write_destination_data(
         try:
             parent.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            raise IncorporatorFormatError(
-                f"Could not create parent directory {parent} for '{file_path}': {e}"
-            ) from e
+            raise IncorporatorFormatError(f"Could not create parent directory {parent} for '{file_path}': {e}") from e
 
     is_empty, safe_iter = _peek_iterable(data)
     if is_empty:
