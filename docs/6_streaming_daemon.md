@@ -91,6 +91,28 @@ handles cadence, retries, draining, and shutdown.
 > `export()` round-trips, not stream destinations. Pick NDJSON if
 > you're unsure — it's the streaming-native default.
 
+> **What the file contains across ticks:**  in `stateful_polling=True`
+> mode the engine RE-EXPORTS THE SAME REGISTRY on every tick — every
+> tick rewrites the destination file with the latest snapshot
+> (~18 launches in the example above).  The file holds the *current*
+> view, not an accumulation across ticks.  This is the right default
+> for "watcher" pipelines: a downstream consumer can `head` /
+> `read_ndjson()` the file at any moment and see the live state.
+>
+> If you need an **append-on-every-tick** ledger (forensic archive,
+> debugging trace, change-data-capture log), opt in explicitly:
+>
+> ```python
+> export_params={
+>     "file_path": "data/spacex_history.ndjson",
+>     "if_exists": "append",                       # forensic accumulation
+> },
+> ```
+>
+> The chunked mode (`stateful_polling=False`, the default) behaves
+> differently: each chunk is NEW data so it *does* accumulate by
+> design.
+
 ---
 
 ## What `stream()` is doing under the hood

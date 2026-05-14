@@ -198,10 +198,14 @@ if __name__ == "__main__":
    instances auto-register in `CryptoSpread.inc_dict` for downstream
    `link_to(...)` use if you want to keep fused history in memory.
 5. **Export.** Same handler dispatch as `stream()` — file extension
-   picks the format (Parquet here, but switch to `.ndjson`, `.csv`,
-   `.sqlite`, `.avro`, etc., for free). Parquet appends per row group;
-   NDJSON is the streaming-native choice if you'd rather not deal with
-   columnar batching.
+   picks the format.  Use any append-friendly format: `.ndjson` (the
+   example), `.csv`, `.sqlite`, or `.avro`.  Parquet / Feather / ORC /
+   Excel / XML / JSON reject append mode and would crash a streaming
+   daemon — see the format-constraint note above.  As with `stream()`,
+   each tick replaces the destination file with the latest fused
+   snapshot; opt into accumulation with
+   `export_params={"if_exists": "append"}` when you want a forensic
+   ledger.
 6. **Shutdown.** SIGTERM / Ctrl+C cancels every task; the wave queue
    drains; the `async for` loop exits.
 
@@ -246,6 +250,113 @@ The JSON uses `cls_name` (string) while the Python uses `cls` (class
 reference). The CLI loader resolves `cls_name` by importing the
 outflow file and looking up the class by name — that's how the JSON
 stays serialisable.
+
+---
+
+## Two Powers You'll Grow Into
+
+The crypto-spread example above uses the simplest fjord shape:
+N independent sources, one outflow function, one output file.  Two
+extensions handle relational + multi-view cases.
+
+### Power 1 — State-aware `inflow(state)`: live `link_to(...)` across sources
+
+When one source's `conv_dict` needs a reference to another source's
+already-loaded registry (e.g. resolving a foreign-key URL to the
+actual Pydantic object), define a top-level `inflow(state)` callable
+in `inflow.py`.  `fjord()` switches from parallel-seed to
+declaration-order sequential seed, and calls `inflow(state)` before
+each source's `incorp()` with the snapshots loaded so far:
+
+```python
+# swapi_inflow.py
+from incorporator import link_to, link_to_list, split_and_get
+
+get_id = split_and_get('/', -1, int)
+
+def inflow(state):
+    # On the Planet + Film seeds, state is empty / partial — be defensive.
+    overrides = {}
+    if "Planet" in state and "Film" in state:
+        overrides["Person"] = {
+            "conv_dict": {
+                "homeworld": link_to(state["Planet"], extractor=get_id),
+                "films":     link_to_list(state["Film"], extractor=get_id),
+            }
+        }
+    return overrides
+```
+
+```python
+async for wave in Incorporator.fjord(
+    stream_params=[
+        {"cls": Planet, "incorp_params": {"inc_url": ".../planets/", "inc_code": "id"}},
+        {"cls": Film,   "incorp_params": {"inc_url": ".../films/",   "inc_code": "id"}},
+        {"cls": Person, "incorp_params": {"inc_url": ".../people/",  "inc_code": "id"}},
+    ],
+    inflow="swapi_inflow.py",           # ← state-aware overrides
+    outflow="swapi_outflow.py",
+    export_params={"file_path": "data/people.ndjson"},
+):
+    print(wave)
+```
+
+`Person.homeworld` arrives as a fully-typed `Planet` object instead
+of a URL string — so an outflow function can `getattr(person.homeworld,
+"inc_name")` directly.
+
+If `inflow.py` exists but defines *no* `inflow` function, fjord keeps
+the legacy parallel-seed path (zero overhead) — the sidecar simply
+extends the token resolver's allow-list as it always has.
+
+### Power 2 — Multi-output: N derived classes from one outflow
+
+Return a `dict[ClassName, list[dict]]` from `outflow(state)` and
+fjord builds one derived class **per dict key** and exports each to
+its own file.  One join, N analytical views:
+
+```python
+# swapi_outflow.py
+def outflow(state):
+    people = list(state["Person"])
+    by_planet = {}
+    for p in people:
+        hw = getattr(p, "homeworld", None)
+        hw_name = getattr(hw, "inc_name", "Unknown") if hw else "Unknown"
+        by_planet.setdefault(hw_name, []).append(p.inc_name)
+
+    return {
+        "JediArchive":  [{"name": p.inc_name, "height": p.height} for p in people],
+        "Demographics": [{"planet": hw, "citizens": len(c)}
+                         for hw, c in by_planet.items()],
+        "Filmography":  [{"name": p.inc_name, "films_count": len(p.films)}
+                         for p in people],
+    }
+```
+
+```python
+async for wave in Incorporator.fjord(
+    stream_params=[...],
+    inflow="swapi_inflow.py",
+    outflow="swapi_outflow.py",
+    export_params={                               # one entry per output key
+        "JediArchive":  {"file_path": "data/jedi.parquet"},
+        "Demographics": {"file_path": "data/demographics.csv"},
+        "Filmography":  {"file_path": "data/films.ndjson"},
+    },
+):
+    print(wave)                                   # one wave per derived class per tick
+```
+
+Each derived class gets its own `_daemon_tick` wrap so a failure
+building `Demographics` doesn't block `JediArchive` from exporting.
+The single-output `list[dict]` return remains the legacy path — list
+return = one file.
+
+> **Power-user note:** if `outflow.py` already declares a real
+> `Incorporator` subclass with a matching name, fjord uses that class
+> instead of the inferred-dynamic one — full type control on derived
+> classes when you want it.
 
 ---
 

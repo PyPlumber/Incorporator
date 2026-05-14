@@ -84,20 +84,42 @@ await Pair.refresh(instance=my_holdings)
 
 ## Identity-Mapping Memory
 
-Every `Incorporator` subclass remembers the `inc_code` and `inc_name`
-field names from its first `incorp()` call. That means `refresh()`
-just works:
+Every `Incorporator` subclass remembers the **full** call-context from
+its first `incorp()` — not just `inc_code` / `inc_name`, but the entire
+network and format-handler kwarg set (`params`, `headers`, `rec_path`,
+`conv_dict`, `excl_lst`, `name_chg`, `payload_list`, `sql_query`,
+`parquet_decimal_columns`, …).  That's why `refresh()` "just works"
+without re-declaring anything:
 
 ```python
 class Pair(Incorporator):
     pass
 
-await Pair.incorp(inc_url="...", inc_code="symbol")
-await Pair.refresh()                              # still keyed by 'symbol' — no need to re-pass
+await Pair.incorp(
+    inc_url="https://api.coingecko.com/api/v3/coins/markets",
+    params={"vs_currency": "usd", "per_page": 100, "page": 1},   # required!
+    headers={"X-Custom": "..."},
+    rec_path="results",
+    conv_dict={"price": inc(float)},
+    inc_code="id",
+)
+
+await Pair.refresh()    # replays params + headers + rec_path + conv_dict
 ```
 
-If you want to change the key on a specific refresh tick (rare), pass
-`inc_code="..."` explicitly to override.
+Without this auto-replay, the refresh would hit the bare
+`/coins/markets` URL with no `?vs_currency=usd` and CoinGecko would
+return a 422.  The framework persists the context as
+`Pair._incorp_kwargs` and merges it under your explicit refresh
+kwargs.
+
+If you want to change any kwarg on a specific refresh tick (rare),
+pass it explicitly to `refresh()` — caller-supplied kwargs **win on
+key conflict**:
+
+```python
+await Pair.refresh(params={"vs_currency": "eur"})   # one-off override
+```
 
 ---
 
@@ -141,21 +163,25 @@ class Pair(Incorporator):
 
 async def main():
     # 1. Initial load — fills Pair.inc_dict with ~1,900 trading pairs.
-    pairs = await Pair.incorp(
+    await Pair.incorp(
         inc_url="https://api.binance.com/api/v3/ticker/24hr",
         inc_code="symbol",
     )
-    btc = Pair.inc_dict["BTCUSDT"]
-    print(f"BTCUSDT lastPrice before:  {btc.lastPrice}")
+    price_before = Pair.inc_dict["BTCUSDT"].lastPrice
+    print(f"BTCUSDT lastPrice before:  {price_before}")
 
     # 2. Wait for the market to move.
     await asyncio.sleep(2)
 
-    # 3. In-state refresh — same instances, latest values.
+    # 3. In-state refresh — replays the original incorp()'s URL,
+    #    inc_code, conv_dict (none here), and any headers/params.
     await Pair.refresh()
 
-    # 4. `btc` was mutated in place — your local reference reflects the new price.
-    print(f"BTCUSDT lastPrice after:   {btc.lastPrice}")
+    # 4. Read the latest value via inc_dict — refresh REPLACES instances
+    #    on every tick (Pydantic v2 validates on construction), so any
+    #    local variable captured pre-refresh now points at a stale model.
+    price_after = Pair.inc_dict["BTCUSDT"].lastPrice
+    print(f"BTCUSDT lastPrice after:   {price_after}")
 
 
 if __name__ == "__main__":

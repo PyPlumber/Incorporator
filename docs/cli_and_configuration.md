@@ -41,7 +41,15 @@ Here is a standard `pipeline.json` designed to scrape an API, enrich it, and app
 *   **`stateful_polling` (Optional, defaults to `false`):** Toggles the core execution engine (see *Dual-Engine Architecture* below).
 *   **`incorp_params` (Required):** Dictates the initial extraction. Must contain an origin (e.g., `inc_url`, `inc_file`, or `inc_page`).
 *   **`refresh_params` (Optional):** If provided, the daemon will use the objects mapped during extraction to execute stateful updates (e.g., fetching deep relational data).
-*   **`export_params` (Optional):** Dictates the load phase. To stream continuously without overwriting previous chunks, use `"if_exists": "append"`.
+*   **`export_params` (Optional):** Dictates the load phase. Mode-aware defaults:
+    *   In **chunking mode** (`stateful_polling=false`) each chunk is *new* data,
+        so the engine auto-injects `if_exists="append"` after chunk 1 on
+        append-friendly formats (NDJSON / CSV / SQLite / Avro).
+    *   In **stateful-polling mode** (`stateful_polling=true`) every tick
+        re-exports the *same* registry, so the engine always REPLACES the
+        file with the latest snapshot — appending would duplicate rows.
+        Set `"if_exists": "append"` explicitly to opt into a forensic ledger
+        that grows on every tick.
 
 ---
 
