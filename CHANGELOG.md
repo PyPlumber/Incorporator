@@ -5,6 +5,29 @@ All notable changes to Incorporator are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-05-14
+
+### Fixed
+- **Logger `atexit` AttributeError on Python 3.11+** — `_cleanup_listeners()`
+  no longer raises when a registered `QueueListener` was already stopped on
+  another thread. Python 3.11's stdlib clears `_thread` to `None` after the
+  first `.stop()`, and the second call would raise
+  `AttributeError: 'NoneType' object has no attribute 'join'` in the atexit
+  hook. Guarded all three stop() sites (atexit hook, eviction path, test fixture).
+- **ISO datetimes with compact `+0000` offset on Python 3.9/3.10** —
+  `parses_as_datetime` / `_fallback_date` now accept the no-colon timezone
+  form. Was silently falling back to the user's default on 3.9/3.10 because
+  `datetime.fromisoformat()` only learned the compact form in 3.11.
+- **pyarrow ORC reader on Windows** — `[parquet]` extra now installs
+  `tzdata>=2024.1` on Windows, where pyarrow's hardcoded
+  `/usr/share/zoneinfo` lookup would otherwise fail with
+  `ORC Read Error: Time zone file /usr/share/zoneinfo/UTC does not exist`.
+  Linux/macOS installs are unchanged.
+
+### Changed
+- Bumped CI actions to `actions/checkout@v6` and `actions/setup-python@v6`
+  for Node.js 24 compatibility (June 2026 deadline). No user-facing impact.
+
 ## [1.1.0] - 2026-05-14
 
 ### Added — Continuous Integration
