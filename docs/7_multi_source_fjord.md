@@ -393,6 +393,12 @@ function, the dynamic output class comes from the filename stem.
 * **[Tutorial 6 — Streaming Daemons](./6_streaming_daemon.md)** —
   single-source equivalent of fjord; reach for it when you only need
   one feed.
+* **[🏁 Appendix — NASCAR Fantasy: Graph-Map Fjord](./appendix/nascar_fantasy_fjord.md)** —
+  advanced 6-source fjord with state-aware `inflow(state)`,
+  multi-output `outflow(state)`, and sentinel-ID filtering via
+  `link_to(..., extractor=…)`.  Read this one once you've internalised
+  the two-source pattern above and want the production graph-map
+  shape.
 * **[CLI & Configuration Guide](./cli_and_configuration.md)** — the
   full `pipeline.json` schema for fjord pipelines.
 * **[Library reference](./library_reference.md)** — full method

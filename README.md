@@ -282,6 +282,7 @@ Patterns that earned their keep before the curriculum was reshaped — productio
 * [🧬 **Pokémon ETL**](./docs/appendix/pokeapi_etl.md) — array reductions with `calc` / `sum_attributes`.
 * [🚨 **Shady Jimmy's XML Audit**](./docs/appendix/xml_post_audit.md) — XML ingestion + declarative bulk POST + fraud audit.
 * [🕸️ **Crypto Graph Mapping** (static)](./docs/appendix/crypto_graph_mapping.md) — `link_to`-based in-memory join across CoinGecko + Binance. Tutorial 7 covers the same fusion as a live daemon.
+* [🏁 **NASCAR Fantasy — Graph-Map Fjord** *(advanced)*](./docs/appendix/nascar_fantasy_fjord.md) — six-source fjord with state-aware `inflow(state)`, multi-output `outflow(state)`, and sentinel-ID filtering. Builds on Tutorial 7.
 * [🐘 **Data Lake Pivot** (legacy)](./docs/appendix/data_lake_pivot.md) — original JSON ↔ Avro/SQLite walkthrough; the headline pattern is now in Tutorial 2.
 
 ---
