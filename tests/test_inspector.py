@@ -122,6 +122,202 @@ def test_analyze_data_non_dict_top_level(capsys: pytest.CaptureFixture[str]) -> 
 
 
 # ==========================================
+# 2b. WRONG-TARGET-OBJECT REGRESSION
+# ==========================================
+
+
+@pytest.fixture
+def spacex_like_launch() -> dict[str, Any]:
+    """SpaceX /launches/latest-shaped fixture — single resource with nested arrays.
+
+    This is the user's original failing case: a rich top-level record whose
+    identity + dates we care about, but with nested list-of-dicts that the
+    pre-fix inspector silently drilled into.
+    """
+    return {
+        "id": "5eb87cdaffd86e000604b330",
+        "name": "FalconSat",
+        "date_local": "2008-09-20T13:23:00-04:00",
+        "date_utc": "2008-09-20T17:23:00.000Z",
+        "flight_number": 4,
+        "rocket": "5e9d0d95eda69955f709d1eb",
+        "success": False,
+        "cores": [
+            {"core": "5e9e289df3591855a26b4ac0", "flight": 1, "gridfins": False},
+            {"core": "abc123def456", "flight": 2, "gridfins": True},
+        ],
+        "failures": [{"time": 33, "altitude": None, "reason": "merlin engine failure"}],
+    }
+
+
+def test_analyze_data_does_not_drift_into_nested_lists(
+    capsys: pytest.CaptureFixture[str], spacex_like_launch: dict[str, Any]
+) -> None:
+    """Regression for the wrong-target-object bug.
+
+    The pre-fix inspector silently rebound ``target_obj`` to
+    ``sample["cores"][0]`` whenever the top-level dict contained any list of
+    dicts. That meant identity mapping and ETL ran against the WRONG object —
+    nested core specs instead of the top-level launch. This test asserts the
+    fix: identity + ETL are evaluated against the top-level launch record.
+    """
+    analyze_data([spacex_like_launch], provided_kwargs={})
+    out = capsys.readouterr().out
+
+    # Identity must come from the launch itself, not from the nested core.
+    assert "inc_code='id'" in out
+    assert "inc_name='name'" in out
+    # Neither nested-list key should show up as the chosen identity.
+    assert "inc_code='core'" not in out
+    assert "inc_code='flight'" not in out
+
+    # Both top-level date fields must be flagged for inc(datetime).
+    assert "'date_local'" in out
+    assert "'date_utc'" in out
+    assert "inc(datetime)" in out
+
+
+def test_analyze_data_prints_drill_down_hint_for_nested_arrays(
+    capsys: pytest.CaptureFixture[str], spacex_like_launch: dict[str, Any]
+) -> None:
+    """When nested list-of-dicts are present, surface a copy-pasteable drill cmd."""
+    analyze_data([spacex_like_launch], provided_kwargs={})
+    out = capsys.readouterr().out
+
+    # The drill-down section must mention the nested arrays with their sizes.
+    assert "nested arrays" in out
+    assert "cores (2)" in out
+    assert "failures (1)" in out
+
+    # And the suggested re-run command names rec_path explicitly.
+    assert "rec_path=" in out
+    assert "await YourClass.test" in out
+
+
+# ==========================================
+# 2c. DATE / TYPE CASTING — VARIANTS THAT FAILED BEFORE
+# ==========================================
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2022-10-05T12:00:00-04:00",   # RFC-3339 with timezone offset (the bug)
+        "2026-05-12T14:32:00Z",         # UTC suffix
+        "2008-09-20T17:23:00.000Z",     # fractional + Z
+        "2008-09-20",                   # plain date
+        "2026-04-22 23:59:59",          # SQL-ish space separator
+    ],
+)
+def test_analyze_data_flags_every_datetime_variant_the_runtime_accepts(
+    capsys: pytest.CaptureFixture[str], value: str
+) -> None:
+    """Any ISO/RFC-3339 variant the framework runtime accepts must be flagged.
+
+    Phase B routes inspector detection through the same _fallback_date the
+    runtime uses, so this matrix is the structural contract: if inc(datetime)
+    would accept it, the inspector recommends it.
+    """
+    sample = {"id": 1, "happened_at": value, "name": "Sample"}
+    analyze_data([sample], provided_kwargs={})
+    out = capsys.readouterr().out
+    assert "inc(datetime)" in out
+    assert "'happened_at'" in out
+
+
+@pytest.mark.parametrize("junk", ["", "N/A", "n/a", "Unknown", "null", "undefined"])
+def test_analyze_data_does_not_flag_garbage_values_as_dates(
+    capsys: pytest.CaptureFixture[str], junk: str
+) -> None:
+    """Garbage values must never be suggested for conversion — even in date-named keys."""
+    sample = {"id": 1, "created_at": junk, "name": "Sample"}
+    analyze_data([sample], provided_kwargs={})
+    out = capsys.readouterr().out
+    # The ETL block should report nothing-to-do for created_at.
+    assert "inc(datetime)" not in out
+    assert "No string fields look like dates or numbers" in out
+
+
+# ==========================================
+# 2d. PAGINATION HINTS (Phase C)
+# ==========================================
+
+
+def test_pagination_hint_next_url_paginator(capsys: pytest.CaptureFixture[str]) -> None:
+    """A ``next`` URL field must trigger a NextUrlPaginator suggestion."""
+    sample = {
+        "results": [{"id": 1}],
+        "next": "https://api.example.com/items?page=2",
+        "count": 100,
+    }
+    analyze_data([sample], provided_kwargs={"rec_path": "results"})
+    out = capsys.readouterr().out
+    assert "PAGINATION HINTS" in out
+    assert "NextUrlPaginator('next')" in out
+
+
+def test_pagination_hint_cursor_paginator(capsys: pytest.CaptureFixture[str]) -> None:
+    """A ``next_cursor`` field must trigger a CursorPaginator suggestion."""
+    sample = {"items": [{"id": 1}], "next_cursor": "abc123token"}
+    analyze_data([sample], provided_kwargs={"rec_path": "items"})
+    out = capsys.readouterr().out
+    assert "CursorPaginator(cursor_param='next_cursor')" in out
+
+
+def test_pagination_hint_offset_paginator(capsys: pytest.CaptureFixture[str]) -> None:
+    """An ``offset`` + ``limit`` pair must trigger an OffsetPaginator suggestion."""
+    sample = {"results": [{"id": 1}], "offset": 0, "limit": 50}
+    analyze_data([sample], provided_kwargs={"rec_path": "results"})
+    out = capsys.readouterr().out
+    assert "OffsetPaginator(limit=50)" in out
+
+
+def test_pagination_hint_silent_when_no_signal(capsys: pytest.CaptureFixture[str]) -> None:
+    """A flat single-resource response should NOT spuriously suggest pagination."""
+    sample = {"id": 1, "name": "Solo", "created_at": "2026-05-12T14:32:00Z"}
+    analyze_data([sample], provided_kwargs={})
+    out = capsys.readouterr().out
+    assert "PAGINATION HINTS" not in out
+
+
+# ==========================================
+# 2e. HEAVY-FIELD HINTS (Phase D)
+# ==========================================
+
+
+def test_heavy_field_hint_flags_asset_urls(capsys: pytest.CaptureFixture[str]) -> None:
+    """Image / video URLs at the top level get nominated for excl_lst."""
+    sample = {
+        "id": 1,
+        "name": "Bulbasaur",
+        "front_default": "https://raw.githubusercontent.com/sprites/1.png",
+        "thumbnail_url": "https://cdn.example.com/thumbs/" + "x" * 250,
+    }
+    analyze_data([sample], provided_kwargs={})
+    out = capsys.readouterr().out
+    assert "HEAVY-FIELD HINTS" in out
+    assert "excl_lst=" in out
+    assert "'front_default'" in out or "'thumbnail_url'" in out
+
+
+def test_heavy_field_hint_flags_base64_image(capsys: pytest.CaptureFixture[str]) -> None:
+    """Base64-encoded image blobs trigger the excl_lst suggestion."""
+    sample = {"id": 1, "preview": "data:image/png;base64," + "A" * 100, "name": "X"}
+    analyze_data([sample], provided_kwargs={})
+    out = capsys.readouterr().out
+    assert "HEAVY-FIELD HINTS" in out
+    assert "'preview'" in out
+
+
+def test_heavy_field_hint_silent_for_lean_payload(capsys: pytest.CaptureFixture[str]) -> None:
+    """A small clean payload must NOT emit heavy-field hints."""
+    sample = {"id": 1, "name": "Lean", "active": True}
+    analyze_data([sample], provided_kwargs={})
+    out = capsys.readouterr().out
+    assert "HEAVY-FIELD HINTS" not in out
+
+
+# ==========================================
 # 3. analyze_error — ROUTING TO ACTIONABLE HINTS
 # ==========================================
 
