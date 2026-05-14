@@ -20,11 +20,14 @@ Run with:
 """
 
 import asyncio
+from pathlib import Path
 
 from incorporator import Incorporator
 
 # Bring the source classes into scope so fjord() can register them.
 from examples.fjord_code.crypto_spread import BinancePair, CoinGecko
+
+HERE = Path(__file__).parent
 
 
 async def main() -> None:
@@ -46,11 +49,8 @@ async def main() -> None:
                 },
             },
         ],
-        outflow="examples/fjord_code/crypto_spread.py",
-        # fjord writes incrementally per export tick — same append constraint
-        # as stream().  NDJSON / CSV / SQLite / Avro accept appends; Parquet /
-        # Feather / ORC / Excel / XML / JSON do not.
-        export_params={"file_path": "data/crypto_spread.ndjson"},
+        outflow=str(HERE / "fjord_code/crypto_spread.py"),
+        export_params={"file_path": str(HERE.parent / "data/crypto_spread.ndjson")},
         refresh_interval=30.0,                              # each source re-fetches every 30 s
         export_interval=60.0,                               # fused spread rows write every 60 s
     ):

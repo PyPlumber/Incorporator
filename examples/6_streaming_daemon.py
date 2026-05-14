@@ -22,8 +22,11 @@ Ctrl+C / SIGTERM triggers a graceful drain.
 """
 
 import asyncio
+from pathlib import Path
 
 from incorporator import LoggedIncorporator
+
+HERE = Path(__file__).parent
 
 
 class Launch(LoggedIncorporator):
@@ -57,7 +60,7 @@ async def main() -> None:
         },
         stateful_polling=True,                                  # live registry, not one-shot
         refresh_interval=30.0,                                  # re-fetch every 30 seconds
-        export_params={"file_path": "data/spacex_upcoming.ndjson"},
+        export_params={"file_path": str(HERE.parent / "data/spacex_upcoming.ndjson")},
         export_interval=90.0,                                   # flush every 90 seconds
         enable_logging=True,                                    # opt into JSON-line logs
     ):
