@@ -160,6 +160,11 @@ def _fallback_date(value: Any) -> datetime:
         "%d %b %Y",
         "%b %d, %Y",
         "%Y-%m-%dT%H:%M:%S.%f",
+        # ISO with compact (no-colon) timezone offset, e.g. "+0000".  Python
+        # 3.11+'s fromisoformat() accepts this; 3.9/3.10 do not, so we catch
+        # it via strptime+%z which is permissive across all 3.x versions.
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%S%z",
         "%a, %d %b %Y %H:%M:%S %Z",
     ]
     for fmt in fallback_formats:
