@@ -79,6 +79,17 @@ LEAGUE_TEAMS_RAW: Dict[str, List[Tuple[float, int]]] = {
 # ── State-aware inflow — wires Race.conv_dict against live peers ────
 
 
+def _pole_id_or_none(raw: Any) -> Any:
+    """NASCAR returns ``pole_winner_driver_id = 0`` for races whose pole
+    qualifying hasn't happened yet (or was rained out).  Driver ID 0
+    coincidentally resolves to a real driver in the registry, so
+    without this filter every future race shows the same name.  Mapping
+    0 → None lets ``link_to`` short-circuit and downstream consumers
+    see ``race.pole_winner_driver_id is None``.
+    """
+    return raw if raw else None
+
+
 def inflow(state: Dict[str, Any]) -> Dict[str, Any]:
     """Build per-source ``conv_dict`` overrides from sibling registries.
 
@@ -94,7 +105,7 @@ def inflow(state: Dict[str, Any]) -> Dict[str, Any]:
         overrides["Race"] = {
             "conv_dict": {
                 "track_id":              link_to(state["Track"]),
-                "pole_winner_driver_id": link_to(state["Driver"]),
+                "pole_winner_driver_id": link_to(state["Driver"], extractor=_pole_id_or_none),
                 **{key: inc(datetime) for key in _DATE_FIELDS},
             }
         }
