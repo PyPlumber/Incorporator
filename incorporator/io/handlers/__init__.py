@@ -95,13 +95,28 @@ async def write_destination_data(
     """Central write dispatcher — routes the row stream to the matching format handler.
 
     Empty-input guard runs once here via ``_peek_iterable`` so individual
-    handlers don't need to repeat it. The handler's ``write`` runs inside
-    ``asyncio.to_thread`` so disk I/O and CPU-heavy encoding never block
-    the event loop.
+    handlers don't need to repeat it.  Parent-directory creation also runs
+    once here so every handler gets the same "just works" behaviour when
+    the user passes ``data/foo.ndjson`` without pre-creating ``data/``.
+    The handler's ``write`` runs inside ``asyncio.to_thread`` so disk I/O
+    and CPU-heavy encoding never block the event loop.
     """
     handler = _HANDLERS.get(format_type)
     if not handler:
         raise IncorporatorFormatError(f"Unsupported export format: '{format_type}'.")
+
+    # Auto-create the parent directory.  Streaming pipelines often target
+    # paths like "data/<name>.ndjson" — failing every export tick because
+    # the user didn't mkdir is hostile DX for zero benefit.  Run pre-write
+    # so the empty-input case below short-circuits without a mkdir burn.
+    parent = Path(file_path).resolve().parent
+    if parent and not parent.exists():
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise IncorporatorFormatError(
+                f"Could not create parent directory {parent} for '{file_path}': {e}"
+            ) from e
 
     is_empty, safe_iter = _peek_iterable(data)
     if is_empty:

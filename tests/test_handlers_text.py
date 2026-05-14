@@ -200,3 +200,41 @@ def test_xml_parse_recovery_from_whitespace(mock_no_speedups, monkeypatch: pytes
     result = XMLHandler().parse("<root><item><name>recovered</name></item></root>")
     assert call_count == 2, "Recovery branch must issue exactly two fromstring() calls"
     assert "recovered" in str(result)
+
+
+
+# ==========================================
+# Auto-mkdir on export (handler dispatcher behaviour)
+# ==========================================
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.asyncio
+async def test_write_destination_data_creates_missing_parent_dir(tmp_path: Path) -> None:
+    """Streaming pipelines target paths like ``data/foo.ndjson``; the dispatcher
+    must create the missing parent dir rather than failing every export tick.
+
+    Pre-fix: the example tutorial 6 failed at first export with
+        NDJSON File IO Error: [Errno 2] No such file or directory: 'data/...'
+    because the user never had a chance to mkdir before the daemon started.
+    """
+    from incorporator.io.formats import FormatType
+    from incorporator.io.handlers import write_destination_data
+
+    # nested non-existent path — three levels deep to confirm parents=True
+    target = tmp_path / "a" / "b" / "c" / "out.ndjson"
+    assert not target.parent.exists()
+
+    await write_destination_data(
+        iter([{"id": "X", "v": 1}, {"id": "Y", "v": 2}]),
+        str(target),
+        FormatType.NDJSON,
+    )
+
+    assert target.exists()
+    assert target.parent.is_dir()
+    text = target.read_text(encoding="utf-8")
+    assert '"id": "X"' in text
+    assert '"id": "Y"' in text
