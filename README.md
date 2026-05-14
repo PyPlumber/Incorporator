@@ -246,6 +246,8 @@ The best way to learn Incorporator is through guided tutorials and the auto-gene
 * [🌊 **Streaming Daemon**](./docs/6_streaming_daemon.md) — `stream()` end-to-end: refresh cadences, export intervals, signal-aware shutdown.
 * [🌊 **Multi-Source Fjord**](./docs/7_multi_source_fjord.md) — `fjord()` end-to-end: fusing two feeds through a user `outflow(state)` function.
 * [🕵️‍♂️ **DX Inspector**](./docs/8_dx_inspector.md) — `test()` end-to-end: let the framework write your `incorp()` kwargs.
+* [🔄 **Stateful Refresh**](./docs/9_stateful_refresh.md) — `refresh()` end-to-end: keep an in-memory graph live without rebuilding.
+* [🩺 **Production Debugging**](./docs/10_debugging_get_error.md) — `LoggedIncorporator` + `get_error()` end-to-end: durable error logs + DLQ retry loops.
 
 ### Reference
 * [📖 **Library Reference** (pdoc)](./docs/library_reference.md) — every public class, method, converter, and paginator, rendered from the source docstrings.
