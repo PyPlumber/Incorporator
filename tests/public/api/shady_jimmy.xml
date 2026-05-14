@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Dealership name="Shady Jimmy's Used Cars" location="Baltimore, MD">
+    <AuditFile generatedAt="2026-04-24T10:15:00Z" auditor="White Hat Auditors">
+
+        <Invoices>
+
+            <Invoice id="INV-001" status="completed">
+                <SaleDate>2026-04-01</SaleDate>
+                <Salesperson id="SP-100">Jimmy Carter</Salesperson>
+                <Buyer>
+                    <Name>John Doe</Name>
+                    <DriverLicense state="MD">D1234567</DriverLicense>
+                </Buyer>
+                <Vehicle>
+                    <VIN>1HGCM82633A004352</VIN>
+                    <Make>Honda</Make>
+                    <Model>Accord</Model>
+                    <Year>2003</Year>
+                    <Mileage>182000</Mileage>
+                    <Color>Silver</Color>
+                </Vehicle>
+                <Financial>
+                    <SalePrice currency="USD">4500</SalePrice>
+                    <Tax>270</Tax>
+                    <Fees>150</Fees>
+                    <Total>4920</Total>
+                    <PaymentMethod>Cash</PaymentMethod>
+                </Financial>
+            </Invoice>
+
+            <Invoice id="INV-002" status="completed">
+                <SaleDate>2026-04-02</SaleDate>
+                <Salesperson id="SP-101">Bob Smith</Salesperson>
+                <Buyer>
+                    <Name>Jane Smith</Name>
+                    <DriverLicense state="MD">S7654321</DriverLicense>
+                </Buyer>
+                <Vehicle>
+                    <VIN>1FAFP404X1F192345</VIN>
+                    <Make>Ford</Make>
+                    <Model>Mustang</Model>
+                    <Year>2001</Year>
+                    <Mileage>140000</Mileage>
+                    <Color>Red</Color>
+                </Vehicle>
+                <Financial>
+                    <SalePrice currency="USD">5200</SalePrice>
+                    <Tax>312</Tax>
+                    <Fees>150</Fees>
+                    <Total>5662</Total>
+                    <PaymentMethod>Financed</PaymentMethod>
+                </Financial>
+            </Invoice>
+
+            <Invoice id="INV-003" status="completed">
+                <SaleDate>2026-04-03</SaleDate>
+                <Salesperson id="SP-102">Alice Johnson</Salesperson>
+                <Buyer>
+                    <Name>Michael Brown</Name>
+                    <DriverLicense state="MD">B9988776</DriverLicense>
+                </Buyer>
+                <Vehicle>
+                    <VIN>2T1BR32E54C123456</VIN>
+                    <Make>Toyota</Make>
+                    <Model>Corolla</Model>
+                    <Year>2004</Year>
+                    <Mileage>165000</Mileage>
+                    <Color>Blue</Color>
+                </Vehicle>
+                <Financial>
+                    <SalePrice currency="USD">3900</SalePrice>
+                    <Tax>234</Tax>
+                    <Fees>120</Fees>
+                    <Total>4254</Total>
+                    <PaymentMethod>Cash</PaymentMethod>
+                </Financial>
+            </Invoice>
+
+            <Invoice id="INV-004" status="completed">
+                <SaleDate>2026-04-04</SaleDate>
+                <Salesperson id="SP-103">Chris Evans</Salesperson>
+                <Buyer>
+                    <Name>Sarah Wilson</Name>
+                    <DriverLicense state="MD">W1122334</DriverLicense>
+                </Buyer>
+                <Vehicle>
+                    <VIN>1N4AL11D75C109151</VIN>
+                    <Make>Nissan</Make>
+                    <Model>Altima</Model>
+                    <Year>2005</Year>
+                    <Mileage>158000</Mileage>
+                    <Color>Gray</Color>
+                </Vehicle>
+                <Financial>
+                    <SalePrice currency="USD">4100</SalePrice>
+                    <Tax>246</Tax>
+                    <Fees>130</Fees>
+                    <Total>4476</Total>
+                    <PaymentMethod>Cash</PaymentMethod>
+                </Financial>
+            </Invoice>
+
+            <Invoice id="INV-005" status="completed">
+                <SaleDate>2026-04-05</SaleDate>
+                <Salesperson id="SP-104">Diana Prince</Salesperson>
+                <Buyer>
+                    <Name>Peter Parker</Name>
+                    <DriverLicense state="MD">P5566778</DriverLicense>
+                </Buyer>
+                <Vehicle>
+                    <VIN>1G1JC5244T7259367</VIN>
+                    <Make>Chevrolet</Make>
+                    <Model>Cavalier</Model>
+                    <Year>1996</Year>
+                    <Mileage>210000</Mileage>
+                    <Color>White</Color>
+                </Vehicle>
+                <Financial>
+                    <SalePrice currency="USD">1800</SalePrice>
+                    <Tax>108</Tax>
+                    <Fees>100</Fees>
+                    <Total>2008</Total>
+                    <PaymentMethod>Cash</PaymentMethod>
+                </Financial>
+            </Invoice>
+
+            <Invoice id="INV-006" status="completed">
+                <SaleDate>2026-04-06</SaleDate>
+                <Salesperson id="SP-105">Bruce Wayne</Salesperson>
+                <Buyer>
+                    <Name>Clark Kent</Name>
+                    <DriverLicense state="MD">K3344556</DriverLicense>
+                </Buyer>
+                <Vehicle>
+                    <VIN>JH4KA8260MC000000</VIN>
+                    <Make>Acura</Make>
+                    <Model>Legend</Model>
+                    <Year>1991</Year>
+                    <Mileage>195000</Mileage>
+                    <Color>Black</Color>
+                </Vehicle>
+                <Financial>
+                    <SalePrice currency="USD">2200</SalePrice>
+                    <Tax>132</Tax>
+                    <Fees>110</Fees>
+                    <Total>2442</Total>
+                    <PaymentMethod>Cash</PaymentMethod>
+                </Financial>
+            </Invoice>
+
+            <Invoice id="INV-007" status="completed">
+                <SaleDate>2026-04-07</SaleDate>
+                <Salesperson id="SP-106">Tony Stark</Salesperson>
+                <Buyer>
+                    <Name>Steve Rogers</Name>
+                    <DriverLicense state="MD">R7788990</DriverLicense>
+                </Buyer>
+                <Vehicle>
+                    <VIN>1C4RJFBG7FC625797</VIN>
+                    <Make>Jeep</Make>
+                    <Model>Grand Cherokee</Model>
+                    <Year>2015</Year>
+                    <Mileage>98000</Mileage>
+                    <Color>Green</Color>
+                </Vehicle>
+                <Financial>
+                    <SalePrice currency="USD">14500</SalePrice>
+                    <Tax>870</Tax>
+                    <Fees>200</Fees>
+                    <Total>15570</Total>
+                    <PaymentMethod>Financed</PaymentMethod>
+                </Financial>
+            </Invoice>
+
+            <Invoice id="INV-008" status="completed">
+                <SaleDate>2026-04-08</SaleDate>
+                <Salesperson id="SP-107">Natasha Romanoff</Salesperson>
+                <Buyer>
+                    <Name>Wanda Maximoff</Name>
+                    <DriverLicense state="MD">M2233445</DriverLicense>
+                </Buyer>
+                <Vehicle>
+                    <VIN>3FA6P0H73HR123456</VIN>
+                    <Make>Ford</Make>
+                    <Model>Fusion</Model>
+                    <Year>2017</Year>
+                    <Mileage>76000</Mileage>
+                    <Color>White</Color>
+                </Vehicle>
+                <Financial>
+                    <SalePrice currency="USD">9800</SalePrice>
+                    <Tax>588</Tax>
+                    <Fees>180</Fees>
+                    <Total>10568</Total>
+                    <PaymentMethod>Financed</PaymentMethod>
+                </Financial>
+            </Invoice>
+
+            <Invoice id="INV-009" status="completed">
+                <SaleDate>2026-04-09</SaleDate>
+                <Salesperson id="SP-108">Stephen Strange</Salesperson>
+                <Buyer>
+                    <Name>Scott Lang</Name>
+                    <DriverLicense state="MD">L6677889</DriverLicense>
+                </Buyer>
+                <Vehicle>
+                    <VIN>5YJSA1E26HF000337</VIN>
+                    <Make>Tesla</Make>
+                    <Model>Model S</Model>
+                    <Year>2017</Year>
+                    <Mileage>54000</Mileage>
+                    <Color>Black</Color>
+                </Vehicle>
+                <Financial>
+                    <SalePrice currency="USD">32000</SalePrice>
+                    <Tax>1920</Tax>
+                    <Fees>250</Fees>
+                    <Total>34170</Total>
+                    <PaymentMethod>Financed</PaymentMethod>
+                </Financial>
+            </Invoice>
+
+            <!-- 🚨 FRAUDULENT RECORD -->
+            <Invoice id="INV-010" status="completed">
+                <SaleDate>2026-04-10</SaleDate>
+                <Salesperson id="SP-999">Jimmy Carter</Salesperson>
+                <Buyer>
+                    <Name>Test Buyer</Name>
+                    <DriverLicense state="MD">X0000000</DriverLicense>
+                </Buyer>
+                <Vehicle>
+                    <VIN>WP0AB2A94HS124053</VIN>
+                    <Make>Honda</Make>
+                    <Model>Civic</Model>
+                    <Year>2015</Year>
+                    <Mileage>12000</Mileage>
+                    <Color>Black</Color>
+                </Vehicle>
+                <Financial>
+                    <SalePrice currency="USD">499</SalePrice>
+                    <Tax>30</Tax>
+                    <Fees>50</Fees>
+                    <Total>579</Total>
+                    <PaymentMethod>Cash</PaymentMethod>
+                </Financial>
+                <Notes>Manager special discount</Notes>
+            </Invoice>
+
+        </Invoices>
+    </AuditFile>
+</Dealership>
