@@ -131,6 +131,44 @@ design, not the journey to it.
    bullet in `docs/installation.md`.
 8. Add one line to the README's "format support" sentence.
 
+## Continuous Integration & Branch Protection
+
+Every PR and every push to `main` / `refactor-ai` triggers
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml), which runs
+three jobs in parallel:
+
+- **lint** — `ruff check`, `ruff format --check`, `black --check` on `incorporator/`.
+- **typecheck** — `mypy incorporator/` under strict mode.
+- **test** — `pytest -m "not benchmark"` across a 3×2 matrix
+  (Python 3.9 / 3.11 / 3.13 on Ubuntu + Windows).
+
+Total wall-clock is ~2–3 minutes; the test matrix runs all six cells
+concurrently. A red ❌ on any cell blocks the merge button when branch
+protection is on.
+
+### Branch protection setup (maintainer one-time task)
+
+`main` and `refactor-ai` should both require the CI workflow to pass
+before merge. This is a click-through GitHub setting, not a committed
+file:
+
+1. **github.com/PyPlumber/incorporator → Settings → Branches**.
+2. Under **Branch protection rules**, click **Add rule**.
+3. **Branch name pattern**: `main` (repeat later for `refactor-ai`).
+4. Tick **Require status checks to pass before merging** and
+   **Require branches to be up to date before merging**.
+5. After the first CI run lands, search the status-checks box and add:
+   - `lint`
+   - `typecheck`
+   - `test (ubuntu-latest, 3.9)` and the other five matrix cells.
+6. (Recommended) tick **Require a pull request before merging**.
+7. (Optional) tick **Do not allow bypassing the above settings** to
+   apply the rule to admins.
+8. **Create** / **Save changes**.
+
+The "Merge" button on every PR against `main` is now disabled until
+all eight CI cells are green.
+
 ## Reporting Bugs / Asking Questions
 
 Open an issue on GitHub. For security disclosures, see [`SECURITY.md`](./SECURITY.md)
