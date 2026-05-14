@@ -115,3 +115,80 @@ async def test_incorporator_list_state_carrier() -> None:
         # Verify the wrapper caught and retained the state!
         assert isinstance(result, IncorporatorList)
         assert result.inc_child_path == "Vehicle.VIN"
+
+
+@pytest.mark.asyncio
+async def test_refresh_replays_persisted_incorp_kwargs() -> None:
+    """Regression — refresh() must replay incorp()'s params / headers / rec_path.
+
+    The user's bug report on Tutorial 7: fjord's daemon called
+    ``CoinGecko.refresh()`` with no args, and the resulting fetch hit
+    ``https://api.coingecko.com/api/v3/coins/markets`` WITHOUT the
+    ``?vs_currency=usd&per_page=100&page=1`` query string the seed used.
+    CoinGecko returned 422.  The fix persists incorp()'s network kwargs
+    on the class as ``_incorp_kwargs`` and refresh() replays them.
+    """
+
+    class CoinGecko(Incorporator):
+        pass
+
+    with patch("incorporator.io.fetch.fetch_concurrent_payloads", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = (
+            [{"id": "bitcoin", "current_price": 60000.0}],
+            [],
+        )
+
+        # SEED — pass network kwargs the same way the user would.
+        await CoinGecko.incorp(
+            inc_url="https://api.coingecko.com/api/v3/coins/markets",
+            params={"vs_currency": "usd", "per_page": 100, "page": 1},
+            headers={"X-Custom": "from-seed"},
+            rec_path="results.items",
+            inc_code="id",
+        )
+
+        # The seed call should have forwarded params / headers / rec_path.
+        seed_call = mock_fetch.await_args_list[0]
+        assert seed_call.kwargs.get("params") == {"vs_currency": "usd", "per_page": 100, "page": 1}
+        assert seed_call.kwargs.get("headers") == {"X-Custom": "from-seed"}
+        assert seed_call.kwargs.get("rec_path") == "results.items"
+
+        # REFRESH — no kwargs.  Must replay the seed's params / headers / rec_path
+        # via cls._incorp_kwargs.  Pre-fix this hit the bare URL → 422.
+        await CoinGecko.refresh()
+
+        refresh_call = mock_fetch.await_args_list[1]
+        assert refresh_call.kwargs.get("params") == {"vs_currency": "usd", "per_page": 100, "page": 1}, (
+            "refresh() must replay params= from the original incorp() call; "
+            f"got kwargs={refresh_call.kwargs}"
+        )
+        assert refresh_call.kwargs.get("headers") == {"X-Custom": "from-seed"}
+        assert refresh_call.kwargs.get("rec_path") == "results.items"
+
+
+@pytest.mark.asyncio
+async def test_refresh_caller_kwargs_win_over_persisted() -> None:
+    """User-supplied refresh kwargs override the persisted incorp() context.
+
+    Confirms the precedence order: explicit refresh args win on key
+    conflicts.  This is what lets a user opt out of the seed's params
+    or supply a different rec_path on a specific refresh tick.
+    """
+
+    class Sample(Incorporator):
+        pass
+
+    with patch("incorporator.io.fetch.fetch_concurrent_payloads", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = ([{"id": 1}], [])
+
+        await Sample.incorp(
+            inc_url="https://example.com/data",
+            params={"q": "seed-value"},
+            inc_code="id",
+        )
+
+        # Refresh with an explicit params override — should win.
+        await Sample.refresh(params={"q": "refresh-override"})
+
+        refresh_call = mock_fetch.await_args_list[1]
+        assert refresh_call.kwargs.get("params") == {"q": "refresh-override"}

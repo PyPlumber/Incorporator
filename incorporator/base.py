@@ -498,6 +498,21 @@ class Incorporator(BaseModel):
         if inc_name is not None:
             cls._inc_name_attr = inc_name
 
+        # Persist the FULL network / format-handler context so refresh()
+        # can replay the same fetch without forcing the caller to re-declare
+        # ``params`` / ``headers`` / ``conv_dict`` / ``rec_path`` on every
+        # tick.  Without this, the stateful-daemon refresh would hit the
+        # bare URL — e.g. CoinGecko returns 422 when ``?vs_currency=usd``
+        # is dropped.  User-supplied ``refresh_params`` still win on key
+        # conflict (handled in ``refresh()`` below).  ``__inspect`` is a
+        # one-shot inspector flag and is intentionally not replayed.
+        cls._incorp_kwargs = {
+            "conv_dict": conv_dict,
+            "excl_lst": excl_lst,
+            "name_chg": name_chg,
+            **{k: v for k, v in kwargs.items() if k != "__inspect"},
+        }
+
         # Extract control flags before network call so they don't pollute handlers
         __inspect = kwargs.pop("__inspect", False)
         payload_list = kwargs.pop("payload_list", None)
@@ -633,6 +648,29 @@ class Incorporator(BaseModel):
             inc_code = getattr(cls, "_inc_code_attr", None)
         if inc_name is None:
             inc_name = getattr(cls, "_inc_name_attr", None)
+
+        # Replay the persisted network / format-handler context from the
+        # original ``incorp()`` call.  This is what makes stateful polling
+        # "just work" — the seed call's ``params={"vs_currency": "usd"}``,
+        # ``headers``, ``rec_path``, ``conv_dict``, etc. are re-applied on
+        # every refresh tick so the same endpoint returns the same shape.
+        # User-supplied ``refresh_params`` win on key conflict: caller's
+        # explicit kwargs are appended LAST in the merge below.
+        persisted: Dict[str, Any] = getattr(cls, "_incorp_kwargs", None) or {}
+        if conv_dict is None:
+            conv_dict = persisted.get("conv_dict")
+        if excl_lst is None:
+            excl_lst = persisted.get("excl_lst")
+        if name_chg is None:
+            name_chg = persisted.get("name_chg")
+        # Network / handler kwargs (params, headers, rec_path, sql_query,
+        # parquet_* etc.).  Filter out the three explicit-param slots we
+        # already handled so they don't double-feed.
+        persisted_net = {
+            k: v for k, v in persisted.items()
+            if k not in ("conv_dict", "excl_lst", "name_chg")
+        }
+        kwargs = {**persisted_net, **kwargs}
 
         # Unrolled instance resolution for DX traceability
         if instance is None:
