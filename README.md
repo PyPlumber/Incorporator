@@ -259,7 +259,7 @@ Secrets stay out of `pipeline.json` — use `${API_KEY}` for env vars or `${file
 A focused 1-7 curriculum in increasing difficulty. Each slot introduces
 one new verb or technique. Runnable code lives under [`/examples`](./examples).
 
-1. [🪙 **First Steps with Incorporator**](./docs/1_first_steps.md) — your first `incorp()` against CoinGecko market data.
+1. [🌱 **First Steps with Incorporator**](./docs/1_first_steps.md) — your first `incorp()` against CoinGecko market data.
 2. [📦 **Universal Formats — One Verb, Any File**](./docs/2_universal_formats.md) — same call across `.json` / `.csv` / `.parquet` / `.sqlite` / `.xlsx` / `.avro`, with a comparison table.
 3. [🕵️‍♂️ **DX Inspector — Let the Framework Write Your Kwargs**](./docs/3_dx_inspector.md) — `test()` profiles unknown APIs.
 4. [🚀 **Drilling API Graphs — Parent → Child**](./docs/4_parent_child_drilling.md) — `inc_parent` + `inc_child` for HATEOAS APIs (SpaceX launches → rockets).

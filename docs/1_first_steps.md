@@ -1,6 +1,6 @@
 ***
 
-# 🪙 First Steps with Incorporator: Your First `incorp()`
+# 🌱 First Steps with Incorporator: Your First `incorp()`
 
 Welcome. This is the smallest meaningful Incorporator program — a
 single API call that turns 100 coins from CoinGecko into a typed
