@@ -128,7 +128,7 @@ class Launch(Incorporator): pass
 launches = await Launch.incorp(inc_url="https://ll.thespacedevs.com/2.2.0/launch/upcoming/")
 print(launches[0].name)
 ```
-→ [Tutorial: Space Devs walkthrough](./docs/1_quick_setup.md)
+→ [Tutorial 1 — First Steps with Incorporator](./docs/1_first_steps.md)
 
 ### `test()` — let the framework write your `incorp()` kwargs for you
 
@@ -181,7 +181,7 @@ async for wave in Pipeline.fjord(
 ):
     if wave.failed_sources: print(wave)
 ```
-→ [Multi-graph mapping guide](./docs/3_graph_mapping.md)
+→ [Tutorial 7 — Multi-Source Fjord](./docs/7_multi_source_fjord.md)
 
 ### `display()` — REPL debug print
 
@@ -227,31 +227,40 @@ Secrets stay out of `pipeline.json` — use `${API_KEY}` for env vars or `${file
 * **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity exponential backoff, failed URLs surfaced via `wave.failed_sources`. → [Library reference](./docs/library_reference.md)
 * **Zero-OOM `IncorporatorList`** backed by a `WeakValueDictionary` for O(1) lookups without GC pressure. → [Streaming](./docs/streaming_and_pagination.md)
 * **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. → [Library reference](./docs/library_reference.md)
-* **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML, all share the same `export()` surface. → [Data lake pivot](./docs/5_data_lake_pivot.md)
+* **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML, all share the same `export()` surface. → [Tutorial 2 — Universal Formats](./docs/2_universal_formats.md)
 
 ---
 
-## 📚 Documentation & Examples
+## 📚 Tutorials (in order)
 
-The best way to learn Incorporator is through guided tutorials and the auto-generated library reference. Runnable code lives under [`/examples`](./examples).
+A focused 1-7 curriculum in increasing difficulty. Each slot introduces
+one new verb or technique. Runnable code lives under [`/examples`](./examples).
 
-### Guided Tutorials — `incorp()` Patterns
-* [🚀 **Space Devs Tutorial**](./docs/1_quick_setup.md) — Pagination, simple ETL, and type casting.
-* [⚡️ **Pokédex Power Rankings**](./docs/2_advanced_etl_calc.md) — Deep enrichment (HATEOAS) and array reductions.
-* [📊 **Stablecoin Dashboard**](./docs/3_graph_mapping.md) — Multi-API graph fusion and relational data binding.
-* [🕵️‍♂️ **Shady Jimmy's Ledger**](./docs/4_xml_post_auditing.md) — XML ingestion, O(1) memory audits, and declarative bulk POSTs.
-* [🐘 **Data Lake Pivot**](./docs/5_data_lake_pivot.md) — Bridging JSON to Avro & SQLite.
+1. [🪙 **First Steps with Incorporator**](./docs/1_first_steps.md) — your first `incorp()` against CoinGecko market data.
+2. [📦 **Universal Formats — One Verb, Any File**](./docs/2_universal_formats.md) — same call across `.json` / `.csv` / `.parquet` / `.sqlite` / `.xlsx` / `.avro`, with a comparison table.
+3. [🕵️‍♂️ **DX Inspector — Let the Framework Write Your Kwargs**](./docs/3_dx_inspector.md) — `test()` profiles unknown APIs.
+4. [🚀 **Drilling API Graphs — Parent → Child**](./docs/4_parent_child_drilling.md) — `inc_parent` + `inc_child` for HATEOAS APIs (SpaceX launches → rockets).
+5. [🔄 **Keep It Live — Stateful Refresh**](./docs/5_stateful_refresh.md) — `refresh()` three ways against Binance's live ticker.
+6. [🌊 **Streaming Daemons**](./docs/6_streaming_daemon.md) — `stream()` for long-running pipelines.
+7. [🌊 **Multi-Source Fjord** *(capstone)*](./docs/7_multi_source_fjord.md) — `fjord()` fusing CoinGecko + Binance into a live spread metric.
 
-### Production-Verb Walkthroughs
-* [🌊 **Streaming Daemon**](./docs/6_streaming_daemon.md) — `stream()` end-to-end: refresh cadences, export intervals, signal-aware shutdown.
-* [🌊 **Multi-Source Fjord**](./docs/7_multi_source_fjord.md) — `fjord()` end-to-end: fusing two feeds through a user `outflow(state)` function.
-* [🕵️‍♂️ **DX Inspector**](./docs/8_dx_inspector.md) — `test()` end-to-end: let the framework write your `incorp()` kwargs.
-* [🔄 **Stateful Refresh**](./docs/9_stateful_refresh.md) — `refresh()` end-to-end: keep an in-memory graph live without rebuilding.
-* [🩺 **Production Debugging**](./docs/10_debugging_get_error.md) — `LoggedIncorporator` + `get_error()` end-to-end: durable error logs + DLQ retry loops.
+## 📑 Reference
 
-### Reference
 * [📖 **Library Reference** (pdoc)](./docs/library_reference.md) — every public class, method, converter, and paginator, rendered from the source docstrings.
-* [⚡ **Performance Characteristics**](./docs/performance.md) — measured throughput per format (both directions) + the automatic engine optimisations.
+* [🩺 **Production Debugging with `get_error()`**](./docs/debugging.md) — `LoggedIncorporator` + structured error logs + DLQ retry loops.
+* [📦 **Formats & Compression Cheat Sheet**](./docs/formats_and_compression.md) — every format kwarg, compression rules.
+* [🌊 **Streaming & Pagination Deep Dive**](./docs/streaming_and_pagination.md) — paginator family for files / endpoints too big for RAM.
+* [🐳 **CLI & Configuration Guide**](./docs/cli_and_configuration.md) — running pipelines from `pipeline.json` without writing Python.
+* [⚡ **Performance Characteristics**](./docs/performance.md) — measured throughput per format + automatic engine optimisations.
+
+## 📎 Appendices
+
+Patterns that earned their keep before the curriculum was reshaped — production-ready, just not on the learning path.
+
+* [🧬 **Pokémon ETL**](./docs/appendix/pokeapi_etl.md) — array reductions with `calc` / `sum_attributes`.
+* [🚨 **Shady Jimmy's XML Audit**](./docs/appendix/xml_post_audit.md) — XML ingestion + declarative bulk POST + fraud audit.
+* [🕸️ **Crypto Graph Mapping** (static)](./docs/appendix/crypto_graph_mapping.md) — `link_to`-based in-memory join across CoinGecko + Binance. Tutorial 7 covers the same fusion as a live daemon.
+* [🐘 **Data Lake Pivot** (legacy)](./docs/appendix/data_lake_pivot.md) — original JSON ↔ Avro/SQLite walkthrough; the headline pattern is now in Tutorial 2.
 
 ---
 

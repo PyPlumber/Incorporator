@@ -1,5 +1,11 @@
 ***
 
+> 📑 **Reference** — production-debugging deep dive. Not a numbered
+> tutorial; reach for this when you need durable error logs and DLQ
+> retry patterns for a `stream()` / `fjord()` pipeline.
+
+***
+
 # 🩺 Production Debugging: `get_error()` + LoggedIncorporator
 
 When a production pipeline fails at 03:00, you don't want to grep a
@@ -171,9 +177,9 @@ subscribes.
 
 ## See Also
 
-* [`stream()` walkthrough](./6_streaming_daemon.md) — `LoggedIncorporator`
-  is the default daemon base class.
-* [`refresh()` workflows](./9_stateful_refresh.md) — re-fetch what
-  `get_error()` surfaced.
+* [Tutorial 6 — Streaming Daemons](./6_streaming_daemon.md) —
+  `LoggedIncorporator` is the default daemon base class.
+* [Tutorial 5 — Stateful Refresh](./5_stateful_refresh.md) — re-fetch
+  what `get_error()` surfaced.
 * [Library reference](./library_reference.md) — every method on
   `LoggedIncorporator`.

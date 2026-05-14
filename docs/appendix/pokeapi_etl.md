@@ -1,5 +1,14 @@
 ***
 
+> 📎 **Appendix** — was previously Tutorial 2. Moved here so the
+> numbered curriculum (Tutorials 1-7) covers the canonical verb arc
+> in order of difficulty. The `calc()` reduction patterns and
+> HATEOAS drill below are still production-ready; tutorial 4 covers
+> a cleaner parent-child drill against SpaceX if you're new to the
+> framework.
+
+***
+
 # 🧬 Advanced ETL: HATEOAS & Declarative Reductions with `calc`
 
 REST APIs are notorious for returning deeply nested, bloated arrays. 

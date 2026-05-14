@@ -81,6 +81,6 @@ and worked examples. The library surface, by verb:
 ## Prefer narrative docs?
 
 The rest of `/docs/` covers the **how** and **why** with hands-on
-walkthroughs — start with the [Quick Setup tutorial](./1_quick_setup.md).
+walkthroughs — start with [Tutorial 1 — First Steps](./1_first_steps.md).
 The pdoc reference covers the **what** for every parameter and return
 type.

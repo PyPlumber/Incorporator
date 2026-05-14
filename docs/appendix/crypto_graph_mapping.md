@@ -1,5 +1,13 @@
 ***
 
+> 📎 **Appendix** — was previously Tutorial 3. The `link_to`-based
+> in-memory join pattern is still production-ready, but the current
+> Tutorial 7 (Multi-Source Fjord) demonstrates the same crypto fusion
+> as a live daemon. Reach for this appendix when you need the static
+> join pattern without the daemon scaffolding.
+
+***
+
 # 🕸️ Multi-Graph Mapping: The Unified Trading Dashboard
 
 In the real world, no single API has all the data you need. 

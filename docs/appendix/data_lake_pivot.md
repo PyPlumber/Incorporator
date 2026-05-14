@@ -1,6 +1,15 @@
+***
+
+> 📎 **Appendix** — was previously Tutorial 5. The headline
+> patterns (JSON ↔ Avro / SQLite round-trips, format-agnostic export)
+> are now in [Tutorial 2 — Universal Formats](../2_universal_formats.md).
+> This file kept as reference for the original walkthrough.
+
+***
+
 # 🐘 The Data Lake Pivot: Bridging JSON to Avro & SQLite
 
-**File:**[`examples/5_data_lake_pivot.py`](../examples/5_data_lake_pivot.py)
+**File:**[`../../examples/appendix/data_lake_pivot.py`](../../examples/appendix/data_lake_pivot.py)
 
 In enterprise data engineering, moving data from flexible Web APIs (JSON) into strict analytical warehouses (SQLite/SQL) and distributed Data Lakes (Apache Avro) is notoriously tedious. It usually requires manual schema definitions, type mapping, and flattening nested dictionaries.
 

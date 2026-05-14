@@ -2,7 +2,7 @@ blank_issues_enabled: false
 contact_links:
   - name: 📖 Documentation
     url: https://github.com/PyPlumber/incorporator/tree/main/docs
-    about: Most usage questions are answered in the docs. Start with docs/1_quick_setup.md.
+    about: Most usage questions are answered in the docs. Start with docs/1_first_steps.md.
   - name: 🔒 Security vulnerability
     url: https://github.com/PyPlumber/incorporator/security/advisories/new
     about: Report security issues privately via GitHub's security tab. Do NOT open a public issue.

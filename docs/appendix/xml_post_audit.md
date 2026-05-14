@@ -1,5 +1,13 @@
 ***
 
+> 📎 **Appendix** — was previously Tutorial 4. Moved here so the
+> numbered curriculum (Tutorials 1-7) covers the canonical verb arc
+> without an XML/POST detour. The patterns below — XML ingestion +
+> declarative bulk POST + state-carrier graph drilling — are still
+> production-ready; this just isn't where a new user starts.
+
+***
+
 # 🚨 Declarative Bulk POST Enrichment: Auditing "Shady Jimmy"
 
 REST APIs don’t just use `GET`. When querying bulk endpoints (like Government Databases or GraphQL), you often need to use `POST` and send a **dynamic payload** mapping multiple records. 
