@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict, List, Optional, cast
 
 from ..logger import Wave
-from ._shared import _interruptible_sleep
+from ._shared import _interruptible_sleep, _resolve_if_exists_for_export
 
 
 async def _outflow_daemon(
@@ -107,7 +107,17 @@ async def _outflow_daemon(
                 # contract.
                 DynamicCls._fjord_snapshot = instances
 
-                await DynamicCls.export(instance=instances, **export_params)
+                # Resolve if_exists per tick — first tick uses handler default
+                # (replace); subsequent ticks append on append-friendly formats
+                # or replace on monolithic formats so the file always holds
+                # the latest fused snapshot rather than crashing.
+                resolved = _resolve_if_exists_for_export(
+                    file_path=export_params.get("file_path"),
+                    force_append=(loop_idx > 1),
+                    user_override=export_params.get("if_exists"),
+                )
+                params = export_params if resolved is None else {**export_params, "if_exists": resolved}
+                await DynamicCls.export(instance=instances, **params)
 
                 await wave_queue.put(
                     Wave(

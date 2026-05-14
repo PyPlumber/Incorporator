@@ -4,8 +4,48 @@ import asyncio
 import time
 from typing import Any, AsyncGenerator, Dict, Optional
 
+from ...exceptions import IncorporatorFormatError
+from ...io.formats import infer_format
+from ...io.handlers._base import supports_append
 from ..logger import Wave
 from ._shared import _enrich_and_load, _row_count
+
+
+def _pre_flight_chunked_append_check(
+    export_params: Optional[Dict[str, Any]],
+    paginator: Any,
+) -> None:
+    """Fail-fast guard for paginated chunked streams hitting append-rejected formats.
+
+    Chunked mode produces NEW data per chunk (different rows each tick).
+    Append-rejected formats (Parquet / Feather / ORC / Excel / XML / JSON)
+    can't accumulate chunks — every chunk would clobber the prior chunk's
+    output, which is silent data loss.  When a paginator is in play AND the
+    export target rejects append, raise immediately so the user picks an
+    append-friendly format (NDJSON / CSV / SQLite / Avro) before the
+    pipeline starts running.
+
+    Single-shot chunked mode (no paginator) is exempt: only one chunk
+    fires, so monolithic targets are fine.
+    """
+    if export_params is None or paginator is None:
+        return
+    file_path = export_params.get("file_path")
+    if file_path is None:
+        return
+    try:
+        fmt = infer_format(file_path)
+    except Exception:
+        return
+    if supports_append(fmt):
+        return
+    raise IncorporatorFormatError(
+        f"Chunked streaming to {fmt.value!r} would lose data — every chunk would "
+        f"overwrite the prior chunk's output.  Switch the export target to an "
+        f"append-friendly format (.ndjson / .csv / .sqlite / .avro), drop the "
+        f"paginator for a single-shot write, or use stateful_polling=True if you "
+        f"want the file to always hold the latest registry snapshot."
+    )
 
 
 async def _run_chunking_engine(
@@ -24,6 +64,11 @@ async def _run_chunking_engine(
     flat regardless of total data volume.  Sleeps ``poll_interval`` between
     full passes when continuous polling is requested.
     """
+    # Pre-flight: monolithic export targets are incompatible with paginated
+    # chunked streaming (every chunk would clobber the prior).  Fail loud
+    # before the pipeline starts, not on chunk 2 mid-write.
+    _pre_flight_chunked_append_check(export_params, paginator)
+
     while True:
         chunk_idx = 0
         while True:

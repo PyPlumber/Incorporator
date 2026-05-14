@@ -85,16 +85,44 @@ async def test_enrich_and_load_refresh_only() -> None:
 
 @pytest.mark.asyncio
 async def test_enrich_and_load_export_force_append() -> None:
-    """force_append=True must inject if_exists='append' into a copy of export_params."""
+    """force_append=True on an append-friendly format must inject if_exists='append'.
+
+    Uses NDJSON (append-friendly).  See the companion
+    test_enrich_and_load_force_append_falls_back_to_replace_for_monolithic
+    test for the new contract on monolithic formats (Parquet / JSON / etc).
+    """
     cls = MagicMock()
     cls.export = AsyncMock()
     dataset: List[Any] = [{"id": 1}]
-    original_params = {"file_path": "/tmp/out.json"}
+    original_params = {"file_path": "/tmp/out.ndjson"}
 
     await _enrich_and_load(cls, dataset, refresh_params=None, export_params=original_params, force_append=True)
 
-    cls.export.assert_awaited_once_with(instance=dataset, file_path="/tmp/out.json", if_exists="append")
+    cls.export.assert_awaited_once_with(instance=dataset, file_path="/tmp/out.ndjson", if_exists="append")
     # Original dict must NOT be mutated
+    assert "if_exists" not in original_params
+
+
+@pytest.mark.asyncio
+async def test_enrich_and_load_force_append_falls_back_to_replace_for_monolithic() -> None:
+    """force_append=True on a monolithic format (JSON / Parquet / XML) falls back to replace.
+
+    The user's primary concern from the senior review: pre-fix, every chunk
+    in stateful / fjord modes forced if_exists='append', and monolithic
+    formats raised IncorporatorFormatError mid-pipeline (chunked) or
+    silently clobbered (stateful — handler default was replace anyway).
+
+    Post-fix: the resolver detects the format and downgrades to 'replace'
+    automatically so the file always holds the latest snapshot.
+    """
+    cls = MagicMock()
+    cls.export = AsyncMock()
+    dataset: List[Any] = [{"id": 1}]
+    original_params = {"file_path": "/tmp/out.json"}                # monolithic JSON
+
+    await _enrich_and_load(cls, dataset, refresh_params=None, export_params=original_params, force_append=True)
+
+    cls.export.assert_awaited_once_with(instance=dataset, file_path="/tmp/out.json", if_exists="replace")
     assert "if_exists" not in original_params
 
 

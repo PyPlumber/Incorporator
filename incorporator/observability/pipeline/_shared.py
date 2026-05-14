@@ -13,6 +13,42 @@ async def _interruptible_sleep(event: asyncio.Event, timeout: Optional[float]) -
         return False
 
 
+def _resolve_if_exists_for_export(
+    file_path: Optional[str],
+    force_append: bool,
+    user_override: Optional[str],
+) -> Optional[str]:
+    """Decide the ``if_exists`` value for a streaming export tick.
+
+    Pipeline behaviour contract:
+      * User passed ``if_exists`` explicitly → honour it verbatim.
+      * ``force_append=False`` (first tick / single-shot) → return None,
+        let the handler use its default ("replace" semantics).
+      * ``force_append=True`` AND format supports append → "append".
+      * ``force_append=True`` AND format CANNOT append → "replace" so the
+        monolithic file always holds the latest registry snapshot rather
+        than crashing on the second tick.
+
+    Returns the chosen ``if_exists`` value, or None when no override is
+    needed (handler default applies).
+    """
+    if user_override is not None:
+        return user_override                       # explicit user wins
+    if not force_append:
+        return None                                # first tick / single-shot
+    # Subsequent tick: prefer append on supported formats, else replace.
+    from ...io.formats import infer_format
+    from ...io.handlers._base import supports_append
+
+    if file_path is None:
+        return "append"                            # no path to inspect; legacy default
+    try:
+        fmt = infer_format(file_path)
+    except Exception:
+        return "append"                            # unknowable → assume append-friendly
+    return "append" if supports_append(fmt) else "replace"
+
+
 async def _enrich_and_load(
     cls: Any,
     dataset: Any,
@@ -28,10 +64,17 @@ async def _enrich_and_load(
         await cls.refresh(instance=dataset, **refresh_params)
 
     if export_params is not None:
-        params = export_params.copy() if force_append else export_params
-        if force_append:
-            params["if_exists"] = "append"
-        await cls.export(instance=dataset, **params)
+        resolved = _resolve_if_exists_for_export(
+            file_path=export_params.get("file_path"),
+            force_append=force_append,
+            user_override=export_params.get("if_exists"),
+        )
+        if resolved is None:
+            await cls.export(instance=dataset, **export_params)
+        else:
+            params = export_params.copy()
+            params["if_exists"] = resolved
+            await cls.export(instance=dataset, **params)
 
 
 def _row_count(dataset: Any) -> int:

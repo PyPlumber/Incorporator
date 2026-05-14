@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List, TextIO, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import deserialize_nested, ensure_string, serialize_nested
-from ._base import BaseFormatHandler
+from ._base import BaseFormatHandler, _neutralise_formula_injection
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +63,20 @@ class CSVHandler(BaseFormatHandler):
         (skips the header row when the target file already exists with
         non-zero size). Nested dict/list values are JSON-encoded via
         ``serialize_nested``.
+
+        Formula-injection mitigation: string cells starting with ``=``, ``@``,
+        ``+``, ``-``, or whitespace control characters are prefixed with a
+        single quote so Excel / LibreOffice / Sheets render them as text
+        rather than evaluating them as formulas (the canonical OWASP fix).
+        Opt out with ``csv_safe_formulas=False`` when the consumer is known
+        to need raw passthrough.
         """
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         try:
             path = Path(file_path).resolve()
             is_append = kwargs.get("if_exists") == "append"
             mode = "a" if is_append else "w"
+            safe_formulas: bool = kwargs.get("csv_safe_formulas", True)
 
             # Only write headers if we are creating a new file
             write_headers = not (is_append and path.exists() and path.stat().st_size > 0)
@@ -85,8 +93,14 @@ class CSVHandler(BaseFormatHandler):
             else:
                 data_iter = data
 
+            def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+                serialised = {k: serialize_nested(v) for k, v in row.items()}
+                if safe_formulas:
+                    return {k: _neutralise_formula_injection(v) for k, v in serialised.items()}
+                return serialised
+
             with open(path, mode, encoding="utf-8", newline="") as f:
-                processed_gen = ({k: serialize_nested(v) for k, v in row.items()} for row in data_iter)
+                processed_gen = (_serialize_row(row) for row in data_iter)
                 writer = csv.DictWriter(
                     f, fieldnames=explicit_fieldnames, delimiter=self.delimiter, extrasaction="ignore"
                 )

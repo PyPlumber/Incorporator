@@ -22,7 +22,7 @@ from typing import Any, Dict, Iterable, List, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import deserialize_nested, serialize_nested
-from ._base import BaseFormatHandler, _raise_if_append_unsupported
+from ._base import BaseFormatHandler, _neutralise_formula_injection, _raise_if_append_unsupported
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,11 @@ class ExcelHandler(BaseFormatHandler):
         path = Path(file_path).resolve()
         sheet_name = kwargs.get("sheet_name", "Sheet1")
         explicit_fieldnames: List[str] = kwargs.get("all_field_names") or []
+        # Formula-injection mitigation defaults ON — cells starting with
+        # =, @, +, -, or whitespace control chars get a single-quote prefix
+        # so Excel renders them as text instead of evaluating.  Opt out via
+        # ``xlsx_safe_formulas=False`` when the consumer needs raw passthrough.
+        safe_formulas: bool = kwargs.get("xlsx_safe_formulas", True)
 
         data_iter: Iterable[Dict[str, Any]]
 
@@ -139,8 +144,13 @@ class ExcelHandler(BaseFormatHandler):
                 for row in data_iter:
                     # serialize_nested flattens dict/list values to JSON strings,
                     # matching CSV / SQLite behaviour. Excel has no native nested
-                    # type, so this is the only safe choice.
-                    ws.append([serialize_nested(row.get(k)) for k in explicit_fieldnames])
+                    # type, so this is the only safe choice.  Formula-injection
+                    # mitigation prefixes any "=", "@", "+", "-" string with a
+                    # single quote so Excel renders text instead of evaluating.
+                    cells = [serialize_nested(row.get(k)) for k in explicit_fieldnames]
+                    if safe_formulas:
+                        cells = [_neutralise_formula_injection(v) for v in cells]
+                    ws.append(cells)
 
                 wb.save(str(path))
             finally:

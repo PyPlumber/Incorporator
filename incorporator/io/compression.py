@@ -117,6 +117,51 @@ def _find_target_in_archive(names: list[str], active_format: FormatType, archive
 # ==========================================
 
 
+# Hard ceiling on decompressed payload size.  Defends against decompression
+# bombs (gzip / zstd / brotli payloads where 1 KB of compressed data expands
+# to gigabytes).  Override via the INCORPORATOR_MAX_DECOMPRESSED_BYTES env
+# var when the workload legitimately exceeds 1 GB; default is conservative.
+import os as _os
+
+DEFAULT_MAX_DECOMPRESSED_BYTES: int = 1 * 1024 * 1024 * 1024  # 1 GB
+
+
+def _max_decompressed_bytes() -> int:
+    """Read the bomb-cap ceiling from the env each call.
+
+    Per-call read (not cached) so test fixtures can monkeypatch the env var
+    without re-importing the module.  The check fires only on
+    decompression, which is rare relative to other hot paths — the env
+    lookup cost is negligible there.
+    """
+    raw = _os.environ.get("INCORPORATOR_MAX_DECOMPRESSED_BYTES")
+    if not raw:
+        return DEFAULT_MAX_DECOMPRESSED_BYTES
+    try:
+        return int(raw)
+    except ValueError:
+        return DEFAULT_MAX_DECOMPRESSED_BYTES
+
+
+def _enforce_size_cap(decompressed_size: int, comp_type: CompressionType) -> None:
+    """Raise when a decompressed payload exceeds the configured cap.
+
+    Called by every decompression strategy AFTER the bytes are produced
+    (the native streams + cramjam don't expose a streaming size-bounded
+    API).  This is post-hoc but still bounds RAM since the worst case is
+    one bomb payload's worth — better than letting a 1-byte input become
+    a 100 GB explosion.
+    """
+    cap = _max_decompressed_bytes()
+    if decompressed_size > cap:
+        raise IncorporatorFormatError(
+            f"Decompression bomb blocked: {comp_type.value!r} payload would "
+            f"expand to {decompressed_size:,} bytes (cap = {cap:,}). "
+            f"Set INCORPORATOR_MAX_DECOMPRESSED_BYTES if the workload "
+            f"legitimately needs more headroom."
+        )
+
+
 def _decompress_native_stream(
     data: Union[str, bytes],
     comp_type: CompressionType,
@@ -133,15 +178,20 @@ def _decompress_native_stream(
         try:
             if comp_type == CompressionType.GZIP:
                 with gzip.open(path, mode, encoding=encoding) as gz_f:
-                    return gz_f.read()
+                    decompressed = gz_f.read()
             elif comp_type == CompressionType.BZ2:
                 with bz2.open(path, mode, encoding=encoding) as bz_f:
-                    return bz_f.read()
+                    decompressed = bz_f.read()
             elif comp_type in (CompressionType.XZ, CompressionType.LZMA):
                 with lzma.open(path, mode, encoding=encoding) as lz_f:
-                    return lz_f.read()
+                    decompressed = lz_f.read()
             else:
                 raise IncorporatorFormatError(f"Unsupported native stream type: {comp_type}")
+            _enforce_size_cap(
+                len(decompressed) if isinstance(decompressed, (bytes, str)) else 0,
+                comp_type,
+            )
+            return decompressed
         except IncorporatorFormatError:
             raise
         except Exception as e:
@@ -156,30 +206,51 @@ def _decompress_native_stream(
             raw = lzma.decompress(data)
         else:
             raise IncorporatorFormatError(f"Unsupported native stream type: {comp_type}")
+        _enforce_size_cap(len(raw), comp_type)
 
         return raw if is_bin else raw.decode("utf-8")
 
     raise IncorporatorFormatError("Data must be a filepath string or bytes.")
 
 
-def _validate_tar_members(members: List[Any]) -> None:
-    """Guard against TAR path traversal (dotdot and absolute paths).
+def _validate_archive_member_names(names: List[str], archive_kind: str) -> None:
+    """Guard against archive path traversal for ZIP and TAR alike.
 
-    Validates every member against a resolved safe temp directory so that
+    Validates every member name against a resolved safe temp directory so
     ``../../etc/passwd`` and ``/etc/passwd``-style names are blocked before
-    any extraction takes place.
+    any extraction takes place.  Also flags absolute paths and Windows-style
+    drive prefixes that ``Path.resolve()`` may not catch on POSIX.
+
+    ``archive_kind`` is used only for the error message ("ZIP" vs "TAR").
     """
     import tempfile
 
     safe_dir = Path(tempfile.mkdtemp()).resolve()
     try:
-        for member in members:
-            member_path = (safe_dir / member.name).resolve()
+        for name in names:
+            # Explicit absolute / drive-prefix rejection: Path.resolve()
+            # collapses POSIX absolutes ("/etc/passwd") into safe_dir on
+            # some platforms; reject them up-front for clarity.
+            if name.startswith(("/", "\\")) or (len(name) >= 2 and name[1] == ":"):
+                raise IncorporatorFormatError(
+                    f"{archive_kind} path traversal blocked (absolute path): {name!r}"
+                )
+            member_path = (safe_dir / name).resolve()
             if not str(member_path).startswith(str(safe_dir)):
-                raise IncorporatorFormatError(f"Archive path traversal blocked: {member.name!r}")
+                raise IncorporatorFormatError(
+                    f"{archive_kind} path traversal blocked: {name!r}"
+                )
     finally:
         # Clean up the temp directory immediately — we only needed it for resolve()
         shutil.rmtree(safe_dir, ignore_errors=True)
+
+
+def _validate_tar_members(members: List[Any]) -> None:
+    """Backwards-compatible wrapper that funnels TAR members through the
+    shared archive-name validator.  Kept as a thin alias so existing call
+    sites stay untouched.
+    """
+    _validate_archive_member_names([m.name for m in members], archive_kind="TAR")
 
 
 def _decompress_archive(
@@ -194,10 +265,16 @@ def _decompress_archive(
     if comp_type == CompressionType.ZIP:
         file_obj = Path(data).resolve() if isinstance(data, str) else io.BytesIO(data)
         with zipfile.ZipFile(file_obj, "r") as zf:
+            # Block ZIP slip / path traversal before extraction.  Mirrors the
+            # TAR validator at lines above — pre-fix, ZIP had no equivalent
+            # guard, so a malicious member name like '../../etc/passwd' could
+            # escape the extraction scope.
+            _validate_archive_member_names(zf.namelist(), archive_kind="ZIP")
             zip_target = _find_target_in_archive(zf.namelist(), active_format, archive_target)
             with zf.open(zip_target) as zip_io:
                 raw_bytes = zip_io.read()
-                return raw_bytes if is_bin else raw_bytes.decode("utf-8")
+            _enforce_size_cap(len(raw_bytes), comp_type)
+            return raw_bytes if is_bin else raw_bytes.decode("utf-8")
 
     if comp_type in (CompressionType.TAR, CompressionType.TGZ):
         file_args = {"name": Path(data).resolve()} if isinstance(data, str) else {"fileobj": io.BytesIO(data)}
@@ -212,6 +289,7 @@ def _decompress_archive(
             tar_io = tf.extractfile(tar_target)
             if tar_io:
                 raw_bytes = tar_io.read()
+                _enforce_size_cap(len(raw_bytes), comp_type)
                 return raw_bytes if is_bin else raw_bytes.decode("utf-8")
             raise IncorporatorFormatError("Failed to extract target from Tar archive.")
 
@@ -241,10 +319,12 @@ def _decompress_cramjam(
             with open(Path(data).resolve(), "rb") as f:
                 # cramjam ≥2.x returns a Buffer object, not plain bytes — wrap in bytes()
                 raw_bytes = bytes(cj_module.decompress(f.read()))
-                return raw_bytes if is_bin else raw_bytes.decode("utf-8")
+            _enforce_size_cap(len(raw_bytes), comp_type)
+            return raw_bytes if is_bin else raw_bytes.decode("utf-8")
 
         # cramjam ≥2.x returns a Buffer object, not plain bytes — wrap in bytes()
         raw_bytes = bytes(cj_module.decompress(data))
+        _enforce_size_cap(len(raw_bytes), comp_type)
         return raw_bytes if is_bin else raw_bytes.decode("utf-8")
 
     except ImportError:

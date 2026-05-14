@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ..logger import Wave
-from ._shared import _interruptible_sleep, _row_count
+from ._shared import _interruptible_sleep, _resolve_if_exists_for_export, _row_count
 
 
 async def _refresh_daemon(
@@ -91,7 +91,17 @@ async def _export_daemon(
         try:
             async with lock:
                 snapshot = dataset_ref[0]
-            await cls.export(instance=snapshot, **export_params)
+            # Resolve if_exists per tick: first tick uses handler default
+            # (replace); subsequent ticks append on append-friendly formats
+            # or replace again on monolithic formats (Parquet/Excel/XML/JSON).
+            # Honour an explicit user-supplied if_exists verbatim.
+            resolved = _resolve_if_exists_for_export(
+                file_path=export_params.get("file_path"),
+                force_append=(loop_idx > 1),
+                user_override=export_params.get("if_exists"),
+            )
+            params = export_params if resolved is None else {**export_params, "if_exists": resolved}
+            await cls.export(instance=snapshot, **params)
             await wave_queue.put(
                 Wave(
                     chunk_index=loop_idx,
