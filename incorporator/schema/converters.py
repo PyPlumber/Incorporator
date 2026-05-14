@@ -62,12 +62,73 @@ class CalcAllOp:
 
 
 def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None) -> CalcOp:
-    """Creates a multi-input row calculation."""
+    """Compute one field's value per row from one or more source fields.
+
+    Drop the return value into a ``conv_dict`` entry; the framework calls
+    ``func`` once per row, passing the named source fields as positional
+    arguments::
+
+        def full_name(first, last):
+            return f"{first} {last}"
+
+        users = await User.incorp(
+            inc_url="...",
+            conv_dict={
+                "name": calc(full_name, "first_name", "last_name"),
+            },
+        )
+
+    Args:
+        func: Callable invoked once per row.  Receives one positional
+            argument per name in ``input_keys`` (missing keys arrive
+            as ``None``).
+        *input_keys: Source field names whose values are passed to ``func``.
+        default: Value used when ``func`` raises or returns ``None``.
+        target_type: Optional type the result is coerced to (``int``,
+            ``float``, ...).
+
+    Returns:
+        A :class:`CalcOp` marker — store it in ``conv_dict``; the engine
+        unwraps it during instance construction.
+
+    For column-wide aggregation (a single call across every row) use
+    :func:`calc_all` instead.
+    """
     return CalcOp(func, default, target_type, list(input_keys))
 
 
 def calc_all(func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None) -> CalcAllOp:
-    """Creates a batch/array calculation down an entire column."""
+    """Compute one field's value from the **entire column** in a single call.
+
+    Like :func:`calc` but ``func`` is invoked **once** with the full list
+    of values across every row — use for window aggregations, ranking,
+    or any reduction that needs the whole column::
+
+        def rank_by_score(scores):
+            ranked = sorted(enumerate(scores), key=lambda p: -p[1])
+            ranks = {idx: r + 1 for r, (idx, _) in enumerate(ranked)}
+            return [ranks[i] for i in range(len(scores))]
+
+        players = await Player.incorp(
+            inc_url="...",
+            conv_dict={"rank": calc_all(rank_by_score, "score")},
+        )
+
+    Args:
+        func: Callable invoked **once total** with one positional argument
+            per input key.  Each positional is a ``list`` of every row's
+            value for that key.  Must return a list with one element per
+            row, in the same order.
+        *input_keys: Source field names.
+        default: Per-row fallback when the returned list is shorter than
+            the row count or contains ``None``.
+        target_type: Optional coercion type applied per row.
+
+    Returns:
+        A :class:`CalcAllOp` marker — store it in ``conv_dict``.
+
+    For per-row computation use :func:`calc` instead.
+    """
     return CalcAllOp(func, default, target_type, list(input_keys))
 
 
@@ -141,9 +202,40 @@ def _get_cached_adapter(actual_type: Any) -> Optional[TypeAdapter[Any]]:
 
 
 def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
-    """
-    Returns a Context-Aware, Type-Ranked validation closure.
-    Now supports `default` fallbacks for missing data or failed conversions!
+    """Coerce a raw API value into a Python type — the workhorse of ``conv_dict``.
+
+    Use ``inc(SomeType)`` in :meth:`Incorporator.incorp`'s ``conv_dict`` to
+    convert every value of that field to ``SomeType`` before Pydantic sees
+    it.  Handles the common pain points of messy API payloads:
+
+    - Strings that are really numbers (``"42"`` → ``42``).
+    - ISO-8601 timestamps (``"2026-05-12T14:32:00Z"`` → ``datetime``).
+    - Boolean-shaped strings (``"yes"``, ``"true"``, ``1`` → ``True``).
+    - The standard garbage-value family (``"N/A"``, ``"null"``,
+      ``"unknown"``, empty string) silently becomes ``default``.
+
+    Example::
+
+        from datetime import datetime
+
+        launches = await Launch.incorp(
+            inc_url="...",
+            conv_dict={
+                "net": inc(datetime),          # ISO-8601 → datetime
+                "altitude_m": inc(float),      # "120.5" → 120.5
+                "is_recovered": inc(bool, default=False),
+            },
+        )
+
+    Args:
+        target_type: The Python type to coerce values to (``int``, ``float``,
+            ``bool``, ``str``, ``datetime``, or pass :data:`new` to accept
+            whatever shape the API hands back).
+        default: Value returned when the source is missing, empty, or a
+            known garbage value; also returned when coercion raises.
+
+    Returns:
+        A converter closure suitable for placing in ``conv_dict``.
     """
     # 1. The 'new' mapping: If 'new', accept ANY valid Python type.
     actual_type = Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type

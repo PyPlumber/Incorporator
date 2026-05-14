@@ -19,7 +19,21 @@ logger = logging.getLogger(__name__)
 # COMMON CALC() FUNCTIONS (Built-ins)
 # ==========================================
 def sum_attributes(*args: Any) -> float:
-    """Example built-in calc function: Safely sums multiple attributes with zero string-allocation overhead."""
+    """Sum any number of values, treating non-numeric and ``None`` as zero.
+
+    A ready-made reducer for :func:`calc` — pair it with field names that
+    hold numeric strings or floats and you get a safe total regardless of
+    whether the API returns the values as ``int``, ``"42"``, or ``None``::
+
+        from incorporator import calc, sum_attributes
+
+        await User.incorp(
+            inc_url="...",
+            conv_dict={
+                "total": calc(sum_attributes, "subtotal", "tax", "tip"),
+            },
+        )
+    """
     total = 0.0
     for x in args:
         if x is not None:
@@ -34,6 +48,30 @@ def sum_attributes(*args: Any) -> float:
 def split_and_get(
     delimiter: str = "/", index: int = -1, cast_type: Optional[Callable[[Any], Any]] = None
 ) -> Callable[[Any], Any]:
+    """Split a string by ``delimiter`` and return one position.
+
+    Common pattern for extracting an ID from the tail of a HATEOAS URL::
+
+        # "https://api.example.com/pokemon/25/" → 25
+        conv_dict={
+            "id": split_and_get("/", index=-2, cast_type=int),
+        }
+
+    Args:
+        delimiter: Character(s) to split on.  Surrounding occurrences are
+            stripped before the split so ``"/foo/"`` and ``"foo"`` behave
+            identically.
+        index: Position to return from the resulting list — negative
+            indices count from the end (default ``-1`` returns the last
+            non-empty part).
+        cast_type: Optional callable applied to the extracted string
+            (e.g. ``int`` to convert a numeric ID).
+
+    Returns a closure for use in ``conv_dict``.  ``None`` / empty values
+    pass through as ``None``; out-of-range indices and failed casts also
+    return ``None`` rather than raising.
+    """
+
     def _splitter(value: Any) -> Any:
         if value is None or value == "":
             return None
@@ -52,7 +90,43 @@ def split_and_get(
 
 
 def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
-    """Maps relational data using a memory-safe hybrid internal cache."""
+    """Join one source's foreign-key field to another source's instances.
+
+    Pass an :class:`IncorporatorList` (or any object with an ``inc_dict``)
+    and a value from the current row will be looked up in that list's
+    registry — turning a string ID into the actual instance::
+
+        binance_books = await BinanceBook.incorp(inc_url="...", inc_code="symbol")
+
+        assets = await Asset.incorp(
+            inc_url="...",
+            conv_dict={
+                # "BTC" → binance_books.inc_dict["BTC"]  (the actual record)
+                "live_book": link_to(binance_books),
+            },
+        )
+
+    Args:
+        dataset: The right-hand side of the join.  Typically an
+            :class:`IncorporatorList`; any object with an ``inc_dict``
+            mapping works too.
+        extractor: Optional transformer applied to the current row's
+            value before the lookup — useful when the FK needs reshaping
+            (e.g. uppercase + suffix to match a stock-ticker format)::
+
+                conv_dict={
+                    "binance_pair": link_to(books, extractor=lambda sym: f"{sym.upper()}USDT"),
+                }
+
+    Returns:
+        A converter closure.  Unmatched keys resolve to ``None`` — never
+        raises.  The lookup tries the key as-is and also its ``str()``
+        form to absorb the common "API returns int, registry keyed by
+        string" mismatch.
+
+    For lists of foreign keys (e.g. tags → tag objects) use
+    :func:`link_to_list`.
+    """
 
     # 1. Primary Cache: OOM-Safe for production Incorporator/Pydantic objects
     registry: "weakref.WeakValueDictionary[Any, Any]" = weakref.WeakValueDictionary()
@@ -114,7 +188,22 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
 
 
 def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], List[Any]]:
-    """Automatically maps a list of foreign keys to their corresponding objects."""
+    """Plural variant of :func:`link_to` — resolve a list of foreign keys to objects.
+
+    Use when the source field is itself a list of IDs (e.g. ``tag_ids``,
+    ``author_uuids``).  Returns a list of matched instances; unmatched
+    keys are filtered out silently.
+
+    ::
+
+        articles = await Article.incorp(
+            inc_url="...",
+            conv_dict={
+                # "tag_ids": ["python", "etl"] → [Tag(python), Tag(etl)]
+                "tags": link_to_list(tags),
+            },
+        )
+    """
     base_linker = link_to(dataset, extractor)
 
     def _mapper(val_list: Any) -> List[Any]:
@@ -126,9 +215,29 @@ def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None)
 
 
 def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
-    """
-    Extracts nested dictionary values via dot-notation drilling.
-    Supports chaining an additional converter logic (e.g., pluck('a.b', chain=int)).
+    """Drill into a nested dict and return one value by dotted path.
+
+    Common pattern for lifting a deeply-nested field up to a top-level
+    attribute on the resulting object::
+
+        # Source row: {"pad": {"location": {"name": "Kennedy SC"}}}
+        # Target:     launch.pad_name == "Kennedy SC"
+
+        await Launch.incorp(
+            inc_url="...",
+            conv_dict={
+                "pad_name": pluck("pad.location.name"),
+            },
+        )
+
+    Args:
+        key: Dot-separated path to the value (e.g. ``"a.b.c"``).
+        chain: Optional callable applied to the extracted value (e.g.
+            ``int`` or another converter token like ``inc(datetime)``).
+
+    Returns a converter closure.  Missing path segments resolve to ``None``
+    rather than raising — drilling through ``{"a": None}`` for path
+    ``"a.b"`` returns ``None`` safely.
     """
     parts = key.split(".")
 
@@ -156,17 +265,53 @@ def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[A
 
 
 def each() -> _EachSentinel:
-    """
-    POST Token: Triggers N Concurrent Iterative Requests.
-    Maps an extracted list of parent IDs row-by-row into the payload dictionary.
+    """POST-payload token: send one HTTP request per extracted parent ID.
+
+    Place inside a ``json_payload`` / ``form_payload`` dict when you want
+    :meth:`Incorporator.incorp` to fan out **N concurrent POSTs** — one
+    per row in the parent dataset — each carrying the corresponding
+    parent ID at that position::
+
+        results = await Decoded.incorp(
+            inc_url="https://api.example.com/decode",
+            inc_parent=invoices,
+            inc_child="vehicle_id",
+            http_method="POST",
+            json_payload={"vehicle_id": each(), "format": "json"},
+        )
+
+    Pair with :func:`join_all` (one bulk request) or :func:`as_list`
+    (one request carrying an array) when the target endpoint accepts a
+    batch shape — your choice of token controls the request count.
     """
     return _EachSentinel()
 
 
 def join_all(delimiter: str = ",") -> Callable[[Any], str]:
-    """
-    POST Token: Triggers 1 Bulk Batch Request.
-    Takes a list of extracted parent IDs and joins them into a single delimited string.
+    """POST-payload token: send one bulk request with all parent IDs joined.
+
+    Place inside a ``json_payload`` / ``form_payload`` dict to collapse
+    every extracted parent ID into a **single delimited string** the
+    target endpoint can scan in one request::
+
+        specs = await NHTSASpec.incorp(
+            inc_url="https://vpic.nhtsa.dot.gov/.../DecodeVINValuesBatch/",
+            inc_parent=invoices,
+            inc_child="Vehicle.VIN",
+            http_method="POST",
+            payload_type="form",
+            form_payload={"data": join_all(";"), "format": "json"},
+        )
+
+    Args:
+        delimiter: Separator between IDs.  Default ``","``; common
+            alternatives are ``";"`` and ``"|"`` depending on the API.
+
+    Returns a converter closure.  Non-list inputs pass through as
+    ``str(value)``.
+
+    See :func:`each` (N requests) and :func:`as_list` (one request, JSON
+    array body) for the other request-count patterns.
     """
 
     def _joiner(data: Any) -> str:
@@ -178,8 +323,24 @@ def join_all(delimiter: str = ",") -> Callable[[Any], str]:
 
 
 def as_list() -> Callable[[Any], List[Any]]:
-    """
-    POST Token: Triggers 1 Bulk Batch Request.
-    Injects the raw extracted list of parent IDs directly into a JSON Array.
+    """POST-payload token: send one bulk request carrying parent IDs as a JSON array.
+
+    Place inside a ``json_payload`` dict to ship every extracted parent ID
+    in a **single request** with the IDs as a JSON list — the natural
+    shape for endpoints that accept a typed array body::
+
+        results = await Endpoint.incorp(
+            inc_url="https://api.example.com/bulk",
+            inc_parent=invoices,
+            inc_child="id",
+            http_method="POST",
+            json_payload={"ids": as_list()},   # → {"ids": [1, 2, 3, ...]}
+        )
+
+    Returns a converter closure.  Scalar inputs are wrapped in a
+    single-element list.
+
+    See :func:`each` (N requests) and :func:`join_all` (one request,
+    delimited string) for the other request-count patterns.
     """
     return lambda data: data if isinstance(data, list) else [data]

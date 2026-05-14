@@ -93,31 +93,37 @@ def _apply_inflow_resolution(
 class Incorporator(BaseModel):
     """The Incorporator base class — subclass it to build an async ETL pipeline.
 
-    ``Incorporator`` is the public surface of the entire framework.  Subclassing
-    (not instantiation) is the primary user interaction: every subclass
-    automatically gets its own dynamically generated Pydantic V2 model **and**
-    its own ``WeakValueDictionary`` instance registry, so unrelated data sources
-    never share state.
+    Subclassing (not instantiation) is the primary user interaction.  Every
+    subclass automatically gets its own dynamically generated Pydantic V2
+    model and its own instance registry, so unrelated data sources never
+    share state.
 
-    The "Holy Trinity" API is three ``@classmethod`` factories:
+    Public verbs you call on a subclass:
 
-    - :meth:`incorp` — Extract & Transform: fetch unknown JSON/XML/CSV/SQLite,
-      coerce types, and return dot-notation Python objects.
-    - :meth:`refresh` — Stateful Update: re-fetch live data into existing
-      instances, deduplicated via origin URL/file.
-    - :meth:`export` — Load: serialise the in-memory object graph out to CSV,
-      JSON, XML, SQLite, Avro, NDJSON, etc.
+    - :meth:`incorp` — fetch + parse + build the object graph.
+    - :meth:`test` — let the framework write your ``incorp()`` kwargs for
+      you by inspecting an unknown endpoint.
+    - :meth:`refresh` — re-fetch live data into existing instances,
+      deduplicated by origin URL/file.
+    - :meth:`export` — serialise the object graph out to any supported
+      format (JSON, NDJSON, CSV, Parquet, SQLite, Avro, Feather, ORC,
+      Excel, XML, …).
+    - :meth:`stream` — run a long-running pipeline as a daemon; yield one
+      :class:`Wave` per tick.
+    - :meth:`fjord` — fuse multiple sources through a user-supplied
+      ``outflow(state)`` function and export the combined output.
+    - :meth:`display` — REPL identity print for ad-hoc debugging.
 
     Design contract:
 
-    - Inherits from ``pydantic.BaseModel`` with ``extra='allow'`` so unexpected
-      fields from messy APIs never raise ``ValidationError``.
-    - Every instance auto-registers into its subclass's ``inc_dict`` via
-      :meth:`model_post_init`, plus every parent class's registry up the MRO
-      (the "Bubble-Up" pattern — see that method's docstring).
-    - The ``inc_dict`` is a ``weakref.WeakValueDictionary``; once the user's
-      list of objects goes out of scope, the entries are garbage-collected.
-      This makes 10M-row ingestion safe by default.
+    - Inherits from :class:`pydantic.BaseModel` with ``extra='allow'`` so
+      unexpected fields from messy APIs never raise ``ValidationError``.
+    - Every instance auto-registers into its subclass's :attr:`inc_dict`
+      via :meth:`model_post_init`, **and** into every parent class's
+      registry up the MRO (the "Bubble-Up" pattern — see that method).
+      Together with ``weakref``-backed storage this means 10M-row
+      ingestion stays O(1) in memory: entries vanish from the registry
+      as soon as the holding list goes out of scope.
 
     Example:
         Minimal subclass + fetch::
@@ -252,7 +258,7 @@ class Incorporator(BaseModel):
                     base.inc_dict[self.inc_code] = self
 
     # ==========================================
-    # PUBLIC "HOLY TRINITY" API
+    # PUBLIC VERBS
     # ==========================================
     @classmethod
     async def incorp(
@@ -525,7 +531,7 @@ class Incorporator(BaseModel):
     ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
         """Re-fetch live data and hydrate existing instances in-place.
 
-        ``refresh()`` is the Stateful Update verb of the Holy Trinity.  It is
+        ``refresh()`` is the stateful-update verb of the framework.  It is
         designed for long-running pipelines that need to keep an in-memory
         object graph synchronised with a changing remote source without
         rebuilding from scratch.
@@ -719,9 +725,10 @@ class Incorporator(BaseModel):
                 a plain string here raises ``TypeError``.
             file_path: Destination file path. Omit to use in-state mode.
             format_type: Override the format inferred from the destination
-                file extension.  See :class:`FormatType` for supported
-                values (``JSON``, ``NDJSON``, ``CSV``, ``TSV``, ``PSV``,
-                ``XML``, ``SQLITE``, ``AVRO``).
+                file extension.  Supported values: ``JSON``, ``NDJSON``,
+                ``CSV``, ``TSV``, ``PSV``, ``XML``, ``SQLITE``, ``AVRO``,
+                ``PARQUET``, ``FEATHER``, ``ORC``, ``XLSX`` (some require
+                opt-in extras — see :doc:`/docs/formats_and_compression`).
             compression: Optional compression to apply **after** writing
                 (e.g. ``"gz"``, ``"bz2"``, ``"xz"``, ``"zip"``, ``"tar"``,
                 ``"zstd"``, ``"lz4"``, ``"snappy"``, ``"brotli"``).  Runs
@@ -867,50 +874,58 @@ class Incorporator(BaseModel):
         inflow: Optional[Union[str, Path]] = None,
         outflow: Optional[Union[str, Path]] = None,
     ) -> AsyncGenerator["Wave", None]:
-        """Yield :class:`Wave` objects from a long-running pipeline.
+        """Run a long-running pipeline; yield one :class:`Wave` per tick.
 
-        ``stream()`` is the autonomous pipeline verb — an async generator that
-        keeps fetching, transforming, and (optionally) exporting until exhausted
-        or cancelled.  It routes to one of two execution engines:
+        ``stream()`` is the production verb for daemons that keep fetching,
+        transforming, and exporting until exhausted or cancelled.  Two modes,
+        selected by ``stateful_polling``:
 
-        - **Chunking engine** (``stateful_polling=False``, default): Sequential
-          chunked ingestion.  Each iteration calls ``incorp(**incorp_params)``,
-          then ``refresh()`` and/or ``export()`` per the configured params,
-          then yields one ``Wave``.  Memory stays O(1) — each chunk is
-          released and ``gc.collect()`` runs before the next.  Best for
-          large paginated sources where you want a steady throughput trace.
+        - **Chunking mode** (default, ``stateful_polling=False``): every
+          tick calls ``incorp(**incorp_params)`` for the next chunk, then
+          optionally ``refresh()`` and ``export()``, then yields one Wave.
+          Memory stays O(1) because each chunk is released before the next
+          one fetches.  Use this for paginated sources where you want a
+          steady throughput trace and an exit when the API runs out.
 
-        - **Stateful-polling engine** (``stateful_polling=True``): Runs
-          ``incorp()`` once to seed the dataset, then spawns independent
-          ``_refresh_daemon`` and ``_export_daemon`` asyncio tasks on
-          decoupled schedules.  Daemons coordinate via an internal
-          ``asyncio.Lock`` so refresh mutations are atomic and export
-          snapshots are consistent.  Best for keeping a live in-memory
-          graph synchronised at one rate while exporting at another.
+        - **Stateful daemon mode** (``stateful_polling=True``): seeds the
+          dataset with one ``incorp()`` call, then runs refresh and export
+          on independent schedules until cancelled.  Use this to keep a
+          live in-memory object graph synchronised against an upstream
+          API while exporting snapshots at a different cadence.
 
-        Interval cascade: ``refresh_interval`` and ``export_interval``
-        each fall back to ``poll_interval`` when not specified, so a
-        single ``poll_interval=60.0`` schedules both daemons identically.
+        Interval cascade: ``refresh_interval`` and ``export_interval`` each
+        fall back to ``poll_interval`` when not set, so a single
+        ``poll_interval=60.0`` ticks both rhythms identically.
 
         Args:
-            incorp_params: kwargs forwarded to :meth:`incorp` on every
-                ingestion cycle.
-            refresh_params: kwargs for :meth:`refresh`.  When ``None``,
-                no refresh daemon is spawned (chunking) or scheduled
-                (stateful).
-            export_params: kwargs for :meth:`export`.  When ``None``,
-                no export daemon is spawned (chunking) or scheduled
-                (stateful).  ``if_exists`` is overridden to ``"append"``
-                in the chunking engine so successive chunks accumulate.
-            poll_interval: Default sleep between full cycles (chunking)
-                or default daemon period (stateful).  ``None`` means
-                "one shot then exit".
-            stateful_polling: Engine selector. ``False`` → chunking;
-                ``True`` → independent daemon tasks.
-            refresh_interval: Stateful-polling override for the refresh
-                daemon period. Falls back to ``poll_interval``.
-            export_interval: Stateful-polling override for the export
-                daemon period. Falls back to ``poll_interval``.
+            incorp_params: kwargs forwarded to :meth:`incorp` every tick.
+            refresh_params: kwargs for :meth:`refresh`.  Omit to skip
+                refresh entirely.
+            export_params: kwargs for :meth:`export`.  Omit to skip
+                export entirely.  In chunking mode, ``if_exists`` is
+                forced to ``"append"`` so successive chunks accumulate
+                into one output file.
+            poll_interval: Default sleep between ticks.  ``None`` means
+                "one-shot then exit" — useful for testing.
+            stateful_polling: Mode selector — see the two modes above.
+            refresh_interval: Override the refresh tick period in stateful
+                mode.  Falls back to ``poll_interval`` when omitted.
+            export_interval: Override the export tick period in stateful
+                mode.  Falls back to ``poll_interval`` when omitted.
+            inflow: Optional path to a Python sidecar (``inflow.py``)
+                holding user-defined helper functions referenced from
+                ``incorp_params["conv_dict"]`` text tokens — calc reducers,
+                custom converters, pre-built paginator instances.  Loaded
+                once per process; symbols become available to the CLI
+                token resolver.  See :doc:`/docs/cli_and_configuration`.
+            outflow: Optional path to a Python sidecar (``outflow.py``)
+                defining the :class:`Incorporator` subclass whose instances
+                the stream should produce.  **Stateful daemon mode only** —
+                chunking mode raises ``ValueError`` if ``outflow`` is set,
+                since per-chunk state has no persistent registry for a
+                user-defined class to attach to.  The subclass is named
+                by the file stem in PascalCase (e.g. ``coin_market.py``
+                → ``CoinMarket``).
 
         Yields:
             :class:`Wave`: One per chunk (chunking) or per daemon
@@ -1025,23 +1040,30 @@ class Incorporator(BaseModel):
         export_interval: Optional[float] = None,
         inflow: Optional[Union[str, Path]] = None,
     ) -> AsyncGenerator["Wave", None]:
-        """Multi-source stateful streaming with a dynamically-built output class.
+        """Run a multi-source pipeline; fuse the live sources through your ``outflow``.
 
-        ``fjord()`` is the multi-source analogue of :meth:`stream` — it ingests
-        from N independent Incorporator subclasses concurrently, exposes their
-        live ``inc_dict`` registries to a developer-provided ``outflow(state)``
-        function, and feeds whatever ``outflow()`` returns into the same
-        dynamic-schema-inference + export pipeline ``incorp()`` already uses.
-        **No user-defined output class is required** — the class is built
-        automatically and named after the ``outflow`` filename
-        (snake_case → PascalCase; e.g. ``coin_market.py`` →
-        ``CoinMarket``).
+        ``fjord()`` is the multi-source production verb.  It fetches N
+        independent Incorporator subclasses concurrently, keeps each one
+        refreshed on its own schedule, hands a live snapshot of all of
+        them to your ``outflow(state)`` function on every export tick,
+        and writes whatever ``outflow()`` returns to a single combined
+        file.  Think of it as: N rivers (streams) → one fjord (combined
+        body) → one exported output.
 
-        Think of it as: N rivers (streams) → one fjord (combined body) → one
-        exported output.
+        Two things ``fjord()`` does that :meth:`stream` does not:
 
-        Stateful polling only.  For single-source streaming or chunked
-        sequential ingestion, use :meth:`stream`.
+        - **Multi-source orchestration.**  Per-source refresh and export
+          cadences are independent — define them on each
+          ``stream_params`` entry and the engine schedules them in
+          parallel.
+        - **Dynamic output class.**  You don't declare the type of the
+          combined row; the engine infers it from whatever
+          ``outflow(state)`` returns and names it after the outflow
+          file's stem in PascalCase (``coin_market.py`` → ``CoinMarket``).
+          The dynamic class behaves like any other :class:`Incorporator`
+          subclass — it has its own ``inc_dict`` and ``export()``.
+
+        Stateful by design.  For single-source streaming, use :meth:`stream`.
 
         Args:
             stream_params: List of source-stream config dicts. Each entry
@@ -1061,14 +1083,17 @@ class Incorporator(BaseModel):
                   top-level ``refresh_interval``.
                 - ``export_interval`` (float): per-entry override of the
                   top-level ``export_interval``.
-            outflow: Path to a Python file defining a top-level
-                ``outflow(state)`` function and (optionally) the
-                ``Incorporator`` subclasses referenced by ``stream_params``
-                ``cls_name`` entries.  ``state`` is a dict mapping each
-                source class's ``__name__`` to its current ``IncorporatorList``
-                snapshot.  ``outflow(state)`` must return ``list[dict]``
-                (or a single ``dict``, auto-wrapped); each row is used to
-                construct one instance of the dynamic output class.
+            outflow: Path to a Python file defining the top-level
+                ``outflow(state)`` function the engine calls on every
+                export tick.  ``state`` is a dict mapping each source
+                class's ``__name__`` to its current
+                :class:`IncorporatorList` snapshot (with ``inc_dict``
+                available for O(1) joins).  ``outflow(state)`` must
+                return ``list[dict]`` (or a single ``dict``, auto-wrapped);
+                each row becomes one instance of the dynamic output
+                class.  Returning ``[]`` yields a zero-row Wave and
+                skips the export — useful for gating output on a join
+                condition.
             export_params: kwargs forwarded to the dynamic output class's
                 ``export()`` for the combined output.  Required — the joined
                 output must have a destination.
@@ -1184,42 +1209,45 @@ class Incorporator(BaseModel):
         cls: Type[TIncorporator],
         **kwargs: Any,
     ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]", List[Any]]:
-        """JIT API Profiler — explore an unknown endpoint without writing a schema.
+        """Explore an unknown endpoint without writing any schema first.
 
-        ``test()`` is a Developer Experience helper that wraps :meth:`incorp`
-        with ``__inspect=True`` to trigger the :mod:`incorporator.tools.inspector`
-        tree analyser.  On a successful fetch it prints a deep tree-view of
-        the payload structure, detects identity-shaped fields (UUIDs,
-        timestamps, etc.), and emits the exact ``inc_code``, ``inc_name``,
-        ``rec_path``, and ``conv_dict`` you'd plug into a real ``incorp()``
-        call.  On a failed fetch it routes the exception through
-        :func:`inspector.analyze_error` for actionable diagnostics.
+        Swap ``await Class.incorp(...)`` for ``await Class.test(...)`` when
+        you don't yet know what shape an API returns.  ``test()`` fetches
+        a single safe sample, walks the payload tree, identifies primary-
+        key candidates (UUIDs, integer IDs, slugs) and human-readable
+        labels, detects type-cast candidates (ISO-8601 timestamps,
+        numeric strings), then prints the **exact** ``inc_code``,
+        ``inc_name``, ``rec_path``, and ``conv_dict`` you'd hand-write
+        for a real ``incorp()`` call.  On a fetch failure it prints
+        diagnostics instead of the tree.
 
-        Differences from :meth:`incorp` for safety:
+        Safety guards baked in:
 
-        - Default ``timeout=5.0`` (fail fast on unresponsive endpoints).
-        - When a paginator is supplied, ``call_lim`` is forced to ``1`` so
-          you only fetch one page during exploration.
-        - The return value is sliced to at most ``_INSPECTION_LIMIT`` (3)
-          records to prevent terminal flooding.
+        - Short timeout (5 s) so unresponsive endpoints fail fast.
+        - When a paginator is supplied, only one page is fetched even
+          if ``call_lim`` would normally allow more.
+        - The returned list is sliced to at most 3 records so a giant
+          endpoint doesn't flood your terminal — enough to poke at the
+          shape, not enough to be a real ingest.
 
         Args:
-            **kwargs: Same as :meth:`incorp`. ``timeout`` and ``call_lim``
-                get safe defaults if not provided.
+            **kwargs: Same as :meth:`incorp`.  ``timeout`` and ``call_lim``
+                get the safe defaults above if you don't override them.
 
         Returns:
-            An :class:`IncorporatorList` of at most 3 records, or an empty
-            list on exception.
+            An :class:`IncorporatorList` of at most 3 records on success,
+            or an empty list when the fetch raises.  Either way, the
+            inspector's tree-view and suggestions have already been
+            printed to stdout by the time this returns.
 
         Example::
 
             class User(Incorporator):
                 pass
 
-            # No idea what the API looks like — let test() figure it out:
             sample = await User.test(inc_url="https://api.unknown.com/v1/users")
-            # Tree + suggested kwargs are printed to stdout.
-            # `sample` is a 3-record preview for inspection.
+            # → tree + suggested kwargs printed to stdout
+            # → `sample` is a 3-record preview for poking at structure
         """
         kwargs["__inspect"] = True
 
