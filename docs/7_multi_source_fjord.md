@@ -27,7 +27,7 @@ independently every 30 seconds.
 * **Fusion:** for each CoinGecko coin where a matching `{SYMBOL}USDT`
   exists in Binance, emit a row with both prices + the basis-point spread
 * **Cadence:** sources refresh every 30 s; fused output writes every 60 s
-* **Output:** `data/crypto_spread.parquet` — append-friendly columnar format
+* **Output:** `data/crypto_spread.ndjson` — append-friendly columnar format
 
 Notice: no output class is declared. `fjord()` builds it dynamically
 from the rows your `outflow()` returns, named after the code-file
@@ -128,7 +128,7 @@ async def main():
             },
         ],
         outflow="examples/fjord_code/crypto_spread.py",
-        export_params={"file_path": "data/crypto_spread.parquet"},
+        export_params={"file_path": "data/crypto_spread.ndjson"},
         refresh_interval=30.0,                              # each source re-fetches every 30 s
         export_interval=60.0,                               # fused output writes every 60 s
     ):
@@ -139,6 +139,14 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+
+---
+
+> **Format constraint** *(same as `stream()`)*: fjord writes
+> incrementally on every export tick, so the export target must be an
+> **append-friendly** format: `.ndjson` / `.csv` / `.sqlite` / `.avro`.
+> Parquet / Feather / ORC / Excel / XML / JSON all reject append mode.
+> Pick NDJSON if unsure.
 
 ---
 
@@ -195,7 +203,7 @@ The same pipeline as a `pipeline.json`:
       "refresh_params": {}
     }
   ],
-  "export_params": {"file_path": "data/crypto_spread.parquet"},
+  "export_params": {"file_path": "data/crypto_spread.ndjson"},
   "refresh_interval": 30.0,
   "export_interval": 60.0
 }
