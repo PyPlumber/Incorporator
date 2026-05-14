@@ -171,6 +171,7 @@ async def test_refresh_re_source_mode_repoints_registry_at_new_url(
     assert len(initial) == 2
     assert Coin.inc_dict["btc"].price == 30000.0
     assert Coin.inc_dict["eth"].price == 2000.0
+    assert Coin.inc_url == OLD_URL                         # baseline
 
     # RE-SOURCE — pass a brand-new URL string as the instance arg.
     refreshed = await Coin.refresh(NEW_URL)
@@ -180,6 +181,12 @@ async def test_refresh_re_source_mode_repoints_registry_at_new_url(
     assert Coin.inc_dict["btc"].price == 31500.0
     assert Coin.inc_dict["eth"].price == 2100.0
     assert len(refreshed) == 2
+
+    # Origin tracking must now reflect the new URL so subsequent in-state
+    # refreshes hit the new source.  The bug this assertion guards: pre-fix,
+    # cls.inc_url stayed pinned to OLD_URL even after a re-source, so a later
+    # no-args refresh() would silently re-fetch the wrong endpoint.
+    assert Coin.inc_url == NEW_URL
 
 
 # ==========================================

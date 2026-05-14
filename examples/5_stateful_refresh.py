@@ -30,42 +30,44 @@ async def main() -> None:
         inc_code="symbol",
     )
     print(f"✅ Loaded {len(pairs)} trading pairs from Binance.")
-    btc = Pair.inc_dict["BTCUSDT"]
-    eth = Pair.inc_dict["ETHUSDT"]
-    print(f"   BTCUSDT lastPrice: {btc.lastPrice}")
-    print(f"   ETHUSDT lastPrice: {eth.lastPrice}")
+    btc_before = Pair.inc_dict["BTCUSDT"].lastPrice
+    print(f"   BTCUSDT lastPrice (before): {btc_before}")
 
     # ------------------------------------------------------------------
     # 2. IN-STATE REFRESH — no args.
     # ------------------------------------------------------------------
     # Identity-mapping memory: the framework remembers inc_code='symbol'
     # from the initial incorp call, so refresh() doesn't need it re-passed.
-    # `btc` and `eth` are the same Python objects — their fields get
-    # mutated in place.
+    # The canonical "what's the current value" lookup is Pair.inc_dict[...] —
+    # refresh replaces the instances under the same keys, so a local var
+    # captured before the refresh would now point at a stale model.
     print("\n⏳ Waiting 2 seconds for the market to move...")
     await asyncio.sleep(2)
-
     await Pair.refresh()
 
-    print("🔄 In-state refresh complete.")
-    print(f"   BTCUSDT lastPrice: {btc.lastPrice}      (same object, new value)")
-    print(f"   ETHUSDT lastPrice: {eth.lastPrice}")
+    btc_after = Pair.inc_dict["BTCUSDT"].lastPrice
+    moved = "moved!" if btc_after != btc_before else "no change (Binance quiet)"
+    print(f"🔄 In-state refresh complete.  BTCUSDT lastPrice: {btc_after}  ({moved})")
 
     # ------------------------------------------------------------------
     # 3. RE-SOURCE REFRESH — repoint at a different endpoint.
     # ------------------------------------------------------------------
     # /ticker/price returns the same symbols but only the latest price —
     # lighter payload when you don't need 24-hour volume / high / low.
+    # The framework rebuilds every instance with the new endpoint's schema,
+    # so the registry now exposes `.price` instead of `.lastPrice`.
     await Pair.refresh("https://api.binance.com/api/v3/ticker/price")
-    print("\n🔁 Re-sourced from /ticker/price (lighter endpoint).")
+    print(f"\n🔁 Re-sourced from /ticker/price (lighter endpoint).")
     print(f"   BTCUSDT current price: {Pair.inc_dict['BTCUSDT'].price}")
+    print(f"   cls.inc_url updated to: {Pair.inc_url}")
 
     # ------------------------------------------------------------------
     # 4. TARGETED REFRESH — refresh a chosen subset.
     # ------------------------------------------------------------------
     # The framework dedups to the single class URL on single-URL
-    # registries, but the API form is honored — useful when you've
-    # flagged specific pairs stale and want clear intent in the code.
+    # registries (no per-instance origin tracking yet), but the API form
+    # is honored — useful when you've flagged specific pairs stale and
+    # want explicit intent in the code.
     my_pairs = [Pair.inc_dict[s] for s in ("BTCUSDT", "ETHUSDT")]
     await Pair.refresh(instance=my_pairs)
     print(f"\n🎯 Targeted refresh of {len(my_pairs)} pairs.")
@@ -74,7 +76,7 @@ async def main() -> None:
     # Any failed sources surface on the result list for DLQ retry.
     # (See docs/debugging.md for the LoggedIncorporator + get_error pattern.)
     if pairs.failed_sources:
-        print(f"⚠️  Failed sources during initial load: {pairs.failed_sources}")
+        print(f"\n⚠️  Failed sources during initial load: {pairs.failed_sources}")
 
 
 if __name__ == "__main__":

@@ -3,14 +3,16 @@
 # 🔄 Stateful Refresh: Keeping Binance Tickers Live
 
 `incorp()` builds an object graph.  `refresh()` keeps it **synchronised
-with the source** — without rebuilding from scratch, without breaking
-existing Python references.
+with the source** without you having to re-pass `inc_code`, `inc_url`,
+or any of the other identity-mapping kwargs.
 
-The distinction matters for production pipelines. A second `incorp()`
-call gives you a new list of new instances; the old references are
-stale. `refresh()` re-fetches and mutates the **existing** Pydantic
-models in place, so anything holding a reference to `pair["BTCUSDT"]`
-automatically sees the latest price.
+The contract: `refresh()` re-fetches and rebuilds the registry — the
+same `Class.inc_dict` you read from before now points at fresh
+Pydantic instances under the same primary keys. The canonical view is
+always `Class.inc_dict[<key>]` — read from there after every refresh
+to get the latest values. (Pydantic v2 models are validated at
+construction, so the framework replaces rather than mutates; cached
+local references will read stale data.)
 
 This tutorial uses Binance's public `/api/v3/ticker/24hr` endpoint
 (no auth, ~1,900 pairs in one HTTP call) — a real live-data feed
@@ -42,6 +44,8 @@ btc_before = Pair.inc_dict["BTCUSDT"].lastPrice
 await asyncio.sleep(2)
 await Pair.refresh()                              # no args — uses cls.inc_url
 
+# Read the latest value via inc_dict (refresh replaces instances, so
+# any local var you captured pre-refresh now points at a stale model).
 btc_after = Pair.inc_dict["BTCUSDT"].lastPrice
 assert btc_before != btc_after                    # Binance moved on us
 ```

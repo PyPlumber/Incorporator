@@ -640,6 +640,14 @@ class Incorporator(BaseModel):
         else:
             inst_list = cast(List[TIncorporator], instance if isinstance(instance, list) else [instance])
 
+        # Re-source mode: refresh("new_url") or refresh(new_url=...) /
+        # refresh(new_file=...) should update the class's origin tracking
+        # so subsequent in-state refreshes hit the new source, not the old one.
+        if target_url:
+            cls.inc_url = target_url
+        elif target_file:
+            cls.inc_file = target_file
+
         if not inst_list:
             logger.warning(
                 "[%s] refresh() called but no instances are loaded in inc_dict — "
