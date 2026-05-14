@@ -29,6 +29,8 @@ For enterprise users who install `incorporator[all]`, these C and Rust extension
   * **How we use it:** Unlocks highly memory-efficient, chunked Rust-bindings for `zstd`, `lz4`, `snappy`, and `brotli` decompression, protecting our users from Out-Of-Memory (OOM) leaks when downloading massive archives.
 * **[fastavro](https://fastavro.readthedocs.io/)** *(by fastavro dev team)*
   * **How we use it:** Bridges the gap between flexible JSON APIs and strict Hadoop/Kafka data lakes by providing lightning-fast Cython bindings for reading and writing Apache Avro streams.
+* **[PyArrow](https://arrow.apache.org/docs/python/)** *(by the Apache Arrow project)*
+  * **How we use it:** Powers our `ParquetHandler` (installed via `incorporator[parquet]`) with columnar Arrow buffers and zero-copy IPC, letting Incorporator round-trip multi-million-row analytical datasets at C++ speed.
 
 ---
 
@@ -37,6 +39,10 @@ To guarantee `--strict` typing compliance and maintain a flawless test suite, we
 
 * **[pytest](https://pytest.org/) & [pytest-asyncio](https://pytest-asyncio.readthedocs.io/)**: For providing the fixtures, async loop management, and mocking capabilities that keep our orchestrator bug-free.
 * **[mypy](https://mypy-lang.org/)**: For enforcing the strict static typing boundaries that keep Incorporator predictable and safe for enterprise deployment.
+* **[ruff](https://docs.astral.sh/ruff/)** *(by Astral)*: A Rust-powered linter + formatter that catches bugs, sorts imports, and enforces our 120-char style across the codebase in milliseconds.
+* **[black](https://black.readthedocs.io/)** *(by Łukasz Langa & Contributors)*: Runs as a belt-and-suspenders cross-check alongside `ruff format`, so any drift between the two formatters surfaces a real bug instead of a style debate.
+* **[pdoc](https://pdoc.dev/)**: Auto-renders our public Google-style docstrings into `docs/library_reference.md`, keeping the API reference in lockstep with the source.
+* **[GitHub Actions](https://github.com/features/actions)**: Runs our lint / typecheck / 3×2-matrix test workflow on every PR, free of charge for open source.
 
 ---
 *To the thousands of unnamed open-source contributors who maintain the Python Standard Library (`asyncio`, `sqlite3`, `csv`, `queue`): **Thank you for building the language we love.***
