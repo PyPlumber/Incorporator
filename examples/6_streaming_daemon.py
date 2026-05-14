@@ -30,18 +30,26 @@ class Launch(LoggedIncorporator):
 
 
 async def main() -> None:
-    # stream() writes incrementally on every export tick, so the export
-    # target must be an append-friendly format: NDJSON, CSV, SQLite, or
-    # Avro.  Parquet / Feather / ORC / Excel / XML / JSON all reject
-    # appends (footer-indexed or monolithic encodings); use one of those
-    # only as a one-shot incorp() + export() round-trip, not a stream
-    # destination.
+    # stream() has TWO modes (selected by ``stateful_polling``):
+    #   * False (default) = "chunking mode": every tick is a fresh incorp,
+    #     state is released between chunks.  Exits when the source has no
+    #     more chunks — handy for paginated catalogues you want to drain
+    #     once.
+    #   * True            = "stateful daemon": seed once, keep the registry
+    #     live, refresh + export on independent cadences until Ctrl+C.
+    #     This is the production-watcher shape — what we want here.
+    #
+    # Export format note: stream() writes incrementally on every export
+    # tick, so the target must accept append mode: NDJSON / CSV / SQLite /
+    # Avro.  Parquet / Feather / ORC / Excel / XML / JSON reject appends
+    # (footer-indexed or monolithic encodings).
     async for wave in Launch.stream(
         incorp_params={
             "inc_url": "https://api.spacexdata.com/v4/launches/latest",
             "inc_code": "id",
             "inc_name": "name",
         },
+        stateful_polling=True,                                  # live registry, not one-shot
         refresh_interval=60.0,                                  # re-fetch every minute
         export_params={"file_path": "data/spacex_latest.ndjson"},
         export_interval=300.0,                                  # flush every 5 minutes

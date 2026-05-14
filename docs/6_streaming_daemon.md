@@ -48,6 +48,7 @@ async def main():
             "inc_code": "id",
             "inc_name": "name",
         },
+        stateful_polling=True,                                  # live registry, not one-shot
         refresh_interval=60.0,                                  # re-fetch every minute
         export_params={"file_path": "data/spacex_latest.ndjson"},
         export_interval=300.0,                                  # flush every 5 minutes
@@ -65,6 +66,22 @@ if __name__ == "__main__":
 
 That's it. **No `while True` loop. No sleep. No try/except.** The engine
 handles cadence, retries, draining, and shutdown.
+
+> **Two modes — pick one explicitly:**
+>
+> * **`stateful_polling=True`** *(used above — the production watcher
+>   shape)*: seed the registry once, keep it live in memory, refresh
+>   and export on independent cadences, run until Ctrl+C / SIGTERM.
+> * **`stateful_polling=False`** *(the default — chunking mode)*: each
+>   tick is a fresh `incorp()` for the next chunk. State is released
+>   between chunks (O(1) memory). The daemon **exits** when the source
+>   has no more chunks. Use this to drain a paginated catalogue once
+>   and walk away.
+>
+> Forgetting `stateful_polling=True` on a single-record endpoint
+> (`/launches/latest` returns one launch) gives you one wave and a
+> clean exit — perfectly valid, but probably not what a "watcher"
+> demo intended.
 
 > **Format constraint:** `stream()` writes incrementally on every
 > export tick, so the export target must be an **append-friendly**
