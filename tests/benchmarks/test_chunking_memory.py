@@ -65,7 +65,17 @@ async def test_chunking_memory_stays_flat(big_csv: Path) -> None:
     gc.collect()
     tracemalloc.start()
     try:
-        async for wave in BenchModel.stream(incorp_params=incorp_params, stateful_polling=False):
+        # ``refresh_params=None`` opts the per-chunk refresh daemon out.  Local
+        # paginator streams (CSV/SQLite/Avro) have no origin URLs for
+        # ``cls.refresh()`` to call back to, so leaving the default ON
+        # (post-commit ``b09b974``) would surface as one failure wave per
+        # chunk with no actual measurement.  We're benching the chunking
+        # memory profile here, not the refresh path.
+        async for wave in BenchModel.stream(
+            incorp_params=incorp_params,
+            refresh_params=None,
+            stateful_polling=False,
+        ):
             waves.append(wave)
             current, _ = tracemalloc.get_traced_memory()
             samples.append(current)
