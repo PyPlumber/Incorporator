@@ -4,10 +4,16 @@ Streaming Daemon Tutorial: Live SpaceX Launch Watcher
 Companion script for `docs/6_streaming_daemon.md`.
 
 Demonstrates `stream()` — a long-running daemon that periodically refreshes
-a single source and flushes snapshots to disk on its own cadence. Subclass
-`LoggedIncorporator` and pass `enable_logging=True` on the verb call so
-every wave is captured in rotating JSON-line log files (logs/api.log,
-logs/error.log, logs/debug.log) — disk I/O never blocks the event loop.
+a single source and flushes snapshots to disk on its own cadence.
+
+Source: SpaceX `/v4/launches/upcoming` — returns ~18 upcoming launches
+as a list, so each refresh wave processes many records instead of the
+single record that `/v4/launches/latest` returns.
+
+`LoggedIncorporator` + `enable_logging=True` routes every wave through
+the background QueueHandler into rotating JSON-line log files
+(logs/api.log, logs/error.log, logs/debug.log) — disk I/O never blocks
+the event loop.
 
 Run with:
     python examples/6_streaming_daemon.py
@@ -45,14 +51,14 @@ async def main() -> None:
     # (footer-indexed or monolithic encodings).
     async for wave in Launch.stream(
         incorp_params={
-            "inc_url": "https://api.spacexdata.com/v4/launches/latest",
+            "inc_url": "https://api.spacexdata.com/v4/launches/upcoming",
             "inc_code": "id",
             "inc_name": "name",
         },
         stateful_polling=True,                                  # live registry, not one-shot
-        refresh_interval=60.0,                                  # re-fetch every minute
-        export_params={"file_path": "data/spacex_latest.ndjson"},
-        export_interval=300.0,                                  # flush every 5 minutes
+        refresh_interval=30.0,                                  # re-fetch every 30 seconds
+        export_params={"file_path": "data/spacex_upcoming.ndjson"},
+        export_interval=90.0,                                   # flush every 90 seconds
         enable_logging=True,                                    # opt into JSON-line logs
     ):
         if wave.failed_sources:

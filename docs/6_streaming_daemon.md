@@ -21,9 +21,9 @@ the CLI.
 
 ## The Goal
 
-* **Source:** `https://api.spacexdata.com/v4/launches/latest`
+* **Source:** `https://api.spacexdata.com/v4/launches/upcoming`
 * **Refresh cadence:** every 60 seconds
-* **Export cadence:** every 5 minutes, into `data/spacex_latest.ndjson`
+* **Export cadence:** every 5 minutes, into `data/spacex_upcoming.ndjson`
 * **Failure handling:** transient errors logged via the wave stream, not
   fatal
 * **Shutdown:** Ctrl+C / SIGTERM drains in-flight work and exits cleanly
@@ -44,14 +44,14 @@ class Launch(LoggedIncorporator):
 async def main():
     async for wave in Launch.stream(
         incorp_params={
-            "inc_url": "https://api.spacexdata.com/v4/launches/latest",
+            "inc_url": "https://api.spacexdata.com/v4/launches/upcoming",
             "inc_code": "id",
             "inc_name": "name",
         },
         stateful_polling=True,                                  # live registry, not one-shot
-        refresh_interval=60.0,                                  # re-fetch every minute
-        export_params={"file_path": "data/spacex_latest.ndjson"},
-        export_interval=300.0,                                  # flush every 5 minutes
+        refresh_interval=30.0,                                  # re-fetch every 30 s
+        export_params={"file_path": "data/spacex_upcoming.ndjson"},
+        export_interval=90.0,                                   # flush every 90 s
         enable_logging=True,                                    # JSON-line logs to disk
     ):
         if wave.failed_sources:
@@ -96,13 +96,18 @@ handles cadence, retries, draining, and shutdown.
 ## What `stream()` is doing under the hood
 
 1. **Seed.** Runs one `Launch.incorp(...)` with your `incorp_params` to
-   build the initial in-memory registry (`Launch.inc_dict`).
+   build the initial in-memory registry (`Launch.inc_dict`). Emits one
+   Wave with `rows_processed` = the number of records the source
+   returned. For `/launches/upcoming` that's ~18; for the singular
+   `/launches/latest` it would be exactly 1 — the row count reflects
+   the **source's shape**, not the daemon's health.
 2. **Two daemon tasks spawn.**
    * A **refresh daemon** re-fetches every `refresh_interval` seconds and
      merges new/updated records into `Launch.inc_dict` under a shared lock.
+     Emits one Wave per tick.
    * An **export daemon** wakes every `export_interval` seconds, snapshots
      the registry under the same lock, and calls `Launch.export(...)` to
-     write the file.
+     write the file. Emits one Wave per tick.
 3. **Wave stream.** Each daemon yields a `Wave` per tick into a
    shared queue. Your `async for` loop consumes them — that's how you
    observe the pipeline without polling it yourself.
@@ -153,15 +158,15 @@ required:
 ```json
 {
   "incorp_params": {
-    "inc_url": "https://api.spacexdata.com/v4/launches/latest",
+    "inc_url": "https://api.spacexdata.com/v4/launches/upcoming",
     "inc_code": "id",
     "inc_name": "name"
   },
   "refresh_params": {},
-  "export_params": {"file_path": "data/spacex_latest.ndjson"},
+  "export_params": {"file_path": "data/spacex_upcoming.ndjson"},
   "stateful_polling": true,
-  "refresh_interval": 60.0,
-  "export_interval": 300.0
+  "refresh_interval": 30.0,
+  "export_interval": 90.0
 }
 ```
 
