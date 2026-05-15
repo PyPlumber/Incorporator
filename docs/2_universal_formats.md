@@ -191,7 +191,7 @@ same Pydantic instances in memory — no schema duplication.
 > # Stream the file in 10,000-row chunks — peak memory is one chunk.
 > chunked = CSVPaginator(file_path="huge.csv", chunk_size=10_000)
 > async for wave in MyClass.stream(
->     incorp_params={"inc_url": "huge.csv", "inc_page": chunked},
+>     incorp_params={"inc_file": "huge.csv", "inc_page": chunked},
 >     export_params={"file_path": "data/processed.ndjson"},
 > ):
 >     print(wave)

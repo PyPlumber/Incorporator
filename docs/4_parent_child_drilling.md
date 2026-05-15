@@ -83,7 +83,6 @@ class Pad(Incorporator):
 
 
 async def main():
-    # Phase 1: Load the parent list.
     launches = await Launch.incorp(
         inc_url="https://api.spacexdata.com/v4/launches/upcoming",
         inc_code="id",
@@ -91,7 +90,6 @@ async def main():
     )
     print(f"Loaded {len(launches)} upcoming launches.")
 
-    # Phase 2: Drill BOTH children in parallel.
     rockets, pads = await asyncio.gather(
         Rocket.incorp(
             inc_url="https://api.spacexdata.com/v4/rockets/{}",
@@ -108,7 +106,6 @@ async def main():
     )
     print(f"Loaded {len(rockets)} rockets, {len(pads)} pads.")
 
-    # Phase 3: O(1) three-way join.
     for launch in launches:
         rocket = Rocket.inc_dict.get(launch.rocket)
         pad = Pad.inc_dict.get(launch.launchpad)

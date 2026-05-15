@@ -23,9 +23,9 @@ Normally, traditional Pydantic setups force you to define strict Sub-Models for 
 
 ## 🎯 The Scenario
 We are going to build a "Gen 1 Power Ranking" table. To do this, we need to:
-1. **Phase 1 (Shallow Discovery):** Fetch a paginated list of 150 Pokémon, which only gives us their names and a HATEOAS URL to their deep details.
-2. **Phase 2 (Deep Enrichment):** Concurrently fire 150 HTTP requests to those URLs to fetch their deep specs.
-3. **Phase 3 (Declarative ETL):** Use `calc()` to intercept the massive `stats` and `types` JSON arrays, sum them up, format them, and drop the raw JSON to save memory.
+1. **Shallow discovery:** Fetch a paginated list of 150 Pokémon, which only gives us their names and a HATEOAS URL to their deep details.
+2. **Deep enrichment:** Concurrently fire 150 HTTP requests to those URLs to fetch their deep specs.
+3. **Declarative ETL:** Use `calc()` to intercept the massive `stats` and `types` JSON arrays, sum them up, format them, and drop the raw JSON to save memory.
 
 ---
 
@@ -57,10 +57,7 @@ def format_typing(types_array: Any) -> str:
 async def main() -> None:
     BASE_URL = "https://pokeapi.co/api/v2"
 
-    # ==========================================
-    # 1. PHASE 1: SHALLOW DISCOVERY
-    # ==========================================
-    print("⏳ Running Phase 1: Shallow Discovery (Fetching 150 records)...")
+    print("⏳ Shallow discovery: fetching 150 records...")
     pokemon_nav = await Nav.incorp(
         inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
         rec_path="results",
@@ -73,11 +70,8 @@ async def main() -> None:
 
     print(f"✅ Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
 
-    # ==========================================
-    # 2. PHASE 2: DEEP ENRICHMENT (HATEOAS)
-    # ==========================================
-    # The IncorporatorList "pokemon_nav" remembers that we set inc_child="url" in Phase 1.
-    # It passes that state directly into Phase 2, effortlessly firing 150 concurrent requests!
+    # pokemon_nav carries the inc_child="url" state from the discovery call;
+    # passing it as inc_parent triggers 150 concurrent detail requests.
     enriched_pokemon = await Pokemon.incorp(
         inc_parent=pokemon_nav,
         inc_code="id",
@@ -91,9 +85,6 @@ async def main() -> None:
         name_chg=[("stats", "base_stat_total")]
     )    
     
-    # ==========================================
-    # 3. USE THE FLATTENED DATA
-    # ==========================================
     if isinstance(enriched_pokemon, list):
         # Sort by our newly calculated integer!
         enriched_pokemon.sort(key=lambda p: getattr(p, "base_stat_total", 0), reverse=True)
@@ -114,9 +105,9 @@ REST APIs often use HATEOAS (Hypermedia as the Engine of Application State), mea
 
 In older frameworks, you had to rely on implicit "magic" attributes to make this jump. Incorporator completely eliminates this via the **State Carrier** pattern:
 
-1. In Phase 1, we explicitly tell the engine `inc_child="url"`.
-2. The returned `pokemon_nav` list object securely *caches* this path state.
-3. When we pass `inc_parent=pokemon_nav` into Phase 2, Incorporator reads the cached state, gracefully drills into all 150 objects, extracts the URLs, and automatically provisions a rate-limited concurrency pool to download the deep payloads simultaneously. Zero boilerplate loops required!
+1. The discovery call passes `inc_child="url"` to tell the engine where child URLs live.
+2. The returned `pokemon_nav` list object carries that path as state.
+3. Passing `inc_parent=pokemon_nav` to the enrichment call reads the cached state, drills into all 150 objects, extracts the URLs, and provisions a rate-limited concurrency pool to download the detail payloads simultaneously. Zero boilerplate loops required!
 
 ### 2. The Power of `calc()`
 This is where Incorporator's ETL engine shines. Look at the raw JSON the API returns for "stats":

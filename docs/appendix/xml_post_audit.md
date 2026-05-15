@@ -48,9 +48,6 @@ from typing import Any
 from incorporator import Incorporator
 from incorporator.schema.extractors import join_all
 
-# ==========================================
-# 1. DEFINE OUR OBJECTS
-# ==========================================
 class Invoice(Incorporator):
     pass
 
@@ -60,26 +57,18 @@ class NHTSASpec(Incorporator):
 async def run_audit() -> None:
     print("📂 Parsing Shady Jimmy's Local XML Ledger...")
 
-    # ==========================================
-    # PHASE 1: Ingest the XML File
-    # ==========================================
     invoices = await Invoice.incorp(
         inc_file="jimmy_ledger.xml",
         rec_path="Dealership.AuditFile.Invoices.Invoice",
         inc_code="id",
-        
-        # 🛡️ The State Carrier: We explicitly declare the child path here!
-        # The IncorporatorList will cache this state for Phase 2.
+        # inc_child caches the VIN path on the list for the enrichment call below.
         inc_child="Vehicle.VIN"
     )
 
     print(f"✅ Extracted {len(invoices)} Invoices. Contacting Federal Databases...")
 
-    # ==========================================
-    # PHASE 2: Declarative Bulk POST Enrichment
-    # ==========================================
-    # Incorporator reads the cached `inc_child_path`, extracts every VIN, 
-    # and automatically joins them with semicolons into 1 Bulk Batch Request!
+    # Incorporator reads the cached inc_child_path, extracts every VIN,
+    # and joins them into one bulk batch request via join_all(";").
     govt_specs = await NHTSASpec.incorp(
         inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
         inc_parent=invoices,
@@ -95,9 +84,6 @@ async def run_audit() -> None:
 
     print(f"✅ Government Data Received for {len(govt_specs)} vehicles. Initiating Fraud Audit...\n")
 
-    # ==========================================
-    # PHASE 3: The Fraud Audit (O(1) Lookups)
-    # ==========================================
     print("=" * 85)
     print(f"{'INVOICE':<10} | {'VIN':<18} | {'JIMMY LISTED':<20} | {'NHTSA TRUE SPEC':<25}")
     print("=" * 85)
@@ -148,7 +134,7 @@ if __name__ == "__main__":
 Parsing XML in standard Python usually requires messy libraries like `xml.etree.ElementTree` and writing recursive loops. Incorporator auto-detects the `.xml` extension, drills through the `rec_path`, and dynamically builds nested Python objects (like `inv.Vehicle.VIN`) implicitly.
 
 ### 2. The Explicit State Carrier (`inc_child`)
-Instead of relying on implicitly mapped URLs or dummy strings, Incorporator uses the **State Carrier** pattern. By declaring `inc_child="Vehicle.VIN"` in Phase 1, the returned `invoices` list securely memorizes that path. When passed into Phase 2, Incorporator instantly knows exactly where to drill to retrieve the primary keys for the next network request.
+Instead of relying on implicitly mapped URLs or dummy strings, Incorporator uses the **State Carrier** pattern. By declaring `inc_child="Vehicle.VIN"` on the first call, the returned `invoices` list securely memorises that path. When passed as `inc_parent` to the enrichment call, Incorporator reads the cached state, drills into all invoices, extracts the VINs, and provisions a single bulk POST request — no boilerplate loops.
 
 ### 3. Declarative Bulk POST Execution (`join_all`)
 The NHTSA endpoint is a "Batch" processor—it expects a single string of VINs separated by semicolons. Instead of forcing you to write `for` loops, extraction lambdas, or punishing the government servers with 500 individual concurrent requests, Incorporator solves this declaratively:
@@ -163,7 +149,7 @@ By providing the `join_all` token, Incorporator automatically intercepts all 500
 ### 4. $O(1)$ Graph Relational Lookups
 We didn't need to write a messy dictionary merge algorithm to join Jimmy's records with the Government records. Because we set `inc_code="VIN"` when parsing the NHTSA response, the data was securely cached in memory. 
 
-In Phase 3, we retrieved the federal specs in $O(1)$ time by simply querying the registry: `govt_specs.inc_dict.get(jimmy_vin)`.
+The federal specs are retrieved in $O(1)$ by querying the registry directly: `govt_specs.inc_dict.get(jimmy_vin)`.
 
 ---
 
@@ -171,9 +157,9 @@ In Phase 3, we retrieved the federal specs in $O(1)$ time by simply querying the
 
 `join_all(";")` itself is JSON-expressible — the CLI's text-token resolver
 will turn `"join_all(\";\")"` into a real callable at load time. What
-still requires an `outflow.py` here is the **two-phase chain** (Phase 1's
-`invoices` becomes Phase 2's `inc_parent`, and Phase 3 reconciles the two
-registries). That's the natural fjord shape: each source is its own
+still requires an `outflow.py` here is the two-step chain — `invoices`
+becomes `inc_parent` for the NHTSA call, and the reconciliation reads both
+registries. That's the natural fjord shape: each source is its own
 `stream_params` entry, and the `outflow(state)` function runs the
 reconciliation across both in-memory registries:
 
