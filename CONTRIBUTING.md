@@ -30,8 +30,8 @@ pytest -m benchmark
 
 Every PR is expected to land with:
 
-- **All 331+ tests green** (`pytest --no-cov -q`).
-- **`mypy --strict` clean** on the source tree (44 files, no errors).
+- **All 521+ tests green** (`pytest --no-cov -q`).
+- **`mypy --strict` clean** on the source tree (47 files, no errors).
 - **`ruff check` clean** on source + tests.
 - **`black --check` clean** on source + tests (line length 120).
 - **New tests** covering any new public method, handler, or CLI flag.
@@ -133,7 +133,7 @@ design, not the journey to it.
 
 ## Continuous Integration & Branch Protection
 
-Every PR and every push to `main` / `refactor-ai` triggers
+Every PR and every push to `main` triggers
 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml), which runs
 three jobs in parallel:
 
@@ -148,13 +148,12 @@ protection is on.
 
 ### Branch protection setup (maintainer one-time task)
 
-`main` and `refactor-ai` should both require the CI workflow to pass
-before merge. This is a click-through GitHub setting, not a committed
-file:
+`main` should require the CI workflow to pass before merge. This is a
+click-through GitHub setting, not a committed file:
 
 1. **github.com/PyPlumber/incorporator → Settings → Branches**.
 2. Under **Branch protection rules**, click **Add rule**.
-3. **Branch name pattern**: `main` (repeat later for `refactor-ai`).
+3. **Branch name pattern**: `main`.
 4. Tick **Require status checks to pass before merging** and
    **Require branches to be up to date before merging**.
 5. After the first CI run lands, search the status-checks box and add:

@@ -24,8 +24,9 @@ versions are not patched — please upgrade.
 
 | Version | Supported |
 |---------|-----------|
-| 1.0.x | ✅ |
-| < 1.0  | ❌ |
+| 1.1.x   | ✅        |
+| 1.0.x   | ❌        |
+| < 1.0   | ❌        |
 
 ## Security Posture
 
@@ -71,9 +72,9 @@ deploying operator:
 
 - **Authentication / authorisation of the source APIs.** Incorporator
   passes whatever credentials you give it. Bring your own rotation.
-- **Sandboxing of user `code_file` modules.** `fjord()` and the CLI
-  execute user-supplied Python from `code_file=…`. Treat that file as
-  trusted code — don't load `code_file` paths from untrusted sources.
+- **Sandboxing of user `outflow` modules.** `fjord()` and the CLI
+  execute user-supplied Python from `outflow=…`. Treat that file as
+  trusted code — don't load `outflow=` paths from untrusted sources.
 - **Operating-system level isolation.** The supplied `Dockerfile` runs
   as a non-root user, but full container hardening (seccomp, AppArmor,
   read-only root FS) is the deployer's responsibility.
