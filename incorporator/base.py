@@ -236,6 +236,9 @@ class Incorporator(BaseModel):
         Emits a compact line containing ``class``, ``inc_code``, ``inc_name``,
         and ``last_rcd`` — useful for REPL inspection and ad-hoc debugging.
         For structured output use :meth:`pydantic.BaseModel.model_dump_json`.
+
+        Returns:
+            ``None``.
         """
         cls_name = getattr(self.__class__, "__name__", "UnknownClass")
         print(f'class:"{cls_name}", inc_code:"{self.inc_code}", inc_name:"{self.inc_name}", last_rcd:"{self.last_rcd}"')
@@ -602,10 +605,11 @@ class Incorporator(BaseModel):
                 (see :meth:`incorp` for the full kwarg list).
 
         Returns:
-            ``IncorporatorList[TIncorporator]``: A new list wrapping the
-            refreshed instances. Existing Python references are mutated
-            in-place via Pydantic field updates, so callers holding the
-            old list will see updated values without reassigning.
+            A single ``TIncorporator`` instance when the source resolves
+            to exactly one record, or an ``IncorporatorList[TIncorporator]``
+            for multi-record sources.  Existing Python references are
+            mutated in-place via Pydantic field updates, so callers holding
+            the old list will see updated values without reassigning.
 
         Raises:
             ValueError: When neither a new source nor stored origin URLs
