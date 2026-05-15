@@ -149,6 +149,8 @@ async def pivot():
     print(f"Loaded {len(coins)} coins from CoinGecko.")
 
     # 2. Write to Parquet for the analytics team.
+    # export() is the write-side counterpart to incorp() — same class,
+    # same format detection from the file extension.
     await Coin.export(instance=coins, file_path="data/coins.parquet")
 
     # 3. Write to SQLite for the API team.

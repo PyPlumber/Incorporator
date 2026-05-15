@@ -69,6 +69,13 @@ handles cadence, retries, draining, and shutdown.
 
 > **Two modes — pick one explicitly:**
 >
+> `stateful_polling` controls what happens on each tick. Use
+> `stateful_polling=True` when you want to build one in-memory registry
+> and keep it live — useful for APIs where re-fetching the full dataset
+> on every tick would waste quota or incur per-call charges. Use the
+> default (`False`) when each tick should fetch the next chunk of data
+> from a paginated source and then discard it from memory.
+>
 > * **`stateful_polling=True`** *(used above — the production watcher
 >   shape)*: seed the registry once, keep it live in memory, refresh
 >   and export on independent cadences, run until Ctrl+C / SIGTERM.

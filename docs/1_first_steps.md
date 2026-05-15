@@ -77,7 +77,9 @@ Optional but useful:
   is the natural choice.
 
 Everything else (`conv_dict`, `excl_lst`, `name_chg`, `inc_parent`,
-`inc_page`, ...) is for the more advanced tutorials.
+`inc_page`, ...) is for the more advanced tutorials. If you're facing an
+unfamiliar endpoint and don't know which kwargs you need, `test()` will
+profile it and print the exact snippet to paste — that's Tutorial 3.
 
 ---
 

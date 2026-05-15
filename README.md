@@ -190,17 +190,15 @@ async for wave in Incorporator.fjord(
     if wave.failed_sources: print(wave)
 ```
 
-**Two more `fjord()` patterns:**
+**Advanced `fjord()` patterns (Tutorial 7):**
 
-* **State-aware `inflow(state)`** — if `inflow.py` defines a top-level
-  `inflow(state)` callable, fjord seeds sources sequentially and feeds
-  each one the prior sources' loaded snapshots. That's how
-  `link_to(state["Planet"], …)` and `link_to_list(state["Film"], …)`
-  resolve foreign-key URLs to real Pydantic instances at incorp time.
-* **Multi-output fjord** — return `dict[ClassName, list[dict]]` from
-  `outflow(state)` and fjord builds N derived classes and writes N
-  export files in one tick, with per-class
-  `export_params={"JediArchive": {...}, "Demographics": {...}}`.
+When sources depend on each other — e.g., one source needs to resolve
+foreign-key URLs against already-loaded objects from another — define an
+`inflow(state)` callable in `inflow.py`; fjord feeds it each prior
+source's live snapshot before seeding the next dependent source. When
+`outflow(state)` should write to multiple destination files, return
+`dict[ClassName, list[dict]]` instead of a flat list; fjord builds one
+derived class per key and exports one file per class per tick.
 
 → [Tutorial 7 — Multi-Source Fjord](./docs/7_multi_source_fjord.md)
 

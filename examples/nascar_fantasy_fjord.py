@@ -53,10 +53,9 @@ PROD_BASE = f"https://cf.nascar.com/data/cacher/production/{CURRENT_YEAR}"
 STANDINGS_BASE = "racinginsights-points-feed.json"
 
 # Standings exclusion list — drop only the genuinely-noisy fields.
-# Phase-11 enrichment keeps ``position``, ``top_5``, ``laps_led``,
-# ``delta_leader``, ``poles``, ``starts``, ``manufacturer``, and
-# ``playoff_eligible`` because the FantasyTeam roster + the new
-# ManufacturerLeaderboard view need them.
+# Keep ``position``, ``top_5``, ``laps_led``, ``delta_leader``,
+# ``poles``, ``starts``, ``manufacturer``, and ``playoff_eligible``:
+# FantasyTeam scoring and ManufacturerLeaderboard both need them.
 _STANDINGS_EXCL = [
     "is_clinch",
     "driver_first_name", "driver_last_name", "driver_suffix",

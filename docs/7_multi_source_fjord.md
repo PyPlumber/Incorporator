@@ -38,7 +38,13 @@ stem (`crypto_spread.py` → `CryptoSpread`).
 ## Step 1: `crypto_spread.py` — The Outflow Sidecar
 
 `fjord()` needs Python code (class definitions + the join logic), so
-it lives in a sidecar file:
+it lives in a sidecar file.
+
+At every export tick, `fjord()` calls your `outflow(state)` function and
+passes it `state` — a `dict[str, IncorporatorList]` keyed by source class
+name, snapshotted under a lock at the start of the tick. Your function
+reads the current data from each source, joins them, and returns a list
+of dicts for the output class.
 
 ```python
 # examples/fjord_code/crypto_spread.py
@@ -311,9 +317,11 @@ extends the token resolver's allow-list as it always has.
 
 ### Pattern 2 — Multi-output: N derived classes from one outflow
 
-Return a `dict[ClassName, list[dict]]` from `outflow(state)` and
-fjord builds one derived class **per dict key** and exports each to
-its own file.  One join, N analytical views:
+When a single outflow run should write to more than one destination
+file — e.g., one normalized entity table and a separate aggregation view
+— return a `dict[ClassName, list[dict]]` from `outflow(state)` instead
+of a plain list. Fjord builds one derived class per dict key and exports
+each to its own file. One join, N analytical views:
 
 ```python
 # swapi_outflow.py
