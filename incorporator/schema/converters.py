@@ -206,6 +206,14 @@ def is_garbage_value(value: Any) -> bool:
     Exposed so the DX Inspector (and any future inference tooling) can
     check "would the runtime ignore this?" without re-implementing the
     rule.
+
+    Args:
+        value: The value to test.  Strings are lowercased and stripped
+            before matching against the garbage set.
+
+    Returns:
+        ``True`` if the value is ``None``, empty, or a known garbage
+        sentinel; ``False`` otherwise.
     """
     if value is None or value == "":
         return True
@@ -219,6 +227,13 @@ def parses_as_datetime(value: Any) -> bool:
     ``inc(datetime)`` in ``conv_dict``. Routes through the same parser the
     runtime uses, so the inspector's advice is structurally aligned with
     what an actual ``incorp()`` call would accept.
+
+    Args:
+        value: The raw value to test.
+
+    Returns:
+        ``True`` if :func:`_fallback_date` can parse the value,
+        ``False`` otherwise (including garbage values and ``None``).
     """
     if is_garbage_value(value):
         return False
@@ -233,6 +248,13 @@ def parses_as_int(value: Any) -> bool:
     """Return True if :func:`_fallback_int` would successfully parse ``value``.
 
     Mirrors :func:`parses_as_datetime` for integer coercion candidates.
+
+    Args:
+        value: The raw value to test.
+
+    Returns:
+        ``True`` if :func:`_fallback_int` can parse the value,
+        ``False`` otherwise (including garbage values and ``None``).
     """
     if is_garbage_value(value):
         return False
@@ -247,6 +269,13 @@ def parses_as_float(value: Any) -> bool:
     """Return True if :func:`_fallback_float` would successfully parse ``value``.
 
     Mirrors :func:`parses_as_datetime` for float coercion candidates.
+
+    Args:
+        value: The raw value to test.
+
+    Returns:
+        ``True`` if :func:`_fallback_float` can parse the value,
+        ``False`` otherwise (including garbage values and ``None``).
     """
     if is_garbage_value(value):
         return False

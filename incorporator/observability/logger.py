@@ -476,6 +476,16 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         wires up the per-class disk logger so subsequent
         ``self.log_info(...)`` / ``self.log_error(...)`` calls land in
         ``logs/<ClassName>_*.log``.
+
+        Args:
+            enable_logging: Route throughput records and failures to rotating
+                JSON-line log files under ``logs/``.  Defaults to ``False``.
+            *args: Forwarded to :meth:`Incorporator.refresh`.
+            **kwargs: Forwarded to :meth:`Incorporator.refresh`.
+
+        Returns:
+            Same as :meth:`Incorporator.refresh` — a single instance or an
+            :class:`IncorporatorList`.
         """
         result = await super().refresh(*args, **kwargs)
 
@@ -499,6 +509,15 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         ``logs/<ClassName>_api.log``, and any raised exception is logged
         to ``logs/<ClassName>_error.log`` with the traceback attached
         before re-raising.
+
+        Args:
+            enable_logging: Bracket the export with INFO entries and route
+                any raised exception to ``logs/<ClassName>_error.log``.
+                Defaults to ``False``.
+            **kwargs: Forwarded to :meth:`Incorporator.export`.
+
+        Returns:
+            ``None``.
         """
         if enable_logging:
             setup_class_logger(cls)
@@ -543,6 +562,23 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         The Wave itself is yielded to the caller **before** any disk write
         completes — the QueueHandler thread handles the write
         asynchronously, so the async-for loop is never blocked on I/O.
+
+        Args:
+            enable_logging: Mirror every :class:`Wave` to disk and route
+                fatal errors to ``logs/<ClassName>_error.log``.
+                Defaults to ``False``.
+            incorp_params: Forwarded to :meth:`Incorporator.stream`.
+            refresh_params: Forwarded to :meth:`Incorporator.stream`.
+            export_params: Forwarded to :meth:`Incorporator.stream`.
+            poll_interval: Forwarded to :meth:`Incorporator.stream`.
+            stateful_polling: Forwarded to :meth:`Incorporator.stream`.
+            refresh_interval: Forwarded to :meth:`Incorporator.stream`.
+            export_interval: Forwarded to :meth:`Incorporator.stream`.
+            inflow: Forwarded to :meth:`Incorporator.stream`.
+            outflow: Forwarded to :meth:`Incorporator.stream`.
+
+        Yields:
+            :class:`Wave` — same shape as :meth:`Incorporator.stream`.
         """
         if enable_logging:
             setup_class_logger(cls)
@@ -601,6 +637,20 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
           from one call.
         - Fatal failures land in the error log with traceback attached
           before re-raising.
+
+        Args:
+            enable_logging: Mirror every :class:`Wave` to disk and route
+                fatal errors to ``logs/<ClassName>_error.log``.
+                Defaults to ``False``.
+            stream_params: Forwarded to :meth:`Incorporator.fjord`.
+            outflow: Forwarded to :meth:`Incorporator.fjord`.
+            export_params: Forwarded to :meth:`Incorporator.fjord`.
+            refresh_interval: Forwarded to :meth:`Incorporator.fjord`.
+            export_interval: Forwarded to :meth:`Incorporator.fjord`.
+            inflow: Forwarded to :meth:`Incorporator.fjord`.
+
+        Yields:
+            :class:`Wave` — same shape as :meth:`Incorporator.fjord`.
         """
         if enable_logging:
             setup_class_logger(cls)

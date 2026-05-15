@@ -34,6 +34,14 @@ def sum_attributes(*args: Any) -> float:
                 "total": calc(sum_attributes, "subtotal", "tax", "tip"),
             },
         )
+
+    Args:
+        *args: Values to sum.  Any number of positional arguments are
+            accepted; ``None`` and non-numeric values contribute zero.
+
+    Returns:
+        The sum as a ``float``.  Returns ``0.0`` when all inputs are
+        ``None`` or non-numeric.
     """
     total = 0.0
     for x in args:
@@ -195,7 +203,7 @@ def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None)
     ``author_uuids``).  Returns a list of matched instances; unmatched
     keys are filtered out silently.
 
-    ::
+    Example::
 
         articles = await Article.incorp(
             inc_url="...",
@@ -204,6 +212,18 @@ def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None)
                 "tags": link_to_list(tags),
             },
         )
+
+    Args:
+        dataset: The right-hand side of the join — same contract as
+            :func:`link_to`.  Typically an :class:`IncorporatorList`; any
+            object with an ``inc_dict`` mapping works too.
+        extractor: Optional transformer applied to each element before the
+            lookup — same contract as :func:`link_to`.
+
+    Returns:
+        A converter closure that accepts a list of foreign keys and returns
+        a list of matched objects.  Non-list inputs return an empty list;
+        unmatched individual keys are silently omitted.
     """
     base_linker = link_to(dataset, extractor)
 
@@ -338,8 +358,9 @@ def as_list() -> Callable[[Any], List[Any]]:
             json_payload={"ids": as_list()},   # → {"ids": [1, 2, 3, ...]}
         )
 
-    Returns a converter closure.  Scalar inputs are wrapped in a
-    single-element list.
+    Returns:
+        A converter closure.  Scalar inputs are wrapped in a
+        single-element list.
 
     See :func:`each` (N requests) and :func:`join_all` (one request,
     delimited string) for the other request-count patterns.
