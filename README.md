@@ -274,7 +274,7 @@ one new verb or technique. Runnable code lives under [`/examples`](./examples).
 * [📦 **Formats & Compression Cheat Sheet**](./docs/formats_and_compression.md) — every format kwarg, compression rules.
 * [🌊 **Streaming & Pagination Deep Dive**](./docs/streaming_and_pagination.md) — paginator family for files / endpoints too big for RAM.
 * [🐳 **CLI & Configuration Guide**](./docs/cli_and_configuration.md) — running pipelines from `pipeline.json` without writing Python.
-* [⚡ **Performance Characteristics**](./docs/performance.md) — measured throughput per format + automatic engine optimisations.
+* [⚡ **Performance**](./docs/performance.md) — measured throughput per format, memory profile, and the knobs you have for going faster.
 
 ## 📎 Appendices
 
