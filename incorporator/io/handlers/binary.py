@@ -108,7 +108,7 @@ class SQLiteHandler(BaseFormatHandler):
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         table_name = sanitize_json_key(kwargs.get("sql_table", "incorporator_export"))
         if_exists = kwargs.get("if_exists", "replace")
-        # Phase 6c: dispatcher pre-resolves; handlers receive an absolute Path.
+        # Dispatcher pre-resolves the path; handlers always receive an absolute Path.
         path = file_path if isinstance(file_path, Path) else Path(file_path)
 
         explicit_keys: List[str] = kwargs.get("all_field_names") or []
@@ -272,7 +272,7 @@ class AvroHandler(BaseFormatHandler):
         # Empty guard is handled centrally by _peek_iterable in handlers/__init__.py
         fastavro = _require_optional("fastavro")
 
-        # Phase 6c: dispatcher pre-resolves; handlers receive an absolute Path.
+        # Dispatcher pre-resolves the path; handlers always receive an absolute Path.
         path = file_path if isinstance(file_path, Path) else Path(file_path)
         pydantic_schema = kwargs.get("pydantic_schema", {})
         properties = pydantic_schema.get("properties", {})

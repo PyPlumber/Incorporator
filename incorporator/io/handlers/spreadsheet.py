@@ -111,8 +111,8 @@ class ExcelHandler(BaseFormatHandler):
 
         Workbook = _require_optional("openpyxl").Workbook
 
-        # Phase 6c: dispatcher pre-resolves the path; handlers receive an
-        # already-absolute Path.  ``Path()`` is a no-op on a Path instance.
+        # Dispatcher pre-resolves the path; handlers always receive an
+        # absolute Path.  ``Path()`` is a no-op on a Path instance.
         path = file_path if isinstance(file_path, Path) else Path(file_path)
         sheet_name = kwargs.get("sheet_name", "Sheet1")
         explicit_fieldnames: List[str] = kwargs.get("all_field_names") or []

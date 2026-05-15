@@ -1,17 +1,11 @@
-"""
-Incorporator Factory Module (schema-driven instance assembly).
-==============================================================
-Module-level factory functions extracted from Incorporator classmethod internals.
-Each function receives ``cls`` explicitly so this module stays independent of
-``base.py`` at import time — eliminating the circular-import risk.
+"""Schema-driven instance assembly: Transform, Compile, Instantiate.
 
-This module lives inside ``incorporator/schema/`` because its job is the
-same conceptual layer as ``schema/builder.py`` and ``schema/router.py``:
-take raw data, compile or look up a Pydantic class, and instantiate it.
+Module-level factory functions for the ``incorp()`` pipeline. Each function
+receives ``cls`` explicitly so this module stays import-time independent of
+``base.py`` — eliminating the circular-import risk.
 
-Dependency direction:
-    ``base.py → schema/factory.py → schema/{builder,router}.py``
-    (never the reverse)
+Dependency direction: ``base.py → schema/factory.py → schema/{builder,router}.py``
+(never the reverse).
 """
 
 import logging
@@ -33,35 +27,43 @@ async def child_incorp(
     inc_parent: Any,
     **kwargs: Any,
 ) -> Union["Incorporator", "IncorporatorList[Any]"]:
-    """Unified Parent-to-Child API proxy for deeply nested RESTful graphs.
+    """Drive a parent-to-child ``incorp()`` call for deeply nested RESTful graphs.
 
-    Extracted from Incorporator._child_incorp so the logic lives outside base.py
-    while still operating on the live `cls` passed in at call time.
+    Resolves ``inc_child`` paths via BFS drill-down on the parent dataset,
+    deduplicates the extracted URLs / IDs, builds the correct request shape
+    (GET ``{}``-template or declarative POST / PUT / PATCH), then delegates
+    to ``cls.incorp(**kwargs)``.
+
+    Args:
+        cls: The child :class:`Incorporator` subclass to instantiate.
+        inc_parent: The parent dataset (list of instances or single instance).
+        **kwargs: Forwarded to ``cls.incorp()`` — ``inc_child``, ``inc_url``,
+            ``http_method``, ``json_payload``, ``form_payload``, etc.
+
+    Returns:
+        A single instance or an :class:`IncorporatorList` of child instances.
     """
     child_path = kwargs.get("inc_child") or getattr(inc_parent, "inc_child_path", None)
     if not child_path and inc_parent:
         parent_class = inc_parent[0].__class__ if isinstance(inc_parent, list) else inc_parent.__class__
         child_path = getattr(parent_class, "inc_child", None)
 
-    # Use the Router to perform BFS drill-down
     extracted_data = (
         router.extract_parent_data(inc_parent, child_path)
         if child_path
         else (inc_parent if isinstance(inc_parent, list) else [inc_parent])
     )
 
-    # Deduplicate paths to prevent duplicate HTTP requests
+    # Deduplicate paths to prevent duplicate HTTP requests for identical parent IDs.
     if extracted_data and child_path:
         extracted_data = _deduplicate_extracted(extracted_data)
 
-    # Enforce REST canonical methods
     raw_method = kwargs.pop("method", kwargs.pop("http_method", "GET"))
     kwargs["http_method"] = raw_method.upper() if isinstance(raw_method, str) else "GET"
 
     inc_url = kwargs.get("inc_url")
     source_urls = [inc_url] if isinstance(inc_url, str) else (inc_url or [])
 
-    # Use the Router to build POST payloads or GET queries
     if extracted_data:
         kwargs = router.resolve_declarative_routing(cls.__name__, extracted_data, source_urls, **kwargs)
 
@@ -80,14 +82,37 @@ def build_instances(
     conv_dict: Optional[Dict[str, Any]] = None,
     name_chg: Optional[List[Tuple[str, str]]] = None,
 ) -> Union["Incorporator", "IncorporatorList[Any]"]:
-    """
-    The Factory Assembler:
-    1. Transforms data via Columnar processing.
-    2. Compiles the optimal Pydantic schema cache.
-    3. Instantiates the Python objects at C-speed.
+    """Transform, compile, and instantiate the parsed payload into Incorporator objects.
 
-    Extracted from Incorporator._build_instances so the heavy lifting lives
-    outside base.py and can be unit-tested independently.
+    Three sequential phases:
+
+    1. **Transform** — applies ``conv_dict``, ``excl_lst``, ``name_chg``, and
+       columnar ``calc`` / ``calc_all`` operations via
+       :func:`schema_builder.apply_etl_transformations`.
+    2. **Compile** — resolves or builds the Pydantic model class via
+       :func:`schema_builder.infer_dynamic_schema`.
+    3. **Instantiate** — batch-validates rows with ``model_validate``
+       (1 000 rows per batch for predictable memory) and wraps the result in
+       an :class:`IncorporatorList`.
+
+    Args:
+        cls: The calling :class:`Incorporator` subclass.
+        parsed_data: Raw dicts from the format handler.
+        failed_sources: Any fetch failures accumulated upstream (surfaced as a
+            ``UserWarning`` and forwarded to :class:`IncorporatorList`).
+        is_single: When ``True`` and ``parsed_data`` has exactly one item,
+            returns a single instance rather than a list.
+        target_class: Override the compiled model class (e.g. for
+            ``refresh()``).
+        inc_code: Field name used as the ``IncorporatorList`` primary key.
+        inc_name: Field name used as the display name.
+        excl_lst: Field names to exclude before instantiation.
+        conv_dict: Per-field converter mapping.
+        name_chg: ``[(old_name, new_name), ...]`` field renames.
+
+    Returns:
+        A single :class:`Incorporator` instance or an
+        :class:`IncorporatorList`.
     """
     if failed_sources:
         warnings.warn(
@@ -106,7 +131,6 @@ def build_instances(
     if is_single and len(parsed_data) == 1:
         parsed_data = parsed_data[0]
 
-    # 1. Transform Phase
     transformed_data = schema_builder.apply_etl_transformations(
         parsed_data=parsed_data,
         code_attr=inc_code,
@@ -116,13 +140,11 @@ def build_instances(
         name_chg=name_chg,
     )
 
-    # 2. Metaprogramming Compile Phase
     ActualClass = target_class or cast(
         "Type[Incorporator]",
         schema_builder.infer_dynamic_schema("DynamicModel", transformed_data, cls),
     )
 
-    # 3. Final Instantiation Phase
     if isinstance(transformed_data, list):
         # Populate the superset schema from raw dicts before Pydantic absorbs extra keys.
         # Guard: create a per-class dict so subclasses don't share the base-class instance.

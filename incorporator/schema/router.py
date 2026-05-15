@@ -1,6 +1,8 @@
-"""
-HATEOAS & Declarative Payload Router for the Incorporator Framework.
-Handles iterative graph-drilling and dynamic HTTP Request generation.
+"""HATEOAS graph-driller and declarative HTTP payload router.
+
+Handles iterative BFS graph-drilling (``inc_child`` path traversal) and
+dynamic HTTP request generation for ``GET {}``-template and declarative
+POST / PUT / PATCH patterns (``each()``, ``join_all()``, ``as_list()``).
 """
 
 import logging

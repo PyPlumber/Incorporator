@@ -168,9 +168,8 @@ async def _run_fjord_engine(
          daemon. All coordinate via a single shared ``asyncio.Lock``.
       3. Shutdown: ``shutdown_event.set()`` → cancel tasks → drain queue → exit.
 
-    Phase 10 additions are optional kwargs (``inflow_callable``,
-    ``outflow_module``) — both default to ``None`` so existing callers
-    keep working unchanged.
+    ``inflow_callable`` and ``outflow_module`` are optional kwargs that
+    default to ``None`` so existing callers keep working unchanged.
     """
     # ------------------------------------------------------------------
     # 1. Seed phase
@@ -311,9 +310,8 @@ async def _run_fjord_engine(
             )
 
     # Always spawn the outflow daemon — it's the whole point of fjord.
-    # Phase 10 Design B: pass the outflow MODULE so the daemon can probe
-    # it for user-pre-declared Incorporator subclasses matching the keys
-    # returned by ``outflow(state)`` (edge case B9).
+    # Pass the outflow MODULE so the daemon can probe it for user-pre-declared
+    # Incorporator subclasses matching the keys returned by ``outflow(state)``.
     tasks.append(
         asyncio.create_task(
             _outflow_daemon(

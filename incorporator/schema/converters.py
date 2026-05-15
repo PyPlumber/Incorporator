@@ -1,8 +1,11 @@
-"""
-Built-in Type-Ranked Conversion Engine for Incorporator.
+"""Type-ranked conversion engine: ``inc()``, ``calc()``, and ``calc_all()``.
 
-Provides the `inc()`, `calc()`, and `calc_all()` syntax for Attribute-Based processing.
-Includes a Ranked Dictionary of fallbacks to guarantee 100% "Null-Safe" ETL pipelines.
+Provides ranked fallback converters that guarantee null-safe ETL pipelines.
+Every converter tries the Pydantic TypeAdapter first, then format-specific
+fallbacks (ISO-8601 for ``datetime``, comma-stripped strings for ``int`` /
+``float``, truthy-string normalisation for ``bool``).  Garbage values
+(``"N/A"``, ``"null"``, empty string) short-circuit to ``default`` without
+entering the fallback chain.
 """
 
 import functools

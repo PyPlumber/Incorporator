@@ -34,23 +34,20 @@ class LinkHeaderPaginator(AsyncPaginator):
         self.is_first_call: bool = True
 
     def reset(self) -> None:
-        """Resets state for daemon polling loops."""
+        """Reset state so the next ``paginate()`` starts from the first page."""
         self.is_exhausted = False
         self.current_url = None
         self.is_first_call = True
 
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        """Yield one raw HTTP response body per page until the chain ends.
+        """Yield one raw response body per page, following RFC 5988 ``Link: rel="next"`` headers.
 
-        ``start_url`` seeds the first request; subsequent URLs are
-        derived per-subclass (next-link, cursor token, offset, etc.).
-        Honours ``call_lim`` so ``stream()`` can force exactly one
-        page per tick.
+        Stops when the response has no ``rel="next"`` entry.  Honours
+        ``call_lim`` so ``stream()`` can force exactly one page per tick.
         """
         if self.is_exhausted:
             return
 
-        # Initialize start_url on the very first execution
         if self.is_first_call:
             self.current_url = start_url
             self.is_first_call = False
@@ -87,7 +84,7 @@ class LinkHeaderPaginator(AsyncPaginator):
                 self.is_exhausted = True
                 if self.strict_mode:
                     raise
-                logger.warning(f"LinkHeaderPaginator stopped on {type(e).__name__}: {e}")
+                logger.warning("LinkHeaderPaginator stopped on %s: %s", type(e).__name__, e)
                 break
 
 
@@ -129,12 +126,12 @@ class CursorPaginator(AsyncPaginator):
         self.seen_cursors.clear()
 
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        """Yield one raw HTTP response body per page until the chain ends.
+        """Yield one raw response body per page, advancing via the cursor token.
 
-        ``start_url`` seeds the first request; subsequent URLs are
-        derived per-subclass (next-link, cursor token, offset, etc.).
-        Honours ``call_lim`` so ``stream()`` can force exactly one
-        page per tick.
+        Reads the next cursor from ``meta.next_token``, ``next_cursor``, or
+        the configured ``cursor_param`` key.  Stops when the cursor is absent
+        or has already been seen (infinite-loop guard).  Honours ``call_lim``
+        so ``stream()`` can force exactly one page per tick.
         """
         if self.is_exhausted:
             return
@@ -170,7 +167,7 @@ class CursorPaginator(AsyncPaginator):
                 self.is_exhausted = True
                 if self.strict_mode:
                     raise
-                logger.warning(f"CursorPaginator stopped on {type(e).__name__}: {e}")
+                logger.warning("CursorPaginator stopped on %s: %s", type(e).__name__, e)
                 break
 
 
@@ -216,12 +213,12 @@ class OffsetPaginator(AsyncPaginator):
         self.current_offset = 0
 
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        """Yield one raw HTTP response body per page until the chain ends.
+        """Yield one raw response body per page, advancing the offset by ``limit``.
 
-        ``start_url`` seeds the first request; subsequent URLs are
-        derived per-subclass (next-link, cursor token, offset, etc.).
-        Honours ``call_lim`` so ``stream()`` can force exactly one
-        page per tick.
+        Stops when the results list is empty (auto-detected from common
+        conventions: ``results``, ``data``, ``items``, ``docs``, ``records``
+        or ``result_key`` if set).  Honours ``call_lim`` so ``stream()``
+        can force exactly one page per tick.
         """
         if self.is_exhausted:
             return
@@ -266,7 +263,7 @@ class OffsetPaginator(AsyncPaginator):
                 self.is_exhausted = True
                 if self.strict_mode:
                     raise
-                logger.warning(f"OffsetPaginator stopped on {type(e).__name__}: {e}")
+                logger.warning("OffsetPaginator stopped on %s: %s", type(e).__name__, e)
                 break
 
 
@@ -307,12 +304,11 @@ class PageNumberPaginator(AsyncPaginator):
         self.current_page = self.start_page
 
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        """Yield one raw HTTP response body per page until the chain ends.
+        """Yield one raw response body per page, incrementing the page number.
 
-        ``start_url`` seeds the first request; subsequent URLs are
-        derived per-subclass (next-link, cursor token, offset, etc.).
-        Honours ``call_lim`` so ``stream()`` can force exactly one
-        page per tick.
+        Stops when the results list is empty (same auto-detection as
+        :class:`OffsetPaginator`).  Honours ``call_lim`` so ``stream()``
+        can force exactly one page per tick.
         """
         if self.is_exhausted:
             return
@@ -356,7 +352,7 @@ class PageNumberPaginator(AsyncPaginator):
                 self.is_exhausted = True
                 if self.strict_mode:
                     raise
-                logger.warning(f"PageNumberPaginator stopped on {type(e).__name__}: {e}")
+                logger.warning("PageNumberPaginator stopped on %s: %s", type(e).__name__, e)
                 break
 
 
@@ -398,11 +394,11 @@ class NextUrlPaginator(AsyncPaginator):
         self.is_first_call = True
 
     async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
-        """Yield one raw HTTP response body per page until the chain ends.
+        """Yield one raw response body per page, following the next-URL embedded in the JSON.
 
-        ``start_url`` seeds the first request; subsequent URLs are
-        derived per-subclass (next-link, cursor token, offset, etc.).
-        Honours ``call_lim`` so ``stream()`` can force exactly one
+        Drills into the response body via ``path_keys`` to extract the URL of
+        the next page, then re-fetches it.  Stops when the value is absent or
+        falsy.  Honours ``call_lim`` so ``stream()`` can force exactly one
         page per tick.
         """
         if self.is_exhausted:
@@ -439,5 +435,5 @@ class NextUrlPaginator(AsyncPaginator):
                 self.is_exhausted = True
                 if self.strict_mode:
                     raise
-                logger.warning(f"NextUrlPaginator stopped on {type(e).__name__}: {e}")
+                logger.warning("NextUrlPaginator stopped on %s: %s", type(e).__name__, e)
                 break

@@ -1,6 +1,8 @@
-"""
-Developer Experience (DX) Inspector Module.
-Analyzes raw API payloads and suggests the optimal Incorporator kwargs.
+"""DX Inspector: analyse raw API payloads and suggest optimal Incorporator kwargs.
+
+Probes a fetched payload for schema shape, datetime columns, numeric columns,
+pagination signals, and heavy asset fields. Surface via
+:func:`incorporator.test` — the ``test()`` verb of the public API.
 """
 
 import logging
@@ -15,8 +17,8 @@ logger = logging.getLogger(__name__)
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _HEX_HASH_RE = re.compile(r"^[0-9a-fA-F]{24,64}$")
 
-# Heavy-field detection patterns (Phase D).  Matches asset CDN URLs the user
-# almost certainly wants to drop from the payload via excl_lst.
+# Heavy-field detection patterns. Matches asset CDN URLs the user almost
+# certainly wants to drop from the payload via excl_lst.
 _ASSET_URL_RE = re.compile(
     r"^https?://.*\.(?:jpg|jpeg|png|gif|webp|svg|bmp|ico|mp4|mov|webm|avi|mp3|wav|pdf|zip|tar|gz)(?:\?.*)?$",
     re.I,
@@ -24,8 +26,8 @@ _ASSET_URL_RE = re.compile(
 _HEAVY_FIELD_BYTES = 2048  # strings larger than this look like blobs
 _ASSET_URL_FIELD_BYTES = 200  # _url / _uri suffix + long value heuristic
 
-# Pagination signal keys (Phase C).  Mapped to the matching paginator class
-# name exported from incorporator/__init__.py.
+# Pagination signal keys. Mapped to the matching paginator class name
+# exported from incorporator/__init__.py.
 _NEXT_URL_KEYS = ("next", "next_url", "next_page", "next_page_url")
 _CURSOR_KEYS = ("cursor", "next_cursor", "page_token")
 _OFFSET_PAIRS = (("offset", "limit"), ("page", "per_page"))

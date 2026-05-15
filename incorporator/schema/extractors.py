@@ -1,8 +1,9 @@
-"""
-Graph extraction, relational linking, and declarative POST tokens for Incorporator.
+"""Graph extraction, relational linking, and declarative POST tokens.
 
-Provides link_to, link_to_list, pluck, each, join_all, as_list, and utility functions
-for navigating relational data and building concurrent request payloads.
+Provides ``link_to``, ``link_to_list``, ``pluck``, ``each``, ``join_all``,
+``as_list``, and utility functions for navigating relational data and building
+concurrent request payloads.  Every converter in this module is designed for
+use in ``conv_dict`` or ``json_payload`` / ``form_payload`` kwargs.
 """
 
 import collections.abc

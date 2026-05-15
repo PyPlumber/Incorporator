@@ -434,7 +434,7 @@ class ParquetHandler(BaseFormatHandler):
         _require_optional("pyarrow")  # dep-presence sentinel — same error as feather/orc
         pq = _require_optional("pyarrow.parquet")
 
-        # Phase 6c: dispatcher pre-resolves; handlers receive an absolute Path.
+        # Dispatcher pre-resolves the path; handlers always receive an absolute Path.
         path = file_path if isinstance(file_path, Path) else Path(file_path)
         compression = kwargs.get("parquet_compression", "snappy")  # pyarrow's default
 
@@ -509,7 +509,7 @@ class FeatherHandler(BaseFormatHandler):
         pa = _require_optional("pyarrow")
         _require_optional("pyarrow.feather")  # dep-presence sentinel — same error message as the read path
 
-        # Phase 6c: dispatcher pre-resolves; handlers receive an absolute Path.
+        # Dispatcher pre-resolves the path; handlers always receive an absolute Path.
         path = file_path if isinstance(file_path, Path) else Path(file_path)
         compression_str = kwargs.get("feather_compression", "lz4")  # Feather V2 default
         # pyarrow.ipc.new_file accepts an ipc.IpcWriteOptions struct rather than a
@@ -596,7 +596,7 @@ class OrcHandler(BaseFormatHandler):
                 "(ORC support requires pyarrow with libarrow_orc)."
             ) from None
 
-        # Phase 6c: dispatcher pre-resolves; handlers receive an absolute Path.
+        # Dispatcher pre-resolves the path; handlers always receive an absolute Path.
         path = file_path if isinstance(file_path, Path) else Path(file_path)
 
         try:

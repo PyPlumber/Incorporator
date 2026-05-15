@@ -1,6 +1,10 @@
-"""
-Prefect Orchestration Nodes for the Incorporator Framework.
-Requires the `[orchestrate]` extras (Prefect).
+"""Prefect orchestration nodes for Incorporator stream and flow pipelines.
+
+Requires the ``[orchestrate]`` extra (``pip install incorporator[orchestrate]``).
+Provides a Prefect ``@task`` wrapping :meth:`LoggedIncorporator.stream` and
+a ``@flow`` entry-point that loads a ``pipeline.json`` configuration.
+When Prefect is not installed the decorators fall back to no-ops so the
+module can be imported without raising.
 """
 
 import json
@@ -11,7 +15,6 @@ from typing import Any, Callable, Dict, List, Optional, cast
 from incorporator import LoggedIncorporator
 from incorporator.observability.logger import Wave
 
-# 1. ZERO-BLOAT DEPENDENCY SHIELD
 try:
     from prefect import flow, get_run_logger, task
 
@@ -46,9 +49,11 @@ async def run_incorporator_stream(
     poll_interval: Optional[float] = None,
     stateful_polling: bool = False,
 ) -> List[Wave]:
-    """
-    Prefect Task executing the O(1) Memory Incorporator Stream.
-    Captures telemetry natively into the Prefect dashboard.
+    """Prefect task wrapping :meth:`LoggedIncorporator.stream`.
+
+    Drives an O(1)-memory incorporator stream and routes each
+    :class:`Wave` tick to the Prefect run logger. Returns the full list
+    of ``Wave`` records on completion.
     """
     if not HAS_PREFECT:
         raise RuntimeError("Prefect is not installed. Run: pip install incorporator[orchestrate]")
@@ -69,7 +74,6 @@ async def run_incorporator_stream(
         ):
             results.append(wave)
 
-            # Route telemetry to the Prefect Cloud Dashboard
             status = f"Chunk {wave.chunk_index} | {wave.rows_processed} rows in {wave.processing_time_sec:.2f}s"
             if wave.failed_sources:
                 logger.warning(f"⚠️ {status} with failures: {wave.failed_sources}")
@@ -86,9 +90,7 @@ async def run_incorporator_stream(
 
 @flow(name="incorporator_pipeline_flow")
 async def run_incorporator_flow(config_path: str, poll_interval: Optional[float] = None) -> List[Wave]:
-    """
-    Prefect Flow entrypoint. Loads JSON configuration and triggers the stream task.
-    """
+    """Prefect flow entry point: load ``pipeline.json`` and run the stream task."""
     if not HAS_PREFECT:
         print("❌ Prefect is not installed. Run: pip install incorporator[orchestrate]")
         sys.exit(1)
@@ -108,11 +110,10 @@ async def run_incorporator_flow(config_path: str, poll_interval: Optional[float]
     if not incorp_params:
         raise ValueError("'incorp_params' must be defined in the configuration JSON.")
 
-    # Execute the Prefect Task
     return await run_incorporator_stream(
         incorp_params=incorp_params,
         refresh_params=refresh_params,
         export_params=export_params,
         poll_interval=poll_interval,
-        stateful_polling=stateful_polling,  # 🛡️ PASS TO TASK
+        stateful_polling=stateful_polling,
     )

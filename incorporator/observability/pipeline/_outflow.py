@@ -1,10 +1,9 @@
 """Fjord-specific outflow daemon: snapshot sources, run user fn, export combined output(s).
 
-Phase 10 Design B adds multi-output support: ``outflow(state)`` may return
-either ``list[dict]`` (single derived class, current behaviour) OR
-``dict[ClassName, list[dict]]`` (one derived class per dict key, one
-export file per class).  Detection is by ``isinstance(result, dict)`` —
-list returns stay on the legacy path.
+``outflow(state)`` may return either ``list[dict]`` (single derived class) or
+``dict[ClassName, list[dict]]`` (one derived class per key, one export file per
+class).  Detection is by ``isinstance(result, dict)`` — list returns take the
+single-output path.
 """
 
 import asyncio
@@ -73,8 +72,8 @@ def _resolve_export_params_for(
     if "file_path" in export_params:
         # Single-output config — every derived class would write to the
         # same file, which is almost never what the user wants when
-        # they returned a multi-output dict.  Phase 10 logs a warning
-        # (B3 / B4 mismatch) but keeps writing — fail-safe over fail-hard.
+        # they returned a multi-output dict.  Log a warning but keep
+        # writing — fail-safe over fail-hard.
         if is_multi_output:
             logger.warning(
                 "outflow(state) returned multi-output dict but export_params "
@@ -125,8 +124,8 @@ async def _outflow_daemon(
          one derived class doesn't block the others — each gets its own
          success-or-failure ``Wave`` tagged ``outflow:<derived_name>``.
       2. Prefers a user-pre-declared ``Incorporator`` subclass on
-         ``outflow_module`` when one exists with the matching name (B9
-         — gives DX full type control); otherwise builds the class via
+         ``outflow_module`` when one exists with the matching name (gives
+         DX full type control); otherwise builds the class via
          ``infer_dynamic_schema(derived_name, rows, base_class)``.  The
          schema registry is keyed by
          ``(name, frozenset(field_keys), id(base))`` so successive
@@ -143,10 +142,10 @@ async def _outflow_daemon(
         on multi-output mismatch).
       * ``export_params[derived_name]``  →  multi-output (recommended
         shape: ``{"JediArchive": {"file_path": "..."}, ...}``).
-      * Missing key  →  warn-and-skip the export (B5); the build
-        count is still recorded on the Wave.
+      * Missing key  →  warn-and-skip the export; the build count is
+        still recorded on the Wave.
 
-    Configured-but-unproduced classes are logged once per tick (B6).
+    Configured-but-unproduced classes are logged once per tick.
 
     Failures in any phase enqueue a Wave with ``failed_sources``
     populated but never crash the daemon.
