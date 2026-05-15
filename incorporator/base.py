@@ -1,12 +1,9 @@
-"""
-Incorporator Base Module
-========================
-The core orchestrator and declarative factory for the Incorporator framework.
+"""Core orchestrator and declarative factory for the Incorporator framework.
 
-This file acts purely as a Domain-Driven orchestrator. It contains NO data parsing,
-network looping, or schema compilation logic. It delegates to `io/`, `schema/`,
-`observability/`, `tools/`, `usercode.py`, and `list.py`, then assembles the
-resulting dynamic Pydantic object graphs.
+Acts purely as a coordination layer: no data parsing, network looping, or
+schema compilation logic lives here.  Delegates to ``io/``, ``schema/``,
+``observability/``, ``tools/``, ``usercode.py``, and ``list.py``, then
+assembles the resulting dynamic Pydantic object graphs.
 """
 
 import asyncio
@@ -94,9 +91,6 @@ def _apply_inflow_resolution(
     return resolved_conv, resolved_page
 
 
-# ==========================================
-# THE INCORPORATOR ENGINE
-# ==========================================
 class Incorporator(BaseModel):
     """The Incorporator base class — subclass it to build an async ETL pipeline.
 
@@ -282,9 +276,6 @@ class Incorporator(BaseModel):
                 if issubclass(base, Incorporator) and base is not Incorporator:
                     base.inc_dict[self.inc_code] = self
 
-    # ==========================================
-    # PUBLIC VERBS
-    # ==========================================
     @classmethod
     async def incorp(
         cls: Type[TIncorporator],
@@ -456,7 +447,6 @@ class Incorporator(BaseModel):
         if inflow is not None:
             conv_dict, inc_page = _apply_inflow_resolution(inflow, conv_dict, inc_page)
 
-        # Route to Parent Execution if triggered
         if inc_parent is not None:
             kwargs.update(
                 {
@@ -482,7 +472,6 @@ class Incorporator(BaseModel):
                 f"[{cls.__name__}] Either 'inc_url', 'inc_file', or a valid 'inc_parent' must be provided."
             )
 
-        # Auto-Infer SQLite Queries
         if source:
             network._inject_sqlite_query(source, kwargs.get("sql_table") or cls.__name__.lower(), kwargs)
 
@@ -491,7 +480,6 @@ class Incorporator(BaseModel):
 
         is_single = not isinstance(source, list) and inc_page is None
 
-        # Lock Root Class Origin Context
         if is_single and isinstance(source, str):
             if is_file_mode:
                 cls.inc_file = source
@@ -524,7 +512,6 @@ class Incorporator(BaseModel):
         __inspect = kwargs.pop("__inspect", False)
         payload_list = kwargs.pop("payload_list", None)
 
-        # I/O Network Phase
         parsed_data, failed_sources = await network.fetch_concurrent_payloads(
             source_list=source_list,
             is_file_mode=is_file_mode,
@@ -534,13 +521,11 @@ class Incorporator(BaseModel):
             **kwargs,
         )
 
-        # Routes raw data to the Inspector if triggered
         if __inspect:
             from .tools.inspector import analyze_data
 
             analyze_data(parsed_data, {"rec_path": kwargs.get("rec_path")})
 
-        # Build Phase — runs in a thread pool to keep the event loop free
         result = await asyncio.to_thread(
             _factory.build_instances,
             cls,
@@ -676,7 +661,6 @@ class Incorporator(BaseModel):
         persisted_net = {k: v for k, v in persisted.items() if k not in ("conv_dict", "excl_lst", "name_chg")}
         kwargs = {**persisted_net, **kwargs}
 
-        # Unrolled instance resolution for DX traceability
         if instance is None:
             inst_list = cast(List[TIncorporator], list(cls.inc_dict.values()))
         elif isinstance(instance, (str, Path)):
@@ -718,13 +702,11 @@ class Incorporator(BaseModel):
 
         child_path = inc_child or getattr(inst_list[0], "inc_child_path", None)
 
-        # Use the Router to drill the Graph
         extracted_data = router.extract_parent_data(inst_list, child_path) if child_path else inst_list
 
         if child_path and extracted_data:
             extracted_data = _deduplicate_extracted(extracted_data)
 
-        # Target Resolution
         target = target_url or target_file
         source_urls = network._normalize_source_list(target, None)
 
@@ -734,7 +716,6 @@ class Incorporator(BaseModel):
         # args, no inc_child) skips this and falls through to the origin-URL
         # fallback below, which reads each instance's stored `inc_url`.
         if not target_file and extracted_data and (target_url or child_path):
-            # Use the Router to build declarative payloads
             kwargs = router.resolve_declarative_routing(cls.__name__, extracted_data, source_urls, **kwargs)
             raw_url = kwargs.pop("inc_url", source_urls)
             source_list: List[str] = network._normalize_source_list(raw_url, None)
@@ -882,7 +863,6 @@ class Incorporator(BaseModel):
                     outflow="transform.py",
                 )
         """
-        # Unrolled instance resolution for DX traceability
         if file_path is None:
             actual_path = str(instance)
             instances: List[TIncorporator] = cast(List[TIncorporator], list(cls.inc_dict.values()))
@@ -1275,13 +1255,11 @@ class Incorporator(BaseModel):
         """
         from .observability.pipeline import _run_fjord_engine
 
-        # Optional inflow= sidecar.  Phase 10 Design A: when the sidecar
-        # defines a top-level ``inflow(state)`` callable, fjord switches to
-        # sequential seed and calls it before each source's ``incorp()``
-        # to obtain per-source ``conv_dict`` overrides.  Without that
-        # callable, the sidecar's public names still extend the token
-        # resolver's allow-list (legacy behaviour) and fjord keeps the
-        # parallel ``asyncio.gather`` seed.
+        # When inflow= defines a top-level ``inflow(state)`` callable, fjord
+        # switches to sequential seed and calls it before each source's
+        # ``incorp()`` to obtain per-source ``conv_dict`` overrides.  Without
+        # that callable, the sidecar's public names still extend the token
+        # resolver's allow-list and fjord keeps the parallel asyncio.gather seed.
         inflow_callable: Any = None
         if inflow is not None:
             from .usercode import load_inflow_callable
@@ -1304,16 +1282,11 @@ class Incorporator(BaseModel):
             if "incorp_params" not in entry:
                 raise ValueError(f"[Incorporator.fjord] stream_params[{idx}] missing required key 'incorp_params'.")
 
-        # Derive the output class name from the outflow filename. fjord
-        # builds the actual Pydantic class lazily on the first non-empty
-        # outflow() tick — see _outflow_daemon in observability/pipeline.py.
-        #
-        # Phase 10 Design B (multi-output fjord): we need the outflow
-        # MODULE too, not just the callable, so the engine can check it
-        # for user-pre-declared Incorporator subclasses matching the
-        # keys returned by ``outflow(state)``.  ``load_outflow_module``
-        # returns both via the per-path module cache, so this costs one
-        # file-read regardless of which loader is called first.
+        # Derive the output class name from the outflow filename. fjord builds
+        # the actual Pydantic class lazily on the first non-empty outflow() tick.
+        # ``load_outflow_module`` returns the callable AND the module so the
+        # engine can check for user-pre-declared Incorporator subclasses matching
+        # the keys returned by ``outflow(state)`` (multi-output fjord).
         output_class_name = pascal_case_from_stem(outflow)
         outflow_fn, outflow_module = load_outflow_module(outflow)
 

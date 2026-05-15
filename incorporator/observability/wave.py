@@ -1,9 +1,8 @@
 """The ``Wave`` telemetry record yielded by ``stream()`` / ``fjord()``.
 
-Extracted from ``observability/logger.py`` so the dataclass lives apart
-from the logging machinery.  ``logger.py`` re-exports ``Wave`` to preserve
-existing imports — ``from incorporator.observability.logger import Wave``
-keeps working without a change in caller code.
+Kept in its own module so the dataclass is importable independently of the
+logging machinery in ``observability/logger.py``.  ``logger.py`` re-exports
+``Wave`` so ``from incorporator.observability.logger import Wave`` still works.
 """
 
 from __future__ import annotations

@@ -1,4 +1,11 @@
-"""Dynamic Pydantic model generation and Declarative ETL engine."""
+"""Dynamic Pydantic model generation and declarative ETL engine.
+
+Provides two public entry points: :func:`infer_dynamic_schema` (builds a
+Pydantic V2 model class from raw data samples) and
+:func:`apply_etl_transformations` (applies ``excl_lst``, ``conv_dict``, and
+``name_chg`` passes in columnar order).  Both are called exclusively from
+:mod:`incorporator.schema.factory`.
+"""
 
 import keyword
 import logging
@@ -19,7 +26,6 @@ logger = logging.getLogger(__name__)
 SCHEMA_REGISTRY: "OrderedDict[Tuple[str, FrozenSet[Any], int], Type[BaseModel]]" = OrderedDict()
 MAX_REGISTRY_SIZE = 1000  # Hard boundary to prevent OOM leaks
 
-# The protective shield for Pydantic internals
 PYDANTIC_RESERVED = {
     "model_config",
     "model_fields",
@@ -41,7 +47,12 @@ _SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_]")
 
 
 def sanitize_json_key(key: str) -> str:
-    """Sanitizes keys to PEP 8 standards and prevents Python/Pydantic collisions."""
+    """Convert a raw JSON key to a safe Python identifier.
+
+    Replaces non-alphanumeric characters with ``_``, prefixes digit-leading
+    names, appends ``_`` to Python keywords, and prefixes Pydantic reserved
+    names with ``safe_`` to prevent ``model_dump`` and friends from colliding.
+    """
     clean_key = _SANITIZE_RE.sub("_", str(key))
 
     if not clean_key:
@@ -64,59 +75,74 @@ def apply_etl_transformations(
     conv_dict: Optional[Dict[str, Any]] = None,
     name_chg: Optional[List[Tuple[str, str]]] = None,
 ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
-    """Applies Declarative ETL rules utilizing Attribute-Based (Columnar) Processing."""
+    """Apply exc_lst, conv_dict, name_chg, and PK-binding transforms in-place.
+
+    Processes ``parsed_data`` through four ordered columnar passes: drop
+    (``excl_lst``), convert (``conv_dict`` — handles :func:`calc`,
+    :func:`calc_all`, and standard converters), rename (``name_chg``), and
+    PK binding (``code_attr`` / ``name_attr`` → ``inc_code`` / ``inc_name``).
+
+    Args:
+        parsed_data: A single record dict or a list of record dicts from the
+            format handler.
+        code_attr: Source field name to alias as ``inc_code``.
+        name_attr: Source field name to alias as ``inc_name``.
+        excl_lst: Field names to drop before Pydantic compilation.
+        conv_dict: Mapping of field name → converter (``inc``, ``calc``,
+            ``calc_all``, ``link_to``, ``pluck``, etc.).
+        name_chg: ``[(old_name, new_name), ...]`` rename pairs applied after
+            conversions.
+
+    Returns:
+        The same structure as ``parsed_data`` (dict or list), mutated in
+        place.  Callers may discard the return value.
+    """
 
     items = parsed_data if isinstance(parsed_data, list) else [parsed_data]
     if not items:
         return parsed_data
 
-    # Extract guaranteed dict references once to strict type validation
     dict_items: List[Dict[str, Any]] = [i for i in items if isinstance(i, dict)]
     if not dict_items:
         return items if isinstance(parsed_data, list) else items[0]
 
-    # 1. COLUMNAR PASS: Exclusions (Drop)
-    # Loop order: rows outer, keys inner — keeps each dict warm in the CPU
-    # cache during the inner loop, avoiding cache thrashing on large datasets.
+    # Rows outer, keys inner — keeps each dict warm in the CPU cache during
+    # the inner loop, avoiding cache thrashing on large datasets.
     if excl_lst:
         excl_set = frozenset(excl_lst)
         for d in dict_items:
             for key in excl_set:
                 d.pop(key, None)
 
-    # 2. COLUMNAR PASS: Conversions (Mutate)
     if conv_dict:
         for key, operation in conv_dict.items():
             op_type = type(operation).__name__
 
-            # --- SCENARIO A: Multi-Input Row Calculation (calc) ---
-            if "Calc" in op_type and "All" not in op_type:
+            if "Calc" in op_type and "All" not in op_type:  # calc sentinel
                 inputs = operation.input_list if operation.input_list else [key]
                 for d in dict_items:
                     args = [d.get(dep) for dep in inputs]
                     try:
                         val = operation.func(*args)
                     except Exception as e:
-                        logger.warning(f"Calc operation failed for key '{key}' with args {args}: {e}")
+                        logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
                         val = operation.default
 
                     if callable(operation.target_type):
                         try:
                             val = operation.target_type(val)
                         except Exception as e:
-                            logger.warning(f"Calc type coercion failed for key '{key}' value {val!r}: {e}")
+                            logger.warning("calc type coercion failed for key '%s' value %r: %s", key, val, e)
                             val = operation.default
                     d[key] = val
 
-            # --- SCENARIO B: Batch Array Calculation (calc_all) ---
-            elif "CalcAll" in op_type:
+            elif "CalcAll" in op_type:  # calc_all sentinel
                 inputs = operation.input_list if operation.input_list else [key]
-                # Zip-like column extraction using our pre-filtered dict_items
                 col_args = [[d.get(dep) for d in dict_items] for dep in inputs]
                 try:
                     results = operation.func(*col_args)
                 except Exception as e:
-                    logger.warning(f"CalcAll operation failed for key '{key}': {e}")
+                    logger.warning("calc_all failed for key '%s': %s", key, e)
                     results = [operation.default] * len(dict_items)
 
                 for idx, d in enumerate(dict_items):
@@ -124,7 +150,9 @@ def apply_etl_transformations(
                         val = results[idx]
                     except IndexError:
                         logger.warning(
-                            f"CalcAll operation returned fewer results than expected for key '{key}' (needed index {idx})"  # noqa: E501
+                            "calc_all returned fewer results than expected for key '%s' (needed index %d)",
+                            key,
+                            idx,
                         )
                         val = operation.default
 
@@ -132,30 +160,24 @@ def apply_etl_transformations(
                         try:
                             val = operation.target_type(val)
                         except Exception as e:
-                            logger.warning(f"CalcAll type coercion failed for key '{key}' value {val!r}: {e}")
+                            logger.warning("calc_all type coercion failed for key '%s' value %r: %s", key, val, e)
                             val = operation.default
                     d[key] = val
 
-            # --- SCENARIO C: Standard Extraction (inc, link_to) ---
-            else:
+            else:  # standard converter: inc, link_to, pluck, etc.
                 for d in dict_items:
                     try:
                         d[key] = operation(d.get(key, None))
                     except Exception as e:
-                        logger.warning(f"Standard conv_dict failed on key '{key}': {e}")
+                        logger.warning("conv_dict failed on key '%s': %s", key, e)
 
-    # 3. COLUMNAR PASS: Renaming (Alias)
-    # Loop order: rows outer, keys inner — same cache-locality reasoning as
-    # the exclusions pass above.  name_map preserves chronological insertion
-    # order so rename sequences applied to the same key chain correctly.
     if name_chg:
-        name_map = dict(name_chg)  # Dict conversion preserves chronological insertion order!
+        name_map = dict(name_chg)  # preserves insertion order so chained renames apply in sequence
         for d in dict_items:
             for old_key, new_key in name_map.items():
                 if old_key in d:
                     d[new_key] = d.pop(old_key)
 
-    # 4. COLUMNAR PASS: PK Binding (Index)
     if code_attr:
         for d in dict_items:
             if code_attr in d:
@@ -223,9 +245,8 @@ def infer_dynamic_schema(
             for k, v in item.items():
                 current_val = sample_dict.get(k)
 
-                # Condition A: Key doesn't exist, is None, or is an empty List/Dict.
                 if current_val is None or (isinstance(current_val, (list, dict)) and not current_val):
-                    # Use shallow copies to prevent mutating the original data via reference!
+                    # Shallow copy prevents mutating the original data via reference.
                     if isinstance(v, list):
                         sample_dict[k] = list(v)
                     elif isinstance(v, dict):
@@ -233,17 +254,15 @@ def infer_dynamic_schema(
                     else:
                         sample_dict[k] = v
 
-                # Condition B: Both are lists. Combine them so recursive calls see ALL nested keys!
                 elif isinstance(current_val, list) and isinstance(v, list):
-                    # Cap the combined sample list at 50 to prevent recursive memory bloat
+                    # Merge so recursive calls see all nested keys; cap at 50 to bound memory.
                     if len(current_val) < 50:
                         current_val.extend(v[: 50 - len(current_val)])
 
-                # Condition C: Both are dicts. Merge keys to discover missing attributes.
                 elif isinstance(current_val, dict) and isinstance(v, dict):
                     for sub_k, sub_v in v.items():
                         if current_val.get(sub_k) is None:
-                            # Enforce shallow copies to prevent recursive reference loops!
+                            # Shallow copy to prevent recursive reference loops.
                             if isinstance(sub_v, list):
                                 current_val[sub_k] = list(sub_v)
                             elif isinstance(sub_v, dict):
@@ -251,7 +270,8 @@ def infer_dynamic_schema(
                             else:
                                 current_val[sub_k] = sub_v
 
-    # Include field names AND types to prevent cross-dataset type collisions
+    # Include types in the key to prevent cross-dataset collisions when two
+    # datasets have identical field names but different value types.
     cache_key = (
         model_name,
         frozenset((k, type(v).__name__) for k, v in sample_dict.items()),
@@ -274,9 +294,8 @@ def infer_dynamic_schema(
             nested_model: Any = infer_dynamic_schema(f"{model_name}_{safe_key}", value, BaseModel)
             fields[safe_key] = (Optional[nested_model], Field(alias=raw_key, default=None))
 
-        # Robust array scanning! Prevent splintering if value[0] is None
         elif isinstance(value, list) and value and any(isinstance(x, dict) for x in value):
-            # Pass only the dictionaries so the recursive inference succeeds
+            # Filter to dicts only — value[0] might be None, which would break recursive inference.
             dict_vals = [x for x in value if isinstance(x, dict)]
             nested_model_list: Any = infer_dynamic_schema(f"{model_name}_{safe_key}Item", dict_vals, BaseModel)
             fields[safe_key] = (
@@ -309,7 +328,6 @@ def infer_dynamic_schema(
                 if isinstance(attr_val, dict):
                     setattr(DynamicModel, attr_name, dict(attr_val))
                 elif isinstance(attr_val, weakref.WeakValueDictionary):
-                    # Type mapping for strictly typed generic dicts
                     setattr(DynamicModel, attr_name, weakref.WeakValueDictionary[Any, Any]())
 
         # LRU cache insert: evict the least-recently-used entry when the

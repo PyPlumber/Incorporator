@@ -1,11 +1,10 @@
-"""
-IncorporatorList: the typed list wrapper and deduplication utility.
+"""IncorporatorList: the typed list wrapper and deduplication utility.
 
 Lives at the package root (rather than under ``schema/``) because it is
-a *runtime collection of Incorporator instances* — public API exported
-in ``incorporator.__all__`` — not a schema-compilation artifact.
-``schema/`` is reserved for the modules that build Pydantic classes
-from raw data (``builder``, ``router``, ``factory``).
+a runtime collection of Incorporator instances — public API exported in
+``incorporator.__all__`` — not a schema-compilation artifact.  ``schema/``
+is reserved for the modules that build Pydantic classes from raw data
+(``builder``, ``router``, ``factory``).
 """
 
 import logging
@@ -31,8 +30,9 @@ def _deduplicate_extracted(data: List[Any]) -> List[Any]:
         non_hashable = [x for x in data if not isinstance(x, (str, int, float, bool))]
         if non_hashable:
             logger.warning(
-                f"extracted_data contains {len(non_hashable)} non-hashable item(s) that cannot be "
-                "deduplicated and will be included as-is. Consider extracting scalar IDs."
+                "extracted_data contains %d non-hashable item(s) that cannot be "
+                "deduplicated and will be included as-is. Consider extracting scalar IDs.",
+                len(non_hashable),
             )
         return list(dict.fromkeys(hashable)) + non_hashable
 
