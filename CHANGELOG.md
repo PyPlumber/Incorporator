@@ -5,6 +5,28 @@ All notable changes to Incorporator are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-05-15
+
+### Changed
+- **Documentation polish pass** — all public docstrings now have formal
+  Google-style `Args:` / `Returns:` / `Yields:` sections. Covers
+  converter predicates (`is_garbage_value`, `parses_as_datetime`,
+  `parses_as_int`, `parses_as_float`), extractor helpers (`link_to_list`,
+  `sum_attributes`, `as_list`), `LoggedIncorporator` verbs (`refresh`,
+  `export`, `stream`, `fjord`), and all 8 `paginate()` async-generator
+  methods. `display()` and `refresh()` return-type descriptions corrected.
+- **pyproject.toml classifiers** — removed Python 3.10 and 3.12 entries;
+  CI only tests 3.9 / 3.11 / 3.13.
+- **Project description** rewritten to accurately describe the library
+  ("Schema-free ETL mapper…").
+- Docs and example files updated: stale "v2.0" version references,
+  dead legacy filename references, and unexplained advanced-pattern
+  lead-ins resolved.
+- `SECURITY.md` supported-versions table updated to v1.1.x; stale
+  parameter name (`code_file=` → `outflow=`) corrected.
+- `CONTRIBUTING.md` test count (521+), mypy file count (47), and
+  Python version list brought up to date.
+
 ## [1.1.1] - 2026-05-14
 
 ### Fixed
