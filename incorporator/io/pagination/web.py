@@ -44,6 +44,14 @@ class LinkHeaderPaginator(AsyncPaginator):
 
         Stops when the response has no ``rel="next"`` entry.  Honours
         ``call_lim`` so ``stream()`` can force exactly one page per tick.
+
+        Args:
+            start_url: The URL of the first page.  Subsequent URLs are
+                extracted from the ``Link`` header automatically.
+
+        Yields:
+            ``bytes`` — the raw HTTP response body for each page; the
+            format handler downstream parses them into records.
         """
         if self.is_exhausted:
             return
@@ -132,6 +140,14 @@ class CursorPaginator(AsyncPaginator):
         the configured ``cursor_param`` key.  Stops when the cursor is absent
         or has already been seen (infinite-loop guard).  Honours ``call_lim``
         so ``stream()`` can force exactly one page per tick.
+
+        Args:
+            start_url: Base URL that receives the cursor as a query parameter
+                on every request.
+
+        Yields:
+            ``bytes`` — the raw HTTP response body for each page; the
+            format handler downstream parses them into records.
         """
         if self.is_exhausted:
             return
@@ -219,6 +235,14 @@ class OffsetPaginator(AsyncPaginator):
         conventions: ``results``, ``data``, ``items``, ``docs``, ``records``
         or ``result_key`` if set).  Honours ``call_lim`` so ``stream()``
         can force exactly one page per tick.
+
+        Args:
+            start_url: Base URL that receives ``offset`` and ``limit`` as
+                query parameters on every request.
+
+        Yields:
+            ``bytes`` — the raw HTTP response body for each page; the
+            format handler downstream parses them into records.
         """
         if self.is_exhausted:
             return
@@ -309,6 +333,14 @@ class PageNumberPaginator(AsyncPaginator):
         Stops when the results list is empty (same auto-detection as
         :class:`OffsetPaginator`).  Honours ``call_lim`` so ``stream()``
         can force exactly one page per tick.
+
+        Args:
+            start_url: Base URL that receives the page number as a query
+                parameter on every request.
+
+        Yields:
+            ``bytes`` — the raw HTTP response body for each page; the
+            format handler downstream parses them into records.
         """
         if self.is_exhausted:
             return
@@ -400,6 +432,14 @@ class NextUrlPaginator(AsyncPaginator):
         the next page, then re-fetches it.  Stops when the value is absent or
         falsy.  Honours ``call_lim`` so ``stream()`` can force exactly one
         page per tick.
+
+        Args:
+            start_url: URL of the first page; subsequent URLs are extracted
+                from the JSON body via ``path_keys``.
+
+        Yields:
+            ``bytes`` — the raw HTTP response body for each page; the
+            format handler downstream parses them into records.
         """
         if self.is_exhausted:
             return

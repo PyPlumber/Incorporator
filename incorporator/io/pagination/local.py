@@ -57,6 +57,14 @@ class SQLitePaginator(AsyncPaginator):
         ``start_url`` is unused — local paginators carry their own
         ``db_path`` / ``file_path`` state. Honours ``call_lim`` so
         ``stream()`` can force exactly one chunk per tick.
+
+        Args:
+            start_url: Unused; present for interface compatibility with web
+                paginators.
+
+        Yields:
+            ``List[Dict[str, Any]]`` — one chunk of up to ``chunk_size``
+            rows per iteration, consumed directly by the instantiation engine.
         """
         if self.is_exhausted:
             return
@@ -138,6 +146,14 @@ class CSVPaginator(AsyncPaginator):
         ``start_url`` is unused — local paginators carry their own
         ``db_path`` / ``file_path`` state. Honours ``call_lim`` so
         ``stream()`` can force exactly one chunk per tick.
+
+        Args:
+            start_url: Unused; present for interface compatibility with web
+                paginators.
+
+        Yields:
+            ``List[Dict[str, Any]]`` — one chunk of up to ``chunk_size``
+            rows per iteration, consumed directly by the instantiation engine.
         """
         if self.is_exhausted:
             return
@@ -216,6 +232,14 @@ class AvroPaginator(AsyncPaginator):
         ``start_url`` is unused — local paginators carry their own
         ``db_path`` / ``file_path`` state. Honours ``call_lim`` so
         ``stream()`` can force exactly one chunk per tick.
+
+        Args:
+            start_url: Unused; present for interface compatibility with web
+                paginators.
+
+        Yields:
+            ``List[Dict[str, Any]]`` — one chunk of up to ``chunk_size``
+            rows per iteration, consumed directly by the instantiation engine.
         """
         if self.is_exhausted:
             return
