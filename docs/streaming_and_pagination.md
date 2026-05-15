@@ -142,7 +142,7 @@ if __name__ == "__main__":
 
 Don't want to write boilerplate Python scripts to run your streams? You don't have to.
 
-The Incorporator v2.0 Platform includes a built-in Typer CLI that can execute this exact same stateful, infinite-looping daemon using a simple JSON file.
+Incorporator includes a built-in CLI that can execute this exact same stateful, infinite-looping daemon using a simple JSON file.
 
 Instead of writing the Python loop above, simply define your pipeline in **`pipeline.json`**:
 ```json
