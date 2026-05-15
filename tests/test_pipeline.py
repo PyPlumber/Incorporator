@@ -567,9 +567,7 @@ async def test_run_pipeline_refresh_interval_falls_back_to_poll_interval() -> No
     assert any(a.operation == "refresh" for a in results)
 
 
-# ==========================================
-# New default-on / sentinel behaviour locks (Phase 1, 2, 4)
-# ==========================================
+# Default-on / sentinel behaviour locks
 
 
 @pytest.mark.asyncio

@@ -22,7 +22,7 @@ These tests pin the guard down structurally:
 Framework note: ``Incorporator.inc_url`` is a ``ClassVar`` populated only
 when the class was loaded from a **single** URL.  Multi-URL incorp and
 per-instance origin tracking are out of scope for this regression suite
-(see plan Phase 5+ for tutorial 5's documented limit).
+(see tutorial 5 for the documented limit).
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Phase 10 Design B — multi-output fjord regressions.
+"""Multi-output fjord regressions.
 
 Covers ``outflow(state) -> dict[ClassName, list[dict]]`` returning
 multiple derived classes per tick, each exported to its own file.

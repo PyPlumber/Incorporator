@@ -1,7 +1,7 @@
 """NASCAR fantasy league as a multi-output fjord pipeline.
 
 Pure-Python rewrite of the legacy ``nascar_fantasy_etl.py`` showcase
-using the fjord engine.  Demonstrates three Phase-10 capabilities in
+using the fjord engine.  Demonstrates three advanced fjord capabilities in
 one config:
 
 1. **State-aware inflow** — ``Race.track_id`` and

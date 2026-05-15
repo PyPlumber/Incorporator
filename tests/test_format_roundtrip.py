@@ -1,4 +1,4 @@
-"""Phase 3 — data-correctness round-trip regressions.
+"""Data-correctness round-trip regressions.
 
 The senior-review audit found round-trip mismatches that surface as
 silent data loss when a Pydantic model is exported and re-imported.
@@ -8,7 +8,7 @@ These tests lock the new contract:
   * SQLite bool round-trip via sql_bool_columns kwarg (was: int only).
   * xml_to_dict force_list kwarg for stable list shapes across docs.
 
-Phase 3 also added docstring warnings for Feather/ORC RAM usage, but
+Feather/ORC RAM usage warnings are documented in the handler docstrings, but
 that's a fundamental pyarrow API constraint — not testable as a fix.
 """
 
@@ -141,9 +141,7 @@ def test_xml_to_dict_force_list_only_affects_named_tags() -> None:
     assert result["root"]["other"] == "b"           # other stays scalar
 
 
-# ==========================================
-# 3d (Phase 8) — Avro field-name round-trip via schema metadata
-# ==========================================
+# Avro field-name round-trip via schema metadata
 
 
 def test_avro_original_field_names_round_trip(tmp_path: Path) -> None:
@@ -197,9 +195,7 @@ def test_avro_round_trip_unchanged_names_omits_metadata(tmp_path: Path) -> None:
         assert "__incorporator_original_names__" not in reader.writer_schema
 
 
-# ==========================================
-# Phase 8 F — Parquet decimal128 / timestamp[tz] round-trip
-# ==========================================
+# Parquet decimal128 / timestamp[tz] round-trip
 
 
 def test_parquet_decimal_columns_kwarg_round_trip(tmp_path: Path) -> None:

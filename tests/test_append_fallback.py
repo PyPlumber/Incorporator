@@ -1,4 +1,4 @@
-"""Regression tests for the stream/fjord append-fallback contract (Phase 1).
+"""Regression tests for the stream/fjord append-fallback contract.
 
 The senior-level audit found that pre-fix, append-rejected formats
 (Parquet / Excel / XML / JSON / Feather / ORC) either crashed mid-pipeline

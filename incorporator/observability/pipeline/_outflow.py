@@ -31,7 +31,7 @@ def _normalise_outflow_return(
 
     Shapes:
       * ``list[dict]`` → ``{default_class_name: list}`` (legacy single-output)
-      * ``dict`` of ``str → list[dict]`` → multi-output (Phase 10 Design B)
+      * ``dict`` of ``str → list[dict]`` → multi-output (one derived class per key)
       * ``dict`` of ``str → str`` (NOT list-valued) → ambiguous; treat as a
         single legacy row (wrap in list).  Backwards-compat for users who
         previously returned a single dict per tick.
@@ -101,7 +101,9 @@ async def _outflow_daemon(
 
     On every tick (two-phase, multi-output aware):
 
-    **Phase 1 — snapshot + invoke user outflow_fn.**
+    Each tick runs in two stages:
+
+    **Stage 1 — snapshot + invoke user outflow_fn.**
       1. Snapshot each ``source_refs[i][0]`` under ``lock`` into a state
          dict keyed by ``source_classes[i].__name__`` (O(N) pointer
          copies, not deep copies — release the lock fast).
@@ -113,12 +115,12 @@ async def _outflow_daemon(
          ran).
       3. ``_normalise_outflow_return`` coerces the result to
          ``{class_name: rows}``:
-           * ``list[dict]``  → single-output (legacy single class)
+           * ``list[dict]``  → single-output (one class)
            * ``dict[str, list[dict]]`` → multi-output (one class per key,
              one file per key)
            * ``{}``          → no-op tick (zero waves)
 
-    **Phase 2 — per-derived-class build + export.**  For every
+    **Stage 2 — per-derived-class build + export.**  For every
     ``(derived_name, rows)`` pair the engine:
       1. Wraps the block in its own ``_daemon_tick`` so a failure in
          one derived class doesn't block the others — each gets its own
@@ -168,11 +170,8 @@ async def _outflow_daemon(
     while not shutdown_event.is_set():
         loop_idx += 1
 
-        # ────────────────────────────────────────────────────────────
-        # Phase 1: snapshot + run user outflow_fn.  On exception we emit
-        # a single composite failure wave and skip Phase 2; on success
-        # the per-class waves below carry the real signal.
-        # ────────────────────────────────────────────────────────────
+        # Stage 1: snapshot + run outflow_fn.  On exception emit a single
+        # composite failure wave and skip Stage 2.
         result: Any = _OUTFLOW_NOT_RUN
         try:
             async with lock:
@@ -197,14 +196,8 @@ async def _outflow_daemon(
         if result is not _OUTFLOW_NOT_RUN:
             grouped, is_multi = _normalise_outflow_return(result, output_class_name)
 
-            # ────────────────────────────────────────────────────────
-            # Phase 2: per-derived-class build + export.
-            #
-            # Each (derived_name, rows) pair gets its own _daemon_tick
-            # so a failure building Demographics doesn't prevent
-            # JediArchive from exporting.  One Wave per derived class
-            # per tick — matches the per-source Wave granularity.
-            # ────────────────────────────────────────────────────────
+            # Stage 2: per-derived-class build + export.  Each pair gets its
+            # own _daemon_tick so one failure doesn't block the others.
             for derived_name, rows in grouped.items():
                 row_count_holder: List[int] = [0]
 
@@ -223,9 +216,8 @@ async def _outflow_daemon(
                         # rows_processed=0; skip build/export.
                         continue
 
-                    # Edge case B9: prefer a user-pre-declared Incorporator
-                    # subclass with the matching name if outflow.py defined
-                    # one.  Lets DX have full type control on derived classes.
+                    # Prefer a user-pre-declared Incorporator subclass with
+                    # the matching name — lets the user have full type control.
                     user_cls = getattr(outflow_module, derived_name, None) if outflow_module is not None else None
                     if user_cls is not None and isinstance(user_cls, type) and issubclass(user_cls, base_class):
                         DerivedCls = cast(Any, user_cls)
@@ -239,18 +231,15 @@ async def _outflow_daemon(
                     DerivedCls.inc_dict.clear()
                     instances = [DerivedCls(**row) for row in rows]
 
-                    # Strong-ref snapshot keeps the WeakValueDictionary
-                    # populated between ticks.  Phase 8 introduced this;
-                    # preserve it per-class so each derived class survives
-                    # independently.
+                    # Strong-ref snapshot keeps the WeakValueDictionary alive between
+                    # ticks — preserve per-class so each derived class survives independently.
                     DerivedCls._fjord_snapshot = instances
 
                     # Per-class export_params lookup + per-tick if_exists.
                     class_export = _resolve_export_params_for(derived_name, export_params, is_multi)
                     if not class_export:
-                        # B5: outflow returned a class with no matching export
-                        # config.  Skip the export but record the build count
-                        # so the user sees what they produced.
+                        # outflow returned a class with no matching export config.
+                        # Skip the export but record the build count.
                         logger.warning(
                             "outflow(state) emitted class %r but export_params has no matching key; skipping export.",
                             derived_name,
@@ -258,12 +247,10 @@ async def _outflow_daemon(
                         row_count_holder[0] = len(instances)
                         continue
 
-                    # Stateful fjord semantics: each derived class is
-                    # rebuilt from scratch every outflow tick (Phase 8
-                    # ``inc_dict.clear()`` + re-materialise), so we
-                    # always replace.  Users wanting forensic
-                    # accumulation can pass ``if_exists="append"``
-                    # explicitly in the per-class export_params.
+                    # Each derived class is rebuilt from scratch every outflow tick
+                    # (inc_dict.clear() + re-materialise), so we always replace.
+                    # Users wanting accumulation can pass if_exists="append" in
+                    # the per-class export_params.
                     resolved = _resolve_if_exists_for_export(
                         file_path=class_export.get("file_path"),
                         force_append=False,

@@ -93,9 +93,9 @@ async def test_parquet_compression_size_vs_ndjson(tmp_path: Path) -> None:
 def test_parquet_from_pydict_vs_from_pylist_microbench() -> None:
     """Micro-benchmark: ``pa.Table.from_pydict`` vs ``from_pylist`` on a typical batch.
 
-    Decision-record benchmark.  The Phase 8 plan flagged ``from_pydict`` as a
-    potential 10 %+ speedup over ``from_pylist`` (which the columnar writer
-    currently uses).  This test runs both on a representative 1024-row batch
+    Decision-record benchmark.  ``from_pydict`` was flagged as a potential
+    10 %+ speedup over ``from_pylist`` (which the columnar writer currently
+    uses).  This test runs both on a representative 1024-row batch
     so the team has concrete data when deciding whether the swap is worth
     the row-to-column pivot cost.
 
@@ -150,7 +150,7 @@ def test_parquet_from_pydict_vs_from_pylist_microbench() -> None:
     assert table_a.num_rows == table_b.num_rows == batch_size
     assert pylist_elapsed < 5.0
     assert pydict_elapsed < 5.0
-    # Decision rule per the Phase 8 plan: swap only if pydict ≥ 1.1× faster on
-    # a representative payload.  This is recorded here as a soft signal; the
+    # Decision rule: swap only if pydict ≥ 1.1× faster on a representative
+    # payload.  This is recorded here as a soft signal; the
     # actual code swap stays a deliberate follow-up commit once the team
     # reviews this print output across multiple hardware profiles.

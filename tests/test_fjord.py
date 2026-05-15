@@ -461,9 +461,7 @@ def test_pascal_case_from_stem_rejects_invalid() -> None:
         pascal_case_from_stem(Path("_.py"))
 
 
-# ==========================================
-# Per-source interval dict-shape (Phase 3)
-# ==========================================
+# Per-source interval dict-shape
 
 
 def test_resolve_per_source_interval_per_entry_override_wins() -> None:

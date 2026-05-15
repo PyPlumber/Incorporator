@@ -1,17 +1,16 @@
-"""Phase 10 Design A — state-aware ``inflow(state)`` callback regressions.
+"""State-aware ``inflow(state)`` callback regressions.
 
 Covers the user's primary motivating cases (SWAPI-Trinity-style linking
-via ``link_to(state["Planet"], …)``) plus the edge cases A1-A9 from the
-plan:
+via ``link_to(state["Planet"], …)``) plus edge cases:
 
-  - A1 source N fails mid-seed
-  - A2 inflow(state) itself raises
-  - A3 inflow returns invalid shape
-  - A4 circular dependency (validate-time would catch — runtime here)
-  - A6 refresh sees fresh peer snapshots (link_to closure on live list)
-  - A7 co-equal sources still parallel
-  - A8 async inflow callable
-  - A9 inflow conv_dict wins over stream_params conv_dict
+  - source N fails mid-seed
+  - inflow(state) itself raises
+  - inflow returns invalid shape
+  - circular dependency (validate-time would catch — runtime here)
+  - refresh sees fresh peer snapshots (link_to closure on live list)
+  - co-equal sources still parallel
+  - async inflow callable
+  - inflow conv_dict wins over stream_params conv_dict
 
 Mock pattern mirrors ``tests/test_fjord.py`` — patch
 ``incorporator.io.fetch.execute_request`` with a canned async stub.

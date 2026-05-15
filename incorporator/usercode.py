@@ -207,12 +207,11 @@ def load_outflow_function(outflow: Union[str, Path]) -> Callable[[Any], Any]:
 def load_outflow_module(outflow: Union[str, Path]) -> Tuple[Callable[[Any], Any], ModuleType]:
     """Load ``outflow.py``; return both its ``outflow`` callable AND its module.
 
-    Sibling of :func:`load_outflow_function` for Phase 10's multi-output
-    fjord: the engine needs the module object so it can probe for
-    user-pre-declared Incorporator subclasses whose names match the
-    keys returned by ``outflow(state)``.  When such a subclass exists,
-    the engine uses it as the derived class instead of building one
-    via :func:`infer_dynamic_schema` (edge case B9).
+    The engine needs the module object so it can probe for user-pre-declared
+    Incorporator subclasses whose names match the keys returned by
+    ``outflow(state)``.  When such a subclass exists, the engine uses it as
+    the derived class instead of building one via
+    :func:`infer_dynamic_schema`.
 
     Reuses :func:`load_user_module`'s ``sys.modules`` cache so calling
     this AND :func:`load_outflow_function` on the same path costs one
@@ -241,15 +240,13 @@ def load_outflow_module(outflow: Union[str, Path]) -> Tuple[Callable[[Any], Any]
 
 
 def load_inflow_callable(inflow: Union[str, Path]) -> Optional[Callable[[Any], Any]]:
-    """Return the OPTIONAL state-aware ``inflow(state)`` callable from ``inflow.py``.
+    """Return the optional state-aware ``inflow(state)`` callable from ``inflow.py``.
 
-    Phase 10 Design A: when ``inflow.py`` defines a top-level callable
-    named ``inflow`` accepting one parameter (``state``), the fjord
-    engine runs it before each source's ``incorp()`` to obtain
-    per-source ``conv_dict`` overrides.  Without this callable
-    (the historical use case where ``inflow.py`` is a passive
-    name-bag for ``calc_bst()``-style reducers), the engine keeps
-    today's parallel ``asyncio.gather`` seed path.
+    When ``inflow.py`` defines a top-level callable named ``inflow`` accepting
+    one parameter (``state``), the fjord engine runs it before each source's
+    ``incorp()`` to obtain per-source ``conv_dict`` overrides.  Without this
+    callable (``inflow.py`` used as a passive name-bag for reducer helpers),
+    the engine keeps the parallel ``asyncio.gather`` seed path.
 
     Sync OR async callables are both accepted — the caller is
     responsible for detecting and awaiting if needed via

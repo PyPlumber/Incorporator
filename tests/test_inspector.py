@@ -214,8 +214,8 @@ def test_analyze_data_flags_every_datetime_variant_the_runtime_accepts(
 ) -> None:
     """Any ISO/RFC-3339 variant the framework runtime accepts must be flagged.
 
-    Phase B routes inspector detection through the same _fallback_date the
-    runtime uses, so this matrix is the structural contract: if inc(datetime)
+    Inspector detection routes through the same ``_fallback_date`` the
+    runtime uses, so this matrix is the structural contract: if ``inc(datetime)``
     would accept it, the inspector recommends it.
     """
     sample = {"id": 1, "happened_at": value, "name": "Sample"}
@@ -238,9 +238,7 @@ def test_analyze_data_does_not_flag_garbage_values_as_dates(
     assert "No string fields look like dates or numbers" in out
 
 
-# ==========================================
-# 2d. PAGINATION HINTS (Phase C)
-# ==========================================
+# 2d. PAGINATION HINTS
 
 
 def test_pagination_hint_next_url_paginator(capsys: pytest.CaptureFixture[str]) -> None:
@@ -280,9 +278,7 @@ def test_pagination_hint_silent_when_no_signal(capsys: pytest.CaptureFixture[str
     assert "PAGINATION HINTS" not in out
 
 
-# ==========================================
-# 2e. HEAVY-FIELD HINTS (Phase D)
-# ==========================================
+# 2e. HEAVY-FIELD HINTS
 
 
 def test_heavy_field_hint_flags_asset_urls(capsys: pytest.CaptureFixture[str]) -> None:

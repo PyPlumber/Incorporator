@@ -1,4 +1,4 @@
-"""Phase 4 — atomic-write regressions.
+"""Atomic-write regressions.
 
 The senior-review audit found that monolithic formats (Parquet, Excel,
 JSON, XML, Feather, ORC) write directly to the target path.  A crash

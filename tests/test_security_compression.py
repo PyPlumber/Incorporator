@@ -1,4 +1,4 @@
-"""Phase 2 — security regressions for compression + formula injection.
+"""Security regressions for compression + formula injection.
 
 Three threats addressed:
   1. ZIP path traversal (a/k/a "ZIP slip") — malicious member names like

@@ -117,10 +117,7 @@ async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) 
     print("🔴 Booting up the Pokedex Terminal...")
     BASE_URL = "https://pokeapi.co/api/v2"
 
-    # ==========================================
-    # 1. PHASE 1: SHALLOW DISCOVERY
-    # ==========================================
-    print("⏳ Running Phase 1: Shallow Discovery (Fetching 150 records)...")
+    print("⏳ Shallow discovery: fetching up to 150 records...")
     pokemon_nav = await Nav.incorp(
         inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
         rec_path="results",
@@ -132,12 +129,8 @@ async def test_pokemon_parent_based_enrichment(monkeypatch: pytest.MonkeyPatch) 
 
     print(f"✅ Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
 
-    # ==========================================
-    # 2. PHASE 2: DEEP ENRICHMENT (HATEOAS)
-    # ==========================================
-    # Showcasing the State Carrier: `incorp` automatically reads the `inc_child_path`
-    # ("url") directly off the `pokemon_nav` list wrapper and concurrently fetches
-    # all 150 URLs seamlessly without throwing the Deprecation Warning!
+    # pokemon_nav carries inc_child="url" as state; inc_parent reads it and
+    # fires concurrent detail requests without a deprecation warning.
     enriched_pokemon = await Pokemon.incorp(
         inc_parent=pokemon_nav,
         inc_code="id",

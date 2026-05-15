@@ -275,7 +275,7 @@ def test_garbage_values_frozenset_contents() -> None:
         ("", False),
         ("N/A", False),
         (None, False),
-        # Numbers shouldn't be flagged as dates (Phase B precedence safeguard).
+        # int/float converter ranks above datetime, so "42" must not match the date fallback.
         ("42", False),
     ],
 )
