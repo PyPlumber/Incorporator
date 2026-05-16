@@ -223,11 +223,13 @@ if typer:
         ),
     ) -> None:
         """
-        Generate a starter pipeline.json (and, for fjord, an outflow.py).
+        Generate a starter pipeline.json or watershed.json (and, for fjord /
+        tideweaver, an outflow.py).
 
         Refuses to overwrite existing files. After running, fill in the
         placeholders, then ``incorporator validate <path>`` to confirm,
-        then ``incorporator stream <path>`` or ``incorporator fjord <path>``.
+        then ``incorporator stream <path>``, ``incorporator fjord <path>``,
+        or ``incorporator tideweaver run <path>``.
         """
         try:
             written = write_scaffold(type_, output_dir.resolve(), with_inflow=with_inflow)
