@@ -10,11 +10,12 @@ longer than ``skip_threshold * dependent.interval``.
 Per-tick bodies live in this module too:
 
 * :class:`Stream` → ``cls.stream(..., stateful_polling=False)`` chunking drain.
-* :class:`Fjord` → "fjord flush": snapshot upstream registries → ``outflow(state)``
-  → dynamic class build → ``cls.export(...)``.  Reuses
-  :func:`_normalise_outflow_return` and :func:`_resolve_export_params_for` from
-  the existing :mod:`incorporator.observability.pipeline._outflow` module so the
-  shape semantics match :meth:`Incorporator.fjord` exactly.
+* :class:`Fjord` → "fjord flush": snapshot upstream registries, then delegate to
+  :func:`incorporator.observability.pipeline._outflow.flush`, the shared
+  per-class build-and-export primitive that the legacy ``_outflow_daemon``
+  also uses.  Shape semantics (single-output list / multi-output dict,
+  user-pre-declared classes vs. ``infer_dynamic_schema``) match
+  :meth:`Incorporator.fjord` exactly.
 * :class:`Export` → ``cls.export(...)``.
 
 Restart policy via :mod:`tenacity` (already a dep).  ``"isolate"`` traps and

@@ -4,7 +4,7 @@ A :class:`Watershed` declares the plan — a time window plus a graph of named
 :class:`Current` nodes connected by edges.  :class:`Tideweaver` runs the plan:
 each current ticks on its own interval; hard edges gate dependents until the
 upstream emits a new :class:`~incorporator.Wave`; soft edges only sequence the
-in-tick order without a data wait.  One :class:`Tide` log record is emitted per
+in-pass order without a data wait.  One :class:`Tide` log record is emitted per
 scheduler pass.
 
 The vocabulary is deliberately small:

@@ -67,9 +67,14 @@ class Stream(Current):
     (``stateful_polling=False``) until the source is drained, then exits.
     Tideweaver's ``interval`` IS the polling cadence between drains.
 
-    Users who need a long-running stateful daemon should add a
-    :class:`Fjord` current downstream instead — that's the stateful-fan-in
-    verb in this layer.
+    The Stream's class registry persists between ticks via a
+    ``_tideweaver_snapshot`` strong-ref the scheduler parks on the class,
+    so a downstream :class:`Fjord` current sees accumulated upstream state
+    on each flush.  If what you actually want is the standalone
+    ``stream(stateful_polling=True)`` long-running daemon — with its own
+    internal ``refresh_interval`` / ``export_interval`` — call that verb
+    directly (``cls.stream(stateful_polling=True, ...)``) instead of
+    wrapping it in a Watershed.
     """
 
     incorp_params: Dict[str, Any] = Field(default_factory=dict)
@@ -79,19 +84,31 @@ class Stream(Current):
     @model_validator(mode="before")
     @classmethod
     def _reject_stateful_polling(cls, data: Any) -> Any:
-        """Reject ``stateful_polling=True`` with a pointer to :class:`Fjord`.
+        """Reject ``stateful_polling=True`` with concrete alternatives.
 
         ``stream()``'s stateful-daemon mode runs indefinitely with its own
         internal ``refresh_interval`` / ``export_interval``, which conflicts
-        with Tideweaver's per-interval tick model.  Users who want a
-        long-running stateful fan-in should use a :class:`Fjord` current.
+        with Tideweaver's per-interval tick model.  Two alternatives,
+        depending on intent:
+
+        * If you want a **long-running stateful daemon**, drop Tideweaver
+          for that source and call ``cls.stream(stateful_polling=True, ...)``
+          directly — that's the standalone daemon verb.
+        * If you want **fan-in inside a Watershed** that accumulates upstream
+          state across ticks, leave this ``Stream(stateful_polling=False)``
+          (the upstream registry persists via ``_tideweaver_snapshot``) and
+          add a :class:`Fjord` current at the tail to join it each tick.
         """
         if isinstance(data, dict) and "stateful_polling" in data:
             raise ValueError(
                 "Stream(stateful_polling=...) is not supported inside a Watershed — "
                 "Tideweaver's 'interval' IS the polling cadence and stream() is always "
-                "called in chunking mode here.  Add a Fjord current downstream if you "
-                "need a stateful long-running fan-in."
+                "called in chunking mode here.  Two alternatives: "
+                "(a) for a long-running stateful daemon, call cls.stream(stateful_polling=True) "
+                "directly outside any Watershed; "
+                "(b) for fan-in across upstream Stream registries, leave this Stream as-is and "
+                "add a Fjord current at the tail — upstream Stream snapshots persist between "
+                "ticks for the flush to read."
             )
         return data
 

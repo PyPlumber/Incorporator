@@ -237,9 +237,12 @@ class SourceC(Incorporator):
 class Combined(Incorporator):
     """Derived class for the fjord flush output.
 
-    Materialised dynamically each tick from whatever rows outflow(state)
-    returns; this declaration just gives users a name to reference and
-    optional schema control.
+    Because this class is declared in outflow.py with a name matching the
+    tail current's ``class`` field in watershed.json, the flush primitive
+    uses *this* class directly each tick — clearing its registry,
+    materialising one instance per row from outflow(state), and exporting.
+    Delete this class entirely to fall back to the dynamic-schema-inference
+    path (the engine builds an anonymous class from the row keys).
     """
     pass
 
