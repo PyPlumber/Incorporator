@@ -78,11 +78,11 @@ def outflow(state):
 """
 
 
-def _seed_source_files(here: Path) -> dict[str, Path]:
+def _seed_source_files(tmpdir: Path) -> dict[str, Path]:
     """Write toy JSON source files so the example runs without network access."""
-    laps_path = here / "laps.json"
-    pits_path = here / "pits.json"
-    flags_path = here / "flags.json"
+    laps_path = tmpdir / "laps.json"
+    pits_path = tmpdir / "pits.json"
+    flags_path = tmpdir / "flags.json"
     laps_path.write_text(
         json.dumps(
             [
@@ -101,18 +101,30 @@ def _seed_source_files(here: Path) -> dict[str, Path]:
     return {"laps": laps_path, "pits": pits_path, "flags": flags_path}
 
 
-def _write_outflow(here: Path) -> Path:
-    path = here / "outflow.py"
+def _write_outflow(tmpdir: Path) -> Path:
+    path = tmpdir / "outflow.py"
     path.write_text(OUTFLOW_SOURCE, encoding="utf-8")
     return path
 
 
 async def main() -> None:
+    # ── Output target: per-run temp dir (keeps the repo clean) ──────────────
+    # If you'd rather persist outputs alongside the script (the convention
+    # other tutorials use), drop the `with tempfile.TemporaryDirectory()`
+    # wrapper and use a persistent directory instead.  For example:
+    #
+    #     HERE = Path(__file__).parent
+    #     tmpdir = HERE.parent / "data"
+    #     tmpdir.mkdir(exist_ok=True)
+    #     files = _seed_source_files(tmpdir)
+    #     outflow_path = _write_outflow(tmpdir)
+    #     out_file = tmpdir / "driver_state.ndjson"
+    #     # ... (no `with tempfile.TemporaryDirectory()`)
     with tempfile.TemporaryDirectory() as tmp:
-        here = Path(tmp)
-        files = _seed_source_files(here)
-        outflow_path = _write_outflow(here)
-        out_file = here / "driver_state.ndjson"
+        tmpdir = Path(tmp)
+        files = _seed_source_files(tmpdir)
+        outflow_path = _write_outflow(tmpdir)
+        out_file = tmpdir / "driver_state.ndjson"
 
         now = datetime.now(timezone.utc)
         window = (now, now + timedelta(seconds=15))
