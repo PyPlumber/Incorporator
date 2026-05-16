@@ -5,6 +5,61 @@ All notable changes to Incorporator are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-05-16
+
+### Added
+- **Tideweaver orchestration layer** — graph-based orchestration over the
+  existing `stream()` / fjord-flush / `export()` primitives.  Build a
+  `Watershed` (one time window + named `Current` nodes + dependency edges),
+  hand it to `Tideweaver`, run.  Five names cover the whole layer:
+  `Tideweaver`, `Watershed`, `Current` (with verb-typed subclasses
+  `Stream` / `Fjord` / `Export`), `Tide` (per-pass log record), and the
+  existing `Wave`.  Four shape constructors (`parallel`, `chain`, `fanout`,
+  `diamond`) cover the common topologies; a `custom` shape with explicit
+  `edges` covers everything else.  Hard / soft dependency gating,
+  skip-ahead, graceful drain at window close, and per-current
+  `on_error` policy (`restart` / `isolate` / `fail_watershed`).  See
+  [Tutorial 8](./docs/8_tideweaver.md).
+- **`incorporator tideweaver run|validate` CLI sub-commands** plus
+  declarative `watershed.json` config with the same env-var interpolation
+  and token-resolution pipeline that `stream` / `fjord` configs use.
+  `run` pre-flights with the same validator `validate` uses (parity with
+  `_run_stream` / `_run_fjord`).
+- **`incorporator init --type tideweaver`** scaffold — third scaffold
+  type next to `stream` / `fjord`.  Generates a `watershed.json` (diamond
+  shape) + paired `outflow.py` ready to edit.
+- **`examples/nascar_watershed.json`** + **`examples/tideweaver_code/race_outflow.py`**
+  — on-disk sample for the CLI smoke-test path; mirrors the
+  `examples/fjord_code/` convention used by Tutorial 7.
+- **Public exports on `incorporator`** for the seven new names
+  (`Tideweaver`, `Watershed`, `Current`, `Stream`, `Fjord`, `Export`,
+  `Tide`).
+
+### Changed
+- **`cli/validate.py`** auto-detects watershed configs (top-level
+  `window` + `shape` keys) and now exposes `tideweaver` in the
+  `ConfigType` literal and the `--type` flag.  No behaviour change for
+  `stream` / `fjord` validation paths.
+- **`observability/pipeline/_outflow.py`** factors a shared async
+  `flush()` generator that yields `(derived_name, row_count, error)` per
+  output class.  Used by both the legacy `_outflow_daemon` and the new
+  `Tideweaver._tick_fjord` — eliminates ~50 lines of duplicated
+  outflow-normalize / dynamic-class-build / per-class export logic.
+  Wave-emission shape preserved exactly for the legacy daemon.
+- **CLI help text** updated across `init`, `validate`, and the new
+  `tideweaver` sub-app so the auto-generated `--help` output covers all
+  three pipeline types consistently.
+- **Documentation pass** — `docs/cli_and_configuration.md` gains a §9
+  for the `tideweaver` sub-command and a row in the
+  "When to Reach For" decision table; `docs/library_reference.md` adds
+  a bullet for `incorporator.observability.tideweaver`; README adds a
+  brief Tideweaver subsection under "The Verbs"; `docs/installation.md`
+  and `docs/deployment.md` mention the new sub-command alongside
+  `stream` / `fjord`.
+- **Tick → wave prose drift** from the earlier user-visible rename
+  cleaned up in `docs/5_stateful_refresh.md` and
+  `docs/6_streaming_daemon.md`.
+
 ## [1.1.2] - 2026-05-15
 
 ### Changed

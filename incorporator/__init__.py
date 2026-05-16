@@ -15,7 +15,7 @@ Key sentinels exported from this package
     without coercion, delegating full control to the attached computation.
 """
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 
 from .base import Incorporator
 from .exceptions import (
