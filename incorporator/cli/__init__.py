@@ -180,19 +180,19 @@ if typer:
 
     @app.command()  # type: ignore[untyped-decorator]
     def validate(
-        config: Path = typer.Argument(..., help="Path to the pipeline.json configuration file."),  # noqa: B008
+        config: Path = typer.Argument(..., help="Path to a pipeline.json or watershed.json file."),  # noqa: B008
         type_: Optional[str] = typer.Option(  # noqa: B008
             None,
             "--type",
-            help="Force 'stream' or 'fjord' validation. Defaults to auto-detect from the JSON keys.",
+            help="Force 'stream', 'fjord', or 'tideweaver' validation. Defaults to auto-detect.",
         ),
     ) -> None:
         """
-        Validate a pipeline.json without executing anything.
+        Validate a pipeline.json / watershed.json without executing anything.
 
         Resolves ${VAR} / ${file:...} references, checks required keys,
-        and (for fjord) confirms cls_name targets and outflow() arity in
-        the referenced outflow file.
+        imports sidecars, and (for fjord / tideweaver) confirms class
+        targets and outflow() arity in the referenced outflow file.
 
         Exits 0 if the config is valid, 1 with a diagnostic report otherwise.
         """

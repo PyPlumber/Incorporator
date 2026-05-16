@@ -1,9 +1,10 @@
-"""Config-shape validation for ``incorporator stream`` and ``incorporator fjord``.
+"""Config-shape validation for ``incorporator stream``, ``fjord``, and ``tideweaver``.
 
 Each validator returns a list of human-readable error strings — empty list
-means the config is valid. The CLI commands (`validate`, `stream`, `fjord`)
-all funnel through these so a developer sees the same diagnostics whether
-they ran ``validate`` standalone or hit a failure mid-execution.
+means the config is valid. The CLI commands (`validate`, `stream`, `fjord`,
+`tideweaver run`) all funnel through these so a developer sees the same
+diagnostics whether they ran ``validate`` standalone or hit a failure
+mid-execution.
 
 Validation is intentionally **structural**, not behavioural:
 
@@ -11,22 +12,28 @@ Validation is intentionally **structural**, not behavioural:
 - We *do* import the user's ``outflow`` and ``inflow`` files (Step 1 of
   fjord is "load and resolve classes anyway"; running it here surfaces
   ImportErrors at validate-time instead of pipeline-startup-time).
-- For ``fjord`` we confirm the ``outflow(state)`` function is defined
-  with the right arity using ``usercode.load_outflow_function``.
+- For ``fjord`` and ``tideweaver`` we confirm the ``outflow(state)`` function
+  is defined with the right arity using ``usercode.load_outflow_function``.
 
-The two configs are auto-detected by their distinctive top-level keys —
-the developer can override with ``--type stream|fjord``.
+The three configs are auto-detected by their distinctive top-level keys —
+the developer can override with ``--type stream|fjord|tideweaver``.
 """
 
 from __future__ import annotations
 
 import importlib.util
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple
 
 from ..base import Incorporator
 
-ConfigType = Literal["stream", "fjord"]
+ConfigType = Literal["stream", "fjord", "tideweaver"]
+
+_TIDEWEAVER_SHAPES = {"chain", "diamond", "fanout", "parallel", "custom"}
+_TIDEWEAVER_VERBS = {"stream", "fjord", "export"}
+_TIDEWEAVER_ON_ERROR = {"restart", "isolate", "fail_watershed"}
+_TIDEWEAVER_EDGE_MODES = {"hard", "soft"}
 
 # Source keys recognised by incorp() — at least one must be present in
 # `incorp_params` for a stream config to be valid.
@@ -34,13 +41,16 @@ _STREAM_SOURCE_KEYS = {"inc_url", "inc_file", "inc_parent", "payload_list"}
 
 
 def autodetect_type(config: Dict[str, Any]) -> ConfigType:
-    """Infer 'stream' vs 'fjord' from the JSON's distinguishing top-level keys.
+    """Infer 'stream' / 'fjord' / 'tideweaver' from distinguishing top-level keys.
 
-    Fjord configs always declare ``outflow`` and a list ``stream_params``;
-    stream configs declare a dict ``incorp_params``. If neither pattern is
-    a clean match we default to 'stream' (the older, simpler shape) — the
-    validator will then surface the missing keys.
+    Tideweaver configs always declare a ``window`` object plus a ``shape``
+    discriminator.  Fjord configs declare ``outflow`` + a list
+    ``stream_params``.  Stream configs declare ``incorp_params``.  If
+    nothing matches we default to 'stream' (the older, simpler shape) and
+    let the validator surface the missing keys.
     """
+    if isinstance(config.get("window"), dict) and isinstance(config.get("shape"), str):
+        return "tideweaver"
     if "outflow" in config and isinstance(config.get("stream_params"), list):
         return "fjord"
     return "stream"
@@ -59,6 +69,8 @@ def validate_config(
     detected = config_type or autodetect_type(config)
     if detected == "fjord":
         return detected, validate_fjord_config(config, config_dir)
+    if detected == "tideweaver":
+        return detected, validate_watershed_config(config, config_dir)
     return detected, validate_stream_config(config, config_dir)
 
 
@@ -229,6 +241,308 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
             errors.append(f"stream_params[{idx}] missing 'incorp_params' (dict).")
 
     return errors
+
+
+def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[str]:
+    """Structural validation for an ``incorporator tideweaver`` watershed.json.
+
+    Checks window shape, the shape-key contract (chain / diamond / fanout /
+    parallel / custom), per-current sanity (name uniqueness, verb in the
+    allowed set, positive interval, sane ``on_error``), edge endpoints +
+    cycles, and imports the outflow / inflow sidecars so user-code
+    ImportErrors surface here.  For every Fjord current the resolved
+    outflow path is checked for an ``outflow(state)`` callable of arity 1
+    (reuses :func:`incorporator.usercode.load_outflow_function`).
+    """
+    errors: List[str] = []
+
+    # --- window ---------------------------------------------------------
+    window = config.get("window")
+    if not isinstance(window, dict) or "start" not in window or "end" not in window:
+        errors.append("'window' must be an object with 'start' and 'end' ISO 8601 timestamps.")
+    else:
+        start_dt = _parse_iso_or_none(window.get("start"))
+        end_dt = _parse_iso_or_none(window.get("end"))
+        if start_dt is None:
+            errors.append(f"'window.start' must be an ISO 8601 timestamp; got {window.get('start')!r}.")
+        if end_dt is None:
+            errors.append(f"'window.end' must be an ISO 8601 timestamp; got {window.get('end')!r}.")
+        if start_dt is not None and end_dt is not None and end_dt <= start_dt:
+            errors.append(f"'window.end' ({end_dt}) must be after 'window.start' ({start_dt}).")
+
+    # --- shape discriminator -------------------------------------------
+    shape = config.get("shape")
+    if shape not in _TIDEWEAVER_SHAPES:
+        errors.append(f"'shape' must be one of {sorted(_TIDEWEAVER_SHAPES)}; got {shape!r}.")
+        return errors  # downstream checks all assume a known shape
+
+    # --- drain_timeout / dependency_mode -------------------------------
+    if "drain_timeout" in config:
+        dt = config["drain_timeout"]
+        if not isinstance(dt, (int, float)) or dt < 0:
+            errors.append("'drain_timeout', if present, must be a non-negative number (seconds).")
+    if shape == "parallel" and "dependency_mode" in config:
+        errors.append("'dependency_mode' is not valid with shape='parallel' (no edges to mode).")
+    if "dependency_mode" in config and config.get("dependency_mode") not in _TIDEWEAVER_EDGE_MODES:
+        errors.append(f"'dependency_mode' must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}.")
+
+    # --- sidecars (import-check) ---------------------------------------
+    inflow_raw = config.get("inflow")
+    inflow_module: Any | None = None
+    if inflow_raw:
+        if not isinstance(inflow_raw, str):
+            errors.append("'inflow', if present, must be a string path.")
+        else:
+            inflow_path = _resolve_outflow_file(inflow_raw, config_dir)
+            if not inflow_path.is_file():
+                errors.append(f"inflow file not found: {inflow_path}")
+            else:
+                load_err = _try_import(inflow_path)
+                if load_err:
+                    errors.append(f"inflow file failed to import: {load_err}")
+                else:
+                    inflow_module = _import_module(inflow_path)
+
+    outflow_raw = config.get("outflow")
+    outflow_module: Any | None = None
+    outflow_path: Path | None = None
+    if outflow_raw:
+        if not isinstance(outflow_raw, str):
+            errors.append("'outflow', if present, must be a string path.")
+        else:
+            outflow_path = _resolve_outflow_file(outflow_raw, config_dir)
+            if not outflow_path.is_file():
+                errors.append(f"outflow file not found: {outflow_path}")
+            else:
+                load_err = _try_import(outflow_path)
+                if load_err:
+                    errors.append(f"outflow file failed to import: {load_err}")
+                else:
+                    outflow_module = _import_module(outflow_path)
+
+    # --- gather currents per shape -------------------------------------
+    current_entries: List[Tuple[str, Dict[str, Any]]] = []  # (path-label, entry)
+    if shape in ("chain", "parallel", "custom"):
+        cs = config.get("currents")
+        if not isinstance(cs, list) or not cs:
+            errors.append(f"shape='{shape}' requires a non-empty 'currents' list.")
+        else:
+            for i, entry in enumerate(cs):
+                if isinstance(entry, dict):
+                    current_entries.append((f"currents[{i}]", entry))
+                else:
+                    errors.append(f"currents[{i}] must be a JSON object.")
+    elif shape == "diamond":
+        for key in ("head", "tail"):
+            entry = config.get(key)
+            if not isinstance(entry, dict):
+                errors.append(f"shape='diamond' requires '{key}' to be a current object.")
+            else:
+                current_entries.append((key, entry))
+        middle = config.get("middle")
+        if not isinstance(middle, list) or not middle:
+            errors.append("shape='diamond' requires a non-empty 'middle' list.")
+        else:
+            for i, entry in enumerate(middle):
+                if isinstance(entry, dict):
+                    current_entries.append((f"middle[{i}]", entry))
+                else:
+                    errors.append(f"middle[{i}] must be a JSON object.")
+    elif shape == "fanout":
+        source = config.get("source")
+        if not isinstance(source, dict):
+            errors.append("shape='fanout' requires 'source' to be a current object.")
+        else:
+            current_entries.append(("source", source))
+        sinks = config.get("sinks")
+        if not isinstance(sinks, list) or not sinks:
+            errors.append("shape='fanout' requires a non-empty 'sinks' list.")
+        else:
+            for i, entry in enumerate(sinks):
+                if isinstance(entry, dict):
+                    current_entries.append((f"sinks[{i}]", entry))
+                else:
+                    errors.append(f"sinks[{i}] must be a JSON object.")
+
+    # --- per-current checks --------------------------------------------
+    names: List[str] = []
+    for label, entry in current_entries:
+        errors.extend(_validate_current_entry(label, entry, outflow_module, inflow_module, config_dir))
+        n = entry.get("name")
+        if isinstance(n, str):
+            names.append(n)
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        errors.append(f"Watershed current names must be unique; duplicates: {dupes}")
+    name_set = set(names)
+
+    # --- custom edges ---------------------------------------------------
+    edges_to_check: List[Tuple[str, str]] = []
+    if shape == "custom":
+        edges = config.get("edges", [])
+        if not isinstance(edges, list):
+            errors.append("shape='custom' requires 'edges' to be a list of {from,to,mode?} objects.")
+        else:
+            for i, edge in enumerate(edges):
+                if not isinstance(edge, dict):
+                    errors.append(f"edges[{i}] must be a JSON object.")
+                    continue
+                f = edge.get("from")
+                t = edge.get("to")
+                m = edge.get("mode", "hard")
+                if not isinstance(f, str) or not isinstance(t, str):
+                    errors.append(f"edges[{i}] must have string 'from' and 'to' fields.")
+                    continue
+                if f not in name_set:
+                    errors.append(f"edges[{i}].from references unknown current {f!r}.")
+                if t not in name_set:
+                    errors.append(f"edges[{i}].to references unknown current {t!r}.")
+                if m not in _TIDEWEAVER_EDGE_MODES:
+                    errors.append(f"edges[{i}].mode must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}.")
+                if isinstance(f, str) and isinstance(t, str) and f in name_set and t in name_set:
+                    edges_to_check.append((f, t))
+
+    # --- depends_on -----------------------------------------------------
+    for label, entry in current_entries:
+        deps = entry.get("depends_on")
+        if deps is None:
+            continue
+        if not isinstance(deps, list):
+            errors.append(f"{label}.depends_on must be a list of strings.")
+            continue
+        for dep in deps:
+            if not isinstance(dep, str):
+                errors.append(f"{label}.depends_on entries must be strings.")
+            elif dep not in name_set:
+                errors.append(f"{label}.depends_on references unknown current {dep!r}.")
+            elif isinstance(entry.get("name"), str):
+                edges_to_check.append((dep, entry["name"]))
+
+    # Shape-derived edges (chain / diamond / fanout) are well-formed by
+    # construction — we don't need to repeat the check; toposort below
+    # would not catch a problem the constructor would already reject.
+    if edges_to_check:
+        errors.extend(_detect_cycle(list(name_set), edges_to_check))
+
+    # --- Fjord outflow arity ------------------------------------------
+    needs_outflow = any(e.get("verb") == "fjord" for _label, e in current_entries)
+    if needs_outflow:
+        if outflow_path is None:
+            errors.append(
+                "At least one Fjord current is declared but no top-level 'outflow' path "
+                "is set; fjord-flush ticks need an outflow(state) sidecar."
+            )
+        elif outflow_path.is_file() and outflow_module is not None:
+            from ..usercode import load_outflow_function
+
+            try:
+                load_outflow_function(outflow_path)
+            except (FileNotFoundError, ImportError, ValueError) as exc:
+                errors.append(str(exc))
+
+    return errors
+
+
+def _validate_current_entry(
+    label: str,
+    entry: Dict[str, Any],
+    outflow_module: Any | None,
+    inflow_module: Any | None,
+    config_dir: Path,
+) -> List[str]:
+    """Structural checks on a single current entry."""
+    errors: List[str] = []
+
+    name = entry.get("name")
+    if not isinstance(name, str) or not name:
+        errors.append(f"{label}.name is required and must be a non-empty string.")
+
+    verb = entry.get("verb", "stream")
+    if verb not in _TIDEWEAVER_VERBS:
+        errors.append(f"{label}.verb must be one of {sorted(_TIDEWEAVER_VERBS)}; got {verb!r}.")
+
+    interval = entry.get("interval")
+    if not isinstance(interval, (int, float)) or interval <= 0:
+        errors.append(f"{label}.interval must be a positive number (seconds).")
+
+    if "on_error" in entry and entry["on_error"] not in _TIDEWEAVER_ON_ERROR:
+        errors.append(f"{label}.on_error must be one of {sorted(_TIDEWEAVER_ON_ERROR)}.")
+    if "skip_threshold" in entry:
+        st = entry["skip_threshold"]
+        if not isinstance(st, (int, float)) or st <= 0:
+            errors.append(f"{label}.skip_threshold must be a positive number.")
+
+    # class string must resolve against inflow/outflow modules.
+    cls_name = entry.get("class")
+    if not isinstance(cls_name, str) or not cls_name:
+        errors.append(f"{label}.class is required and must be a string.")
+    elif outflow_module is None and inflow_module is None:
+        errors.append(
+            f"{label}.class={cls_name!r} references a class but no 'outflow' or 'inflow' "
+            "sidecar is declared to resolve it from."
+        )
+    else:
+        resolved = None
+        for mod in (outflow_module, inflow_module):
+            if mod is None:
+                continue
+            target = getattr(mod, cls_name, None)
+            if isinstance(target, type) and issubclass(target, Incorporator):
+                resolved = target
+                break
+        if resolved is None:
+            errors.append(
+                f"{label}.class={cls_name!r} is not defined as an Incorporator subclass in the "
+                "outflow or inflow sidecar."
+            )
+
+    # Per-current inflow/outflow overrides — file must exist if declared.
+    for key in ("inflow", "outflow"):
+        if key in entry:
+            raw = entry[key]
+            if not isinstance(raw, str):
+                errors.append(f"{label}.{key}, if present, must be a string path.")
+                continue
+            p = _resolve_outflow_file(raw, config_dir)
+            if not p.is_file():
+                errors.append(f"{label}.{key} not found: {p}")
+
+    return errors
+
+
+def _detect_cycle(names: List[str], edges: List[Tuple[str, str]]) -> List[str]:
+    """Return [error] if ``edges`` form a cycle over ``names``; else []."""
+    indeg: Dict[str, int] = dict.fromkeys(names, 0)
+    adj: Dict[str, List[str]] = {n: [] for n in names}
+    for f, t in edges:
+        if t in indeg:
+            indeg[t] += 1
+            adj.setdefault(f, []).append(t)
+    queue = [n for n in names if indeg[n] == 0]
+    visited = 0
+    while queue:
+        n = queue.pop(0)
+        visited += 1
+        for m in adj.get(n, []):
+            indeg[m] -= 1
+            if indeg[m] == 0:
+                queue.append(m)
+    if visited != len(names):
+        cyclic = sorted({n for n in names if indeg[n] > 0})
+        return [f"Watershed graph has a cycle involving: {cyclic}."]
+    return []
+
+
+def _parse_iso_or_none(value: Any) -> datetime | None:
+    """Parse an ISO 8601 timestamp; return ``None`` on any failure."""
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
