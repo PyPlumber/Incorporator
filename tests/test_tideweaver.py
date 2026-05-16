@@ -674,3 +674,276 @@ def test_cli_tideweaver_run_missing_config(tmp_path: Path) -> None:
     result = runner.invoke(app, ["tideweaver", "run", str(tmp_path / "nope.json")])
     assert result.exit_code == 1
     assert "not found" in result.stdout.lower() or "not found" in (result.stderr or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Validate command coverage (autodetect + structural checks + CLI + pre-flight)
+# ---------------------------------------------------------------------------
+
+
+def _write_minimal_ws(tmp_path: Path, body_overrides: Dict[str, Any] | None = None) -> Path:
+    """Write a valid baseline watershed.json (parallel shape, 1 stream current)."""
+    _write_outflow_with_classes(tmp_path)
+    body: Dict[str, Any] = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "parallel",
+        "outflow": "outflow.py",
+        "currents": [
+            {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        ],
+    }
+    if body_overrides:
+        body.update(body_overrides)
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    return cfg
+
+
+def test_autodetect_identifies_tideweaver() -> None:
+    """A config with top-level 'window' + 'shape' auto-detects as 'tideweaver'."""
+    from incorporator.cli.validate import autodetect_type
+
+    cfg = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "parallel",
+        "currents": [],
+    }
+    assert autodetect_type(cfg) == "tideweaver"
+
+
+def test_autodetect_still_picks_stream_and_fjord() -> None:
+    """Backwards compat: stream and fjord configs still autodetect correctly."""
+    from incorporator.cli.validate import autodetect_type
+
+    assert autodetect_type({"incorp_params": {"inc_url": "https://x"}}) == "stream"
+    assert autodetect_type({"outflow": "o.py", "stream_params": []}) == "fjord"
+
+
+def test_validate_watershed_chain(tmp_path: Path) -> None:
+    """A correct chain watershed validates cleanly (no errors)."""
+    from incorporator.cli.validate import validate_watershed_config
+
+    _write_outflow_with_classes(tmp_path)
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "chain",
+        "outflow": "outflow.py",
+        "currents": [
+            {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+            {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+        ],
+    }
+    assert validate_watershed_config(body, tmp_path) == []
+
+
+def test_validate_rejects_bad_window(tmp_path: Path) -> None:
+    """Inverted / non-ISO window timestamps surface clear errors."""
+    from incorporator.cli.validate import validate_watershed_config
+
+    _write_outflow_with_classes(tmp_path)
+    body = {
+        "window": {"start": "not-a-date", "end": "also-not"},
+        "shape": "parallel",
+        "outflow": "outflow.py",
+        "currents": [
+            {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        ],
+    }
+    errs = validate_watershed_config(body, tmp_path)
+    assert any("window.start" in e for e in errs)
+    assert any("window.end" in e for e in errs)
+
+
+def test_validate_rejects_unknown_shape(tmp_path: Path) -> None:
+    """An unrecognised 'shape' key produces a clear listing of valid shapes."""
+    from incorporator.cli.validate import validate_watershed_config
+
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "noodle",
+    }
+    errs = validate_watershed_config(body, tmp_path)
+    assert any("'shape' must be one of" in e for e in errs)
+
+
+def test_validate_rejects_bad_verb(tmp_path: Path) -> None:
+    """Unknown 'verb' on a current is rejected with the valid set listed."""
+    from incorporator.cli.validate import validate_watershed_config
+
+    _write_outflow_with_classes(tmp_path)
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "parallel",
+        "outflow": "outflow.py",
+        "currents": [{"name": "a", "class": "LapData", "verb": "spume", "interval": 30}],
+    }
+    errs = validate_watershed_config(body, tmp_path)
+    assert any("verb" in e and "spume" in e for e in errs)
+
+
+def test_validate_rejects_unknown_class(tmp_path: Path) -> None:
+    """A class string that doesn't resolve in outflow.py is rejected."""
+    from incorporator.cli.validate import validate_watershed_config
+
+    _write_outflow_with_classes(tmp_path)
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "parallel",
+        "outflow": "outflow.py",
+        "currents": [{"name": "a", "class": "GhostClass", "verb": "stream", "interval": 30}],
+    }
+    errs = validate_watershed_config(body, tmp_path)
+    assert any("GhostClass" in e for e in errs)
+
+
+def test_validate_rejects_bad_outflow_arity(tmp_path: Path) -> None:
+    """An outflow(state) with the wrong arity is caught at validate time."""
+    from incorporator.cli.validate import validate_watershed_config
+
+    bad_outflow = tmp_path / "outflow.py"
+    bad_outflow.write_text(
+        "from incorporator import Incorporator\n"
+        "class DriverState(Incorporator):\n    pass\n"
+        "class LapData(Incorporator):\n    pass\n"
+        "def outflow():\n    return []\n",  # arity 0 — bug
+        encoding="utf-8",
+    )
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "chain",
+        "outflow": "outflow.py",
+        "currents": [
+            {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+            {
+                "name": "b",
+                "class": "DriverState",
+                "verb": "fjord",
+                "interval": 30,
+                "export_params": {"file_path": "out.ndjson"},
+            },
+        ],
+    }
+    errs = validate_watershed_config(body, tmp_path)
+    assert any("outflow()" in e and "1 parameter" in e for e in errs)
+
+
+def test_validate_rejects_parallel_with_dependency_mode(tmp_path: Path) -> None:
+    """parallel shape refuses 'dependency_mode' — there are no edges to mode."""
+    from incorporator.cli.validate import validate_watershed_config
+
+    _write_outflow_with_classes(tmp_path)
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "parallel",
+        "outflow": "outflow.py",
+        "dependency_mode": "hard",
+        "currents": [{"name": "a", "class": "LapData", "verb": "stream", "interval": 30}],
+    }
+    errs = validate_watershed_config(body, tmp_path)
+    assert any("dependency_mode" in e and "parallel" in e for e in errs)
+
+
+def test_validate_rejects_custom_cycle(tmp_path: Path) -> None:
+    """A cyclic edges list in shape='custom' is flagged."""
+    from incorporator.cli.validate import validate_watershed_config
+
+    _write_outflow_with_classes(tmp_path)
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "custom",
+        "outflow": "outflow.py",
+        "currents": [
+            {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+            {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+        ],
+        "edges": [
+            {"from": "a", "to": "b", "mode": "hard"},
+            {"from": "b", "to": "a", "mode": "hard"},
+        ],
+    }
+    errs = validate_watershed_config(body, tmp_path)
+    assert any("cycle" in e for e in errs)
+
+
+def test_validate_rejects_unknown_edge_endpoint(tmp_path: Path) -> None:
+    """An edge that points at a non-existent current is flagged."""
+    from incorporator.cli.validate import validate_watershed_config
+
+    _write_outflow_with_classes(tmp_path)
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "custom",
+        "outflow": "outflow.py",
+        "currents": [{"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}}],
+        "edges": [{"from": "a", "to": "ghost"}],
+    }
+    errs = validate_watershed_config(body, tmp_path)
+    assert any("ghost" in e for e in errs)
+
+
+def test_validate_rejects_bad_interval(tmp_path: Path) -> None:
+    """A non-positive interval is rejected."""
+    from incorporator.cli.validate import validate_watershed_config
+
+    _write_outflow_with_classes(tmp_path)
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "parallel",
+        "outflow": "outflow.py",
+        "currents": [{"name": "a", "class": "LapData", "verb": "stream", "interval": 0}],
+    }
+    errs = validate_watershed_config(body, tmp_path)
+    assert any("interval" in e for e in errs)
+
+
+def test_top_level_validate_routes_to_tideweaver(tmp_path: Path) -> None:
+    """`incorporator validate <ws.json>` auto-detects + accepts the watershed."""
+    from typer.testing import CliRunner
+
+    from incorporator.cli import app
+
+    cfg = _write_minimal_ws(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(app, ["validate", str(cfg)])
+    assert result.exit_code == 0, result.stdout
+    assert "tideweaver" in result.stdout
+
+
+def test_top_level_validate_emits_diagnostic_block(tmp_path: Path) -> None:
+    """An invalid watershed produces the same diagnostic block style as stream/fjord."""
+    from typer.testing import CliRunner
+
+    from incorporator.cli import app
+
+    cfg = _write_minimal_ws(tmp_path, {"shape": "noodle"})
+    runner = CliRunner()
+    result = runner.invoke(app, ["validate", str(cfg)])
+    assert result.exit_code == 1
+    assert "Config invalid" in result.stdout
+    assert "shape" in result.stdout.lower()
+
+
+def test_tideweaver_validate_subcommand(tmp_path: Path) -> None:
+    """`incorporator tideweaver validate` works and emits the green banner."""
+    from typer.testing import CliRunner
+
+    from incorporator.cli import app
+
+    cfg = _write_minimal_ws(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(app, ["tideweaver", "validate", str(cfg)])
+    assert result.exit_code == 0, result.stdout
+    assert "valid" in result.stdout
+
+
+def test_tideweaver_run_calls_validate_first(tmp_path: Path) -> None:
+    """`tideweaver run` runs the same validator before starting the scheduler."""
+    from typer.testing import CliRunner
+
+    from incorporator.cli import app
+
+    cfg = _write_minimal_ws(tmp_path, {"shape": "noodle"})
+    runner = CliRunner()
+    result = runner.invoke(app, ["tideweaver", "run", str(cfg)])
+    assert result.exit_code == 1
+    assert "Config invalid" in result.stdout
