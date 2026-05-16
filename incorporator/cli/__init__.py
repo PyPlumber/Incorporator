@@ -38,6 +38,7 @@ from .runners import (
     set_json_output_mode,
 )
 from .scaffold import write_scaffold
+from .tideweaver import build_app as _build_tideweaver_app
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,10 @@ if typer:
     @app.callback()  # type: ignore[untyped-decorator]
     def main_callback() -> None:
         pass
+
+    _tideweaver_app = _build_tideweaver_app()
+    if _tideweaver_app is not None:
+        app.add_typer(_tideweaver_app, name="tideweaver")
 
 else:
     # Failsafe for entrypoint if Typer is missing
