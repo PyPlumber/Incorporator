@@ -133,30 +133,23 @@ imports it, registers the classes, and drives the pipeline.
 
 ```python
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
-from incorporator import Incorporator, calc, inc, link_to
+from typing import Any, Dict, List
+from incorporator import Incorporator, inc, link_to
 
 
-# 1. Six source classes — one IncorporatorList per registry.
+# Seven source classes — one IncorporatorList per registry.
+# LeagueRoster is the seventh: seeded from a local JSON file via
+# inc_file= instead of inc_url=.  Same handler dispatch; no special casing.
 class Track(Incorporator):         pass
 class Driver(Incorporator):        pass
 class Race(Incorporator):          pass
 class CupStanding(Incorporator):   pass
 class BuschStanding(Incorporator): pass
 class TruckStanding(Incorporator): pass
+class LeagueRoster(Incorporator):  pass
 
 
 _DATE_FIELDS = ("date_scheduled", "race_date", "qualifying_date", "tunein_date")
-
-
-# 2. Fantasy-league rosters — keyed by team handle, values are
-#    (series_id_float, driver_id) tuples.  Series 1 = Cup, 2 = Busch,
-#    3 = Truck.  Pure data, lives next to the outflow it feeds.
-LEAGUE_TEAMS_RAW: Dict[str, List[Tuple[float, int]]] = {
-    "Queen":     [(3.0, 4235), (2.0, 4441), (1.0, 3989), ...],
-    "Intim'tor": [(3.0, 4312), (2.0, 34),   (1.0, 4030), ...],
-    # ... 6 more teams
-}
 ```
 
 ### The Sentinel Filter
