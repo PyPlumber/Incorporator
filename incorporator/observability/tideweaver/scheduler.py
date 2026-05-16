@@ -286,9 +286,8 @@ class Tideweaver:
         async for _wave in current.cls.stream(**kwargs):
             pass
         # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
-        # setattr() avoids mypy's "no such attribute" complaint on the bare
-        # Incorporator type (the field is a runtime-only escape hatch).
-        setattr(current.cls, "_tideweaver_snapshot", list(current.cls.inc_dict.values()))
+        # Runtime-only escape-hatch attribute (no field on Incorporator itself).
+        current.cls._tideweaver_snapshot = list(current.cls.inc_dict.values())  # type: ignore[attr-defined]
 
     async def _tick_fjord(self, current: Fjord) -> None:
         """One fjord flush: snapshot upstream → outflow(state) → build → export."""

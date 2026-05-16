@@ -57,10 +57,10 @@ def load_watershed(path: Path) -> Watershed:
         raise ValueError(f"watershed.json must be a JSON object at the top level; got {type(raw).__name__}.")
 
     base_dir = path.parent.resolve()
-    return _build_watershed(raw, base_dir)
+    return build_watershed(raw, base_dir)
 
 
-def _build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
+def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
     window = _parse_window(raw.get("window"))
     inflow = _resolve_sidecar(raw.get("inflow"), base_dir)
     outflow = _resolve_sidecar(raw.get("outflow"), base_dir)

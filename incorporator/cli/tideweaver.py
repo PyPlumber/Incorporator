@@ -1,8 +1,10 @@
-"""CLI verb: ``incorporator tideweaver run <file>.json``.
+"""CLI verb: ``incorporator tideweaver run|validate <file>.json``.
 
-Loads a ``watershed.json`` via :func:`incorporator.observability.tideweaver.config.load_watershed`,
-constructs a :class:`~incorporator.observability.tideweaver.Tideweaver`, and runs it to
-window-end with one ``Tide`` log record per scheduler pass.
+Loads a ``watershed.json``, runs the same structural validator the top-level
+``incorporator validate`` command uses (`validate_watershed_config`), and either
+prints a clean diagnostic (`validate`) or builds + runs a
+:class:`~incorporator.observability.tideweaver.Tideweaver` (`run`).  One ``Tide``
+log record is emitted per scheduler pass.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ except ImportError:  # pragma: no cover — orchestrate extra is optional
     _typer = None  # type: ignore[assignment]
 
 from ..observability.tideweaver import Tide, Tideweaver
-from ..observability.tideweaver.config import load_watershed
+from ..observability.tideweaver.config import build_watershed
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +33,14 @@ async def _run_tideweaver(
     json_output: bool,
     heartbeat_file: Optional[Path],
 ) -> None:
-    """Async runner — load + run a Watershed; emit one line per :class:`Tide`."""
-    watershed = load_watershed(config_path)
+    """Async runner — pre-flight validate, build the Watershed, emit Tides."""
+    # Lazy imports to avoid cli/__init__.py circular load when this module is
+    # imported during the cli package's own load.
+    from .runners import _load_pipeline_config, _run_validation
+
+    raw_config = _load_pipeline_config(config_path)
+    _run_validation(raw_config, config_path.parent.resolve(), type_override="tideweaver")
+    watershed = build_watershed(raw_config, config_path.parent.resolve())
     tw = Tideweaver(watershed)
     async for tide in tw.run():
         _emit_tide(tide, json_output=json_output)
@@ -57,17 +65,17 @@ def _emit_tide(tide: Tide, *, json_output: bool) -> None:
 
 
 def build_app() -> Any:
-    """Build the ``tideweaver`` Typer sub-app.
+    """Build the ``tideweaver`` Typer sub-app with ``run`` and ``validate`` commands.
 
-    Returns ``None`` if Typer is not installed so ``cli/__init__.py`` can
-    skip registration cleanly under the same ``try/except ImportError``
-    guard it already uses for the top-level app.
+    Returns ``None`` if Typer is not installed so ``cli/__init__.py`` can skip
+    registration cleanly under the same ``try/except ImportError`` guard it
+    already uses for the top-level app.
     """
     if _typer is None:
         return None
     tideweaver_app: Any = _typer.Typer(
         name="tideweaver",
-        help="Run a watershed.json: orchestrate streams + fjord flushes + exports.",
+        help="Run or validate a watershed.json: orchestrate streams + fjord flushes + exports.",
         no_args_is_help=True,
     )
 
@@ -103,5 +111,25 @@ def build_app() -> Any:
         except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
             _typer.secho(f"Error: {exc}", fg=_typer.colors.RED)
             sys.exit(1)
+
+    @tideweaver_app.command("validate")  # type: ignore[untyped-decorator]
+    def validate(
+        config: Path = _typer.Argument(..., help="Path to the watershed.json file to validate."),  # noqa: B008
+    ) -> None:
+        """Validate a watershed.json without executing anything.
+
+        Resolves ${VAR} / ${file:...} references, checks the shape contract
+        and every current's required keys, imports sidecars, and confirms
+        any Fjord current's outflow(state) function arity.  Exits 0 if
+        valid, 1 with a diagnostic report otherwise.
+        """
+        from .runners import _load_pipeline_config, _run_validation
+
+        if not config.is_file():
+            _typer.secho(f"Error: Configuration file not found at {config}", fg=_typer.colors.RED)
+            sys.exit(1)
+        raw_config = _load_pipeline_config(config)
+        _run_validation(raw_config, config.parent.resolve(), type_override="tideweaver")
+        _typer.secho(f"✅ {config} is valid (tideweaver).", fg=_typer.colors.GREEN)
 
     return tideweaver_app
