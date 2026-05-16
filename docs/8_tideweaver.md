@@ -188,7 +188,7 @@ equivalent; env-var interpolation (`${VAR}`, `${VAR:-default}`,
     {"name": "flags", "class": "FlagEvents", "verb": "stream", "interval": 30}
   ],
   "tail":   {"name": "state", "class": "DriverState", "verb": "fjord",  "interval": 30,
-             "export_params": {"file_path": "state.ndjson", "format": "ndjson"}},
+             "export_params": {"file_path": "state.ndjson", "format": "ndjson", "if_exists": "append"}},
   "dependency_mode": "hard"
 }
 ```
