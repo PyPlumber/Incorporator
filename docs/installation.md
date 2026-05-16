@@ -59,7 +59,7 @@ pip install incorporator[parquet]
 pip install incorporator[orchestrate]
 ```
 **What this installs:** `typer`, `prefect`.
-* **Why you need it:** Unlocks the `incorporator stream` and `incorporator fjord` CLI subcommands plus the pre-built Prefect `@flow` wrappers (see `deployment.md`).
+* **Why you need it:** Unlocks the `incorporator stream`, `incorporator fjord`, and `incorporator tideweaver` CLI subcommands plus the pre-built Prefect `@flow` wrappers (see `deployment.md`).
 
 ### 📖 The Docs Flag (Contributors Only)
 ```bash

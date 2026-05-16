@@ -137,6 +137,28 @@ flushes waves, and exits cleanly. `docker stop`, `docker compose
 down`, and `kubectl delete pod` all send SIGTERM by default — no
 extra config required.
 
+### Deploying a Tideweaver Watershed
+
+The same Docker pattern works for `incorporator tideweaver run` —
+swap the entrypoint args:
+
+```dockerfile
+CMD ["tideweaver", "run", "/app/config/watershed.json", \
+     "--logs", \
+     "--heartbeat-file", "/tmp/incorporator.heartbeat"]
+```
+
+Tideweaver runs to its declared window-end and then drains in-flight
+ticks for up to `drain_timeout` seconds before exiting (default 30s).
+For long-running or restart-on-exit shapes, use the same `restart:
+unless-stopped` policy a stream daemon would use; for one-shot
+window runs, omit `restart` and the container stops when the window
+closes.  `--json-output` and `--heartbeat-file` work the same as
+they do for `stream` / `fjord`.
+
+See [Tutorial 8 — Tideweaver](./8_tideweaver.md) for the watershed.json
+shape.
+
 ---
 
 ## 2. Cloud Orchestration (Prefect)
