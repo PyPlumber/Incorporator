@@ -4,17 +4,23 @@
 ``dict[ClassName, list[dict]]`` (one derived class per key, one export file per
 class).  Detection is by ``isinstance(result, dict)`` — list returns take the
 single-output path.
+
+The :func:`flush` async generator factors the per-tick "outflow → build →
+export" core out of :func:`_outflow_daemon` so other callers (notably
+:class:`incorporator.observability.tideweaver.Tideweaver`'s ``_tick_fjord``)
+can share the same primitive without re-implementing the dynamic-class
+build + per-class export semantics.
 """
 
 import asyncio
 import logging
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple, cast
 
 from ..logger import Wave  # re-export for callers
 from ._shared import _daemon_tick, _interruptible_sleep, _resolve_if_exists_for_export
 
-__all__ = ["Wave", "_outflow_daemon"]
+__all__ = ["Wave", "_outflow_daemon", "flush"]
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +88,87 @@ def _resolve_export_params_for(
             )
         return export_params
     return cast(Dict[str, Any], export_params.get(derived_name, {}))
+
+
+async def flush(
+    outflow_fn: Callable[[Dict[str, Any]], Any],
+    state: Dict[str, List[Any]],
+    *,
+    default_output_class_name: str,
+    base_class: Any,
+    export_params: Dict[str, Any],
+    outflow_module: Optional[ModuleType] = None,
+) -> AsyncIterator[Tuple[str, int, Optional[Exception]]]:
+    """Run one outflow flush; yield one ``(derived_name, row_count, error)`` per class.
+
+    Calls ``outflow_fn(state)`` in :func:`asyncio.to_thread`, normalises the
+    return via :func:`_normalise_outflow_return`, then iterates the resulting
+    ``{class_name: rows}`` mapping.  For each derived class:
+
+    1. Prefer a user-pre-declared :class:`~incorporator.Incorporator` subclass
+       on ``outflow_module`` whose name matches; else build via
+       :func:`infer_dynamic_schema`.
+    2. Clear the class's ``inc_dict``, materialise instances, park a
+       strong-ref ``_fjord_snapshot`` to defeat the
+       :class:`weakref.WeakValueDictionary` registry.
+    3. Resolve the per-class slice of ``export_params`` via
+       :func:`_resolve_export_params_for`.
+    4. ``await cls.export()`` when an export config is present.
+
+    Per-class build/export errors are caught and surfaced as the third
+    element of the yielded tuple — the caller decides whether to emit a
+    per-class failure :class:`Wave`, log + continue, or abort.  Exceptions
+    raised by ``outflow_fn`` itself **propagate** so the caller can shape
+    its own composite failure response.
+
+    Reused by both :func:`_outflow_daemon` (long-running fjord engine) and
+    :class:`incorporator.observability.tideweaver.Tideweaver`'s
+    ``_tick_fjord`` (per-interval fjord-flush in a Watershed).
+    """
+    # Local import keeps the observability layer free of a hard schema dep
+    # at module-import time.
+    from ...schema.builder import infer_dynamic_schema
+
+    result = await asyncio.to_thread(outflow_fn, state)
+    grouped, is_multi = _normalise_outflow_return(result, default_output_class_name)
+
+    for derived_name, rows in grouped.items():
+        try:
+            if not rows:
+                # Zero-row branch — success with no class built and no export.
+                yield (derived_name, 0, None)
+                continue
+
+            # Prefer a user-pre-declared subclass with the matching name.
+            user_cls = getattr(outflow_module, derived_name, None) if outflow_module is not None else None
+            if user_cls is not None and isinstance(user_cls, type) and issubclass(user_cls, base_class):
+                derived_cls = cast(Any, user_cls)
+            else:
+                derived_cls = cast(Any, infer_dynamic_schema(derived_name, rows, base_class))
+
+            derived_cls.inc_dict.clear()
+            instances = [derived_cls(**row) for row in rows]
+            derived_cls._fjord_snapshot = instances  # strong-ref keeps the WeakValueDictionary alive
+
+            class_export = _resolve_export_params_for(derived_name, export_params, is_multi)
+            if not class_export:
+                logger.warning(
+                    "outflow(state) emitted class %r but export_params has no matching key; skipping export.",
+                    derived_name,
+                )
+                yield (derived_name, len(instances), None)
+                continue
+
+            resolved = _resolve_if_exists_for_export(
+                file_path=class_export.get("file_path"),
+                force_append=False,
+                user_override=class_export.get("if_exists"),
+            )
+            params = class_export if resolved is None else {**class_export, "if_exists": resolved}
+            await derived_cls.export(instance=instances, **params)
+            yield (derived_name, len(instances), None)
+        except Exception as exc:  # noqa: BLE001 — caller decides what to do
+            yield (derived_name, 0, exc)
 
 
 async def _outflow_daemon(
@@ -152,54 +239,35 @@ async def _outflow_daemon(
     Failures in any phase enqueue a Wave with ``failed_sources``
     populated but never crash the daemon.
     """
-    # Local import keeps the observability layer free of a hard schema dep at
-    # module-import time.
-    from ...schema.builder import infer_dynamic_schema
-
     loop_idx = 0
     # Pre-compute state dict keys once — avoids re-allocating the key list on
     # every tick.  The key order is stable for the lifetime of the daemon.
     state_keys = [cls.__name__ for cls in source_classes]
-    # Sentinel distinguishes "outflow_fn never produced a value" (raised, or
-    # has not yet been invoked) from a legitimate ``None`` return.  ``None``
-    # IS a valid outflow return (mapped to a zero-row tick by
-    # ``_normalise_outflow_return``); the sentinel lets us tell those cases
-    # apart without an extra flag variable.
-    _OUTFLOW_NOT_RUN = object()
 
     while not shutdown_event.is_set():
         loop_idx += 1
 
-        # Stage 1: snapshot + run outflow_fn.  On exception emit a single
-        # composite failure wave and skip Stage 2.
-        result: Any = _OUTFLOW_NOT_RUN
+        # Stage 1: snapshot under lock.
+        async with lock:
+            state = dict(zip(state_keys, [ref[0] for ref in source_refs]))
+
+        # Stage 2: delegate the outflow + per-class build/export to flush().
+        # outflow_fn-level exceptions propagate out of the async-for and land
+        # in the except below as the single composite failure wave.  Per-class
+        # build/export errors are surfaced as the third tuple element so the
+        # _daemon_tick context emits a properly-shaped per-class failure wave.
+        produced: set[str] = set()
         try:
-            async with lock:
-                state = dict(zip(state_keys, [ref[0] for ref in source_refs]))
-            # asyncio.to_thread releases the GIL so CPU-heavy outflow functions
-            # don't block refresh/export daemons running on other sources.
-            result = await asyncio.to_thread(outflow_fn, state)
-        except Exception as exc:
-            # User outflow code raised — single composite failure wave keyed
-            # by the default output class name (we don't know which derived
-            # class would have produced what at this point).
-            await wave_queue.put(
-                Wave(
-                    chunk_index=loop_idx,
-                    operation=f"outflow:{output_class_name}",
-                    rows_processed=0,
-                    failed_sources=[f"Outflow Error: {exc}"],
-                    processing_time_sec=0.0,
-                )
-            )
-
-        if result is not _OUTFLOW_NOT_RUN:
-            grouped, is_multi = _normalise_outflow_return(result, output_class_name)
-
-            # Stage 2: per-derived-class build + export.  Each pair gets its
-            # own _daemon_tick so one failure doesn't block the others.
-            for derived_name, rows in grouped.items():
-                row_count_holder: List[int] = [0]
+            async for derived_name, count, err in flush(
+                outflow_fn,
+                state,
+                default_output_class_name=output_class_name,
+                base_class=base_class,
+                export_params=export_params,
+                outflow_module=outflow_module,
+            ):
+                produced.add(derived_name)
+                row_count_holder: List[int] = [count]
 
                 def _read_row_count(holder: List[int] = row_count_holder) -> int:
                     return holder[0]
@@ -211,59 +279,16 @@ async def _outflow_daemon(
                     error_prefix="Outflow Error",
                     row_count_fn=_read_row_count,
                 ):
-                    if not rows:
-                        # Zero-row branch — emit success wave with
-                        # rows_processed=0; skip build/export.
-                        continue
-
-                    # Prefer a user-pre-declared Incorporator subclass with
-                    # the matching name — lets the user have full type control.
-                    user_cls = getattr(outflow_module, derived_name, None) if outflow_module is not None else None
-                    if user_cls is not None and isinstance(user_cls, type) and issubclass(user_cls, base_class):
-                        DerivedCls = cast(Any, user_cls)
-                    else:
-                        DerivedCls = cast(
-                            Any,
-                            infer_dynamic_schema(derived_name, rows, base_class),
-                        )
-
-                    # Reset registry for this tick's view, then materialise.
-                    DerivedCls.inc_dict.clear()
-                    instances = [DerivedCls(**row) for row in rows]
-
-                    # Strong-ref snapshot keeps the WeakValueDictionary alive between
-                    # ticks — preserve per-class so each derived class survives independently.
-                    DerivedCls._fjord_snapshot = instances
-
-                    # Per-class export_params lookup + per-tick if_exists.
-                    class_export = _resolve_export_params_for(derived_name, export_params, is_multi)
-                    if not class_export:
-                        # outflow returned a class with no matching export config.
-                        # Skip the export but record the build count.
-                        logger.warning(
-                            "outflow(state) emitted class %r but export_params has no matching key; skipping export.",
-                            derived_name,
-                        )
-                        row_count_holder[0] = len(instances)
-                        continue
-
-                    # Each derived class is rebuilt from scratch every outflow tick
-                    # (inc_dict.clear() + re-materialise), so we always replace.
-                    # Users wanting accumulation can pass if_exists="append" in
-                    # the per-class export_params.
-                    resolved = _resolve_if_exists_for_export(
-                        file_path=class_export.get("file_path"),
-                        force_append=False,
-                        user_override=class_export.get("if_exists"),
-                    )
-                    params = class_export if resolved is None else {**class_export, "if_exists": resolved}
-                    await DerivedCls.export(instance=instances, **params)
-                    row_count_holder[0] = len(instances)
+                    if err is not None:
+                        # Re-raise inside the _daemon_tick so it emits the
+                        # standard per-class failure wave shape.
+                        raise err
 
             # B6: warn about export_params keys that outflow didn't fill.
-            if is_multi:
-                produced = set(grouped.keys())
-                configured = {k for k, v in export_params.items() if k != "if_exists" and isinstance(v, dict)}
+            # Only meaningful when the config is multi-output (> 1 nested-dict
+            # entries keyed by class name).
+            configured = {k for k, v in export_params.items() if k != "if_exists" and isinstance(v, dict)}
+            if len(configured) > 1:
                 orphan = configured - produced
                 if orphan:
                     logger.warning(
@@ -271,6 +296,19 @@ async def _outflow_daemon(
                         "did not produce any rows for them this wave.",
                         sorted(orphan),
                     )
+        except Exception as exc:  # noqa: BLE001 — surface to telemetry, never crash the daemon
+            # outflow_fn itself raised.  Single composite failure wave keyed
+            # by the default output class (we don't know which derived class
+            # would have produced what at this point).
+            await wave_queue.put(
+                Wave(
+                    chunk_index=loop_idx,
+                    operation=f"outflow:{output_class_name}",
+                    rows_processed=0,
+                    failed_sources=[f"Outflow Error: {exc}"],
+                    processing_time_sec=0.0,
+                )
+            )
 
         if e_interval is None:
             break

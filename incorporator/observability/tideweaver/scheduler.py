@@ -31,7 +31,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
 from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_exponential
 
-from ..pipeline._outflow import _normalise_outflow_return, _resolve_export_params_for
+from ..pipeline._outflow import flush
 from .current import Current, Export, Fjord, Stream
 from .tide import Tide
 from .watershed import Watershed
@@ -292,8 +292,14 @@ class Tideweaver:
         cls_any._tideweaver_snapshot = list(current.cls.inc_dict.values())
 
     async def _tick_fjord(self, current: Fjord) -> None:
-        """One fjord flush: snapshot upstream → outflow(state) → build → export."""
-        from ...schema.builder import infer_dynamic_schema
+        """One fjord flush: snapshot upstream → outflow(state) → build → export.
+
+        Delegates the outflow → normalize → per-class build/export to the
+        shared :func:`incorporator.observability.pipeline._outflow.flush`
+        generator (also used by the legacy ``_outflow_daemon``).  The
+        scheduler's job is just snapshotting the upstream state and logging
+        per-class failures; the outflow primitive owns the rest.
+        """
         from ...usercode import load_outflow_module
 
         outflow_path = current.outflow or self.watershed.outflow
@@ -321,31 +327,22 @@ class Tideweaver:
                 state[dep.cls.__name__] = list(snapshot)
             else:
                 state[dep.cls.__name__] = list(dep.cls.inc_dict.values())
-        result = await asyncio.to_thread(outflow_fn, state)
-        grouped, is_multi = _normalise_outflow_return(result, current.cls.__name__)
 
-        for derived_name, rows in grouped.items():
-            if not rows:
-                continue
-            user_cls = getattr(outflow_module, derived_name, None)
-            base_cls = current.cls
-            if user_cls is not None and isinstance(user_cls, type) and issubclass(user_cls, base_cls):
-                derived_cls = cast(Any, user_cls)
-            else:
-                derived_cls = cast(Any, infer_dynamic_schema(derived_name, rows, base_cls))
-            derived_cls.inc_dict.clear()
-            instances = [derived_cls(**row) for row in rows]
-            derived_cls._fjord_snapshot = instances
-            class_export = _resolve_export_params_for(derived_name, current.export_params, is_multi)
-            if not class_export:
+        async for derived_name, _count, err in flush(
+            outflow_fn,
+            state,
+            default_output_class_name=current.cls.__name__,
+            base_class=current.cls,
+            export_params=current.export_params,
+            outflow_module=outflow_module,
+        ):
+            if err is not None:
                 logger.warning(
-                    "Tideweaver: Fjord flush %s produced derived class %r with no matching "
-                    "export_params; skipping export.",
+                    "Tideweaver: Fjord flush %r raised on derived class %r: %s",
                     current.name,
                     derived_name,
+                    err,
                 )
-                continue
-            await derived_cls.export(instance=instances, **class_export)
 
     async def _tick_export(self, current: Export) -> None:
         """One ``cls.export(...)`` call."""
