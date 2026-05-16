@@ -1,0 +1,63 @@
+{
+  "_comment_1_": "Sample watershed.json for the NASCAR diamond pattern.",
+  "_comment_2_": "Run from the repo root so the relative inc_file / outflow paths resolve:",
+  "_comment_3_": "  incorporator validate examples/nascar_watershed.json",
+  "_comment_4_": "  incorporator tideweaver run examples/nascar_watershed.json --json-output",
+  "_comment_5_": "Override the default window with env vars: RACE_START / RACE_END (ISO 8601, UTC).",
+
+  "window": {
+    "start": "${RACE_START:-2026-05-16T00:00:00+00:00}",
+    "end":   "${RACE_END:-2026-12-31T23:59:59+00:00}"
+  },
+
+  "shape": "diamond",
+  "outflow": "tideweaver_code/race_outflow.py",
+  "drain_timeout": 30,
+  "dependency_mode": "hard",
+
+  "head": {
+    "name": "laps",
+    "class": "LapData",
+    "verb": "stream",
+    "interval": 30,
+    "incorp_params": {
+      "inc_file": "examples/tideweaver_code/laps.json",
+      "inc_code": "driver"
+    }
+  },
+
+  "middle": [
+    {
+      "name": "pits",
+      "class": "PitStops",
+      "verb": "stream",
+      "interval": 30,
+      "incorp_params": {
+        "inc_file": "examples/tideweaver_code/pits.json",
+        "inc_code": "driver"
+      }
+    },
+    {
+      "name": "flags",
+      "class": "FlagEvents",
+      "verb": "stream",
+      "interval": 30,
+      "incorp_params": {
+        "inc_file": "examples/tideweaver_code/flags.json",
+        "inc_code": "color"
+      }
+    }
+  ],
+
+  "tail": {
+    "name": "state",
+    "class": "DriverState",
+    "verb": "fjord",
+    "interval": 30,
+    "export_params": {
+      "file_path": "data/driver_state.ndjson",
+      "format": "ndjson",
+      "if_exists": "append"
+    }
+  }
+}

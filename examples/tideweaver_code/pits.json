@@ -1,0 +1,5 @@
+[
+  {"driver": "Hamlin", "stop": 1},
+  {"driver": "Byron",  "stop": 2},
+  {"driver": "Bell",   "stop": 1}
+]

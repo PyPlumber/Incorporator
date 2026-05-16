@@ -1,0 +1,7 @@
+[
+  {"driver": "Larson",  "lap_number": 42},
+  {"driver": "Hamlin",  "lap_number": 41},
+  {"driver": "Byron",   "lap_number": 42},
+  {"driver": "Bell",    "lap_number": 40},
+  {"driver": "Elliott", "lap_number": 41}
+]
