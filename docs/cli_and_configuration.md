@@ -352,12 +352,16 @@ inside tracebacks aren't scrubbed — keep secrets out of URLs.
 `incorporator validate <config.json>` runs every structural check the
 runtime does (required keys, env var expansion, inflow/outflow imports,
 outflow() arity) **without executing the pipeline**. Exits 0 / 1 with a
-human-readable report. Use this in CI and in pre-commit hooks.
+human-readable report. Use this in CI and in pre-commit hooks.  Auto-detects
+the config type from its top-level keys (`incorp_params` → stream,
+`outflow` + `stream_params` → fjord, `window` + `shape` → tideweaver); pass
+`--type stream|fjord|tideweaver` to force one.
 
-`incorporator init [--type stream|fjord] [--output-dir .]` writes a
-starter `pipeline.json` (and, for fjord, an `outflow.py`). Refuses to
-overwrite existing files. After running, edit the placeholders, then
-`validate`, then `stream` / `fjord`.
+`incorporator init [--type stream|fjord|tideweaver] [--output-dir .]`
+writes a starter `pipeline.json` or `watershed.json` (and, for fjord /
+tideweaver, an `outflow.py`). Refuses to overwrite existing files. After
+running, edit the placeholders, then `validate`, then the matching run
+verb (`stream`, `fjord`, or `tideweaver run`).
 
 ---
 
@@ -501,7 +505,74 @@ JSON config.
 | :--- | :--- |
 | Stream **one** source through chunked/stateful polling | `incorporator stream` |
 | Concurrently poll **N sources** and join them into a new entity | `incorporator fjord` |
+| Multiple sources on **independent intervals** with dependency gating in one time window | `incorporator tideweaver run` (see §9 below) |
 | Sequencing / DAG dependencies between pipelines | Wrap either in a Prefect flow (see `deployment.md`) |
+
+---
+
+## 9. The `tideweaver` Subcommand — Windowed Orchestration
+
+`stream` watches one source.  `fjord` joins N sources via one shared
+`outflow(state)` daemon.  `tideweaver` is the layer above either: a
+**graph of named currents** (each one a `stream` / fjord-flush / `export`
+verb) that **tick on independent intervals** inside a single time window,
+with hard or soft dependency edges gating which currents may fire when.
+
+Use tideweaver when you have multiple feeds on different cadences (laps
+update every 5s, pit reports every 30s, lap-summaries every minute) and
+you need a clean way to declare *"this current depends on a fresh wave
+from that one"* without writing your own `asyncio` glue.
+
+### Two subcommands
+
+```bash
+incorporator tideweaver validate watershed.json   # structural check only; exit 0/1
+incorporator tideweaver run      watershed.json   # full run; one Tide log per pass
+```
+
+The `run` verb runs the same validator before kickoff (parity with
+`stream` / `fjord`), so a bad watershed fails fast with the curated
+diagnostic block instead of mid-construction Pydantic errors.
+
+Both accept the same observability flags as `stream` / `fjord`:
+`--logs`, `--json-output`, `--heartbeat-file <path>`.
+
+### Configuration File (`watershed.json`)
+
+```json
+{
+  "window": {"start": "${RACE_START}", "end": "${RACE_END}"},
+  "shape": "diamond",
+  "outflow": "race_outflow.py",
+  "drain_timeout": 30,
+  "dependency_mode": "hard",
+  "head":   {"name": "laps",  "class": "LapData",     "verb": "stream", "interval": 30, "incorp_params": {"inc_url": "..."}},
+  "middle": [
+    {"name": "pits",  "class": "PitStops",   "verb": "stream", "interval": 30, "incorp_params": {"inc_url": "..."}},
+    {"name": "flags", "class": "FlagEvents", "verb": "stream", "interval": 30, "incorp_params": {"inc_url": "..."}}
+  ],
+  "tail":   {"name": "state", "class": "DriverState", "verb": "fjord",  "interval": 30,
+             "export_params": {"file_path": "data/state.ndjson", "format": "ndjson", "if_exists": "append"}}
+}
+```
+
+Five `shape` values are supported, each driving a different edge layout:
+`chain`, `diamond`, `fanout`, `parallel`, and `custom` (raw `edges: [...]`
+list for mixed-mode topologies).  See [Tutorial 8 — Tideweaver](./8_tideweaver.md)
+for the full walk-through plus the Python-API equivalents.
+
+### Operation tags
+
+| Operation tag | Emitted by |
+| :--- | :--- |
+| `Tide` log record (NDJSON on `--json-output`) | One per scheduler pass, regardless of which currents fired |
+| `Wave` from a Stream current | Same wave shape as the stream daemon (`chunk`, `refresh`, ...) |
+| `outflow:<DerivedName>` | Each fjord-flush export (same prefix as the standalone fjord engine) |
+
+The Tide record captures which currents `fired` this pass and which
+`skipped` (with reasons: `not_due`, `awaiting_upstream`, `skip_ahead`,
+`still_running`).  Use it for cadence audits without parsing per-current
+Waves.
 
 For the full method-level signature of `fjord()`, see the pdoc-built
 [Library reference](./library_reference.md).

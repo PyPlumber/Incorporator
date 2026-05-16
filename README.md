@@ -202,6 +202,37 @@ derived class per key and exports one file per class per tick.
 
 → [Tutorial 7 — Multi-Source Fjord](./docs/7_multi_source_fjord.md)
 
+### `Tideweaver` — orchestrate multiple feeds on independent intervals
+
+When you need to run several sources at different cadences inside a single
+time window, with dependency edges that gate downstream work until an
+upstream produces fresh data, build a `Watershed` and hand it to
+`Tideweaver`:
+
+```python
+from incorporator import Tideweaver, Watershed, Stream, Fjord
+
+watershed = Watershed.diamond(
+    window=(start, end),
+    head=Stream(name="laps",  cls=Lap,   interval=30, incorp_params={...}),
+    middle=[Stream(name="pits",  cls=Pit,  interval=30, incorp_params={...}),
+            Stream(name="flags", cls=Flag, interval=30, incorp_params={...})],
+    tail=Fjord(name="state", cls=DriverState, interval=30,
+               export_params={"file_path": "state.ndjson"}),
+    outflow="race_outflow.py",
+)
+async for tide in Tideweaver(watershed).run():
+    print(tide.tide_number, tide.fired, tide.skipped)
+```
+
+Four shape helpers cover the common topologies (`parallel`, `chain`,
+`fanout`, `diamond`); a `custom` shape with explicit `edges` covers
+everything else.  Declarative `watershed.json` config + a
+`incorporator tideweaver run` / `validate` CLI verb mirror the
+`stream` / `fjord` workflow.
+
+→ [Tutorial 8 — Tideweaver](./docs/8_tideweaver.md)
+
 ### `display()` — REPL debug print
 
 ```python

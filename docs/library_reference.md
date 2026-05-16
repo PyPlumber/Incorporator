@@ -70,9 +70,12 @@ and worked examples. The library surface, by verb:
   `LinkHeaderPaginator`, plus local-file `SQLitePaginator`,
   `CSVPaginator`, `AvroPaginator`
 - `incorporator.cli` — the `incorporator init / validate / stream /
-  fjord` Typer subcommands
+  fjord / tideweaver` Typer subcommands
 - `incorporator.observability` — `LoggedIncorporator`, `Wave`,
   `LoggingMixin`, plus the pipeline engines
+- `incorporator.observability.tideweaver` — `Tideweaver`, `Watershed`,
+  `Current` / `Stream` / `Fjord` / `Export`, `Tide` — orchestration layer
+  over `stream()` and fjord-flush primitives (see [Tutorial 8](./8_tideweaver.md))
 - `incorporator.io.formats` — `FormatType` enum + extension inference
   *(see the [Cross-Format Type Bridge](./formats_and_compression.md#-cross-format-type-bridge)
   for how every Python type round-trips through every supported format)*
