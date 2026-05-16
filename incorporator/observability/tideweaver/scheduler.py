@@ -287,7 +287,9 @@ class Tideweaver:
             pass
         # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
         # Runtime-only escape-hatch attribute (no field on Incorporator itself).
-        current.cls._tideweaver_snapshot = list(current.cls.inc_dict.values())  # type: ignore[attr-defined]
+        # cast(Any) mirrors the same trick _outflow.py uses for _fjord_snapshot.
+        cls_any = cast(Any, current.cls)
+        cls_any._tideweaver_snapshot = list(current.cls.inc_dict.values())
 
     async def _tick_fjord(self, current: Fjord) -> None:
         """One fjord flush: snapshot upstream → outflow(state) → build → export."""
