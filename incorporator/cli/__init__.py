@@ -205,7 +205,10 @@ if typer:
         type_: str = typer.Option(  # noqa: B008
             "stream",
             "--type",
-            help="Scaffold type: 'stream' (one source) or 'fjord' (multi-source + outflow.py).",
+            help=(
+                "Scaffold type: 'stream' (one source), 'fjord' (multi-source + outflow.py), "
+                "or 'tideweaver' (windowed graph + outflow.py)."
+            ),
         ),
         output_dir: Path = typer.Option(  # noqa: B008
             Path("."),
@@ -238,12 +241,21 @@ if typer:
         typer.secho(f"✅ Wrote {len(written)} starter file(s):", fg=typer.colors.GREEN)
         for path in written:
             typer.secho(f"  - {path}", fg=typer.colors.CYAN)
-        pipeline_path = next((p for p in written if p.name == "pipeline.json"), written[0])
+        # Config filename varies by scaffold type — pipeline.json for stream/fjord,
+        # watershed.json for tideweaver.  The run verb differs too.
+        config_path = next(
+            (p for p in written if p.name in ("pipeline.json", "watershed.json")),
+            written[0],
+        )
+        if type_ == "tideweaver":
+            run_cmd = f"incorporator tideweaver run {config_path}"
+        else:
+            run_cmd = f"incorporator {type_} {config_path}"
         typer.secho(
             "\nNext steps:\n"
             "  1. Edit the file(s) above and replace the placeholders.\n"
-            f"  2. incorporator validate {pipeline_path}\n"
-            f"  3. incorporator {type_} {pipeline_path}",
+            f"  2. incorporator validate {config_path}\n"
+            f"  3. {run_cmd}",
             fg=typer.colors.WHITE,
         )
 

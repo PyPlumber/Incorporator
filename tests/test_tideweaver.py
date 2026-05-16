@@ -947,3 +947,26 @@ def test_tideweaver_run_calls_validate_first(tmp_path: Path) -> None:
     result = runner.invoke(app, ["tideweaver", "run", str(cfg)])
     assert result.exit_code == 1
     assert "Config invalid" in result.stdout
+
+
+def test_init_tideweaver_scaffold_validates(tmp_path: Path) -> None:
+    """`init --type tideweaver` emits a watershed.json + outflow.py that pass validate_watershed_config.
+
+    Mirrors the CLI's production flow: env-expand the raw JSON first, then validate.
+    Confirms the generated scaffold is ready to ``incorporator tideweaver run`` after
+    the user replaces the URL placeholders with their real source endpoints.
+    """
+    import json as _json
+
+    from incorporator.cli.envexpand import expand_env
+    from incorporator.cli.scaffold import write_scaffold
+    from incorporator.cli.validate import autodetect_type, validate_watershed_config
+
+    written = write_scaffold("tideweaver", tmp_path)
+    names = {p.name for p in written}
+    assert names == {"watershed.json", "outflow.py"}
+    raw = _json.loads((tmp_path / "watershed.json").read_text(encoding="utf-8"))
+    expanded = expand_env(raw)
+    assert autodetect_type(expanded) == "tideweaver"
+    errors = validate_watershed_config(expanded, tmp_path)
+    assert errors == [], f"scaffold watershed.json should validate cleanly; got: {errors}"
