@@ -114,7 +114,7 @@ return a 422.  The framework persists the context as
 `Pair._incorp_kwargs` and merges it under your explicit refresh
 kwargs.
 
-If you want to change any kwarg on a specific refresh tick (rare),
+If you want to change any kwarg on a specific refresh wave (rare),
 pass it explicitly to `refresh()` — caller-supplied kwargs **win on
 key conflict**:
 
@@ -179,7 +179,7 @@ async def main():
     await Pair.refresh()
 
     # 4. Read the latest value via inc_dict — refresh REPLACES instances
-    #    on every tick (Pydantic v2 validates on construction), so any
+    #    on every wave (Pydantic v2 validates on construction), so any
     #    local variable captured pre-refresh now points at a stale model.
     price_after = Pair.inc_dict["BTCUSDT"].lastPrice
     print(f"BTCUSDT lastPrice after:   {price_after}")

@@ -133,11 +133,11 @@ handles cadence, retries, draining, and shutdown.
 2. **Two daemon tasks spawn.**
    * A **refresh daemon** re-fetches every `refresh_interval` seconds and
      merges new/updated records into `Launch.inc_dict` under a shared lock.
-     Emits one Wave per wave.
+     Emits one Wave per refresh cycle.
    * An **export daemon** wakes every `export_interval` seconds, snapshots
      the registry under the same lock, and calls `Launch.export(...)` to
-     write the file. Emits one Wave per tick.
-3. **Wave stream.** Each daemon yields a `Wave` per wave into a
+     write the file. Emits one Wave per export cycle.
+3. **Wave stream.** Each daemon yields one Wave per cycle into a
    shared queue. Your `async for` loop consumes them — that's how you
    observe the pipeline without polling it yourself.
 4. **Shutdown.** Ctrl+C / SIGTERM sets a shutdown event; daemons drain,
