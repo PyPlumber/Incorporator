@@ -27,7 +27,7 @@ All loaders rely on Python's ``importlib.util.spec_from_file_location``
 + ``exec_module``, which registers the module in ``sys.modules`` before
 ``exec_module`` returns.  Subsequent calls with the same path therefore
 **don't re-execute the file** — Python's import cache absorbs the
-repeat.  Callers can safely call these helpers per-tick without paying
+repeat.  Callers can safely call these helpers per-wave without paying
 re-import cost.
 """
 

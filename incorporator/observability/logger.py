@@ -256,7 +256,7 @@ class LoggingMixin:
         - ``msg``: human-readable message
         - ``meta``: flat ``key:"value"`` summary (class, identity, origin)
         - ``wave``: the full :class:`Wave` dump as a dict (when the error
-          came from a pipeline tick — chunk index, rows, failed sources,
+          came from a pipeline wave — chunk index, rows, failed sources,
           processing time, etc.)
         - ``timestamp`` and other standard ``logging`` fields
 
@@ -546,7 +546,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         outflow: Optional[Any] = None,
         enable_logging: bool = False,
     ) -> AsyncGenerator[Wave, None]:
-        """Long-running pipeline, with each tick mirrored to disk on opt-in.
+        """Long-running pipeline, with each wave mirrored to disk on opt-in.
 
         Identical to :meth:`Incorporator.stream` (every kwarg forwarded
         unchanged).  When ``enable_logging=True`` is also passed:
@@ -622,7 +622,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         inflow: Optional[Any] = None,
         enable_logging: bool = False,
     ) -> AsyncGenerator[Wave, None]:
-        """Multi-source pipeline, with each tick mirrored to disk on opt-in.
+        """Multi-source pipeline, with each wave mirrored to disk on opt-in.
 
         Identical to :meth:`Incorporator.fjord` (every kwarg forwarded
         unchanged).  When ``enable_logging=True`` is also passed:

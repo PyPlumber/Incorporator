@@ -178,7 +178,7 @@ price → CoinMarket with computed spread), reach for `fjord()`.
 
 `fjord()` runs each source's refresh daemon concurrently under a shared
 lock, then calls a user-supplied `outflow(state)` function on each export
-tick. The output class is built dynamically from the rows `outflow()`
+wave. The output class is built dynamically from the rows `outflow()`
 returns — named after the `outflow` filename (`coin_market.py` →
 `CoinMarket`). No output class to declare. Stateful-polling only — no
 chunking mode.

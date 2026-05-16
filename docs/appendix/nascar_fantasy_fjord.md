@@ -208,7 +208,7 @@ def inflow(state: Dict[str, Any]) -> Dict[str, Any]:
     Inflow runs BEFORE each source's incorp().  On the first calls
     (Track / Driver / Standings) ``state`` is empty / partial, so
     Race's override only emits once its peers exist — fjord then
-    re-applies it on every refresh tick so the link_to closures see
+    re-applies it on every refresh wave so the link_to closures see
     fresh peer snapshots.
     """
     overrides: Dict[str, Any] = {}
@@ -328,7 +328,7 @@ async def main() -> None:
 > loads the module once via `importlib`'s cache, so the second
 > import is free.
 
-> **`refresh_params=None` everywhere = single-tick test mode.**  Drop
+> **`refresh_params=None` everywhere = single-wave test mode.**  Drop
 > those lines (refresh defaults to on with a 60s interval) and the
 > daemons stay alive — perfect for production but blocks the
 > `async for` loop indefinitely.  Mix and match: leave `Track`'s
@@ -339,7 +339,7 @@ async def main() -> None:
 
 ## 🏁 The Run
 
-A single tick against the live NASCAR endpoints:
+A single wave against the live NASCAR endpoints:
 
 ```
 🏁 Initiating NASCAR Data Gateway (fjord)...
@@ -648,11 +648,11 @@ The defaults in the JSON above are tuned for live-season operation:
 | `Race` | 10 min | Pole winner finalises Saturday; race winner Sunday |
 | `CupStanding` / `BuschStanding` / `TruckStanding` | 5 min | Live points update during/after each race |
 | `LeagueRoster` | refresh off | Edit the JSON + restart the daemon |
-| Outflow tick | 60 s | Fused export every minute |
+| Outflow wave | 60 s | Fused export every minute |
 
 For an off-season demo (one-shot run with no refresh), set every
 `refresh_params: null` and drop `refresh_interval` / `export_interval`
-entirely — the pipeline exits cleanly after one outflow tick.
+entirely — the pipeline exits cleanly after one outflow wave.
 
 ### Secrets aren't required
 
@@ -677,7 +677,7 @@ apply if you ever swap one of the sources for a paid feed.
 | **Per-class export config** | Top-level `export_params` keyed by class name |
 | **Field harvesting** | Every output column traces back to a field already pulled in the seed; no extra API call to add `track_type` / `manufacturer` / `winner`.  Payoff for the framework's eager-fetch / centralised-state model |
 | **Config externalisation** | Fantasy rosters live in `league_teams.json`, not Python — editing the league no longer requires touching code |
-| **Single-tick test mode** | `refresh_params=None` on every entry, no `export_interval` → the pipeline exits after one outflow tick |
+| **Single-wave test mode** | `refresh_params=None` on every entry, no `export_interval` → the pipeline exits after one outflow wave |
 | **Pure-data outflow function** | The `outflow(state)` is a normal Python function — no async, no daemon plumbing, no lock acquisition. Fjord takes care of all that |
 
 ---

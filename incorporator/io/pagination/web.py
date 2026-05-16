@@ -43,7 +43,7 @@ class LinkHeaderPaginator(AsyncPaginator):
         """Yield one raw response body per page, following RFC 5988 ``Link: rel="next"`` headers.
 
         Stops when the response has no ``rel="next"`` entry.  Honours
-        ``call_lim`` so ``stream()`` can force exactly one page per tick.
+        ``call_lim`` so ``stream()`` can force exactly one page per wave.
 
         Args:
             start_url: The URL of the first page.  Subsequent URLs are
@@ -139,7 +139,7 @@ class CursorPaginator(AsyncPaginator):
         Reads the next cursor from ``meta.next_token``, ``next_cursor``, or
         the configured ``cursor_param`` key.  Stops when the cursor is absent
         or has already been seen (infinite-loop guard).  Honours ``call_lim``
-        so ``stream()`` can force exactly one page per tick.
+        so ``stream()`` can force exactly one page per wave.
 
         Args:
             start_url: Base URL that receives the cursor as a query parameter
@@ -234,7 +234,7 @@ class OffsetPaginator(AsyncPaginator):
         Stops when the results list is empty (auto-detected from common
         conventions: ``results``, ``data``, ``items``, ``docs``, ``records``
         or ``result_key`` if set).  Honours ``call_lim`` so ``stream()``
-        can force exactly one page per tick.
+        can force exactly one page per wave.
 
         Args:
             start_url: Base URL that receives ``offset`` and ``limit`` as
@@ -332,7 +332,7 @@ class PageNumberPaginator(AsyncPaginator):
 
         Stops when the results list is empty (same auto-detection as
         :class:`OffsetPaginator`).  Honours ``call_lim`` so ``stream()``
-        can force exactly one page per tick.
+        can force exactly one page per wave.
 
         Args:
             start_url: Base URL that receives the page number as a query
@@ -431,7 +431,7 @@ class NextUrlPaginator(AsyncPaginator):
         Drills into the response body via ``path_keys`` to extract the URL of
         the next page, then re-fetches it.  Stops when the value is absent or
         falsy.  Honours ``call_lim`` so ``stream()`` can force exactly one
-        page per tick.
+        page per wave.
 
         Args:
             start_url: URL of the first page; subsequent URLs are extracted

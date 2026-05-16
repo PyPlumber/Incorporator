@@ -3,7 +3,7 @@ Outflow sidecar for `examples/7_multi_source_fjord.py`.
 
 The fjord engine imports this file at runtime, registers the two source
 classes (SpaceXLaunch + SpaceXRocket), and calls `outflow(state)` on each
-export tick to fuse them into a single row stream. The dynamic output
+export wave to fuse them into a single row stream. The dynamic output
 class is built from this file's stem — `launch_with_rocket.py` →
 `LaunchWithRocket`.
 """

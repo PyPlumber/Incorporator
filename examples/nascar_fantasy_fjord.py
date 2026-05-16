@@ -9,7 +9,7 @@ one config:
    ``Driver`` instances via ``inflow(state)`` in
    ``examples/fjord_code/nascar_fantasy.py``.  Track + Driver +
    three standings classes seed in parallel; Race waits for its
-   peers and gets state-wired conv_dict on every refresh tick.
+   peers and gets state-wired conv_dict on every refresh wave.
 
 2. **Multi-output outflow** — ``outflow(state)`` returns
    ``dict[ClassName, list[dict]]``; fjord builds TWO derived classes
@@ -188,7 +188,7 @@ async def main() -> None:
 
         # This is a one-shot test run — every source has
         # ``refresh_params=None`` above so no refresh daemon spawns
-        # and the pipeline exits after a single outflow tick.
+        # and the pipeline exits after a single outflow wave.
         #
         # For a production long-running daemon, drop the
         # ``refresh_params=None`` lines and uncomment the cadence

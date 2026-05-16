@@ -268,7 +268,7 @@ async def _outflow_daemon(
                 if orphan:
                     logger.warning(
                         "export_params declares output(s) %s but outflow(state) "
-                        "did not produce any rows for them this tick.",
+                        "did not produce any rows for them this wave.",
                         sorted(orphan),
                     )
 

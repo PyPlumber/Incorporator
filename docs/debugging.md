@@ -24,7 +24,7 @@ process, retrievable in your own Python with one async call.
 
 ```text
    incorp() / stream() / fjord()  ───┐
-                                     │ emit Wave on each tick
+                                     │ emit Wave on each wave
    ┌─────────────────────────┐       ▼
    │  failed_sources on Wave │ ◄─── permanent failure
    └─────────────┬───────────┘
@@ -37,7 +37,7 @@ process, retrievable in your own Python with one async call.
        await Class.get_error()   ───►  List[dict]  ───►  DLQ retry
 ```
 
-`failed_sources` is the **live** view (this tick); `get_error()` is
+`failed_sources` is the **live** view (this wave); `get_error()` is
 the **durable** view (everything this class has ever logged).
 
 ---
@@ -135,7 +135,7 @@ async def retry_failed_webhooks():
         print("✅ No DLQ entries — pipeline is clean.")
         return
 
-    # Dedup before retry — the same URL may appear across multiple ticks.
+    # Dedup before retry — the same URL may appear across multiple waves.
     dlq_urls = list(set(dlq_urls))
     print(f"♻️  Retrying {len(dlq_urls)} previously-failed URLs.")
     return await Webhook.incorp(inc_url=dlq_urls, inc_code="id", enable_logging=True)

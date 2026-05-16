@@ -14,10 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Wave(BaseModel):
-    """A single tick of pipeline telemetry yielded by ``stream()`` / ``fjord()``.
+    """A single wave of pipeline telemetry yielded by ``stream()`` / ``fjord()``.
 
     Each ``Wave`` reports one cycle of work in the engine — a chunk in
-    the chunking pipeline, or one refresh / export tick in the stateful
+    the chunking pipeline, or one refresh / export wave in the stateful
     daemons.  Frozen Pydantic model so callers can pass instances
     around without worrying about mutation.
     """

@@ -110,7 +110,7 @@ class Incorporator(BaseModel):
       format (JSON, NDJSON, CSV, Parquet, SQLite, Avro, Feather, ORC,
       Excel, XML, …).
     - :meth:`stream` — run a long-running pipeline as a daemon; yield one
-      :class:`Wave` per tick.
+      :class:`Wave` per wave.
     - :meth:`fjord` — fuse multiple sources through a user-supplied
       ``outflow(state)`` function and export the combined output.
     - :meth:`display` — REPL identity print for ad-hoc debugging.
@@ -963,14 +963,14 @@ class Incorporator(BaseModel):
         inflow: Optional[Union[str, Path]] = None,
         outflow: Optional[Union[str, Path]] = None,
     ) -> AsyncGenerator["Wave", None]:
-        """Run a long-running pipeline; yield one :class:`Wave` per tick.
+        """Run a long-running pipeline; yield one :class:`Wave` per wave.
 
         ``stream()`` is the production verb for daemons that keep fetching,
         transforming, and exporting until exhausted or cancelled.  Two modes,
         selected by ``stateful_polling``:
 
         - **Chunking mode** (default, ``stateful_polling=False``): every
-          tick calls ``incorp(**incorp_params)`` for the next chunk, then
+          wave calls ``incorp(**incorp_params)`` for the next chunk, then
           optionally ``refresh()`` and ``export()``, then yields one Wave.
           Memory stays O(1) because each chunk is released before the next
           one fetches.  Use this for paginated sources where you want a
@@ -984,22 +984,22 @@ class Incorporator(BaseModel):
 
         Interval cascade: ``refresh_interval`` and ``export_interval`` each
         fall back to ``poll_interval`` when not set, so a single
-        ``poll_interval=60.0`` ticks both rhythms identically.
+        ``poll_interval=60.0`` drives both rhythms identically.
 
         Args:
-            incorp_params: kwargs forwarded to :meth:`incorp` every tick.
+            incorp_params: kwargs forwarded to :meth:`incorp` every wave.
             refresh_params: kwargs for :meth:`refresh`.  Omit to skip
                 refresh entirely.
             export_params: kwargs for :meth:`export`.  Omit to skip
                 export entirely.  In chunking mode, ``if_exists`` is
                 forced to ``"append"`` so successive chunks accumulate
                 into one output file.
-            poll_interval: Default sleep between ticks.  ``None`` means
+            poll_interval: Default sleep between waves.  ``None`` means
                 "one-shot then exit" — useful for testing.
             stateful_polling: Mode selector — see the two modes above.
-            refresh_interval: Override the refresh tick period in stateful
+            refresh_interval: Override the refresh wave period in stateful
                 mode.  Falls back to ``poll_interval`` when omitted.
-            export_interval: Override the export tick period in stateful
+            export_interval: Override the export wave period in stateful
                 mode.  Falls back to ``poll_interval`` when omitted.
             inflow: Optional path to a Python sidecar (``inflow.py``)
                 holding user-defined helper functions referenced from
@@ -1142,7 +1142,7 @@ class Incorporator(BaseModel):
         ``fjord()`` is the multi-source production verb.  It fetches N
         independent Incorporator subclasses concurrently, keeps each one
         refreshed on its own schedule, hands a live snapshot of all of
-        them to your ``outflow(state)`` function on every export tick,
+        them to your ``outflow(state)`` function on every export wave,
         and writes whatever ``outflow()`` returns to a single combined
         file.  Think of it as: N rivers (streams) → one fjord (combined
         body) → one exported output.
@@ -1182,7 +1182,7 @@ class Incorporator(BaseModel):
                   top-level ``export_interval``.
             outflow: Path to a Python file defining the top-level
                 ``outflow(state)`` function the engine calls on every
-                export tick.  ``state`` is a dict mapping each source
+                export wave.  ``state`` is a dict mapping each source
                 class's ``__name__`` to its current
                 :class:`IncorporatorList` snapshot (with ``inc_dict``
                 available for O(1) joins).  ``outflow(state)`` must
@@ -1198,10 +1198,10 @@ class Incorporator(BaseModel):
                 symbols extend the token resolver's allow-list (mostly for
                 ``conv_dict`` callables in per-source ``incorp_params``).
                 See :func:`incorporator.usercode.load_user_module`.
-            refresh_interval: Default sleep between refresh ticks for each
+            refresh_interval: Default sleep between refresh waves for each
                 source daemon.  Per-entry ``refresh_interval`` overrides this.
                 ``None`` means "one-shot then exit".
-            export_interval: Default sleep between outflow-and-export ticks.
+            export_interval: Default sleep between outflow-and-export waves.
                 ``None`` means "one-shot then exit".
 
         Yields:
@@ -1209,10 +1209,10 @@ class Incorporator(BaseModel):
             identifies what fired:
 
             - ``"fjord_incorp:<ClassName>"`` — seed phase, one per source.
-            - ``"fjord_refresh:<ClassName>"`` — per-source refresh tick.
-            - ``"export:<ClassName>"`` — per-source export tick (when an
+            - ``"fjord_refresh:<ClassName>"`` — per-source refresh wave.
+            - ``"export:<ClassName>"`` — per-source export wave (when an
               entry has ``export_params``).
-            - ``"outflow:<DynamicClassName>"`` — outflow-and-export tick.
+            - ``"outflow:<DynamicClassName>"`` — outflow-and-export wave.
 
         Example:
             ``coin_market.py``::

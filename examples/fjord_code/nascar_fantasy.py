@@ -95,7 +95,7 @@ def inflow(state: Dict[str, Any]) -> Dict[str, Any]:
     Inflow is called before each source's ``incorp()``.  On the early
     calls (Track / Driver / Standings / LeagueRoster) ``state`` is
     empty or partial, so we only emit Race's override once its peers
-    exist — fjord then re-applies it on every refresh tick so Race's
+    exist — fjord then re-applies it on every refresh wave so Race's
     ``track_id``, ``pole_winner_driver_id``, and ``winner_driver_id``
     resolve to live ``Track`` / ``Driver`` instances rather than raw
     integers.

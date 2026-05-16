@@ -3,7 +3,7 @@ Outflow sidecar for `examples/7_multi_source_fjord.py`.
 
 The fjord engine imports this file at runtime, registers the two source
 classes (CoinGecko + BinancePair), and calls `outflow(state)` on each
-export tick to fuse them into a single row stream: the basis-point
+export wave to fuse them into a single row stream: the basis-point
 spread between CoinGecko USD price and Binance USDT price for every
 overlapping symbol.
 

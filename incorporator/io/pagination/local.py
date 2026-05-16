@@ -56,7 +56,7 @@ class SQLitePaginator(AsyncPaginator):
 
         ``start_url`` is unused — local paginators carry their own
         ``db_path`` / ``file_path`` state. Honours ``call_lim`` so
-        ``stream()`` can force exactly one chunk per tick.
+        ``stream()`` can force exactly one chunk per wave.
 
         Args:
             start_url: Unused; present for interface compatibility with web
@@ -145,7 +145,7 @@ class CSVPaginator(AsyncPaginator):
 
         ``start_url`` is unused — local paginators carry their own
         ``db_path`` / ``file_path`` state. Honours ``call_lim`` so
-        ``stream()`` can force exactly one chunk per tick.
+        ``stream()`` can force exactly one chunk per wave.
 
         Args:
             start_url: Unused; present for interface compatibility with web
@@ -231,7 +231,7 @@ class AvroPaginator(AsyncPaginator):
 
         ``start_url`` is unused — local paginators carry their own
         ``db_path`` / ``file_path`` state. Honours ``call_lim`` so
-        ``stream()`` can force exactly one chunk per tick.
+        ``stream()`` can force exactly one chunk per wave.
 
         Args:
             start_url: Unused; present for interface compatibility with web

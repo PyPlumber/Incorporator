@@ -69,7 +69,7 @@ class AsyncPaginator:
 
         * Yield raw bytes / strings / pre-parsed rows per page or chunk.
         * Respect ``self.call_lim`` if set (used by ``stream()`` to force
-          O(1) memory by yielding exactly one chunk per tick).
+          O(1) memory by yielding exactly one chunk per wave).
         * Set ``self.is_exhausted = True`` when no more data is available
           so the orchestrator can flip to its idle / poll state.
         """

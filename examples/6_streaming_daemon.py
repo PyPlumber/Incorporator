@@ -40,7 +40,7 @@ class Launch(LoggedIncorporator):
 
 async def main() -> None:
     # stream() has TWO modes (selected by ``stateful_polling``):
-    #   * False (default) = "chunking mode": every tick is a fresh incorp,
+    #   * False (default) = "chunking mode": every wave is a fresh incorp,
     #     state is released between chunks.  Exits when the source has no
     #     more chunks — handy for paginated catalogues you want to drain
     #     once.
@@ -49,7 +49,7 @@ async def main() -> None:
     #     This is the production-watcher shape — what we want here.
     #
     # Export format note: stream() writes incrementally on every export
-    # tick, so the target must accept append mode: NDJSON / CSV / SQLite /
+    # wave, so the target must accept append mode: NDJSON / CSV / SQLite /
     # Avro.  Parquet / Feather / ORC / Excel / XML / JSON reject appends
     # (footer-indexed or monolithic encodings).
     async for wave in Launch.stream(

@@ -45,11 +45,11 @@ Here is a standard `pipeline.json` designed to scrape an API, enrich it, and app
     *   In **chunking mode** (`stateful_polling=false`) each chunk is *new* data,
         so the engine auto-injects `if_exists="append"` after chunk 1 on
         append-friendly formats (NDJSON / CSV / SQLite / Avro).
-    *   In **stateful-polling mode** (`stateful_polling=true`) every tick
+    *   In **stateful-polling mode** (`stateful_polling=true`) every wave
         re-exports the *same* registry, so the engine always REPLACES the
         file with the latest snapshot — appending would duplicate rows.
         Set `"if_exists": "append"` explicitly to opt into a forensic ledger
-        that grows on every tick.
+        that grows on every wave.
 
 ---
 
@@ -427,7 +427,7 @@ names via `getattr`, and validates each resolved object is an
 | `inflow` | ⬜ | Optional path to a `.py` file with two distinct roles: (1) its public symbols extend the token resolver's allow-list — reducer functions referenced from per-source `conv_dict` text tokens; (2) if it defines a top-level `inflow(state)` callable, fjord switches to sequential source seeding and calls it before each source's `incorp()` with the snapshots loaded so far (see Pattern 1 in [Tutorial 7](./7_multi_source_fjord.md)). Both roles can live in the same file. |
 | `export_params` | ✅ | Destination for the combined output graph. |
 | `refresh_interval` | ⬜ | Cadence (seconds) for per-source refresh daemons. Each entry can override. |
-| `export_interval` | ⬜ | Cadence (seconds) for the outflow-and-export tick. |
+| `export_interval` | ⬜ | Cadence (seconds) for the outflow-and-export wave. |
 
 ### The `outflow()` Function
 
@@ -473,7 +473,7 @@ def outflow(state):
 |  | Audit telemetry, graceful shutdown, weak-ref management |
 
 If `outflow()` returns `[]`, fjord emits a wave with `rows_processed=0`
-and skips the export for that tick. Useful for "no joined rows this
+and skips the export for that wave. Useful for "no joined rows this
 iteration" without crashing the daemon.
 
 ### Running the Daemon
@@ -491,9 +491,9 @@ JSON config.
 | Operation tag | Emitted by |
 | :--- | :--- |
 | `fjord_incorp:<ClassName>` | Seed phase, one per source |
-| `fjord_refresh:<ClassName>` | Per-source refresh daemon tick |
-| `export:<ClassName>` | Per-source export daemon tick (when `export_params` set on entry) |
-| `outflow:<DynamicClassName>` | Outflow-and-export daemon tick |
+| `fjord_refresh:<ClassName>` | Per-source refresh daemon wave |
+| `export:<ClassName>` | Per-source export daemon wave (when `export_params` set on entry) |
+| `outflow:<DynamicClassName>` | Outflow-and-export daemon wave |
 
 ### When to Reach For `fjord` vs `stream`
 

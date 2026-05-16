@@ -52,7 +52,7 @@ async def run_incorporator_stream(
     """Prefect task wrapping :meth:`LoggedIncorporator.stream`.
 
     Drives an O(1)-memory incorporator stream and routes each
-    :class:`Wave` tick to the Prefect run logger. Returns the full list
+    :class:`Wave` to the Prefect run logger. Returns the full list
     of ``Wave`` records on completion.
     """
     if not HAS_PREFECT:

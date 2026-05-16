@@ -69,18 +69,18 @@ handles cadence, retries, draining, and shutdown.
 
 > **Two modes — pick one explicitly:**
 >
-> `stateful_polling` controls what happens on each tick. Use
+> `stateful_polling` controls what happens on each wave. Use
 > `stateful_polling=True` when you want to build one in-memory registry
 > and keep it live — useful for APIs where re-fetching the full dataset
-> on every tick would waste quota or incur per-call charges. Use the
-> default (`False`) when each tick should fetch the next chunk of data
+> on every wave would waste quota or incur per-call charges. Use the
+> default (`False`) when each wave should fetch the next chunk of data
 > from a paginated source and then discard it from memory.
 >
 > * **`stateful_polling=True`** *(used above — the production watcher
 >   shape)*: seed the registry once, keep it live in memory, refresh
 >   and export on independent cadences, run until Ctrl+C / SIGTERM.
 > * **`stateful_polling=False`** *(the default — chunking mode)*: each
->   tick is a fresh `incorp()` for the next chunk. State is released
+>   wave is a fresh `incorp()` for the next chunk. State is released
 >   between chunks (O(1) memory). The daemon **exits** when the source
 >   has no more chunks. Use this to drain a paginated catalogue once
 >   and walk away.
@@ -90,22 +90,22 @@ handles cadence, retries, draining, and shutdown.
 > chunks — confirm that's the intent before reaching for `stream()`.
 
 > **Format constraint:** `stream()` writes incrementally on every
-> export tick, so the export target must be an **append-friendly**
+> export wave, so the export target must be an **append-friendly**
 > format: `.ndjson` / `.csv` / `.sqlite` / `.avro`. Parquet / Feather /
 > ORC / Excel / XML / JSON all reject append mode (footer-indexed or
 > monolithic encodings) — use those only for one-shot `incorp()` →
 > `export()` round-trips, not stream destinations. Pick NDJSON if
 > you're unsure — it's the streaming-native default.
 
-> **What the file contains across ticks:**  in `stateful_polling=True`
-> mode the engine RE-EXPORTS THE SAME REGISTRY on every tick — every
-> tick rewrites the destination file with the latest snapshot
+> **What the file contains across waves:**  in `stateful_polling=True`
+> mode the engine RE-EXPORTS THE SAME REGISTRY on every wave — every
+> wave rewrites the destination file with the latest snapshot
 > (~18 launches in the example above).  The file holds the *current*
-> view, not an accumulation across ticks.  This is the right default
+> view, not an accumulation across waves.  This is the right default
 > for "watcher" pipelines: a downstream consumer can `head` /
 > `read_ndjson()` the file at any moment and see the live state.
 >
-> If you need an **append-on-every-tick** ledger (forensic archive,
+> If you need an **append-on-every-wave** ledger (forensic archive,
 > debugging trace, change-data-capture log), opt in explicitly:
 >
 > ```python
@@ -133,11 +133,11 @@ handles cadence, retries, draining, and shutdown.
 2. **Two daemon tasks spawn.**
    * A **refresh daemon** re-fetches every `refresh_interval` seconds and
      merges new/updated records into `Launch.inc_dict` under a shared lock.
-     Emits one Wave per tick.
+     Emits one Wave per wave.
    * An **export daemon** wakes every `export_interval` seconds, snapshots
      the registry under the same lock, and calls `Launch.export(...)` to
      write the file. Emits one Wave per tick.
-3. **Wave stream.** Each daemon yields a `Wave` per tick into a
+3. **Wave stream.** Each daemon yields a `Wave` per wave into a
    shared queue. Your `async for` loop consumes them — that's how you
    observe the pipeline without polling it yourself.
 4. **Shutdown.** Ctrl+C / SIGTERM sets a shutdown event; daemons drain,
@@ -166,7 +166,7 @@ logs/debug.log    # internal lifecycle events
 You can post-process these with `jq`, ship them to a log aggregator, or
 just `tail -f` them — disk I/O never blocks the event loop.
 
-### `inc_dict` survives across refresh ticks
+### `inc_dict` survives across refresh waves
 
 Because `LoggedIncorporator` (and `Incorporator`) back `inc_dict` with a
 `WeakValueDictionary`, the registry stays O(1) and never accumulates

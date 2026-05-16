@@ -5,7 +5,7 @@
 `stream()` watches **one** source. `fjord()` watches **N** sources
 concurrently and lets you fuse them through a user-defined
 `outflow(state)` function — the engine handles every concurrent
-refresh, every export tick, the shared lock, the wave queue, and the
+refresh, every export wave, the shared lock, the wave queue, and the
 dynamic output class.
 
 This is the capstone of the curriculum: you've already loaded a
@@ -40,9 +40,9 @@ stem (`crypto_spread.py` → `CryptoSpread`).
 `fjord()` needs Python code (class definitions + the join logic), so
 it lives in a sidecar file.
 
-At every export tick, `fjord()` calls your `outflow(state)` function and
+At every export wave, `fjord()` calls your `outflow(state)` function and
 passes it `state` — a `dict[str, IncorporatorList]` keyed by source class
-name, snapshotted under a lock at the start of the tick. Your function
+name, snapshotted under a lock at the start of the wave. Your function
 reads the current data from each source, joins them, and returns a list
 of dicts for the output class.
 
@@ -149,7 +149,7 @@ if __name__ == "__main__":
 ---
 
 > **Format constraint** *(same as `stream()`)*: fjord writes
-> incrementally on every export tick, so the export target must be an
+> incrementally on every export wave, so the export target must be an
 > **append-friendly** format: `.ndjson` / `.csv` / `.sqlite` / `.avro`.
 > Parquet / Feather / ORC / Excel / XML / JSON all reject append mode.
 > Pick NDJSON if unsure.
@@ -208,7 +208,7 @@ if __name__ == "__main__":
    example), `.csv`, `.sqlite`, or `.avro`.  Parquet / Feather / ORC /
    Excel / XML / JSON reject append mode and would crash a streaming
    daemon — see the format-constraint note above.  As with `stream()`,
-   each tick replaces the destination file with the latest fused
+   each wave replaces the destination file with the latest fused
    snapshot; opt into accumulation with
    `export_params={"if_exists": "append"}` when you want a forensic
    ledger.
@@ -353,7 +353,7 @@ async for wave in Incorporator.fjord(
         "Filmography":  {"file_path": "data/films.ndjson"},
     },
 ):
-    print(wave)                                   # one wave per derived class per tick
+    print(wave)                                   # one wave per derived class
 ```
 
 Each derived class gets its own `_daemon_tick` wrap so a failure
@@ -375,7 +375,7 @@ return = one file.
 | Joining two REST APIs that update at different rates | Independent per-source refresh cadences |
 | Computing a derived dataset live (price spreads, latency joins, etc.) | `outflow()` runs CPU-heavy joins off the event loop |
 | Needing a strong-typed output class without declaring one | `infer_dynamic_schema()` builds it from the rows |
-| Production observability across a fan-out pipeline | One `Wave` per source per tick + per outflow tick — pipe to disk via `enable_logging=True` |
+| Production observability across a fan-out pipeline | One `Wave` per source per wave + per outflow wave — pipe to disk via `enable_logging=True` |
 
 ---
 
