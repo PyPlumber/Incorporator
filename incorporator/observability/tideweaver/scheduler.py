@@ -1,0 +1,371 @@
+"""The :class:`Tideweaver` orchestrator — async run-loop, dep gating, drain.
+
+The scheduler walks the :class:`Watershed`'s topological order on every pass.
+Each :class:`Current` ticks on its own interval; hard edges gate the dependent
+until the upstream has emitted a new wave since the dependent last consumed.
+Soft edges only sequence the in-pass order — no data wait.  Skip-ahead
+short-circuits a dependent when its upstream's in-flight tick has been running
+longer than ``skip_threshold * dependent.interval``.
+
+Per-tick bodies live in this module too:
+
+* :class:`Stream` → ``cls.stream(..., stateful_polling=False)`` chunking drain.
+* :class:`Fjord` → "fjord flush": snapshot upstream registries → ``outflow(state)``
+  → dynamic class build → ``cls.export(...)``.  Reuses
+  :func:`_normalise_outflow_return` and :func:`_resolve_export_params_for` from
+  the existing :mod:`incorporator.observability.pipeline._outflow` module so the
+  shape semantics match :meth:`Incorporator.fjord` exactly.
+* :class:`Export` → ``cls.export(...)``.
+
+Restart policy via :mod:`tenacity` (already a dep).  ``"isolate"`` traps and
+logs, ``"fail_watershed"`` re-raises.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, cast
+
+from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_exponential
+
+from ..pipeline._outflow import _normalise_outflow_return, _resolve_export_params_for
+from .current import Current, Export, Fjord, Stream
+from .tide import Tide
+from .watershed import Watershed
+
+logger = logging.getLogger(__name__)
+
+TickFactory = Callable[[Current], Awaitable[None]]
+
+
+class Tideweaver:
+    """Run a :class:`Watershed` to completion.
+
+    Use :meth:`run` as an async iterator — it yields one :class:`Tide` per
+    scheduler pass and exits when the window closes (after the graceful
+    drain).
+
+    Args:
+        watershed: The plan to run.
+        tick_factory: Optional override for per-current tick bodies, used by
+            tests to inject deterministic stubs.  Defaults to the production
+            dispatch on :class:`Stream` / :class:`Fjord` / :class:`Export`.
+        pass_interval: Seconds between scheduler passes.  Defaults to
+            ``min(c.interval for c in currents) / 2`` clamped to ``[0.05, 1.0]``.
+    """
+
+    def __init__(
+        self,
+        watershed: Watershed,
+        *,
+        tick_factory: Optional[TickFactory] = None,
+        pass_interval: Optional[float] = None,
+    ) -> None:
+        self.watershed = watershed
+        self.tick_factory = tick_factory
+        self.pass_interval = pass_interval or max(
+            0.05,
+            min(1.0, min(c.interval for c in watershed.currents) / 2.0),
+        )
+
+        # Scheduler bookkeeping — keyed by current name.
+        self._last_tick_started: Dict[str, float] = {}
+        self._last_wave_at: Dict[str, datetime] = {}
+        self._last_consumed: Dict[Tuple[str, str], datetime] = {}
+        self._inflight: Dict[str, asyncio.Task[None]] = {}
+        self._started_at: Dict[str, float] = {}
+        self._tide_number = 0
+        self._currents_by_name: Dict[str, Current] = {c.name: c for c in watershed.currents}
+        self._topo: List[str] = watershed.toposort()
+        self._upstream: Dict[str, List[Tuple[str, str]]] = {c.name: [] for c in watershed.currents}
+        for e in watershed.edges:
+            self._upstream[e.to_name].append((e.from_name, e.mode))
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def run(self) -> AsyncIterator[Tide]:
+        """Run the watershed; yield one :class:`Tide` per scheduler pass."""
+        shutdown_event = asyncio.Event()
+        stopper = asyncio.create_task(self._shutdown_at_window_end(shutdown_event))
+        try:
+            while not shutdown_event.is_set():
+                tide = await self._run_pass(shutdown_event)
+                yield tide
+                if shutdown_event.is_set():
+                    break
+                try:
+                    await asyncio.wait_for(shutdown_event.wait(), timeout=self.pass_interval)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            await self._drain()
+            stopper.cancel()
+            try:
+                await stopper
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Tideweaver: shutdown stopper exited unexpectedly: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Lifecycle helpers
+    # ------------------------------------------------------------------
+
+    async def _shutdown_at_window_end(self, shutdown_event: asyncio.Event) -> None:
+        end = self.watershed.window[1]
+        delay = max(0.0, (end - datetime.now(timezone.utc)).total_seconds())
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        shutdown_event.set()
+
+    async def _drain(self) -> None:
+        pending = [t for t in self._inflight.values() if not t.done()]
+        if not pending:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True),
+                timeout=self.watershed.drain_timeout,
+            )
+        except asyncio.TimeoutError:
+            for t in pending:
+                if not t.done():
+                    t.cancel()
+
+    # ------------------------------------------------------------------
+    # Pass-level scheduling
+    # ------------------------------------------------------------------
+
+    async def _run_pass(self, shutdown_event: asyncio.Event) -> Tide:
+        self._tide_number += 1
+        started = time.monotonic()
+        fired: List[str] = []
+        skipped: List[Tuple[str, str]] = []
+
+        for name in self._topo:
+            if shutdown_event.is_set():
+                break
+            current = self._currents_by_name[name]
+            existing = self._inflight.get(name)
+            if existing is not None and not existing.done():
+                skipped.append((name, "still_running"))
+                continue
+            reason = self._gate_reason(current, time.monotonic())
+            if reason is not None:
+                skipped.append((name, reason))
+                continue
+            self._spawn_tick(current)
+            fired.append(name)
+
+        duration = time.monotonic() - started
+        return Tide(tide_number=self._tide_number, fired=fired, skipped=skipped, duration_sec=duration)
+
+    def _gate_reason(self, current: Current, now: float) -> Optional[str]:
+        """Return ``None`` if ``current`` may fire; else a short skip reason."""
+        last = self._last_tick_started.get(current.name)
+        if last is not None and (now - last) < current.interval:
+            return "not_due"
+        for up_name, mode in self._upstream[current.name]:
+            in_flight = self._inflight.get(up_name)
+            if in_flight is not None and not in_flight.done():
+                elapsed = now - self._started_at.get(up_name, now)
+                if elapsed > current.skip_threshold * current.interval:
+                    return "skip_ahead"
+                if mode == "hard":
+                    return "awaiting_upstream"
+            if mode == "hard":
+                upstream_wave = self._last_wave_at.get(up_name)
+                if upstream_wave is None:
+                    return "awaiting_upstream"
+                consumed = self._last_consumed.get((current.name, up_name))
+                if consumed is not None and upstream_wave <= consumed:
+                    return "awaiting_upstream"
+        return None
+
+    def _spawn_tick(self, current: Current) -> None:
+        now_mono = time.monotonic()
+        self._last_tick_started[current.name] = now_mono
+        self._started_at[current.name] = now_mono
+        # Capture upstream consumption BEFORE the tick runs so a fast upstream
+        # finishing concurrently doesn't double-count its wave.
+        consumed_snapshot = {
+            up_name: self._last_wave_at[up_name]
+            for up_name, _mode in self._upstream[current.name]
+            if up_name in self._last_wave_at
+        }
+        task = asyncio.create_task(self._tick_wrapper(current, consumed_snapshot))
+        self._inflight[current.name] = task
+
+    async def _tick_wrapper(
+        self,
+        current: Current,
+        consumed_snapshot: Dict[str, datetime],
+    ) -> None:
+        """Run one tick under the current's :attr:`on_error` policy."""
+        try:
+            if current.on_error == "restart":
+                async for attempt in AsyncRetrying(
+                    stop=stop_after_attempt(5),
+                    wait=wait_random_exponential(multiplier=1.0, min=0.5, max=8.0),
+                    reraise=True,
+                ):
+                    with attempt:
+                        await self._invoke_tick(current)
+            elif current.on_error == "isolate":
+                try:
+                    await self._invoke_tick(current)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Tideweaver: isolated tick failure on %s: %s", current.name, exc)
+            else:  # fail_watershed
+                await self._invoke_tick(current)
+        except (Exception, RetryError):
+            if current.on_error == "fail_watershed":
+                raise
+            logger.error("Tideweaver: tick failed for %s after retries; current parked.", current.name)
+        finally:
+            # Record the wave timestamp + bump consumed for hard upstreams.
+            wave_at = datetime.now(timezone.utc)
+            self._last_wave_at[current.name] = wave_at
+            for up_name, value in consumed_snapshot.items():
+                self._last_consumed[(current.name, up_name)] = value
+            # Also bump consumed for any upstream that produced a wave during this tick.
+            for up_name, _mode in self._upstream[current.name]:
+                latest = self._last_wave_at.get(up_name)
+                if latest is not None:
+                    self._last_consumed[(current.name, up_name)] = latest
+            self._started_at.pop(current.name, None)
+
+    async def _invoke_tick(self, current: Current) -> None:
+        if self.tick_factory is not None:
+            await self.tick_factory(current)
+            return
+        if isinstance(current, Stream):
+            await self._tick_stream(current)
+        elif isinstance(current, Fjord):
+            await self._tick_fjord(current)
+        elif isinstance(current, Export):
+            await self._tick_export(current)
+        else:
+            raise NotImplementedError(
+                f"Tideweaver has no default tick body for bare Current; "
+                f"subclass Stream/Fjord/Export or pass a tick_factory.  Got: {type(current).__name__}"
+            )
+
+    # ------------------------------------------------------------------
+    # Per-current tick bodies
+    # ------------------------------------------------------------------
+
+    async def _tick_stream(self, current: Stream) -> None:
+        """One chunking-mode drain of ``cls.stream(...)``.
+
+        Incorporator's ``inc_dict`` is a ``WeakValueDictionary`` — without an
+        external strong reference, instances die before a downstream Fjord
+        flush can read them.  We park a strong-ref snapshot on the class as
+        ``_tideweaver_snapshot`` so the registry stays alive between ticks;
+        the Fjord flush reads through to that attribute when present.
+        """
+        kwargs: Dict[str, Any] = {
+            "incorp_params": current.incorp_params,
+            "poll_interval": None,
+            "stateful_polling": False,
+        }
+        if current.refresh_params is not None:
+            kwargs["refresh_params"] = current.refresh_params
+        if current.export_params is not None:
+            kwargs["export_params"] = current.export_params
+        inflow = current.inflow or self.watershed.inflow
+        if inflow is not None:
+            kwargs["inflow"] = inflow
+        async for _wave in current.cls.stream(**kwargs):
+            pass
+        # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
+        # setattr() avoids mypy's "no such attribute" complaint on the bare
+        # Incorporator type (the field is a runtime-only escape hatch).
+        setattr(current.cls, "_tideweaver_snapshot", list(current.cls.inc_dict.values()))
+
+    async def _tick_fjord(self, current: Fjord) -> None:
+        """One fjord flush: snapshot upstream → outflow(state) → build → export."""
+        from ...schema.builder import infer_dynamic_schema
+        from ...usercode import load_outflow_module
+
+        outflow_path = current.outflow or self.watershed.outflow
+        if outflow_path is None:
+            raise ValueError(
+                f"Fjord current {current.name!r} requires an outflow= path (per-current or watershed-level)."
+            )
+        outflow_fn, outflow_module = load_outflow_module(outflow_path)
+
+        # Snapshot upstream Currents' Incorporator class registries.
+        # Walks the *transitive* upstream closure so a Fjord flush in a
+        # diamond/chain sees state from every source that feeds it, not just
+        # its direct edges.  This matches user intuition: "give my outflow
+        # everything upstream" instead of "give me what my immediate parents
+        # processed."
+        upstream_names = self._transitive_upstreams(current.name)
+        deps = [self._currents_by_name[up_name] for up_name in upstream_names]
+        state: Dict[str, List[Any]] = {}
+        for dep in deps:
+            # Prefer the chunking-mode strong-ref snapshot if the upstream is a
+            # Stream; fall back to live inc_dict (which works for sources that
+            # naturally hold strong refs).
+            snapshot = getattr(dep.cls, "_tideweaver_snapshot", None)
+            if snapshot is not None:
+                state[dep.cls.__name__] = list(snapshot)
+            else:
+                state[dep.cls.__name__] = list(dep.cls.inc_dict.values())
+        result = await asyncio.to_thread(outflow_fn, state)
+        grouped, is_multi = _normalise_outflow_return(result, current.cls.__name__)
+
+        for derived_name, rows in grouped.items():
+            if not rows:
+                continue
+            user_cls = getattr(outflow_module, derived_name, None)
+            base_cls = current.cls
+            if user_cls is not None and isinstance(user_cls, type) and issubclass(user_cls, base_cls):
+                derived_cls = cast(Any, user_cls)
+            else:
+                derived_cls = cast(Any, infer_dynamic_schema(derived_name, rows, base_cls))
+            derived_cls.inc_dict.clear()
+            instances = [derived_cls(**row) for row in rows]
+            derived_cls._fjord_snapshot = instances
+            class_export = _resolve_export_params_for(derived_name, current.export_params, is_multi)
+            if not class_export:
+                logger.warning(
+                    "Tideweaver: Fjord flush %s produced derived class %r with no matching "
+                    "export_params; skipping export.",
+                    current.name,
+                    derived_name,
+                )
+                continue
+            await derived_cls.export(instance=instances, **class_export)
+
+    async def _tick_export(self, current: Export) -> None:
+        """One ``cls.export(...)`` call."""
+        await current.cls.export(**current.export_params)
+
+    # ------------------------------------------------------------------
+    # Graph utilities
+    # ------------------------------------------------------------------
+
+    def _transitive_upstreams(self, name: str) -> List[str]:
+        """Return the set of names reachable upstream from ``name`` (excluding self).
+
+        Order is topological among the reachable ancestors so downstream
+        consumers (e.g. logging) see a stable shape.
+        """
+        seen: set[str] = set()
+        stack = [up_name for up_name, _mode in self._upstream[name]]
+        while stack:
+            up = stack.pop()
+            if up in seen:
+                continue
+            seen.add(up)
+            stack.extend(grand for grand, _mode in self._upstream[up] if grand not in seen)
+        return [n for n in self._topo if n in seen]

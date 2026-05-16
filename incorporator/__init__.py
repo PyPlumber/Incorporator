@@ -39,6 +39,15 @@ from .io.pagination import (
 )
 from .list import IncorporatorList
 from .observability.logger import LoggedIncorporator, LoggingMixin, Wave, setup_class_logger
+from .observability.tideweaver import (
+    Current,
+    Export,
+    Fjord,
+    Stream,
+    Tide,
+    Tideweaver,
+    Watershed,
+)
 from .schema.converters import (
     calc,
     calc_all,
@@ -91,4 +100,12 @@ __all__ = [
     "IncorporatorFormatError",
     "IncorporatorNetworkError",
     "IncorporatorSchemaError",
+    # Tideweaver orchestration layer
+    "Tideweaver",
+    "Watershed",
+    "Current",
+    "Stream",
+    "Fjord",
+    "Export",
+    "Tide",
 ]
