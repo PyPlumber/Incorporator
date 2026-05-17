@@ -8,8 +8,7 @@ helpers they use:
 - :mod:`.fjord`    — Engine 2: multi-source stateful streaming with combined
   ``outflow(state)`` output.  Reached via :meth:`Incorporator.fjord`, and
   via :meth:`Incorporator.stream(stateful_polling=True)` through the shim
-  in :func:`incorporator.base._stream_stateful_via_fjord` (single-source
-  identity outflow).
+  in :mod:`._stateful_shim` (single-source identity outflow).
 
 Per-source daemons (``_refresh_daemon`` / ``_export_daemon``) live in
 :mod:`._daemons` and are reused by the fjord engine.

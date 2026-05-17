@@ -37,7 +37,7 @@ from .io.pagination.base import AsyncPaginator
 from .list import IncorporatorList, _deduplicate_extracted
 from .schema import factory as _factory
 from .schema import router
-from .usercode import apply_code_transform, load_outflow_module, pascal_case_from_stem
+from .usercode import apply_code_transform, apply_inflow_resolution, load_outflow_module, pascal_case_from_stem
 
 if TYPE_CHECKING:
     from .observability.logger import Wave
@@ -55,196 +55,6 @@ _counter_lock = threading.Lock()
 # ``refresh_params=None``.  Module-private; treat any external comparison
 # against this object as undefined behaviour.
 _UNSET: Any = object()
-
-
-def _apply_inflow_resolution(
-    inflow: Union[str, Path],
-    conv_dict: Optional[Dict[str, Any]],
-    inc_page: Optional[AsyncPaginator],
-) -> Tuple[Optional[Dict[str, Any]], Optional[AsyncPaginator]]:
-    """Load the inflow module and resolve string-form tokens in trinity kwargs.
-
-    Shared by :meth:`Incorporator.incorp` and :meth:`Incorporator.refresh`.
-    When ``inflow`` is set, imports the module (cached via ``sys.modules``,
-    so the first call pays the import cost and all subsequent calls are
-    free) and resolves any string-form tokens in ``conv_dict`` and
-    ``inc_page`` against the module's public symbols.
-
-    Real Python callables already present in ``conv_dict`` pass through
-    unchanged — the resolver only touches strings.
-    """
-    from .cli.tokens import resolve_tokens
-    from .usercode import extract_public_names, load_user_module
-
-    module = load_user_module(inflow, name_hint="_inc_trinity_inflow")
-    extra_names = extract_public_names(module)
-    resolved_conv = cast(
-        Optional[Dict[str, Any]],
-        resolve_tokens(conv_dict, extra_names=extra_names) if conv_dict else conv_dict,
-    )
-    resolved_page = inc_page
-    if isinstance(inc_page, str):
-        resolved_page = cast(
-            Optional[AsyncPaginator],
-            resolve_tokens(inc_page, extra_names=extra_names),
-        )
-    return resolved_conv, resolved_page
-
-
-async def _stream_stateful_via_fjord(
-    *,
-    receiver_cls: Type["Incorporator"],
-    incorp_params: Dict[str, Any],
-    refresh_params: Optional[Dict[str, Any]],
-    export_params: Optional[Dict[str, Any]],
-    poll_interval: Optional[float],
-    refresh_interval: Optional[float],
-    export_interval: Optional[float],
-    outflow_user_module: Optional[Any],
-) -> AsyncGenerator["Wave", None]:
-    """Shim adapter from ``stream(stateful_polling=True)`` to ``_run_fjord_engine``.
-
-    The two engines were morally identical (seed → refresh-daemon → export-daemon
-    against an in-memory ``WeakValueDictionary`` registry) but lived in separate
-    modules.  This adapter synthesises a one-source ``stream_params`` list and an
-    identity ``outflow(state)`` so the fjord engine can run a single-source
-    stateful pipeline transparently — Python-object identity in ``cls.inc_dict``
-    survives across waves thanks to the IncorporatorList pass-through fast path
-    in :func:`incorporator.observability.pipeline._outflow.flush`.
-
-    Seed-only short-circuit: when the caller passed neither ``refresh_params``
-    nor ``export_params``, the shim does the seed in-line and emits one Wave —
-    no daemons spawn.  This mirrors the legacy ``_run_stateful_engine``
-    behaviour (``stateful.py:95-103``) and avoids the fjord engine's "always
-    spawn the outflow daemon" path emitting an extra phantom wave.
-
-    Op-string remap: fjord emits ``"fjord_incorp:<Cls>"`` / ``"fjord_refresh:<Cls>"``
-    / ``"outflow:<Cls>"``; the documented :meth:`stream` Wave contract uses
-    ``"incorp"`` / ``"refresh"`` / ``"export"``.  This adapter rewrites the
-    ``operation`` field (and strips the ``" for <ClassName>"`` parenthetical from
-    seed-empty failure messages) so existing wave consumers see no change.
-    """
-    import time as _time
-    import types as _types
-
-    from .observability.logger import Wave
-    from .observability.pipeline import (
-        DEFAULT_EXPORT_INTERVAL_SEC,
-        DEFAULT_REFRESH_INTERVAL_SEC,
-    )
-    from .observability.pipeline._shared import _row_count
-    from .observability.pipeline.fjord import _run_fjord_engine
-
-    cls_name = receiver_cls.__name__
-
-    # Seed-only short-circuit: legacy stateful engine returned after the
-    # seed wave when no daemons were requested.  Preserve that behaviour
-    # here so callers that just want "load the registry once and exit"
-    # don't pay for an outflow-daemon tick (and see an extra phantom wave).
-    if refresh_params is None and export_params is None:
-        seed_start = _time.perf_counter()
-        try:
-            initial_dataset = await receiver_cls.incorp(**incorp_params)
-        except Exception as exc:
-            yield Wave(
-                chunk_index=1,
-                operation="incorp",
-                rows_processed=0,
-                failed_sources=[f"Seed Error: {exc}"],
-                processing_time_sec=_time.perf_counter() - seed_start,
-            )
-            return
-        seed_elapsed = _time.perf_counter() - seed_start
-        if not initial_dataset:
-            yield Wave(
-                chunk_index=1,
-                operation="incorp",
-                rows_processed=0,
-                failed_sources=["Initial incorp() yielded no data"],
-                processing_time_sec=seed_elapsed,
-            )
-            return
-        yield Wave(
-            chunk_index=1,
-            operation="incorp",
-            rows_processed=_row_count(initial_dataset),
-            processing_time_sec=seed_elapsed,
-        )
-        return
-
-    # Pick the outflow callable: prefer a user-defined ``outflow(state)`` in
-    # the supplied outflow.py, otherwise synthesise an identity outflow that
-    # returns the live IncorporatorList for the receiver class.  flush()'s
-    # pass-through fast path detects this and preserves instance identity.
-    def _identity_outflow(state: Dict[str, Any]) -> Dict[str, Any]:
-        return {cls_name: state[cls_name]}
-
-    outflow_fn: Any = _identity_outflow
-    outflow_module: Optional[Any] = outflow_user_module
-    if outflow_user_module is not None:
-        candidate_fn = getattr(outflow_user_module, "outflow", None)
-        if callable(candidate_fn):
-            outflow_fn = candidate_fn
-
-    # Stub module exposing receiver_cls under its __name__ so flush()'s
-    # pre-declared-subclass match (by name) keeps the user's class identity
-    # instead of building a new dynamic class.  Only built when no user
-    # module was supplied (otherwise the user's module already exposes the
-    # subclass and we want their authored definitions to win).
-    if outflow_module is None:
-        outflow_module = _types.ModuleType("_inc_stream_identity_outflow_module")
-        setattr(outflow_module, cls_name, receiver_cls)
-
-    # Interval cascade — mirrors the legacy run_pipeline branch so a stateful
-    # stream spawned without any interval kwargs still has a sensible tick
-    # rate (legacy behaviour: 60 s refresh / 300 s export).
-    r_interval = refresh_interval or poll_interval or DEFAULT_REFRESH_INTERVAL_SEC
-    e_interval = export_interval or poll_interval or DEFAULT_EXPORT_INTERVAL_SEC
-
-    stream_params: List[Dict[str, Any]] = [
-        {
-            "cls": receiver_cls,
-            "incorp_params": incorp_params,
-            "refresh_params": refresh_params,
-        }
-    ]
-    effective_export_params: Dict[str, Any] = export_params if export_params is not None else {}
-
-    seed_suffix = f" for {cls_name}"
-    async for wave in _run_fjord_engine(
-        output_class_name=cls_name,
-        base_class=Incorporator,
-        stream_params=stream_params,
-        outflow_fn=outflow_fn,
-        export_params=effective_export_params,
-        r_interval=r_interval,
-        e_interval=e_interval,
-        outflow_module=outflow_module,
-        inflow_callable=None,
-    ):
-        op = wave.operation
-        if op.startswith("fjord_incorp:"):
-            new_op: Optional[str] = "incorp"
-        elif op.startswith("fjord_refresh:"):
-            new_op = "refresh"
-        elif op.startswith("outflow:"):
-            new_op = "export"
-        else:
-            new_op = None  # leave unchanged (e.g. "export:<Cls>" per-source export)
-
-        new_failed = (
-            [s.replace(seed_suffix, "") for s in wave.failed_sources] if wave.failed_sources else wave.failed_sources
-        )
-
-        if new_op is None and new_failed == wave.failed_sources:
-            yield wave
-        else:
-            yield wave.model_copy(
-                update={
-                    "operation": new_op if new_op is not None else wave.operation,
-                    "failed_sources": new_failed,
-                }
-            )
 
 
 class Incorporator(BaseModel):
@@ -604,7 +414,7 @@ class Incorporator(BaseModel):
         # symbols.  Cheap when not set; module imports are cached via
         # sys.modules so per-call cost is one dict lookup after first load.
         if inflow is not None:
-            conv_dict, inc_page = _apply_inflow_resolution(inflow, conv_dict, inc_page)
+            conv_dict, inc_page = apply_inflow_resolution(inflow, conv_dict, inc_page)
 
         if inc_parent is not None:
             kwargs.update(
@@ -855,7 +665,7 @@ class Incorporator(BaseModel):
         # inflow= sidecar: same DX as incorp() — resolve string-form tokens
         # in conv_dict / inc_page against the module's public symbols.
         if inflow is not None:
-            conv_dict, inc_page = _apply_inflow_resolution(inflow, conv_dict, inc_page)
+            conv_dict, inc_page = apply_inflow_resolution(inflow, conv_dict, inc_page)
 
         TargetClass = inst_list[0].__class__
         kwargs["http_method"] = kwargs.pop("method", kwargs.pop("http_method", "GET")).upper()
@@ -1294,10 +1104,14 @@ class Incorporator(BaseModel):
             # be a separate _run_stateful_engine into a one-source fjord
             # pipeline.  Python-object identity in ``cls.inc_dict`` is
             # preserved across waves by the IncorporatorList pass-through
-            # fast path in ``_outflow.flush()``.
+            # fast path in ``_outflow.flush()``.  See
+            # ``observability/pipeline/_stateful_shim.py``.
             # ----------------------------------------------------------
-            async for wave in _stream_stateful_via_fjord(
+            from .observability.pipeline._stateful_shim import stream_stateful_via_fjord
+
+            async for wave in stream_stateful_via_fjord(
                 receiver_cls=receiver_cls,
+                base_class=Incorporator,
                 incorp_params=incorp_params,
                 refresh_params=refresh_params,
                 export_params=export_params,

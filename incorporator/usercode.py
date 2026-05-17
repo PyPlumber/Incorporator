@@ -11,6 +11,10 @@ exactly one job: read a ``.py`` off disk and surface its symbols.
 - :func:`extract_public_names` — return ``{name: obj}`` for every
   top-level non-underscore name in a loaded module. Used by the token
   resolver to extend its allow-list with the inflow module's symbols.
+- :func:`apply_inflow_resolution` — load the inflow sidecar and
+  resolve string-form tokens in ``conv_dict`` / ``inc_page`` against
+  its public symbols (shared by :meth:`Incorporator.incorp` and
+  :meth:`Incorporator.refresh`).
 - :func:`apply_code_transform` — load and run an optional
   ``transform(instances)`` hook (used by :meth:`Incorporator.export`).
 - :func:`load_outflow_function` — load fjord's required
@@ -36,7 +40,9 @@ import inspect as _inspect
 import re
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
+
+from .io.pagination.base import AsyncPaginator
 
 
 def load_user_module(path: Union[str, Path], *, name_hint: str = "_inc_user_module") -> ModuleType:
@@ -106,6 +112,39 @@ def extract_public_names(module: ModuleType) -> Dict[str, Any]:
     "public by default" convention follows Python's standard rules.
     """
     return {n: getattr(module, n) for n in dir(module) if not n.startswith("_")}
+
+
+def apply_inflow_resolution(
+    inflow: Union[str, Path],
+    conv_dict: Optional[Dict[str, Any]],
+    inc_page: Optional[AsyncPaginator],
+) -> Tuple[Optional[Dict[str, Any]], Optional[AsyncPaginator]]:
+    """Load the inflow module and resolve string-form tokens in trinity kwargs.
+
+    Shared by :meth:`Incorporator.incorp` and :meth:`Incorporator.refresh`.
+    When ``inflow`` is set, imports the module (cached via ``sys.modules``,
+    so the first call pays the import cost and all subsequent calls are
+    free) and resolves any string-form tokens in ``conv_dict`` and
+    ``inc_page`` against the module's public symbols.
+
+    Real Python callables already present in ``conv_dict`` pass through
+    unchanged — the resolver only touches strings.
+    """
+    from .cli.tokens import resolve_tokens
+
+    module = load_user_module(inflow, name_hint="_inc_trinity_inflow")
+    extra_names = extract_public_names(module)
+    resolved_conv = cast(
+        Optional[Dict[str, Any]],
+        resolve_tokens(conv_dict, extra_names=extra_names) if conv_dict else conv_dict,
+    )
+    resolved_page = inc_page
+    if isinstance(inc_page, str):
+        resolved_page = cast(
+            Optional[AsyncPaginator],
+            resolve_tokens(inc_page, extra_names=extra_names),
+        )
+    return resolved_conv, resolved_page
 
 
 def apply_code_transform(
