@@ -1,6 +1,10 @@
 ***
 
-# 🌊 Multi-Source Fjord: Live Crypto Spread (Capstone)
+# 🌊 Multi-Source Fjord: Live Crypto Spread
+
+**Prerequisites:** [Tutorial 1](./1_first_steps.md) (`incorp()`, `inc_dict`),
+[Tutorial 4](./4_stateful_refresh.md) (`refresh()`), [Tutorial 5](./5_streaming_daemon.md)
+(`stream()`, `Wave`, both polling modes).
 
 `stream()` watches **one** source. `fjord()` watches **N** sources
 concurrently and lets you fuse them through a user-defined
@@ -8,13 +12,23 @@ concurrently and lets you fuse them through a user-defined
 refresh, every export wave, the shared lock, the wave queue, and the
 dynamic output class.
 
-This is the capstone of the curriculum: you've already loaded a
-CoinGecko coin catalogue (tutorial 1), kept a Binance ticker registry
-live (tutorial 5), and seen the pattern of refreshing two registries
-in parallel. Now you'll **fuse them** — compute a basis-point spread
-between CoinGecko's USD price and Binance's USDT price for every
-overlapping symbol, on a 60-second cadence, with each source refreshing
-independently every 30 seconds.
+You've already loaded a CoinGecko coin catalogue (Tutorial 1), kept a
+Binance ticker registry live (Tutorial 5), and seen the pattern of
+refreshing two registries in parallel. Now you'll **fuse them** —
+compute a basis-point spread between CoinGecko's USD price and
+Binance's USDT price for every overlapping symbol, on a 60-second
+cadence, with each source refreshing independently every 30 seconds.
+This is the canonical two-venue arbitrage-flavour pattern; Tutorial 7
+generalises it to N exchanges in a windowed graph.
+
+> **Polling-mode policy.**  `fjord()` is the *multi-source equivalent
+> of `stream(stateful_polling=True)`* — every per-source daemon refreshes
+> its registry in place so the shared `outflow(state)` snapshot is always
+> reading from live data (Wave records are introduced in Tutorial 5).
+> You don't pass `stateful_polling=` to `fjord()`; it's implicit in the
+> contract.  If you need bulk chunked drains across multiple sources,
+> reach for parallel `stream(stateful_polling=False, inc_page=...)` calls
+> or Tutorial 7's Tideweaver currents instead.
 
 ---
 
