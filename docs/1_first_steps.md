@@ -50,13 +50,14 @@ You've found an unknown REST API.  What's the schema?  What's the right
 `inc_code` (the primary-key field for the registry)?  Is there a `rec_path` wrapping the
 records?  Are any fields ISO-8601 strings that should be cast to `datetime`?
 
-You *could* open Postman, eyeball the JSON, and write a half-dozen hypothesis `incorp()`
-calls.  Or you let Incorporator do it for you.
+You *could* open Postman, eyeball the JSON, and start guessing what kwargs you'd need
+to ingest it.  Or you let Incorporator do it for you.
 
-`test()` is the **JIT API Profiler**.  Same call shape as `incorp()`, but it fetches one
-safe page, walks the payload tree, runs regex-based value scoring to detect
-identity-shaped fields (UUIDs, timestamps, slugs, etc.), and **prints the exact
-`incorp()` kwargs you'd write yourself** — minus the trial and error.
+`test()` is the **JIT API Profiler** and your first call against any unfamiliar
+endpoint.  It fetches one safe page, walks the payload tree, runs regex-based value
+scoring to detect identity-shaped fields (UUIDs, timestamps, slugs, etc.), and
+**prints the exact kwargs you'll need to ingest the data for real** — minus the
+trial and error.
 
 ```python
 import asyncio
@@ -64,7 +65,8 @@ import asyncio
 asyncio.run(Coin.test(inc_url="https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd"))
 ```
 
-That's it.  **Swap `.incorp()` for `.test()`** to trigger the inspector.
+That's it.  **One call to `.test()`** profiles the endpoint and prints the kwargs
+you'll paste into Step 3.
 
 ### Read the report
 
