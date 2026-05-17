@@ -1,41 +1,52 @@
 ***
 
-# 📦 Universal Formats: One Verb, Any File
+# 📦 Universal Formats: Build a Crypto Snapshot Warehouse
 
-The Incorporator promise: **same syntax for every format**. The
-`incorp()` call you wrote for a JSON API works without modification
-against a CSV from a stakeholder, a Parquet file in your data lake, a
-SQLite snapshot from your nightly cron, an XML feed from a vendor, or
-an Excel sheet someone emailed you. The framework auto-detects format
-from the file extension and dispatches to the matching handler.
+The Incorporator promise: **same syntax for every format**.  The `incorp()` call you wrote
+for a JSON API works without modification against a CSV from a stakeholder, a Parquet
+file in your data lake, a SQLite snapshot from your nightly cron, or an Avro stream from
+Kafka.  The framework auto-detects format from the file extension and dispatches to the
+matching handler.
 
-This tutorial walks the universal call shape across every supported
-format and closes with the data-lake "pivot" — round-trip from a REST
-API into Parquet for analytics consumers and SQLite for OLTP
-consumers, all from one `incorp()` source.
+We'll use that uniformity to build the real-world crypto-ETL pattern: **periodically
+snapshot CoinGecko's top-100 markets into a multi-format warehouse**.  Append-friendly
+formats (NDJSON / CSV / SQLite) accumulate a time-series log; columnar formats
+(Parquet / Feather / ORC) get snapshot-and-replaced each tick.  Both shapes share one
+`Coin(Incorporator)` class and one schema inference pass.
+
+**Prerequisites:** [Tutorial 1 — First Steps](./1_first_steps.md) (`incorp()`, `test()`,
+`inc_dict`, basic schema inference).
 
 ---
 
 ## Format Coverage at a Glance
 
-| Format | Extension | Read | Write | Append | Install |
+| Format | Extension | Read | Write | **Append?** | Install |
 |---|---|---|---|---|---|
-| **JSON** | `.json` | ✅ | ✅ | ❌ | core |
-| **NDJSON** *(streaming JSON)* | `.ndjson` / `.jsonl` | ✅ | ✅ | ✅ | core |
-| **CSV / TSV / PSV** | `.csv` / `.tsv` / `.psv` | ✅ | ✅ | ✅ | core |
-| **XML** | `.xml` | ✅ | ✅ | ❌ | core (lxml in `[speedups]`) |
-| **SQLite** | `.db` / `.sqlite` / `.sqlite3` | ✅ | ✅ | ✅ | core |
+| **JSON** | `.json` | ✅ | ✅ | ❌ rebuilds | core |
+| **NDJSON** *(streaming JSON)* | `.ndjson` / `.jsonl` | ✅ | ✅ | ✅ append | core |
+| **CSV / TSV / PSV** | `.csv` / `.tsv` / `.psv` | ✅ | ✅ | ✅ append | core |
+| **XML** | `.xml` | ✅ | ✅ | ❌ rebuilds | core (lxml in `[speedups]`) |
+| **SQLite** | `.db` / `.sqlite` / `.sqlite3` | ✅ | ✅ | ✅ upsert | core |
 | **HTML tables** | `.html` | ✅ | ❌ | — | `pip install incorporator[speedups]` |
-| **Parquet** | `.parquet` | ✅ | ✅ | ❌ | `pip install incorporator[parquet]` |
-| **Feather (Arrow IPC)** | `.feather` / `.arrow` | ✅ | ✅ | ❌ | `pip install incorporator[parquet]` |
-| **ORC** | `.orc` | ✅ | ✅ | ❌ | `pip install incorporator[parquet]` |
-| **Avro** | `.avro` | ✅ | ✅ | ✅ | `pip install incorporator[avro]` |
-| **Excel** | `.xlsx` | ✅ | ✅ | ❌ | `pip install incorporator[xlsx]` |
+| **Parquet** | `.parquet` | ✅ | ✅ | ❌ snapshot-only | `pip install incorporator[parquet]` |
+| **Feather (Arrow IPC)** | `.feather` / `.arrow` | ✅ | ✅ | ❌ snapshot-only | `pip install incorporator[parquet]` |
+| **ORC** | `.orc` | ✅ | ✅ | ❌ snapshot-only | `pip install incorporator[parquet]` |
+| **Avro** | `.avro` | ✅ | ✅ | ✅ append | `pip install incorporator[avro]` |
+| **Excel** | `.xlsx` | ✅ | ✅ | ❌ rebuilds | `pip install incorporator[xlsx]` |
 
-Compression is **transparent** for `.gz`, `.bz2`, `.xz`, `.lzma`,
-`.zip`, `.tar`, `.tgz` — the framework decompresses before parsing,
-no extra calls. See [Formats & Compression](./formats_and_compression.md)
-for the full cheat sheet.
+Compression is **transparent** for `.gz`, `.bz2`, `.xz`, `.lzma`, `.zip`, `.tar`, `.tgz`
+— the framework decompresses before parsing, no extra calls.  See
+[Formats & Compression](./formats_and_compression.md) for the full cheat sheet.
+
+> **Why the append column matters.** Append-friendly formats let you accumulate a
+> time-series snapshot warehouse cheaply — every tick appends a row block, the file
+> grows linearly, and crash recovery is cheap.  Columnar formats (Parquet / Feather /
+> ORC) write a footer at the *end* of the file that indexes every column's row groups;
+> appending requires reading the old footer, rewriting both the data and the footer, and
+> atomically replacing the file.  That's slow at scale and wrong for per-tick writes.
+> Pick append-friendly formats for *accumulating* warehouses; pick columnar for
+> *snapshot* artifacts (hourly / daily rebuilds, query-friendly final outputs).
 
 ---
 
@@ -47,90 +58,19 @@ Every format uses the same `incorp()` signature:
 result = await SomeClass.incorp(inc_file="path/to/data.<ext>", inc_code="...")
 ```
 
-The framework infers the format from the file extension. Same return
-shape, same dot-notation, same `inc_dict` registry, regardless of the
-source file.
+The framework infers the format from the file extension.  Same return shape, same
+dot-notation, same `inc_dict` registry, regardless of source file.
 
 ---
 
-## Step 1: The Same Data, Five Formats
+## Step 1: Snapshot the Source Once
 
-The fixtures below contain identical content — three trades from a
-toy ledger — encoded in five different formats:
-
-```python
-# trades.json
-[
-    {"trade_id": "T001", "symbol": "AAPL", "qty": 100, "price": 175.50},
-    {"trade_id": "T002", "symbol": "MSFT", "qty": 50,  "price": 410.25},
-    {"trade_id": "T003", "symbol": "GOOG", "qty": 25,  "price": 162.80}
-]
-```
-
-```csv
-# trades.csv
-trade_id,symbol,qty,price
-T001,AAPL,100,175.50
-T002,MSFT,50,410.25
-T003,GOOG,25,162.80
-```
-
-```xml
-<!-- trades.xml -->
-<root>
-  <item><trade_id>T001</trade_id><symbol>AAPL</symbol><qty>100</qty><price>175.50</price></item>
-  <item><trade_id>T002</trade_id><symbol>MSFT</symbol><qty>50</qty>  <price>410.25</price></item>
-  <item><trade_id>T003</trade_id><symbol>GOOG</symbol><qty>25</qty>  <price>162.80</price></item>
-</root>
-```
-
-Plus `trades.parquet`, `trades.sqlite`, `trades.xlsx`, etc. produced
-by any data-pipeline tool you like.
-
-**One class, five reads:**
+Same `incorp()` call you wrote in Tutorial 1 — top-100 coins, CoinGecko's
+`/coins/markets`:
 
 ```python
 import asyncio
-from incorporator import Incorporator
 
-
-class Trade(Incorporator):
-    pass
-
-
-async def main():
-    for path in ["trades.json", "trades.csv", "trades.xml",
-                 "trades.parquet", "trades.sqlite"]:
-        kwargs = {"inc_file": path, "inc_code": "trade_id"}
-        if path.endswith(".sqlite"):
-            kwargs["sql_query"] = "SELECT * FROM trades"
-        elif path.endswith(".xml"):
-            # xml_to_dict wraps every doc in {<root_tag>: ...} and groups
-            # identically-named children into a list — drill the dotted path
-            # to the leaf array.
-            kwargs["rec_path"] = "root.item"
-        trades = await Trade.incorp(**kwargs)
-
-        print(f"{path:20s} → {len(trades)} rows; AAPL qty: {Trade.inc_dict['T001'].qty}")
-
-
-asyncio.run(main())
-```
-
-Every iteration prints the same logical result. The framework
-absorbed format diversity at the I/O boundary; your application code
-stays uniform.
-
----
-
-## Round-Trip Pattern: Data-Lake Pivot
-
-A common production pattern: pull from a REST API once, then write
-the data to **two** stores — Parquet for analytics, SQLite for
-transactional lookups.
-
-```python
-import asyncio
 from incorporator import Incorporator
 
 
@@ -138,83 +78,141 @@ class Coin(Incorporator):
     pass
 
 
-async def pivot():
-    # 1. Pull from a REST API.
+async def snapshot():
     coins = await Coin.incorp(
         inc_url="https://api.coingecko.com/api/v3/coins/markets",
-        params={"vs_currency": "usd", "per_page": 100},
+        params={"vs_currency": "usd", "per_page": 100, "page": 1},
         inc_code="id",
         inc_name="name",
     )
-    print(f"Loaded {len(coins)} coins from CoinGecko.")
-
-    # 2. Write to Parquet for the analytics team.
-    # export() is the write-side counterpart to incorp() — same class,
-    # same format detection from the file extension.
-    await Coin.export(instance=coins, file_path="data/coins.parquet")
-
-    # 3. Write to SQLite for the API team.
-    await Coin.export(
-        instance=coins,
-        file_path="data/coins.sqlite",
-        sql_table="coins",
-        if_exists="replace",
-    )
-
-    # 4. Verify both reads round-trip cleanly.
-    from_parquet = await Coin.incorp(inc_file="data/coins.parquet", inc_code="id")
-    from_sqlite = await Coin.incorp(
-        inc_file="data/coins.sqlite",
-        sql_query="SELECT * FROM coins",
-        inc_code="id",
-    )
-    assert from_parquet.inc_dict["bitcoin"].current_price > 0
-    assert from_sqlite.inc_dict["bitcoin"].current_price > 0
-    print("Round-trip OK: Parquet and SQLite both produce the same object graph.")
-
-
-asyncio.run(pivot())
+    print(f"📥 Loaded {len(coins)} coins from CoinGecko.")
+    return coins
 ```
 
-Two `export()` calls, two different stores, one source. The Parquet
-file is consumable by pandas / DuckDB / Snowflake / BigQuery. The
-SQLite file is consumable by `sqlite3` or any ORM. Both came from the
-same Pydantic instances in memory — no schema duplication.
+You now have a typed object graph in memory.  Time to land it in the warehouse.
 
-> **For files larger than RAM:** the synchronous `incorp(inc_file=...)`
-> path materialises the whole file before parsing — fine for the typical
-> "a few hundred MB" case, but it OOMs on multi-GB CSV / SQLite / Avro
-> inputs.  Use the **local paginators** in
-> [`incorporator.io.pagination`](./streaming_and_pagination.md):
->
-> ```python
-> from incorporator.io.pagination import CSVPaginator
->
-> # Stream the file in 10,000-row chunks — peak memory is one chunk.
-> chunked = CSVPaginator(file_path="huge.csv", chunk_size=10_000)
-> async for wave in MyClass.stream(
->     incorp_params={"inc_file": "huge.csv", "inc_page": chunked},
->     export_params={"file_path": "data/processed.ndjson"},
-> ):
->     print(wave)
-> ```
->
-> `SQLitePaginator` and `AvroPaginator` follow the same shape.  See
-> the [streaming guide](./streaming_and_pagination.md) for the full
-> paginator catalogue.
+---
+
+## Step 2: Append to NDJSON and CSV (Append-Friendly Log)
+
+Both NDJSON and CSV grow row-wise.  Pass `if_exists="append"` to `export()` and each
+call adds a row block at the end of the file:
+
+```python
+from pathlib import Path
+
+DATA = Path("data")
+DATA.mkdir(exist_ok=True)
+
+
+async def append_log(coins):
+    # NDJSON: one JSON object per line; safe to grep, tail -f, ship to log aggregators.
+    await Coin.export(
+        instance=coins,
+        file_path=DATA / "coins_log.ndjson",
+        if_exists="append",
+    )
+    # CSV: header written once, rows appended.  Good for spreadsheet consumers.
+    await Coin.export(
+        instance=coins,
+        file_path=DATA / "coins_log.csv",
+        if_exists="append",
+    )
+    print(f"📜 Appended {len(coins)} rows to NDJSON and CSV log.")
+```
+
+Run `snapshot()` and `append_log()` on a cron / interval; the files grow linearly.
+
+---
+
+## Step 3: Upsert into SQLite (Append-Friendly Warehouse)
+
+SQLite uses `if_exists="append"` too, but the framework also supports
+`if_exists="replace"` (drop the table and rewrite) and the more interesting upsert
+pattern via `INSERT OR REPLACE` semantics — keyed by `inc_code`:
+
+```python
+async def upsert_warehouse(coins):
+    await Coin.export(
+        instance=coins,
+        file_path=DATA / "coins_warehouse.sqlite",
+        sql_table="coin_snapshots",
+        if_exists="append",                              # accumulate rows; query later
+    )
+    print(f"🗃️  Upserted {len(coins)} rows into SQLite warehouse.")
+```
+
+Now your analysts can `SELECT id, current_price, snapshot_time FROM coin_snapshots
+ORDER BY snapshot_time DESC` to walk the time series.
+
+---
+
+## Step 4: Snapshot-Write Parquet (Columnar, Query-Friendly)
+
+Parquet can't append per tick (the column-statistics footer would have to be rewritten),
+so `export()` to a `.parquet` path **rebuilds the file atomically** every call — write
+to a sibling tempfile, then `os.replace()` on success.  A crash mid-write leaves the
+*previous* snapshot in place; never a half-written corrupt-footer file.
+
+```python
+async def snapshot_parquet(coins):
+    await Coin.export(
+        instance=coins,
+        file_path=DATA / "coins_latest.parquet",         # atomic snapshot-and-replace
+        parquet_compression="snappy",
+    )
+    print(f"📊 Wrote Parquet snapshot of {len(coins)} coins.")
+```
+
+This is the right pattern for hourly / daily *artifact* dumps that downstream consumers
+(Athena, DuckDB, Spark, Snowflake) query directly.  For per-tick accumulation, stay in
+NDJSON / CSV / SQLite and let a downstream batch job convert to Parquet at window close
+— see [Appendix: Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md).
+
+---
+
+## Step 5: Round-Trip — Re-`incorp()` Each Artifact
+
+The warehouse is only as useful as the round-trip.  Read every format back and verify
+the object graph is identical:
+
+```python
+async def verify_round_trip():
+    # NDJSON / CSV / Parquet — pure file paths; format detected from extension.
+    from_ndjson = await Coin.incorp(inc_file=DATA / "coins_log.ndjson", inc_code="id")
+    from_csv    = await Coin.incorp(inc_file=DATA / "coins_log.csv",    inc_code="id")
+    from_parquet = await Coin.incorp(inc_file=DATA / "coins_latest.parquet", inc_code="id")
+
+    # SQLite needs the SQL query (extension isn't enough to pick a table).
+    from_sqlite = await Coin.incorp(
+        inc_file=DATA / "coins_warehouse.sqlite",
+        sql_query="SELECT * FROM coin_snapshots WHERE snapshot_time = "
+                  "(SELECT MAX(snapshot_time) FROM coin_snapshots)",
+        inc_code="id",
+    )
+
+    for label, snap in [("ndjson", from_ndjson), ("csv", from_csv),
+                         ("parquet", from_parquet), ("sqlite", from_sqlite)]:
+        btc = snap.inc_dict["bitcoin"]
+        print(f"  {label:8s} → BTC ${btc.current_price:,.2f}")
+```
+
+You wrote one Pydantic schema (zero lines — the framework inferred it from CoinGecko).
+You're round-tripping that schema through five storage substrates.  No schema
+duplication, no per-format models.
 
 ---
 
 ## Format-Specific Kwargs
 
-The universal call accepts a small number of **format-specific
-kwargs** when the file format needs them:
+The universal call accepts a small number of **format-specific kwargs** when the file
+format needs them:
 
 | Format | Extra kwarg | Why |
 |---|---|---|
 | SQLite | `sql_query="SELECT ..."` | SQL is execution-shaped, not extension-shaped |
-| SQLite | `sql_table="trades"` | export() target table name |
-| CSV / TSV / PSV | `if_exists="append"` | NDJSON-style append on write |
+| SQLite | `sql_table="coin_snapshots"` | `export()` target table name |
+| CSV / TSV / PSV | `if_exists="append"` | append on write |
 | NDJSON | `if_exists="append"` | append on write |
 | Avro | `if_exists="append"` | append on write |
 | Parquet | `parquet_compression="snappy"` | column-encoding compression |
@@ -223,44 +221,52 @@ kwargs** when the file format needs them:
 | HTML | `table_index=0` | pick which `<table>` on the page |
 | Archive | `archive_target="data.json"` | name the file inside a multi-member archive |
 
-Everything else (`inc_code`, `inc_name`, `conv_dict`, `excl_lst`,
-`name_chg`) stays format-agnostic.
+Everything else (`inc_code`, `inc_name`, `conv_dict`, `excl_lst`, `name_chg`) stays
+format-agnostic.
 
 ---
 
 ## Streaming Massive Files
 
-For files larger than RAM (databases, multi-GB CSVs, billion-row
-Parquet), use the **local paginators** in the
-[Streaming & Pagination guide](./streaming_and_pagination.md):
+The synchronous `incorp(inc_file=...)` path materialises the whole file before parsing
+— fine for the typical "a few hundred MB" case, but it OOMs on multi-GB inputs.  For
+files larger than RAM, use the **local paginators** in
+[`incorporator.io.pagination`](./streaming_and_pagination.md):
 
 ```python
-from incorporator.io.pagination import SQLitePaginator, CSVPaginator
+from incorporator.io.pagination import SQLitePaginator
 
-# Yields one chunk at a time, never materialises the whole table.
+# Yields one chunk at a time; peak memory is one chunk.
 db_streamer = SQLitePaginator(
-    db_path="warehouse.db",
-    sql_query="SELECT * FROM trades",
+    db_path=DATA / "coins_warehouse.sqlite",
+    sql_query="SELECT * FROM coin_snapshots",
     chunk_size=10_000,
 )
-async for wave in Trade.stream(
+async for wave in Coin.stream(
     incorp_params={"inc_url": "local_warehouse", "inc_page": db_streamer},
-    export_params={"file_path": "data/trades_export.parquet"},
+    export_params={"file_path": DATA / "coins_export.parquet"},
 ):
     print(f"Streamed {wave.rows_processed} rows in chunk {wave.chunk_index}")
 ```
 
-Memory stays flat regardless of total row count.
+`CSVPaginator` and `AvroPaginator` follow the same shape.  Tutorial 5 covers `stream()`
+end-to-end — for a paginated source like a 10,000+ coin pull, the same paginator powers
+the chunking-mode pipeline.
 
 ---
 
 ## See Also
 
-* **[Formats & Compression Cheat Sheet](./formats_and_compression.md)** —
-  every kwarg per format, plus compression details.
-* **[Streaming & Pagination](./streaming_and_pagination.md)** — the
-  paginator family for files too big to fit in RAM.
-* **[Tutorial 1 — Profiling with `test()`](./1_first_steps.md#profiling-unknown-apis-with-test)** —
-  let the DX Inspector print the kwargs you need against an unknown file or endpoint.
-* **[Library reference](./library_reference.md)** — full `incorp()`
-  and `export()` signatures.
+* **[Formats & Compression Cheat Sheet](./formats_and_compression.md)** — every kwarg
+  per format, plus compression details.
+* **[Streaming & Pagination](./streaming_and_pagination.md)** — the paginator family for
+  files / endpoints too big to fit in RAM.
+* **[Tutorial 1 — Profiling with `test()`](./1_first_steps.md)** — let the DX Inspector
+  print the kwargs you need against an unknown file or endpoint.
+* **[Appendix — Data Lake Pivot](./appendix/data_lake_pivot.md)** *(deeper reference)* —
+  full JSON ↔ Avro ↔ SQLite round-trip with nested-structure reconstruction.
+* **[Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md)** —
+  the right pattern for landing columnar artifacts at the close of an orchestration
+  window.
+* **[Library reference](./library_reference.md)** — full `incorp()` and `export()`
+  signatures.

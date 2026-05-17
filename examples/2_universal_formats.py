@@ -1,15 +1,19 @@
 """
-Tutorial 2 — Universal Formats: One Verb, Any File
---------------------------------------------------
+Tutorial 2 — Universal Formats: Build a Crypto Snapshot Warehouse
+-----------------------------------------------------------------
 Companion script for `docs/2_universal_formats.md`.
 
-Demonstrates the framework's universal-format promise: the same
-`incorp()` call shape reads JSON, CSV, XML, SQLite, and (with the
-[parquet] extra) Parquet — every iteration produces the same Pydantic
-object graph.
+Demonstrates the framework's universal-format promise via the real
+crypto-ETL pattern: snapshot CoinGecko's top-100 markets, land each
+snapshot in multiple stores, then round-trip every artifact back into
+the same Python object graph.
 
-The script builds the fixture files itself inside a temporary
-directory so it runs without external setup.
+Pipeline:
+1. ``incorp()`` once from CoinGecko (top-100 by market cap).
+2. Append to NDJSON + CSV (append-friendly log).
+3. Append to SQLite (upsert-friendly warehouse).
+4. Snapshot-write Parquet (columnar, atomic replace each call).
+5. Re-``incorp()`` each artifact and verify the round-trip.
 
 Run with:
     python examples/2_universal_formats.py
@@ -18,112 +22,109 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import json
-import sqlite3
 import tempfile
 from pathlib import Path
 
 from incorporator import Incorporator
 
 
-class Trade(Incorporator):
-    """Trade ledger entry — auto-keyed by ``trade_id``."""
+class Coin(Incorporator):
+    """CoinGecko market row — auto-keyed by ``id``."""
 
 
-SAMPLE_TRADES = [
-    {"trade_id": "T001", "symbol": "AAPL", "qty": 100, "price": 175.50},
-    {"trade_id": "T002", "symbol": "MSFT", "qty": 50, "price": 410.25},
-    {"trade_id": "T003", "symbol": "GOOG", "qty": 25, "price": 162.80},
-]
+COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
 
 
-def write_fixtures(root: Path) -> dict[str, Path]:
-    """Materialise the same three trades in four formats inside ``root``."""
-    json_path = root / "trades.json"
-    csv_path = root / "trades.csv"
-    xml_path = root / "trades.xml"
-    sqlite_path = root / "trades.sqlite"
-
-    # JSON
-    json_path.write_text(json.dumps(SAMPLE_TRADES), encoding="utf-8")
-
-    # CSV
-    headers = list(SAMPLE_TRADES[0].keys())
-    rows = [",".join(str(t[h]) for h in headers) for t in SAMPLE_TRADES]
-    csv_path.write_text(",".join(headers) + "\n" + "\n".join(rows), encoding="utf-8")
-
-    # XML
-    items = "".join(
-        "<item>" + "".join(f"<{k}>{v}</{k}>" for k, v in t.items()) + "</item>"
-        for t in SAMPLE_TRADES
+async def snapshot() -> "list[Coin]":
+    """Pull one snapshot of CoinGecko top-100 markets."""
+    coins = await Coin.incorp(
+        inc_url=COINGECKO_MARKETS_URL,
+        params={"vs_currency": "usd", "per_page": 100, "page": 1},
+        inc_code="id",
+        inc_name="name",
+        excl_lst=["image"],  # heavy field — see Tutorial 1 inspector output
     )
-    xml_path.write_text(f"<root>{items}</root>", encoding="utf-8")
+    print(f"📥 Loaded {len(coins)} coins from CoinGecko.")
+    return coins
 
-    # SQLite
-    conn = sqlite3.connect(sqlite_path)
+
+async def append_log(coins, data_dir: Path) -> None:
+    """Append to NDJSON + CSV — both grow row-wise."""
+    await Coin.export(
+        instance=coins,
+        file_path=data_dir / "coins_log.ndjson",
+        if_exists="append",
+    )
+    await Coin.export(
+        instance=coins,
+        file_path=data_dir / "coins_log.csv",
+        if_exists="append",
+    )
+    print(f"📜 Appended {len(coins)} rows to NDJSON + CSV log.")
+
+
+async def upsert_warehouse(coins, data_dir: Path) -> None:
+    """Append into a SQLite warehouse table."""
+    await Coin.export(
+        instance=coins,
+        file_path=data_dir / "coins_warehouse.sqlite",
+        sql_table="coin_snapshots",
+        if_exists="append",
+    )
+    print(f"🗃️  Upserted {len(coins)} rows into SQLite warehouse.")
+
+
+async def snapshot_parquet(coins, data_dir: Path) -> None:
+    """Atomically snapshot-replace a Parquet file each call."""
+    out = data_dir / "coins_latest.parquet"
     try:
-        conn.execute(
-            "CREATE TABLE trades (trade_id TEXT, symbol TEXT, qty INTEGER, price REAL)"
+        await Coin.export(
+            instance=coins,
+            file_path=out,
+            parquet_compression="snappy",
         )
-        conn.executemany(
-            "INSERT INTO trades VALUES (?, ?, ?, ?)",
-            [(t["trade_id"], t["symbol"], t["qty"], t["price"]) for t in SAMPLE_TRADES],
-        )
-        conn.commit()
-    finally:
-        conn.close()
+        print(f"📊 Wrote Parquet snapshot ({out.stat().st_size} bytes).")
+    except Exception as e:                                  # noqa: BLE001
+        print(f"⚠️  Parquet export skipped ({e!s}) — install incorporator[parquet]")
 
-    return {"json": json_path, "csv": csv_path, "xml": xml_path, "sqlite": sqlite_path}
+
+async def verify_round_trip(data_dir: Path) -> None:
+    """Re-incorp every artifact and prove the object graph round-trips."""
+    print("\n🔁 Round-trip verification:")
+
+    from_ndjson = await Coin.incorp(inc_file=data_dir / "coins_log.ndjson", inc_code="id")
+    btc = from_ndjson.inc_dict["bitcoin"]
+    print(f"  ndjson  → BTC ${btc.current_price:,.2f}")
+
+    from_csv = await Coin.incorp(inc_file=data_dir / "coins_log.csv", inc_code="id")
+    btc = from_csv.inc_dict["bitcoin"]
+    print(f"  csv     → BTC ${btc.current_price:,.2f}")
+
+    from_sqlite = await Coin.incorp(
+        inc_file=data_dir / "coins_warehouse.sqlite",
+        sql_query="SELECT * FROM coin_snapshots",
+        inc_code="id",
+    )
+    btc = from_sqlite.inc_dict["bitcoin"]
+    print(f"  sqlite  → BTC ${btc.current_price:,.2f}")
+
+    parquet_path = data_dir / "coins_latest.parquet"
+    if parquet_path.exists():
+        from_parquet = await Coin.incorp(inc_file=parquet_path, inc_code="id")
+        btc = from_parquet.inc_dict["bitcoin"]
+        print(f"  parquet → BTC ${btc.current_price:,.2f}")
 
 
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        fixtures = write_fixtures(Path(tmp))
-        print(f"📁 Wrote fixtures to {tmp}\n")
+        data_dir = Path(tmp)
+        print(f"📁 Warehouse root: {data_dir}\n")
 
-        # The universal call shape — same kwargs across every format.
-        # Two format-specific kwargs are needed:
-        #   * SQLite needs sql_query=... because the format is execution-shaped.
-        #   * XML needs rec_path="item" to drill past the <root> wrapper that
-        #     xml_to_dict produces when every child shares a tag.
-        for label, path in fixtures.items():
-            kwargs: dict = {"inc_file": str(path), "inc_code": "trade_id"}
-            if label == "sqlite":
-                kwargs["sql_query"] = "SELECT * FROM trades"
-            elif label == "xml":
-                # xml_to_dict wraps every payload in {<root_tag>: ...}, then
-                # collapses identically-named children into a list. Drill the
-                # dotted path to reach the trade items.
-                kwargs["rec_path"] = "root.item"
-
-            trades = await Trade.incorp(**kwargs)
-            # Some formats / shapes return a single instance instead of a list;
-            # normalise so len() works regardless.
-            count = len(trades) if isinstance(trades, list) else 1
-            aapl = Trade.inc_dict["T001"]
-            print(
-                f"{label:8s} → {count} rows; "
-                f"AAPL qty={aapl.qty:>3}, price={aapl.price}"
-            )
-
-        # Data-lake pivot: same data, two destination formats.
-        # Re-load from JSON, then write Parquet + SQLite.
-        ledger = await Trade.incorp(inc_file=str(fixtures["json"]), inc_code="trade_id")
-        out_parquet = Path(tmp) / "out.parquet"
-        out_sqlite = Path(tmp) / "out.sqlite"
-        try:
-            await Trade.export(instance=ledger, file_path=str(out_parquet))
-            print(f"\n📤 Wrote Parquet: {out_parquet.name} ({out_parquet.stat().st_size} bytes)")
-        except Exception as e:
-            print(f"\n⚠️  Parquet export skipped ({e!s}) — install incorporator[parquet]")
-
-        await Trade.export(
-            instance=ledger,
-            file_path=str(out_sqlite),
-            sql_table="trades",
-            if_exists="replace",
-        )
-        print(f"📤 Wrote SQLite: {out_sqlite.name} ({out_sqlite.stat().st_size} bytes)")
+        coins = await snapshot()
+        await append_log(coins, data_dir)
+        await upsert_warehouse(coins, data_dir)
+        await snapshot_parquet(coins, data_dir)
+        await verify_round_trip(data_dir)
 
 
 if __name__ == "__main__":
