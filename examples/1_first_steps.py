@@ -3,14 +3,13 @@ Tutorial 1 — First Steps with Incorporator: CoinGecko Market Data
 -----------------------------------------------------------------
 Companion script for `docs/1_first_steps.md`.
 
-Two demos in one file:
+Two demos in one file, in the order the tutorial teaches them:
 
-1. ``incorp_demo`` — smallest meaningful Incorporator program: one API
-   call against CoinGecko's top-100-by-market-cap endpoint, no schema
-   declared, full dot-notation + O(1) registry.
-2. ``test_demo`` — the JIT API Profiler. Swap ``.incorp()`` for
-   ``.test()`` to fetch one safe page and print the exact ``incorp()``
-   kwargs the framework recommends.
+1. ``test_demo`` — the JIT API Profiler runs FIRST.  Swap ``.incorp()``
+   for ``.test()`` to fetch one safe page and print the exact
+   ``incorp()`` kwargs the framework recommends for the endpoint.
+2. ``incorp_demo`` — apply those recommendations: top-100 coins by
+   market cap, no schema declared, full dot-notation + O(1) registry.
 
 Run with:
     python examples/1_first_steps.py
@@ -67,8 +66,11 @@ async def test_demo() -> None:
 
 
 async def main() -> None:
-    await incorp_demo()
+    # Discovery first: profile the endpoint with test() and let the inspector
+    # print the recommended kwargs.
     await test_demo()
+    # Application second: paste those recommendations into a real incorp() call.
+    await incorp_demo()
 
 
 if __name__ == "__main__":
