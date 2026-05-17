@@ -93,6 +93,16 @@ You now have a typed object graph in memory.  Time to land it in the warehouse.
 
 ---
 
+### A quick word on `export()`
+
+`incorp()` reads.  `export()` writes — the symmetric counterpart, with the same
+class, the same format auto-detection from the file extension, and the same kwargs
+idiom you just used.  Steps 2–4 below land the snapshot in three different stores by
+varying only the `file_path` extension and a couple of format-specific kwargs;
+everything else is identical between the three calls.
+
+---
+
 ## Step 2: Append to NDJSON and CSV (Append-Friendly Log)
 
 Both NDJSON and CSV grow row-wise.  Pass `if_exists="append"` to `export()` and each
