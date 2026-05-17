@@ -12,7 +12,7 @@ import logging
 import re
 import weakref
 from collections import OrderedDict
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -41,6 +41,19 @@ PYDANTIC_RESERVED = {
     "dict",
     "json",
 }
+
+# Mutable-container ClassVars on Incorporator that need per-subclass isolation.
+# Each entry: (attr_name, factory(seed) -> fresh instance).  ``seed`` is the
+# base-class value (walked via MRO with getattr) so dict-typed entries can
+# inherit any seeds populated on the base before forking off a shallow copy
+# for the dynamic subclass.  WeakValueDictionary always starts empty per
+# subclass — fjord_snapshot owns the strong references during outflow.
+_MISSING: Any = object()
+_PER_SUBCLASS_CONTAINERS: Tuple[Tuple[str, Callable[[Any], Any]], ...] = (
+    ("inc_dict", lambda _seed: weakref.WeakValueDictionary[Any, Any]()),
+    ("_schema_union", lambda seed: dict(seed) if isinstance(seed, dict) else {}),
+    ("_incorp_kwargs", lambda seed: dict(seed) if isinstance(seed, dict) else {}),
+)
 
 # Pre-compile regex to save C-level CPU cycles
 _SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_]")
@@ -316,19 +329,17 @@ def infer_dynamic_schema(
             **fields,
         )
 
-        # Mirror necessary state into the dynamic child class.
-        # Shallow copy (dict()) instead of deepcopy: the child class owns its
-        # own mapping but shares values by reference.  Values that need true
-        # isolation are mutable only via their class's own methods, so shared
-        # references are safe.  deepcopy on large _schema_union dicts was
-        # allocating gigabytes over long runs with 1000+ compiled schemas.
-        for attr_name in dir(base_class):
-            if not attr_name.startswith("__") and attr_name not in PYDANTIC_RESERVED:
-                attr_val = getattr(base_class, attr_name)
-                if isinstance(attr_val, dict):
-                    setattr(DynamicModel, attr_name, dict(attr_val))
-                elif isinstance(attr_val, weakref.WeakValueDictionary):
-                    setattr(DynamicModel, attr_name, weakref.WeakValueDictionary[Any, Any]())
+        # Mirror per-subclass mutable-container state from the base.
+        # Replaces the older ``dir(base_class)`` scan (~200 names) with an
+        # explicit allow-list — see _PER_SUBCLASS_CONTAINERS.  ``getattr``
+        # walks the MRO, so user-defined intermediate subclasses (those that
+        # subclass Incorporator without overriding these attrs) still resolve
+        # to the grandparent's seed.  Shallow copy for dict-typed entries
+        # so the child owns its mapping but shares value references.
+        for attr_name, factory in _PER_SUBCLASS_CONTAINERS:
+            seed = getattr(base_class, attr_name, _MISSING)
+            if seed is not _MISSING:
+                setattr(DynamicModel, attr_name, factory(seed))
 
         # LRU cache insert: evict the least-recently-used entry when the
         # registry is full.  OrderedDict.popitem(last=False) removes the

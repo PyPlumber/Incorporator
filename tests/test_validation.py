@@ -209,6 +209,60 @@ async def test_schema_union_sibling_class_isolation(tmp_path: Path) -> None:
     assert "field_only_in_a" not in b_union  # Sibling A's field must NOT bleed into B
 
 
+@pytest.mark.asyncio
+async def test_per_subclass_isolation_walks_mro(tmp_path: Path) -> None:
+    """User-defined intermediate subclasses must still get per-subclass containers.
+
+    Regression guard for the dir(base_class) -> allow-list refactor: when a
+    user subclasses Incorporator once (without overriding inc_dict /
+    _schema_union / _incorp_kwargs), the seed values live on Incorporator
+    itself, not on the intermediate class.  The DynamicModel built from
+    Alpha or Beta must still get its OWN container instances — getattr
+    walks the MRO and finds Incorporator's seed; vars(base_class) would
+    silently miss it and leak shared state across siblings.
+
+    Covers _schema_union isolation only (the framework explicitly assigns
+    cls._schema_union = {} on first incorp via factory.py:284-285).
+    inc_dict isolation on user classes is a separate concern — instances
+    register on DynamicModel.inc_dict, which is isolated by the refactor.
+    """
+    json_a = tmp_path / "a.json"
+    json_b = tmp_path / "b.json"
+    json_a.write_text(json.dumps([{"alpha_only": 1}, {"alpha_only": 2}]), encoding="utf-8")
+    json_b.write_text(json.dumps([{"beta_only": 3}, {"beta_only": 4}]), encoding="utf-8")
+
+    class UserBase(Incorporator):
+        """Intermediate subclass: no ClassVar overrides."""
+
+    class Alpha(UserBase):
+        pass
+
+    class Beta(UserBase):
+        pass
+
+    for cls in (UserBase, Alpha, Beta):
+        if "_schema_union" in cls.__dict__:
+            del cls._schema_union  # type: ignore[attr-defined]
+
+    alpha_list = await Alpha.incorp(inc_file=str(json_a))
+    beta_list = await Beta.incorp(inc_file=str(json_b))
+
+    alpha_union = Alpha._schema_union  # type: ignore[attr-defined]
+    beta_union = Beta._schema_union  # type: ignore[attr-defined]
+
+    assert "alpha_only" in alpha_union
+    assert "beta_only" not in alpha_union
+    assert "beta_only" in beta_union
+    assert "alpha_only" not in beta_union
+
+    # DynamicModel containers must be isolated even when both inherit from
+    # the same UserBase (which itself inherits Incorporator's seeds).
+    alpha_dyn = alpha_list._model_class  # type: ignore[attr-defined]
+    beta_dyn = beta_list._model_class  # type: ignore[attr-defined]
+    assert alpha_dyn.inc_dict is not beta_dyn.inc_dict
+    assert alpha_dyn._schema_union is not beta_dyn._schema_union
+
+
 # ==========================================
 # 5. DYNAMIC MODEL IN-STATE EXPORT
 # ==========================================
