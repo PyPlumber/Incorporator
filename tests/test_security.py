@@ -116,3 +116,87 @@ def test_tar_safe_member_passes(tmp_path: Path) -> None:
     # Should not raise — returns the JSON string
     result = decompress_data(tar_bytes, "archive.tar", FormatType.JSON)
     assert '"id"' in result
+
+
+# ==========================================
+# 3. SSRF REDIRECT-HOOK TESTS (async DNS path)
+# ==========================================
+
+
+@pytest.mark.asyncio
+async def test_host_is_internal_metadata_host_fast_path() -> None:
+    """Known cloud-metadata host must resolve internal without any DNS round-trip."""
+    from incorporator.io.fetch import _host_is_internal
+
+    assert await _host_is_internal("169.254.169.254") is True
+    assert await _host_is_internal("metadata.google.internal") is True
+
+
+@pytest.mark.asyncio
+async def test_host_is_internal_external_ip_literal() -> None:
+    """Public IP literal must resolve external without any DNS round-trip."""
+    from incorporator.io.fetch import _host_is_internal
+
+    assert await _host_is_internal("8.8.8.8") is False
+
+
+@pytest.mark.asyncio
+async def test_host_is_internal_uses_async_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DNS resolution must go through ``loop.getaddrinfo``, never sync ``socket.getaddrinfo``.
+
+    Regression test for the blocking-DNS bug: previously ``_host_is_internal``
+    called ``socket.getaddrinfo`` synchronously inside an async hook, stalling
+    the event loop on every redirect.  This test asserts the async path is
+    used by patching it; the sync path is patched to raise so a regression
+    would fail loudly.
+    """
+    import asyncio
+
+    from incorporator.io import fetch
+
+    # Sync socket.getaddrinfo must not be called — regression guard.
+    def _fail_sync(*args: object, **kwargs: object) -> object:
+        raise AssertionError("synchronous socket.getaddrinfo called from async path")
+
+    monkeypatch.setattr("socket.getaddrinfo", _fail_sync)
+
+    # Async path returns a fake addrinfo pointing at an internal IP.
+    fake_internal = [(0, 0, 0, "", ("10.0.0.1", 0))]
+
+    async def _fake_async_getaddrinfo(host: str, port: object, **kw: object) -> object:
+        return fake_internal
+
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "getaddrinfo", _fake_async_getaddrinfo)
+
+    assert await fetch._host_is_internal("my-internal.local") is True
+
+
+@pytest.mark.asyncio
+async def test_redirect_hook_blocks_internal_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """End-to-end: the response hook must raise on a 302 → internal-host redirect."""
+    import asyncio
+
+    import httpx
+
+    from incorporator.exceptions import IncorporatorNetworkError
+    from incorporator.io import fetch
+
+    fake_internal = [(0, 0, 0, "", ("127.0.0.1", 0))]
+
+    async def _fake_async_getaddrinfo(host: str, port: object, **kw: object) -> object:
+        return fake_internal
+
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "getaddrinfo", _fake_async_getaddrinfo)
+
+    # Synthesize a 302 response whose Location points at an internal-resolving hostname.
+    request = httpx.Request("GET", "https://example.com/")
+    response = httpx.Response(
+        status_code=302,
+        headers={"Location": "https://my-internal.local/admin"},
+        request=request,
+    )
+
+    with pytest.raises(IncorporatorNetworkError, match="blocked redirect to internal host"):
+        await fetch._block_internal_redirect_hook(response)

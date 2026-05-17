@@ -121,36 +121,27 @@ _METADATA_HOSTS = frozenset(
 )
 
 
-def _host_is_internal(host: str) -> bool:
-    """Return True when ``host`` resolves to an RFC1918 / loopback / link-local IP.
+def _host_is_internal_fast(host: str) -> Optional[bool]:
+    """Cheap pre-DNS check.
 
-    The lookup is performed via ``socket.getaddrinfo`` so DNS-resolved
-    hostnames (``localhost``, ``my-internal.local``) are caught alongside
-    bare IP literals.  Each returned address is checked against the standard
-    ``ipaddress`` private/loopback/link-local properties plus an explicit
-    cloud-metadata blocklist (the ``169.254.169.254`` family).
-
-    Failure to resolve (NXDOMAIN, transient DNS error) is treated as
-    **non-internal** — we don't want a DNS hiccup to make a legitimate
-    redirect look malicious.  The subsequent HTTP request will fail
-    naturally if the host genuinely doesn't exist.
+    Returns:
+        ``True`` if ``host`` is a known-internal metadata host or an IP
+        literal that's internal; ``False`` if it's an IP literal that's
+        external; ``None`` when DNS resolution is needed to decide.
     """
     if not host:
         return False
-    host_l = host.lower()
-    if host_l in _METADATA_HOSTS:
+    if host.lower() in _METADATA_HOSTS:
         return True
     try:
-        # Try parsing as IP literal first — avoids a DNS round-trip for the
-        # common SSRF case where the attacker uses raw IPs.
         ip = ipaddress.ip_address(host)
-        return _ip_is_internal(ip)
     except ValueError:
-        pass
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except (socket.gaierror, OSError):
-        return False
+        return None
+    return _ip_is_internal(ip)
+
+
+def _addrinfos_have_internal(infos: List[Any]) -> bool:
+    """Walk a ``getaddrinfo`` result list; True if any resolved IP is internal."""
     for info in infos:
         addr_raw = info[4][0]
         # ``info[4]`` is ``(host, port)`` for AF_INET and ``(host, port, flowinfo, scopeid)``
@@ -164,6 +155,31 @@ def _host_is_internal(host: str) -> bool:
         if _ip_is_internal(ip):
             return True
     return False
+
+
+async def _host_is_internal(host: str) -> bool:
+    """Return True when ``host`` resolves to an RFC1918 / loopback / link-local IP.
+
+    The lookup is performed via ``loop.getaddrinfo`` (asyncio's async wrapper
+    around ``socket.getaddrinfo``) so DNS-resolved hostnames (``localhost``,
+    ``my-internal.local``) are caught alongside bare IP literals **without
+    blocking the event loop**.  Each returned address is checked against the
+    standard ``ipaddress`` private/loopback/link-local properties plus an
+    explicit cloud-metadata blocklist (the ``169.254.169.254`` family).
+
+    Failure to resolve (NXDOMAIN, transient DNS error) is treated as
+    **non-internal** — we don't want a DNS hiccup to make a legitimate
+    redirect look malicious.  The subsequent HTTP request will fail
+    naturally if the host genuinely doesn't exist.
+    """
+    fast = _host_is_internal_fast(host)
+    if fast is not None:
+        return fast
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+    except (socket.gaierror, OSError):
+        return False
+    return _addrinfos_have_internal(infos)
 
 
 def _ip_is_internal(ip: Any) -> bool:
@@ -201,7 +217,7 @@ async def _block_internal_redirect_hook(response: httpx.Response) -> None:
         # surface the parse error rather than hiding it behind our SSRF check.
         return
     host = target.host
-    if _host_is_internal(host):
+    if await _host_is_internal(host):
         raise IncorporatorNetworkError(
             f"Security Policy Violation: blocked redirect to internal host '{host}' "
             f"(full URL: {target}). Disable with block_internal_redirects=False if "
