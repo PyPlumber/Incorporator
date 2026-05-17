@@ -126,9 +126,9 @@ Each section is actionable:
   content type, etc.).
 
 > **Drill-down:** when the inspector finds nested list-of-dicts inside the top-level
-> record (e.g. SpaceX `/launches/latest` has `cores: [...]`), it surfaces a
-> copy-pasteable `rec_path='cores'` hint for re-running `test()` against that nested
-> level.
+> record (common in wrapper-shaped APIs that return `{"data": [...]}` or
+> `{"results": {...}}`), it surfaces a copy-pasteable `rec_path='data'` /
+> `rec_path='results'` hint for re-running `test()` against that nested level.
 
 ---
 
