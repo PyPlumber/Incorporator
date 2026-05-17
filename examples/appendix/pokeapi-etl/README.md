@@ -3,7 +3,7 @@
 > 📎 **Appendix — `calc()` reductions over a HATEOAS drill.**
 > Sums and aggregations across a parent-child fan-out (PokéAPI).
 > If you're new to parent-child, start with
-> [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md)
+> [Tutorial 3 — Parent-Child Drilling](../../03-parent-child-drilling/README.md)
 > (CoinGecko top-N → `/coins/{id}` drill); reach for this appendix
 > for the `calc()` reduction patterns layered on top.
 
@@ -199,7 +199,7 @@ incorporator stream pipeline.json
 
 The token resolver imports `inflow.py` at config-load time, sees `calculate_bst` in its public symbols, and resolves the `calc(...)` string to a real Python callable before the engine runs. The reducer runs **before** format dispatch, so this exact pipeline.json works for any export format — switch the extension to `.csv`, `.parquet`, `.avro`, etc., and the integer still lands in the cell.
 
-> **Tip:** for paginators and pre-built converter instances, use the cleaner `@name` syntax. Define `next_page = NextUrlPaginator("next")` in `inflow.py`, then reference it as `"inc_page": "@next_page"` in pipeline.json — zero JSON escape characters. See [the CLI guide](../cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full pattern.
+> **Tip:** for paginators and pre-built converter instances, use the cleaner `@name` syntax. Define `next_page = NextUrlPaginator("next")` in `inflow.py`, then reference it as `"inc_page": "@next_page"` in pipeline.json — zero JSON escape characters. See [the CLI guide](../../../docs/cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full pattern.
 
 ---
 
@@ -207,10 +207,10 @@ The token resolver imports `inflow.py` at config-load time, sees `calculate_bst`
 
 | Goal | Read |
 |---|---|
-| See the canonical parent-child intro (no calc layer) | [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md) |
-| Apply `calc()` reductions in a fjord outflow | [Appendix — NASCAR Fantasy Fjord](./nascar_fantasy_fjord.md) |
-| Stream paginated APIs with custom paginators | [Streaming & Pagination Deep Dive](../streaming_and_pagination.md) |
-| Land the reduced output in a warehouse | [Tutorial 2 — Universal Formats](../2_universal_formats.md) |
+| See the canonical parent-child intro (no calc layer) | [Tutorial 3 — Parent-Child Drilling](../../03-parent-child-drilling/README.md) |
+| Apply `calc()` reductions in a fjord outflow | [Appendix — NASCAR Fantasy Fjord](../nascar-fantasy-fjord/README.md) |
+| Stream paginated APIs with custom paginators | [Streaming & Pagination Deep Dive](../../../docs/streaming_and_pagination.md) |
+| Land the reduced output in a warehouse | [Tutorial 2 — Universal Formats](../../02-universal-formats/README.md) |
 
 ---
 

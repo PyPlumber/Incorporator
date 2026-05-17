@@ -7,9 +7,9 @@
 each ticking on its own interval, with dependency edges that gate downstream work until
 upstream produces fresh data.
 
-**Prerequisites:** [Tutorial 4](./4_stateful_refresh.md) (`refresh()` mechanics),
-[Tutorial 5](./5_streaming_daemon.md) (`stream()`, both polling modes),
-[Tutorial 6](./6_multi_source_fjord.md) (`fjord()` + `outflow(state)`).
+**Prerequisites:** [Tutorial 4](../04-stateful-refresh/README.md) (`refresh()` mechanics),
+[Tutorial 5](../05-streaming-daemon/README.md) (`stream()`, both polling modes),
+[Tutorial 6](../06-multi-source-fjord/README.md) (`fjord()` + `outflow(state)`).
 
 > **The canonical multi-source orchestration use case for crypto is the
 > multi-exchange arbitrage scanner.**  Real arb bots monitor 5–20+ exchanges
@@ -419,12 +419,12 @@ stderr so log shippers can ingest stdout directly.
 
 | Goal | Read |
 |---|---|
-| Master the fjord pattern that `Fjord` currents reuse | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
-| Run the same diamond shape against a different domain | [Appendix — NASCAR Tideweaver](./appendix/nascar_tideweaver.md) |
-| Land columnar Parquet artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
-| Pick between in-process and cloud orchestration | [Appendix — Tideweaver vs. Prefect](./appendix/tideweaver_vs_prefect.md) |
-| Configure Tideweaver from `watershed.json` for the CLI | [CLI & Configuration §9](./cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration) |
-| Ship as a Docker container with environment-driven config | [Deployment Guide](./deployment.md) |
+| Master the fjord pattern that `Fjord` currents reuse | [Tutorial 6 — Multi-Source Fjord](../06-multi-source-fjord/README.md) |
+| Run the same diamond shape against a different domain | [Appendix — NASCAR Tideweaver](../appendix/nascar-tideweaver/README.md) |
+| Land columnar Parquet artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md) |
+| Pick between in-process and cloud orchestration | [Appendix — Tideweaver vs. Prefect](../appendix/tideweaver-vs-prefect/README.md) |
+| Configure Tideweaver from `watershed.json` for the CLI | [CLI & Configuration §9](../../docs/cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration) |
+| Ship as a Docker container with environment-driven config | [Deployment Guide](../../docs/deployment.md) |
 
 ---
 

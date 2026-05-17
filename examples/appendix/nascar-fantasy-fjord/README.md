@@ -652,7 +652,7 @@ entirely — the pipeline exits cleanly after one outflow wave.
 This pipeline calls *only* public NASCAR endpoints — no API keys, no
 auth.  The `${API_KEY}` / `${file:/run/secrets/...}` patterns
 documented in the
-[deployment guide](../deployment.md#secrets--local-vs-production)
+[deployment guide](../../../docs/deployment.md#secrets--local-vs-production)
 apply if you ever swap one of the sources for a paid feed.
 
 ---
@@ -679,11 +679,11 @@ apply if you ever swap one of the sources for a paid feed.
 
 | Goal | Read |
 |---|---|
-| Master the two-source fjord pattern first | [Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md) |
-| Drill parent records before fusing | [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md) |
-| Orchestrate the same multi-source join in a windowed graph | [Tutorial 7 — Tideweaver](../7_tideweaver.md) |
-| Run the diamond shape across NASCAR race telemetry | [Appendix — NASCAR Tideweaver](./nascar_tideweaver.md) |
-| Configure this pipeline as a CLI fjord run | [CLI & Configuration Guide](../cli_and_configuration.md) |
+| Master the two-source fjord pattern first | [Tutorial 6 — Multi-Source Fjord](../../06-multi-source-fjord/README.md) |
+| Drill parent records before fusing | [Tutorial 3 — Parent-Child Drilling](../../03-parent-child-drilling/README.md) |
+| Orchestrate the same multi-source join in a windowed graph | [Tutorial 7 — Tideweaver](../../07-tideweaver/README.md) |
+| Run the diamond shape across NASCAR race telemetry | [Appendix — NASCAR Tideweaver](../nascar-tideweaver/README.md) |
+| Configure this pipeline as a CLI fjord run | [CLI & Configuration Guide](../../../docs/cli_and_configuration.md) |
 
 ---
 

@@ -18,8 +18,8 @@ endpoint for the rich per-coin detail you actually need for analytics (full desc
 homepage links, developer activity, full market data, sentiment).  All in two `incorp()`
 calls.
 
-**Prerequisites:** [Tutorial 1](./1_first_steps.md) (`incorp()`, `test()`, `inc_dict`),
-[Tutorial 2](./2_universal_formats.md) (knows what `export()` looks like; you'll often
+**Prerequisites:** [Tutorial 1](../01-first-steps/README.md) (`incorp()`, `test()`, `inc_dict`),
+[Tutorial 2](../02-universal-formats/README.md) (knows what `export()` looks like; you'll often
 land child-drilled detail in a warehouse).
 
 > **CoinGecko rate-limit note.** The free public API allows roughly 5–15 calls per
@@ -217,7 +217,7 @@ The natural next backtest step is `/coins/{id}/market_chart?vs_currency=usd&days
 30 days of `[timestamp, price]` pairs per coin.  That response shape (three parallel
 arrays under `prices`, `market_caps`, `total_volumes`) is *one record per child URL*,
 which doesn't fit the standard `inc_code` model directly.  The
-[Pokédex ETL appendix](./appendix/pokeapi_etl.md) shows the `calc()` + nested-array
+[Pokédex ETL appendix](../appendix/pokeapi-etl/README.md) shows the `calc()` + nested-array
 reduction pattern that solves this — and the same trick handles `market_chart` row
 flattening.
 
@@ -227,13 +227,13 @@ flattening.
 
 | Goal | Read |
 |---|---|
-| Profile the parent endpoint before drilling | [Tutorial 1 — First Steps + DX Inspector](./1_first_steps.md) |
-| Land the drilled results in a warehouse | [Tutorial 2 — Universal Formats](./2_universal_formats.md) |
-| Keep both registries live with `refresh()` | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
-| Fuse parent + child into one composite record | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
-| See the same pattern against the SpaceX v4 API | [Appendix — SpaceX Launches](./appendix/spacex_launches.md) |
-| Paginated HATEOAS drill with `calc()` reductions | [Appendix — PokéAPI ETL](./appendix/pokeapi_etl.md) |
-| XML ingestion + declarative bulk POST enrichment | [Appendix — Shady Jimmy's XML Audit](./appendix/xml_post_audit.md) |
+| Profile the parent endpoint before drilling | [Tutorial 1 — First Steps + DX Inspector](../01-first-steps/README.md) |
+| Land the drilled results in a warehouse | [Tutorial 2 — Universal Formats](../02-universal-formats/README.md) |
+| Keep both registries live with `refresh()` | [Tutorial 4 — Stateful Refresh](../04-stateful-refresh/README.md) |
+| Fuse parent + child into one composite record | [Tutorial 6 — Multi-Source Fjord](../06-multi-source-fjord/README.md) |
+| See the same pattern against the SpaceX v4 API | [Appendix — SpaceX Launches](../appendix/spacex-launches/README.md) |
+| Paginated HATEOAS drill with `calc()` reductions | [Appendix — PokéAPI ETL](../appendix/pokeapi-etl/README.md) |
+| XML ingestion + declarative bulk POST enrichment | [Appendix — Shady Jimmy's XML Audit](../appendix/xml-post-audit/README.md) |
 
 ---
 

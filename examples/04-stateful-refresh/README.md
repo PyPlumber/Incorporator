@@ -2,8 +2,8 @@
 
 # 🔄 Stateful Refresh: Keeping Binance Tickers Live
 
-**Prerequisites:** [Tutorial 1](./1_first_steps.md) (`incorp()`, `test()`, `inc_dict`),
-[Tutorial 3](./3_parent_child_drilling.md) (two-registries mental model).
+**Prerequisites:** [Tutorial 1](../01-first-steps/README.md) (`incorp()`, `test()`, `inc_dict`),
+[Tutorial 3](../03-parent-child-drilling/README.md) (two-registries mental model).
 
 `incorp()` builds an object graph.  `refresh()` keeps it **synchronised
 with the source** without you having to re-pass `inc_code`, `inc_url`,
@@ -209,7 +209,7 @@ Two verbs, one shared registry, zero stale references.
 Transient HTTP errors are handled by the same Tenacity retry policy
 `incorp()` uses; permanent failures surface via
 `refreshed.failed_sources` for DLQ-style retry workflows (see the
-[Production Debugging](./debugging.md) reference).
+[Production Debugging](../../docs/debugging.md) reference).
 
 ---
 
@@ -234,12 +234,12 @@ back-to-back with a decision matrix at the close.
 
 | Goal | Read |
 |---|---|
-| Discover an unfamiliar endpoint first | [Tutorial 1 — First Steps + DX Inspector](./1_first_steps.md) |
-| Drill parent records before refreshing | [Tutorial 3 — Parent-Child Drilling](./3_parent_child_drilling.md) |
-| Wrap `refresh()` in a daemon with periodic export | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
-| Refresh multiple sources concurrently and fuse the results | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
-| Orchestrate N sources on independent cadences in one window | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
-| Diagnose refresh failures with structured logs | [Production Debugging](./debugging.md) |
+| Discover an unfamiliar endpoint first | [Tutorial 1 — First Steps + DX Inspector](../01-first-steps/README.md) |
+| Drill parent records before refreshing | [Tutorial 3 — Parent-Child Drilling](../03-parent-child-drilling/README.md) |
+| Wrap `refresh()` in a daemon with periodic export | [Tutorial 5 — Streaming Daemons](../05-streaming-daemon/README.md) |
+| Refresh multiple sources concurrently and fuse the results | [Tutorial 6 — Multi-Source Fjord](../06-multi-source-fjord/README.md) |
+| Orchestrate N sources on independent cadences in one window | [Tutorial 7 — Tideweaver](../07-tideweaver/README.md) |
+| Diagnose refresh failures with structured logs | [Production Debugging](../../docs/debugging.md) |
 
 ---
 

@@ -2,8 +2,8 @@
 
 # 🌊 Multi-Source Fjord: Live Crypto Spread
 
-**Prerequisites:** [Tutorial 1](./1_first_steps.md) (`incorp()`, `inc_dict`),
-[Tutorial 4](./4_stateful_refresh.md) (`refresh()`), [Tutorial 5](./5_streaming_daemon.md)
+**Prerequisites:** [Tutorial 1](../01-first-steps/README.md) (`incorp()`, `inc_dict`),
+[Tutorial 4](../04-stateful-refresh/README.md) (`refresh()`), [Tutorial 5](../05-streaming-daemon/README.md)
 (`stream()`, `Wave`, both polling modes).
 
 `stream()` watches **one** source. `fjord()` watches **N** sources
@@ -413,12 +413,12 @@ function, the dynamic output class comes from the filename stem.
 
 | Goal | Read |
 |---|---|
-| Master single-source stateful polling first | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
-| Master the single-source `stream()` daemon | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
-| Coordinate per-source intervals + dependency gating | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
-| Build a 7-source fjord with state-aware `inflow()` | [Appendix — NASCAR Fantasy Fjord](./appendix/nascar_fantasy_fjord.md) |
-| Run the static (non-daemon) join variant | [Appendix — Crypto Graph Mapping](./appendix/crypto_graph_mapping.md) |
-| Configure fjord from JSON for the CLI | [CLI & Configuration Guide](./cli_and_configuration.md) |
+| Master single-source stateful polling first | [Tutorial 4 — Stateful Refresh](../04-stateful-refresh/README.md) |
+| Master the single-source `stream()` daemon | [Tutorial 5 — Streaming Daemons](../05-streaming-daemon/README.md) |
+| Coordinate per-source intervals + dependency gating | [Tutorial 7 — Tideweaver](../07-tideweaver/README.md) |
+| Build a 7-source fjord with state-aware `inflow()` | [Appendix — NASCAR Fantasy Fjord](../appendix/nascar-fantasy-fjord/README.md) |
+| Run the static (non-daemon) join variant | [Appendix — Crypto Graph Mapping](../appendix/crypto-graph-mapping/README.md) |
+| Configure fjord from JSON for the CLI | [CLI & Configuration Guide](../../docs/cli_and_configuration.md) |
 
 ---
 

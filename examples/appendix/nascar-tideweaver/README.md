@@ -5,7 +5,7 @@
 > `Watershed.diamond()`.  This appendix re-runs the same shape against
 > a completely different domain — NASCAR race telemetry — so the
 > reader can confirm the orchestrator is domain-agnostic.  No new
-> framework concepts here; read [Tutorial 7](../7_tideweaver.md) first.
+> framework concepts here; read [Tutorial 7](../../07-tideweaver/README.md) first.
 
 ***
 
@@ -20,7 +20,7 @@ Race telemetry is a natural fit for `Watershed.diamond()`:
   interval so a downstream dashboard sees a coherent per-driver snapshot.
 
 Three Stream currents feed one Fjord tail.  Same shape as the crypto arb scanner
-in [Tutorial 7](../7_tideweaver.md); different sources, different outflow logic, same
+in [Tutorial 7](../../07-tideweaver/README.md); different sources, different outflow logic, same
 five-name vocabulary.
 
 ---
@@ -179,11 +179,11 @@ Run from the repo root so the relative `inc_file` / `outflow` paths resolve.
 
 | Goal | Read |
 |---|---|
-| See the crypto-spine version of the same diamond | [Tutorial 7 — Tideweaver](../7_tideweaver.md) |
-| Run the non-Tideweaver fjord variant against NASCAR data | [Appendix — NASCAR Fantasy Fjord](./nascar_fantasy_fjord.md) |
-| Land columnar artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](./tideweaver_parquet_snapshots.md) |
-| Pick between in-process Tideweaver and cloud schedulers | [Appendix — Tideweaver vs. Prefect](./tideweaver_vs_prefect.md) |
-| Configure this watershed for the CLI | [CLI & Configuration §9](../cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration) |
+| See the crypto-spine version of the same diamond | [Tutorial 7 — Tideweaver](../../07-tideweaver/README.md) |
+| Run the non-Tideweaver fjord variant against NASCAR data | [Appendix — NASCAR Fantasy Fjord](../nascar-fantasy-fjord/README.md) |
+| Land columnar artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../tideweaver-parquet-snapshots/README.md) |
+| Pick between in-process Tideweaver and cloud schedulers | [Appendix — Tideweaver vs. Prefect](../tideweaver-vs-prefect/README.md) |
+| Configure this watershed for the CLI | [CLI & Configuration §9](../../../docs/cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration) |
 
 ---
 

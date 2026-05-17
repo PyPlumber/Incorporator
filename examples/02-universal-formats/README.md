@@ -14,7 +14,7 @@ formats (NDJSON / CSV / SQLite) accumulate a time-series log; columnar formats
 (Parquet / Feather / ORC) get snapshot-and-replaced each tick.  Both shapes share one
 `Coin(Incorporator)` class and one schema inference pass.
 
-**Prerequisites:** [Tutorial 1 — First Steps](./1_first_steps.md) (`incorp()`, `test()`,
+**Prerequisites:** [Tutorial 1 — First Steps](../01-first-steps/README.md) (`incorp()`, `test()`,
 `inc_dict`, basic schema inference).
 
 ---
@@ -37,7 +37,7 @@ formats (NDJSON / CSV / SQLite) accumulate a time-series log; columnar formats
 
 Compression is **transparent** for `.gz`, `.bz2`, `.xz`, `.lzma`, `.zip`, `.tar`, `.tgz`
 — the framework decompresses before parsing, no extra calls.  See
-[Formats & Compression](./formats_and_compression.md) for the full cheat sheet.
+[Formats & Compression](../../docs/formats_and_compression.md) for the full cheat sheet.
 
 > **Why the append column matters.** Append-friendly formats let you accumulate a
 > time-series snapshot warehouse cheaply — every tick appends a row block, the file
@@ -177,7 +177,7 @@ async def snapshot_parquet(coins):
 This is the right pattern for hourly / daily *artifact* dumps that downstream consumers
 (Athena, DuckDB, Spark, Snowflake) query directly.  For per-tick accumulation, stay in
 NDJSON / CSV / SQLite and let a downstream batch job convert to Parquet at window close
-— see [Appendix: Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md).
+— see [Appendix: Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md).
 
 ---
 
@@ -241,7 +241,7 @@ format-agnostic.
 The synchronous `incorp(inc_file=...)` path materialises the whole file before parsing
 — fine for the typical "a few hundred MB" case, but it OOMs on multi-GB inputs.  For
 files larger than RAM, use the **local paginators** in
-[`incorporator.io.pagination`](./streaming_and_pagination.md):
+[`incorporator.io.pagination`](../../docs/streaming_and_pagination.md):
 
 ```python
 from incorporator.io.pagination import SQLitePaginator
@@ -269,13 +269,13 @@ the chunking-mode pipeline.
 
 | Goal | Read |
 |---|---|
-| Discover the right kwargs for an unknown source first | [Tutorial 1 — First Steps + DX Inspector](./1_first_steps.md) |
-| Join a parent endpoint to per-record detail children | [Tutorial 3 — Parent-Child Drilling](./3_parent_child_drilling.md) |
-| Keep the warehouse source data fresh | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
-| Run the warehouse loader as a long-running daemon | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
-| Land columnar Parquet from an orchestrated pipeline | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
-| Round-trip JSON ↔ Avro ↔ SQLite with nested reconstruction | [Appendix — Data Lake Pivot](./appendix/data_lake_pivot.md) |
-| Stream a file too big for RAM | [Streaming & Pagination Deep Dive](./streaming_and_pagination.md) |
+| Discover the right kwargs for an unknown source first | [Tutorial 1 — First Steps + DX Inspector](../01-first-steps/README.md) |
+| Join a parent endpoint to per-record detail children | [Tutorial 3 — Parent-Child Drilling](../03-parent-child-drilling/README.md) |
+| Keep the warehouse source data fresh | [Tutorial 4 — Stateful Refresh](../04-stateful-refresh/README.md) |
+| Run the warehouse loader as a long-running daemon | [Tutorial 5 — Streaming Daemons](../05-streaming-daemon/README.md) |
+| Land columnar Parquet from an orchestrated pipeline | [Appendix — Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md) |
+| Round-trip JSON ↔ Avro ↔ SQLite with nested reconstruction | [Appendix — Data Lake Pivot](../appendix/data-lake-pivot/README.md) |
+| Stream a file too big for RAM | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |
 
 ---
 

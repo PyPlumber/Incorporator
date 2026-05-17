@@ -2,7 +2,7 @@
 
 > 📎 **Appendix — JSON ↔ Avro / SQLite round-trip walkthrough.**
 > Long-form reference for the format-agnostic export pattern; see
-> [Tutorial 2 — Universal Formats](../2_universal_formats.md) for
+> [Tutorial 2 — Universal Formats](../../02-universal-formats/README.md) for
 > the condensed five-format comparison.
 
 ***
@@ -141,7 +141,7 @@ incorporator stream pipeline.json
 * `users.parquet` → Parquet *(requires `pip install incorporator[parquet]`)*
 * `users.ndjson` / `.csv` / `.xlsx` → all native
 
-For a Dockerised daemon that polls + refreshes on a schedule, see [`examples/cli-templates/daemon-mode.json`](../../examples/cli-templates/daemon-mode.json) and [the deployment guide](../deployment.md).
+For a Dockerised daemon that polls + refreshes on a schedule, see [`examples/cli-templates/daemon-mode.json`](../../examples/cli-templates/daemon-mode.json) and [the deployment guide](../../../docs/deployment.md).
 
 ---
 
@@ -149,10 +149,10 @@ For a Dockerised daemon that polls + refreshes on a schedule, see [`examples/cli
 
 | Goal | Read |
 |---|---|
-| Build a per-tick snapshot warehouse | [Tutorial 2 — Universal Formats](../2_universal_formats.md) |
-| Land Parquet artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](./tideweaver_parquet_snapshots.md) |
-| Stream massive files through chunking + paginators | [Streaming & Pagination Deep Dive](../streaming_and_pagination.md) |
-| See the format kwarg reference | [Formats & Compression](../formats_and_compression.md) |
+| Build a per-tick snapshot warehouse | [Tutorial 2 — Universal Formats](../../02-universal-formats/README.md) |
+| Land Parquet artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../tideweaver-parquet-snapshots/README.md) |
+| Stream massive files through chunking + paginators | [Streaming & Pagination Deep Dive](../../../docs/streaming_and_pagination.md) |
+| See the format kwarg reference | [Formats & Compression](../../../docs/formats_and_compression.md) |
 
 ---
 

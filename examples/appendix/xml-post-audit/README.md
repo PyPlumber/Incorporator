@@ -3,7 +3,7 @@
 > 📎 **Appendix — XML ingestion + declarative bulk POST + fraud
 > audit.**  XML parsing, state-carrier graph drilling, and a
 > templated bulk-POST round-trip against an audit endpoint.  See
-> [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md)
+> [Tutorial 3 — Parent-Child Drilling](../../03-parent-child-drilling/README.md)
 > for the canonical parent-child intro before tackling this one.
 
 ***
@@ -186,7 +186,7 @@ incorporator validate pipeline.json
 incorporator fjord pipeline.json
 ```
 
-`audit_jimmy.py` defines the `Invoice` and `NHTSASpec` classes, and the `outflow(state)` function that issues the bulk POST with `join_all(";")`, then reconciles each invoice VIN against the federal registry in O(1). See [`examples/cli-templates/outflow_example.py`](../../examples/cli-templates/outflow_example.py) for the pattern and [the CLI guide](../cli_and_configuration.md) for the full schema.
+`audit_jimmy.py` defines the `Invoice` and `NHTSASpec` classes, and the `outflow(state)` function that issues the bulk POST with `join_all(";")`, then reconciles each invoice VIN against the federal registry in O(1). See [`examples/cli-templates/outflow_example.py`](../../examples/cli-templates/outflow_example.py) for the pattern and [the CLI guide](../../../docs/cli_and_configuration.md) for the full schema.
 
 ---
 
@@ -194,10 +194,10 @@ incorporator fjord pipeline.json
 
 | Goal | Read |
 |---|---|
-| See the canonical parent-child intro | [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md) |
-| Fuse the audit output into a multi-source pipeline | [Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md) |
-| Stream a giant XML feed with chunking | [Streaming & Pagination Deep Dive](../streaming_and_pagination.md) |
-| Ship the bulk-POST workflow as a daemon | [Tutorial 5 — Streaming Daemons](../5_streaming_daemon.md) |
+| See the canonical parent-child intro | [Tutorial 3 — Parent-Child Drilling](../../03-parent-child-drilling/README.md) |
+| Fuse the audit output into a multi-source pipeline | [Tutorial 6 — Multi-Source Fjord](../../06-multi-source-fjord/README.md) |
+| Stream a giant XML feed with chunking | [Streaming & Pagination Deep Dive](../../../docs/streaming_and_pagination.md) |
+| Ship the bulk-POST workflow as a daemon | [Tutorial 5 — Streaming Daemons](../../05-streaming-daemon/README.md) |
 
 ---
 

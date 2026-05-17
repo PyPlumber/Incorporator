@@ -6,12 +6,15 @@
 the long-running pipeline — periodic fetch + optional periodic export, all running as a
 daemon under your event loop.  The kwargs *are* the pipeline definition.
 
-`stream()` has two engines selected by a single flag — `stateful_polling`.  Pick the
-right one for the job and the rest is plumbing.  This tutorial walks both modes
+`stream()` runs the chunking engine by default.  Setting `stateful_polling=True`
+routes you through the fjord engine via a thin single-source shim — the user-facing
+contract is unchanged (the same `incorp` / `refresh` / `export` waves with the same
+fields), the underlying engine is fjord with an identity outflow.  Pick the right
+mode for the job and the rest is plumbing.  This tutorial walks both modes
 back-to-back, against two real crypto-research use cases.
 
-**Prerequisites:** [Tutorial 4](./4_stateful_refresh.md) (`refresh()` semantics),
-[Tutorial 1](./1_first_steps.md) (`incorp()`, `inc_dict`), [Tutorial 2](./2_universal_formats.md)
+**Prerequisites:** [Tutorial 4](../04-stateful-refresh/README.md) (`refresh()` semantics),
+[Tutorial 1](../01-first-steps/README.md) (`incorp()`, `inc_dict`), [Tutorial 2](../02-universal-formats/README.md)
 (append-friendly format selection for warehouses).
 
 > **REST polling vs WebSockets — pick the right layer for your latency budget.**
@@ -154,7 +157,7 @@ mode whenever the answer to "do I need this registry to outlive the chunk?" is n
 |---|---|---|
 | Live registry that mutates over time (dashboard, mark-to-market, slow indicators) | **Stateful** | `stateful_polling=True`, `refresh_interval=N`, `export_interval=M` |
 | One-shot bulk ingestion of a paginated source (historical backfill, warehouse seed) | **Chunking** | `inc_page=<Paginator>`, `export_params={"if_exists": "append"}` |
-| Both at once across multiple sources on independent cadences | Tideweaver | [Tutorial 7](./7_tideweaver.md) — declarative graph of currents |
+| Both at once across multiple sources on independent cadences | Tideweaver | [Tutorial 7](../07-tideweaver/README.md) — declarative graph of currents |
 
 ---
 
@@ -175,8 +178,8 @@ populated:
    completes, export drains, file is sealed.
 
 For the full engine breakdown see the [streaming & pagination
-guide](./streaming_and_pagination.md) and the
-[CLI configuration guide](./cli_and_configuration.md).
+guide](../../docs/streaming_and_pagination.md) and the
+[CLI configuration guide](../../docs/cli_and_configuration.md).
 
 ---
 
@@ -245,7 +248,7 @@ incorporator stream pipeline.json --logs
 The `--logs` flag swaps in `LoggedIncorporator` automatically.  Add
 `--heartbeat-file /tmp/inc.beat` and your Docker `HEALTHCHECK` (already baked into
 the ship-with-the-repo `Dockerfile`) will restart the container if the daemon
-hangs.  See the [deployment guide](./deployment.md) for the full Compose / secrets /
+hangs.  See the [deployment guide](../../docs/deployment.md) for the full Compose / secrets /
 healthcheck walkthrough.
 
 ---
@@ -257,8 +260,8 @@ healthcheck walkthrough.
 | One-shot fetch into Python objects | `incorp()` |
 | Live dashboard / mark-to-market registry on a cadence | `stream(stateful_polling=True, ...)` |
 | Bulk drain of a paginated source into an append-friendly warehouse | `stream(stateful_polling=False, inc_page=...)` |
-| Multi-source fusion with a custom `outflow()` join | [`fjord()`](./6_multi_source_fjord.md) |
-| Multi-source orchestration on independent cadences within a window | [Tideweaver](./7_tideweaver.md) |
+| Multi-source fusion with a custom `outflow()` join | [`fjord()`](../06-multi-source-fjord/README.md) |
+| Multi-source orchestration on independent cadences within a window | [Tideweaver](../07-tideweaver/README.md) |
 
 ---
 
@@ -266,13 +269,13 @@ healthcheck walkthrough.
 
 | Goal | Read |
 |---|---|
-| Pick the right refresh mode before wrapping in a daemon | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
-| Stream multiple sources concurrently with a fused outflow | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
-| Orchestrate multiple sources on independent cadences in one window | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
-| Run the same daemon shape against a non-crypto domain | [Appendix — SpaceX Launches](./appendix/spacex_launches.md) |
-| Land per-window columnar artifacts (Parquet) | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
-| Master the paginator family for the chunking engine | [Streaming & Pagination Deep Dive](./streaming_and_pagination.md) |
-| Ship as a Docker daemon with health checks | [Deployment Guide](./deployment.md) |
+| Pick the right refresh mode before wrapping in a daemon | [Tutorial 4 — Stateful Refresh](../04-stateful-refresh/README.md) |
+| Stream multiple sources concurrently with a fused outflow | [Tutorial 6 — Multi-Source Fjord](../06-multi-source-fjord/README.md) |
+| Orchestrate multiple sources on independent cadences in one window | [Tutorial 7 — Tideweaver](../07-tideweaver/README.md) |
+| Run the same daemon shape against a non-crypto domain | [Appendix — SpaceX Launches](../appendix/spacex-launches/README.md) |
+| Land per-window columnar artifacts (Parquet) | [Appendix — Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md) |
+| Master the paginator family for the chunking engine | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |
+| Ship as a Docker daemon with health checks | [Deployment Guide](../../docs/deployment.md) |
 
 ---
 

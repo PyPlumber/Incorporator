@@ -38,7 +38,7 @@ Here is a standard `pipeline.json` designed to scrape an API, enrich it, and app
 ```
 
 ### Parameter Breakdown:
-*   **`stateful_polling` (Optional, defaults to `false`):** Toggles the core execution engine (see *Dual-Engine Architecture* below).
+*   **`stateful_polling` (Optional, defaults to `false`):** Selects the execution mode (see *Stream Modes* below).
 *   **`incorp_params` (Required):** Dictates the initial extraction. Must contain an origin (e.g., `inc_url`, `inc_file`, or `inc_page`).
 *   **`refresh_params` (Optional):** If provided, the daemon will use the objects mapped during extraction to execute stateful updates (e.g., fetching deep relational data).
 *   **`export_params` (Optional):** Dictates the load phase. Mode-aware defaults:
@@ -53,17 +53,26 @@ Here is a standard `pipeline.json` designed to scrape an API, enrich it, and app
 
 ---
 
-## 3. The Dual-Engine Architecture
+## 3. Stream Modes
 
-Incorporator v2.0 features two distinct execution pipelines, controlled entirely by the `"stateful_polling"` JSON flag.
+`stream()` has **one engine** (chunking) with a shim that adapts `stateful_polling=true`
+onto the fjord engine.  The user-facing surface is the same in both modes — same
+wave shape, same kwarg vocabulary — but the underlying execution differs:
 
-### Engine 1: Big Data Chunking (`"stateful_polling": false`)
+### Chunking mode (`"stateful_polling": false`)
 *   **Best for:** 10M+ row databases, massive CSV files, or heavily paginated APIs.
-*   **Behavior:** It strictly enforces O(1) Memory limits. It fetches a single chunk, enriches it, saves it to disk, and **completely flushes the RAM** before fetching the next chunk. 
+*   **Behavior:** Strictly enforces O(1) memory. Fetches a single chunk, enriches it,
+    saves it to disk, and **completely flushes the RAM** before fetching the next chunk.
 
-### Engine 2: Live Stateful Polling (`"stateful_polling": true`)
-*   **Best for:** Live Dashboards, 100 Stock Tickers, or 50 IoT Sensors.
-*   **Behavior:** It runs extraction (`incorp`) **exactly once** to build the object graph in RAM. On subsequent polling intervals, it skips extraction and simply `refresh()`es the existing objects in memory, making it incredibly fast and network-efficient for small datasets.
+### Stateful mode (`"stateful_polling": true`)
+*   **Best for:** Live dashboards, 100 stock tickers, or 50 IoT sensors.
+*   **Behavior:** Runs extraction (`incorp`) **exactly once** to build the object graph
+    in RAM. On subsequent polling intervals, it skips extraction and `refresh()`es the
+    existing objects in memory — incredibly fast and network-efficient for small datasets.
+*   **Under the hood:** Routes through the fjord engine as a single-source pipeline
+    with a synthesised identity outflow.  The `IncorporatorList` pass-through fast
+    path in `flush()` preserves Python-object identity in `cls.inc_dict` across
+    waves, so the contract is identical to the legacy stateful engine.
 
 ---
 

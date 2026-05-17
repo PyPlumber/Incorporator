@@ -254,24 +254,24 @@ And the discovery loop you ran *before* that:
 
 | Goal | Tutorial |
 |---|---|
-| Snapshot CoinGecko into a Parquet/SQLite/NDJSON warehouse | [Tutorial 2 — Universal Formats](./2_universal_formats.md) |
-| Drill into nested API graphs (parent → child) for backtest data | [Tutorial 3 — Parent-Child Drilling](./3_parent_child_drilling.md) |
-| Keep this registry live (refresh prices every minute) | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
-| Run as a long-lived daemon | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
-| Fuse CoinGecko + Binance into a live spread | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
-| Orchestrate multi-exchange pipelines in a windowed graph (capstone) | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| Snapshot CoinGecko into a Parquet/SQLite/NDJSON warehouse | [Tutorial 2 — Universal Formats](../02-universal-formats/README.md) |
+| Drill into nested API graphs (parent → child) for backtest data | [Tutorial 3 — Parent-Child Drilling](../03-parent-child-drilling/README.md) |
+| Keep this registry live (refresh prices every minute) | [Tutorial 4 — Stateful Refresh](../04-stateful-refresh/README.md) |
+| Run as a long-lived daemon | [Tutorial 5 — Streaming Daemons](../05-streaming-daemon/README.md) |
+| Fuse CoinGecko + Binance into a live spread | [Tutorial 6 — Multi-Source Fjord](../06-multi-source-fjord/README.md) |
+| Orchestrate multi-exchange pipelines in a windowed graph (capstone) | [Tutorial 7 — Tideweaver](../07-tideweaver/README.md) |
 
 **Common follow-ups you might be wondering about:**
 
 * **Pagination** — CoinGecko's `/coins/markets` accepts `page=N` for the next batch.
   To fetch every page automatically, pass a paginator: see
-  [Streaming & Pagination](./streaming_and_pagination.md).
+  [Streaming & Pagination](../../docs/streaming_and_pagination.md).
 * **When to reach for `test()` again** — any time an API changes shape, any time you're
   building a `pipeline.json` for the CLI, any time you're stuck on `inc_code` /
   `rec_path`.  It's safe to run against production endpoints (one page, 5-second
   timeout).
 * **Errors** — failed sources surface on `coins.failed_sources`.  For durable error logs
-  and DLQ retry, see [Production Debugging](./debugging.md).
+  and DLQ retry, see [Production Debugging](../../docs/debugging.md).
 
 ---
 

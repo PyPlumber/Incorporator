@@ -22,10 +22,10 @@ We'll cover two patterns in one appendix:
 
 1. **Parent → Child drilling** — load upcoming launches, drill rockets
    + launchpads concurrently, three-way O(1) join.  Mirrors
-   [Tutorial 3](../3_parent_child_drilling.md).
+   [Tutorial 3](../../03-parent-child-drilling/README.md).
 2. **Streaming daemon** — periodic refresh + export of the launch
    feed, log shipping via `LoggedIncorporator`.  Mirrors
-   [Tutorial 5](../5_streaming_daemon.md) (Part 1, stateful mode).
+   [Tutorial 5](../../05-streaming-daemon/README.md) (Part 1, stateful mode).
 
 ---
 
@@ -174,10 +174,10 @@ pattern Tutorial 5 walks through; nothing SpaceX-specific.
 
 | Goal | Read |
 |---|---|
-| See the crypto-spine version of parent-child drilling | [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md) |
-| See the crypto-spine version of the streaming daemon | [Tutorial 5 — Streaming Daemons](../5_streaming_daemon.md) |
-| Fuse SpaceX launches + rockets into one composite | [Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md) |
-| See another non-crypto domain in the curriculum | [Appendix — NASCAR Tideweaver](./nascar_tideweaver.md) |
+| See the crypto-spine version of parent-child drilling | [Tutorial 3 — Parent-Child Drilling](../../03-parent-child-drilling/README.md) |
+| See the crypto-spine version of the streaming daemon | [Tutorial 5 — Streaming Daemons](../../05-streaming-daemon/README.md) |
+| Fuse SpaceX launches + rockets into one composite | [Tutorial 6 — Multi-Source Fjord](../../06-multi-source-fjord/README.md) |
+| See another non-crypto domain in the curriculum | [Appendix — NASCAR Tideweaver](../nascar-tideweaver/README.md) |
 
 ---
 

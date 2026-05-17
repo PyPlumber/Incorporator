@@ -2,7 +2,7 @@
 
 > 📎 **Appendix — Static graph join.**  `link_to`-based one-shot
 > in-memory join across CoinGecko + Binance.  See
-> [Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md) for
+> [Tutorial 6 — Multi-Source Fjord](../../06-multi-source-fjord/README.md) for
 > the same fusion as a live daemon; reach for this appendix when
 > you want the static pattern without the daemon scaffolding.
 
@@ -187,10 +187,10 @@ incorporator fjord pipeline.json
 
 | Goal | Read |
 |---|---|
-| Drill parent records into per-record children | [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md) |
-| Run the same multi-source join as a live daemon | [Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md) |
-| Coordinate the joined sources in a windowed graph | [Tutorial 7 — Tideweaver](../7_tideweaver.md) |
-| Configure the join from JSON for the CLI | [CLI & Configuration Guide](../cli_and_configuration.md) |
+| Drill parent records into per-record children | [Tutorial 3 — Parent-Child Drilling](../../03-parent-child-drilling/README.md) |
+| Run the same multi-source join as a live daemon | [Tutorial 6 — Multi-Source Fjord](../../06-multi-source-fjord/README.md) |
+| Coordinate the joined sources in a windowed graph | [Tutorial 7 — Tideweaver](../../07-tideweaver/README.md) |
+| Configure the join from JSON for the CLI | [CLI & Configuration Guide](../../../docs/cli_and_configuration.md) |
 
 ---
 
@@ -199,4 +199,4 @@ incorporator fjord pipeline.json
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)
 
-The `outflow.py` defines `BinanceBook(Incorporator)`, `CryptoAsset(Incorporator)`, and the `outflow(state)` function that runs the `link_to` lookups across the two in-memory registries. With the intervals above, every 60 s the sources refresh, and every 120 s the fused dataset is flushed to disk. See [`examples/cli-templates/outflow_example.py`](../examples/cli-templates/outflow_example.py) for the pattern and [the CLI guide](./cli_and_configuration.md) for the full schema.
+The `outflow.py` defines `BinanceBook(Incorporator)`, `CryptoAsset(Incorporator)`, and the `outflow(state)` function that runs the `link_to` lookups across the two in-memory registries. With the intervals above, every 60 s the sources refresh, and every 120 s the fused dataset is flushed to disk. See [`examples/cli-templates/outflow_example.py`](../../cli-templates/outflow_example.py) for the pattern and [the CLI guide](../../../docs/cli_and_configuration.md) for the full schema.
