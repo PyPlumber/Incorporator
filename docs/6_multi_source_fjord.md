@@ -7,10 +7,11 @@
 (`stream()`, `Wave`, both polling modes).
 
 `stream()` watches **one** source. `fjord()` watches **N** sources
-concurrently and lets you fuse them through a user-defined
-`outflow(state)` function — the engine handles every concurrent
-refresh, every export wave, the shared lock, the wave queue, and the
-dynamic output class.
+concurrently and lets you fuse them through a small **`outflow(state)`
+join function you define** — one that receives every source's live
+registry and returns the rows to export. The engine handles every
+concurrent refresh, every export wave, the shared lock, the wave
+queue, and the dynamic output class around that one function.
 
 You've already loaded a CoinGecko coin catalogue (Tutorial 1), kept a
 Binance ticker registry live (Tutorial 5), and seen the pattern of

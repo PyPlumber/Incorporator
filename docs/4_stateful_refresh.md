@@ -20,9 +20,10 @@ local references will read stale data.)
 This tutorial uses Binance's public `/api/v3/ticker/24hr` endpoint
 (no auth, ~1,900 pairs in one HTTP call) — a real live-data feed
 where the values move every few seconds. By the end you'll know the
-three resolution modes, the identity-mapping memory that makes
-`refresh()` ergonomic, and the patterns that distinguish `refresh()`
-from `stream()` / `fjord()`.
+three resolution modes and the identity-mapping memory that makes
+`refresh()` ergonomic. The closing "Where to Next" section maps
+`refresh()` onto the daemon and multi-source patterns later tutorials
+build on top of it.
 
 ---
 
