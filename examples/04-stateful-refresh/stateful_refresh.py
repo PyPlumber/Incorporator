@@ -23,10 +23,16 @@ class Pair(Incorporator):
 
 async def main() -> None:
     # ------------------------------------------------------------------
-    # 1. INITIAL LOAD — ~1,900 pairs in one HTTP call.
+    # 1. INITIAL LOAD — ~600 pairs in one HTTP call.
     # ------------------------------------------------------------------
+    # api.binance.com is geo-blocked in many regions (US, UK, Singapore)
+    # — it returns 451 "Unavailable For Legal Reasons" rather than data.
+    # api.binance.us is the US-licensed mirror with the same v3 endpoint
+    # shape (fewer listed pairs — ~600 vs ~1,900 — but identical refresh
+    # semantics).  Swap back to api.binance.com if you're outside those
+    # regions and want the full pair universe.
     pairs = await Pair.incorp(
-        inc_url="https://api.binance.com/api/v3/ticker/24hr",
+        inc_url="https://api.binance.us/api/v3/ticker/24hr",
         inc_code="symbol",
     )
     print(f"✅ Loaded {len(pairs)} trading pairs from Binance.")
@@ -56,7 +62,7 @@ async def main() -> None:
     # lighter payload when you don't need 24-hour volume / high / low.
     # The framework rebuilds every instance with the new endpoint's schema,
     # so the registry now exposes `.price` instead of `.lastPrice`.
-    await Pair.refresh("https://api.binance.com/api/v3/ticker/price")
+    await Pair.refresh("https://api.binance.us/api/v3/ticker/price")
     print(f"\n🔁 Re-sourced from /ticker/price (lighter endpoint).")
     print(f"   BTCUSDT current price: {Pair.inc_dict['BTCUSDT'].price}")
     print(f"   cls.inc_url updated to: {Pair.inc_url}")
