@@ -5,7 +5,7 @@ Companion script for `docs/1_first_steps.md`.
 
 Two demos in one file, in the order the tutorial teaches them:
 
-1. ``test_demo`` — the JIT API Profiler runs FIRST.  Swap ``.incorp()``
+1. ``inspector_demo`` — the JIT API Profiler runs FIRST.  Swap ``.incorp()``
    for ``.test()`` to fetch one safe page and print the exact
    ``incorp()`` kwargs the framework recommends for the endpoint.
 2. ``incorp_demo`` — apply those recommendations: top-100 coins by
@@ -48,7 +48,7 @@ async def incorp_demo() -> None:
         print(f"    #{coin.market_cap_rank} {coin.name} ({coin.symbol.upper()})")
 
 
-async def test_demo() -> None:
+async def inspector_demo() -> None:
     # ------------------------------------------------------------------
     # DX Inspector — hit the unknown endpoint via test().
     # ------------------------------------------------------------------
@@ -68,7 +68,7 @@ async def test_demo() -> None:
 async def main() -> None:
     # Discovery first: profile the endpoint with test() and let the inspector
     # print the recommended kwargs.
-    await test_demo()
+    await inspector_demo()
     # Application second: paste those recommendations into a real incorp() call.
     await incorp_demo()
 
