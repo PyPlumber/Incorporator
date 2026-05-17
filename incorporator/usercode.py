@@ -17,8 +17,12 @@ exactly one job: read a ``.py`` off disk and surface its symbols.
   :meth:`Incorporator.refresh`).
 - :func:`apply_code_transform` — load and run an optional
   ``transform(instances)`` hook (used by :meth:`Incorporator.export`).
-- :func:`load_outflow_function` — load fjord's required
-  ``outflow(state)`` function (used by :meth:`Incorporator.fjord`).
+- :func:`load_outflow_module` — load fjord's required ``outflow(state)``
+  function AND its module (used by :meth:`Incorporator.fjord` and the
+  Tideweaver Fjord current).
+- :func:`load_inflow_callable` — load the optional state-aware
+  ``inflow(state)`` callable from an inflow sidecar (used by
+  :meth:`Incorporator.fjord`).
 - :func:`pascal_case_from_stem` — derive a PascalCase class name from
   a filename stem (used by fjord/stream to name a dynamic output
   class, or to look up the user-defined class in an outflow.py).
@@ -114,6 +118,63 @@ def extract_public_names(module: ModuleType) -> Dict[str, Any]:
     return {n: getattr(module, n) for n in dir(module) if not n.startswith("_")}
 
 
+def _extract_user_callable(
+    module: ModuleType,
+    *,
+    name: str,
+    required: bool,
+    param_label: str,
+    source_path: Union[str, Path],
+    arity: int = 1,
+) -> Optional[Callable[..., Any]]:
+    """Pull a top-level callable off a sidecar module and validate its arity.
+
+    Single source of truth for the "is the function there, callable, and
+    one-arg?" check used by every sidecar-loading entry point in this module
+    (``apply_code_transform``, ``load_outflow_module``, ``load_inflow_callable``).
+
+    Args:
+        module: The already-loaded sidecar module.
+        name: The top-level symbol to extract (``"transform"`` / ``"outflow"``
+            / ``"inflow"``).
+        required: Raise ``ValueError`` when the symbol is missing.  When
+            ``False``, returns ``None`` for missing.
+        param_label: Human-readable parameter name used in arity-mismatch
+            errors (``"instances"`` / ``"state"``) so the message matches the
+            domain of the caller.
+        source_path: The user's sidecar path; included in error messages so
+            failures point at the offending file.
+        arity: Expected number of positional parameters (default 1).
+
+    Returns:
+        The callable on success, ``None`` when ``required=False`` and the
+        symbol is absent.
+
+    Raises:
+        ValueError: For missing-and-required, non-callable target, or
+            wrong arity.
+    """
+    fn = getattr(module, name, None)
+    if fn is None:
+        if required:
+            raise ValueError(
+                f"[Incorporator] outflow file must define a top-level {name}(state) function: {source_path}"
+                if name == "outflow"
+                else f"[Incorporator] sidecar file must define a top-level {name}() function: {source_path}"
+            )
+        return None
+    if not callable(fn):
+        raise ValueError(f"[Incorporator] sidecar file's top-level {name!r} attribute must be callable: {source_path}")
+    sig = _inspect.signature(fn)
+    params = list(sig.parameters)
+    if len(params) != arity:
+        raise ValueError(
+            f"[Incorporator] {name}() must accept exactly {arity} parameter ({param_label}), "
+            f"got {len(params)}: {params}"
+        )
+    return fn  # type: ignore[no-any-return]
+
+
 def apply_inflow_resolution(
     inflow: Union[str, Path],
     conv_dict: Optional[Dict[str, Any]],
@@ -173,74 +234,14 @@ def apply_code_transform(
         ValueError: If ``transform`` is defined but takes the wrong number
             of parameters.
     """
-    code_path = Path(outflow).resolve()
-    if not code_path.exists():
-        raise FileNotFoundError(f"[Incorporator] outflow file not found: {code_path}")
-
-    spec = importlib.util.spec_from_file_location("_inc_code_transform", code_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"[Incorporator] Cannot load module spec from: {code_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    transform_fn = getattr(module, "transform", None)
+    module = load_user_module(outflow, name_hint="_inc_code_transform")
+    transform_fn = _extract_user_callable(
+        module, name="transform", required=False, param_label="instances", source_path=outflow
+    )
     if transform_fn is None:
         return instances
-
-    sig = _inspect.signature(transform_fn)
-    params = list(sig.parameters)
-    if len(params) != 1:
-        raise ValueError(
-            f"[Incorporator] transform() must accept exactly 1 parameter (instances), got {len(params)}: {params}"
-        )
-
     result = transform_fn(instances)
     return result if result is not None else instances
-
-
-def load_outflow_function(outflow: Union[str, Path]) -> Callable[[Any], Any]:
-    """Load a top-level ``outflow(state)`` function from a Python file.
-
-    Mirrors :func:`apply_code_transform`'s importlib pattern but for the
-    fjord engine — the file must define a function named ``outflow`` that
-    accepts exactly one parameter (the state dict mapping class names to
-    ``IncorporatorList`` snapshots) and returns a ``list[dict]`` (or a
-    single ``dict``, which fjord auto-wraps).  The returned rows are fed
-    into the dynamic-schema-inference path the same way ``incorp()``
-    treats parsed payloads.
-
-    Returns:
-        The loaded callable.
-
-    Raises:
-        FileNotFoundError: ``outflow`` does not exist.
-        ImportError: The file cannot be loaded as a Python module.
-        ValueError: ``outflow`` is missing or has the wrong arity.
-    """
-    code_path = Path(outflow).resolve()
-    if not code_path.exists():
-        raise FileNotFoundError(f"[Incorporator] outflow file not found: {code_path}")
-
-    spec = importlib.util.spec_from_file_location("_inc_fjord_outflow", code_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"[Incorporator] Cannot load module spec from: {code_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    outflow_fn = getattr(module, "outflow", None)
-    if outflow_fn is None:
-        raise ValueError(f"[Incorporator] outflow file must define a top-level outflow(state) function: {code_path}")
-
-    sig = _inspect.signature(outflow_fn)
-    params = list(sig.parameters)
-    if len(params) != 1:
-        raise ValueError(
-            f"[Incorporator] outflow() must accept exactly 1 parameter (state), got {len(params)}: {params}"
-        )
-
-    return outflow_fn  # type: ignore[no-any-return]
 
 
 def load_outflow_module(outflow: Union[str, Path]) -> Tuple[Callable[[Any], Any], ModuleType]:
@@ -252,9 +253,10 @@ def load_outflow_module(outflow: Union[str, Path]) -> Tuple[Callable[[Any], Any]
     the derived class instead of building one via
     :func:`infer_dynamic_schema`.
 
-    Reuses :func:`load_user_module`'s ``sys.modules`` cache so calling
-    this AND :func:`load_outflow_function` on the same path costs one
-    file-read total.
+    Reuses :func:`load_user_module`'s ``sys.modules`` cache so repeated
+    loads of the same path cost one file-read total — and the arity check
+    delegates to :func:`_extract_user_callable` so every sidecar loader in
+    this module shares one source of truth for the error message.
 
     Raises:
         FileNotFoundError: ``outflow`` does not exist.
@@ -263,19 +265,9 @@ def load_outflow_module(outflow: Union[str, Path]) -> Tuple[Callable[[Any], Any]
             function or it has the wrong arity.
     """
     module = load_user_module(outflow, name_hint="_inc_fjord_outflow")
-
-    outflow_fn = getattr(module, "outflow", None)
-    if outflow_fn is None:
-        raise ValueError(f"[Incorporator] outflow file must define a top-level outflow(state) function: {outflow}")
-
-    sig = _inspect.signature(outflow_fn)
-    params = list(sig.parameters)
-    if len(params) != 1:
-        raise ValueError(
-            f"[Incorporator] outflow() must accept exactly 1 parameter (state), got {len(params)}: {params}"
-        )
-
-    return outflow_fn, module
+    outflow_fn = _extract_user_callable(module, name="outflow", required=True, param_label="state", source_path=outflow)
+    # ``required=True`` guarantees a non-None return; mypy needs the cast.
+    return cast(Callable[[Any], Any], outflow_fn), module
 
 
 def load_inflow_callable(inflow: Union[str, Path]) -> Optional[Callable[[Any], Any]]:
@@ -304,21 +296,7 @@ def load_inflow_callable(inflow: Union[str, Path]) -> Optional[Callable[[Any], A
         ValueError: ``inflow`` is defined but has the wrong arity.
     """
     module = load_user_module(inflow, name_hint="_inc_fjord_inflow")
-    inflow_fn = getattr(module, "inflow", None)
-    if inflow_fn is None:
-        return None
-
-    if not callable(inflow_fn):
-        raise ValueError(f"[Incorporator] inflow file's top-level 'inflow' attribute must be callable: {inflow}")
-
-    sig = _inspect.signature(inflow_fn)
-    params = list(sig.parameters)
-    if len(params) != 1:
-        raise ValueError(
-            f"[Incorporator] inflow() must accept exactly 1 parameter (state), got {len(params)}: {params}"
-        )
-
-    return inflow_fn  # type: ignore[no-any-return]
+    return _extract_user_callable(module, name="inflow", required=False, param_label="state", source_path=inflow)
 
 
 def pascal_case_from_stem(outflow: Union[str, Path]) -> str:

@@ -13,7 +13,7 @@ Validation is intentionally **structural**, not behavioural:
   fjord is "load and resolve classes anyway"; running it here surfaces
   ImportErrors at validate-time instead of pipeline-startup-time).
 - For ``fjord`` and ``tideweaver`` we confirm the ``outflow(state)`` function
-  is defined with the right arity using ``usercode.load_outflow_function``.
+  is defined with the right arity using ``usercode.load_outflow_module``.
 
 The three configs are auto-detected by their distinctive top-level keys —
 the developer can override with ``--type stream|fjord|tideweaver``.
@@ -206,13 +206,14 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
     # Reload via importlib for symbol access (cheap — same module spec).
     module = _import_module(outflow_path)
 
-    # outflow() arity check via usercode.load_outflow_function — it already
+    # outflow() arity check via usercode.load_outflow_module — it already
     # raises with the right diagnostic if the function is missing or has the
-    # wrong signature. We swallow the ValueError into the report.
-    from ..usercode import load_outflow_function
+    # wrong signature.  We discard the loaded module and just surface the
+    # ValueError into the report.
+    from ..usercode import load_outflow_module
 
     try:
-        load_outflow_function(outflow_path)
+        load_outflow_module(outflow_path)
     except (FileNotFoundError, ImportError, ValueError) as exc:
         errors.append(str(exc))
 
@@ -252,7 +253,7 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
     cycles, and imports the outflow / inflow sidecars so user-code
     ImportErrors surface here.  For every Fjord current the resolved
     outflow path is checked for an ``outflow(state)`` callable of arity 1
-    (reuses :func:`incorporator.usercode.load_outflow_function`).
+    (reuses :func:`incorporator.usercode.load_outflow_module`).
     """
     errors: List[str] = []
 
@@ -433,10 +434,10 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
                 "is set; fjord-flush ticks need an outflow(state) sidecar."
             )
         elif outflow_path.is_file() and outflow_module is not None:
-            from ..usercode import load_outflow_function
+            from ..usercode import load_outflow_module
 
             try:
-                load_outflow_function(outflow_path)
+                load_outflow_module(outflow_path)
             except (FileNotFoundError, ImportError, ValueError) as exc:
                 errors.append(str(exc))
 
