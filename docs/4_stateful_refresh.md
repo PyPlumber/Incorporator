@@ -2,6 +2,9 @@
 
 # 🔄 Stateful Refresh: Keeping Binance Tickers Live
 
+**Prerequisites:** [Tutorial 1](./1_first_steps.md) (`incorp()`, `test()`, `inc_dict`),
+[Tutorial 3](./3_parent_child_drilling.md) (two-registries mental model).
+
 `incorp()` builds an object graph.  `refresh()` keeps it **synchronised
 with the source** without you having to re-pass `inc_code`, `inc_url`,
 or any of the other identity-mapping kwargs.
@@ -206,6 +209,23 @@ Transient HTTP errors are handled by the same Tenacity retry policy
 `incorp()` uses; permanent failures surface via
 `refreshed.failed_sources` for DLQ-style retry workflows (see the
 [Production Debugging](./debugging.md) reference).
+
+---
+
+## Where to Next
+
+The next tutorial wraps `refresh()` in a daemon — and that's where
+you'll learn the `stateful_polling` choice:
+
+* **`stateful_polling=True`** keeps doing what we did in this tutorial:
+  one live registry, refreshed in place every N seconds.  This is the
+  mark-to-market dashboard / portfolio NAV / slow-indicator pattern.
+* **`stateful_polling=False`** (the default) turns `stream()` into a
+  paginator-driven O(1) ingestion loop for bulk data that doesn't fit
+  in memory — historical backfills, warehouse seeds, multi-page pulls.
+
+Same verb (`stream()`), two engines.  Tutorial 5 walks both modes
+back-to-back with a decision matrix at the close.
 
 ---
 
