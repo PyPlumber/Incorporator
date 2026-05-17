@@ -55,18 +55,21 @@ def _redact(text: str) -> str:
 
 
 def _route_wave_to_log(cls: Type[Any], wave: "Wave") -> None:
-    """Adapter shared by :meth:`LoggedIncorporator.stream` and ``fjord``.
+    """Route a single Wave to the appropriate log level based on its outcome.
 
-    - Routes waves with ``failed_sources`` to ``error.log``.
-    - Routes waves with ``rows_processed > 0`` (and no failures) to ``info``.
+    Shared adapter used by :meth:`LoggedIncorporator.stream` and ``fjord``. The
+    routing rules:
+
+    - Waves with ``failed_sources`` → ``error.log``.
+    - Successful waves with ``rows_processed > 0`` → ``info``.
     - Zero-row, zero-failure waves are skipped (noise).
-    - Attaches the structured ``wave`` dump as a record extra so
-      :class:`JSONFormatter` writes it as a top-level JSON key alongside
-      ``meta`` — :meth:`LoggingMixin.get_error` callers can read
-      ``record["wave"]`` directly.
-    - Applies :func:`_redact` to the human-readable message *and* the
-      ``failed_sources`` list inside the dumped wave. The ``Wave``
-      yielded back to the caller is untouched.
+
+    Attaches the structured ``wave`` dump as a record extra so
+    :class:`JSONFormatter` writes it as a top-level JSON key alongside ``meta``;
+    :meth:`LoggingMixin.get_error` callers can read ``record["wave"]`` directly.
+    Applies :func:`_redact` to the human-readable message *and* the
+    ``failed_sources`` list inside the dumped wave. The ``Wave`` yielded back to
+    the caller is untouched.
     """
     dump = wave.model_dump(mode="json")
     dump["failed_sources"] = [_redact(s) for s in dump.get("failed_sources", [])]

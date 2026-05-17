@@ -56,13 +56,19 @@ async def _run_chunking_engine(
     poll_interval: Optional[float],
     paginator: Any,
 ) -> AsyncGenerator[Wave, None]:
-    """ENGINE 1 — O(1) Chunking (Sequential).
+    """Stream a paginated source one chunk at a time, with flat memory.
 
     Loops over paginator-driven or single-shot ``incorp()`` calls, calling
-    ``_enrich_and_load`` per chunk and yielding one ``Wave`` per chunk.
-    Releases each dataset from memory immediately after yielding so RSS stays
-    flat regardless of total data volume.  Sleeps ``poll_interval`` between
-    full passes when continuous polling is requested.
+    ``_enrich_and_load`` per chunk. Releases each dataset from memory immediately
+    after yielding so RSS stays flat regardless of total data volume. Sleeps
+    ``poll_interval`` between full passes when continuous polling is requested.
+
+    This is the engine behind ``stream(stateful_polling=False)`` — the right shape
+    for bulk drains of paginated sources, historical backfills, and warehouse seeds
+    where each chunk is independent of the next.
+
+    Yields:
+        Wave: one per chunk, success or failure.
     """
     # Pre-flight: monolithic export targets are incompatible with paginated
     # chunked streaming (every chunk would clobber the prior).  Fail loud

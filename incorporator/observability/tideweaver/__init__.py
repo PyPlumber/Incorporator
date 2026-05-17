@@ -17,12 +17,12 @@ The vocabulary is deliberately small:
 * :class:`~incorporator.Wave` — already exists; one emit from a stream call
   or a fjord flush.  Unmodified by this module.
 
-A "fjord flush" is the tick unit of a :class:`Fjord` current: snapshot the
-upstream currents' registries, run the user-supplied ``outflow(state)``
-function, build the dynamic output class, export.  It is NOT a call to
-``cls.fjord()`` (which is a long-running daemon ill-suited to per-interval
-ticking).  Stream source ingestion is owned by the upstream :class:`Stream`
-currents in the graph.
+A "fjord flush" is the scheduling primitive of a :class:`Fjord` current:
+snapshot the upstream currents' registries, run the user-supplied
+``outflow(state)`` function, build the dynamic output class, export.  It is
+NOT a call to ``cls.fjord()`` (which is a long-running daemon ill-suited to
+per-interval ticking).  Stream source ingestion is owned by the upstream
+:class:`Stream` currents in the graph.
 """
 
 from .current import Current, Export, Fjord, Stream
