@@ -217,6 +217,10 @@ Transient HTTP errors are handled by the same Tenacity retry policy
   daemon form of `refresh()` on a cadence.
 * **[Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md)** —
   combine refreshes from CoinGecko + Binance into a live spread metric.
+* **[Tutorial 7 — Tideweaver](./7_tideweaver.md)** — when you need
+  multiple `refresh()` sources on independent cadences inside a single
+  time window, Tideweaver's `Stream` currents automate what you'd
+  otherwise wire by hand.
 * **[Production Debugging](./debugging.md)** — what to do when
   `failed_sources` is non-empty after a refresh.
 * **[Library reference](./library_reference.md)** — full method

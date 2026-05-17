@@ -222,7 +222,19 @@ graceful shutdown), see [the deployment guide](./deployment.md).
 | Periodic fetch + export of a single source as a daemon | `stream()` |
 | Multi-source fusion with a custom `outflow()` join | [`fjord()`](./6_multi_source_fjord.md) |
 
-See [`streaming_and_pagination.md`](./streaming_and_pagination.md) for
-paginator integration (handing `stream()` an `inc_page=` paginator for
-O(1) chunked ingestion) and the
-[Library reference](./library_reference.md) for the full kwarg signature.
+---
+
+## See Also
+
+* **[Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md)** — the
+  one-shot `refresh()` that `stream()` wraps in a daemon.
+* **[Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md)** —
+  `fjord()` for fusing N concurrent sources.
+* **[Tutorial 7 — Tideweaver](./7_tideweaver.md)** — coordinate multiple
+  `stream()` pipelines on independent cadences with dependency gating
+  inside a bounded time window.
+* **[Streaming & Pagination Deep Dive](./streaming_and_pagination.md)** —
+  paginator integration (handing `stream()` an `inc_page=` paginator for
+  O(1) chunked ingestion).
+* **[Library reference](./library_reference.md)** — full `stream()`
+  kwarg signature.

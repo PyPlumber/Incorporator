@@ -401,6 +401,10 @@ function, the dynamic output class comes from the filename stem.
 * **[Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md)** —
   single-source equivalent of fjord; reach for it when you only need
   one feed.
+* **[Tutorial 7 — Tideweaver](./7_tideweaver.md)** — when fjord sources
+  need independent intervals *and* dependency gating within a bounded
+  window, Tideweaver replaces the `fjord()` daemon with a graph of named
+  currents using the same `outflow(state)` pattern.
 * **[🏁 Appendix — NASCAR Fantasy: Graph-Map Fjord](./appendix/nascar_fantasy_fjord.md)** —
   advanced 6-source fjord with state-aware `inflow(state)`,
   multi-output `outflow(state)`, and sentinel-ID filtering via

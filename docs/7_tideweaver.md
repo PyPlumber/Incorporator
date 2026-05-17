@@ -17,7 +17,7 @@ Five names cover the whole layer:
 | `Tide` | One scheduler pass. Emitted as a log record per pass. |
 | `Wave` | Already exists. One emit from a stream or fjord flush. |
 
-A **fjord flush** is the tick unit of a `Fjord` current inside Tideweaver:
+A **fjord flush** is the scheduling primitive of a `Fjord` current inside Tideweaver:
 snapshot the upstream currents' registries, run the user-supplied
 `outflow(state)`, build the dynamic output class, export.  It is *not* a
 call to `cls.fjord()` (which is a long-running daemon).
@@ -210,3 +210,22 @@ incorporator tideweaver run watershed.json --json-output
 
 One NDJSON `Tide` record per scheduler pass lands on stdout; status banners
 go to stderr so log shippers can ingest stdout directly.
+
+---
+
+## See Also
+
+* **[Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md)** — the
+  `outflow(state)` pattern that `Fjord` currents reuse each flush. Read
+  Tutorial 6 first if the dynamic-output-class concept is unfamiliar.
+* **[CLI & Configuration §9](./cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration)** —
+  the `watershed.json` schema and the `tideweaver validate` / `run` CLI verbs.
+* **[Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md)** —
+  one-shot Parquet export at window close (different shape from per-tick
+  NDJSON append).
+* **[Appendix — Tideweaver vs. Prefect](./appendix/tideweaver_vs_prefect.md)** —
+  picking between in-process Tideweaver and an external cloud scheduler,
+  and the recommended Prefect-wraps-Tideweaver production pattern.
+* **[Library reference](./library_reference.md)** — every public class
+  (`Tideweaver`, `Watershed`, `Current` / `Stream` / `Fjord` / `Export`,
+  `Tide`) rendered from source docstrings.

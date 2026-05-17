@@ -523,6 +523,15 @@ update every 5s, pit reports every 30s, lap-summaries every minute) and
 you need a clean way to declare *"this current depends on a fresh wave
 from that one"* without writing your own `asyncio` glue.
 
+> **`--type` auto-detection:** `incorporator validate` identifies a
+> `watershed.json` automatically by the presence of top-level `"window"`
+> + `"shape"` keys — the same heuristic that distinguishes it from
+> `pipeline.json` (`"incorp_params"` → stream; `"outflow"` +
+> `"stream_params"` → fjord).  Pass `--type tideweaver` to force the
+> check if your config omits one of those sentinel keys (e.g. a
+> `"shape": "custom"` watershed with only explicit `edges`).  The same
+> heuristic backs `incorporator init --type ...` scaffolds.
+
 ### Two subcommands
 
 ```bash
