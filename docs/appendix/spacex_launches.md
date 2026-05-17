@@ -170,12 +170,18 @@ pattern Tutorial 5 walks through; nothing SpaceX-specific.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* **[Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md)** — the crypto
-  version of Pattern 1 (CoinGecko top-N → `/coins/{id}`).
-* **[Tutorial 5 — Streaming Daemons](../5_streaming_daemon.md)** — the crypto version
-  of Pattern 2 (Binance live ticker), plus the full stateful-vs-chunking decision
-  matrix.
-* **[Appendix — PokéAPI ETL](./pokeapi_etl.md)** — paginated HATEOAS drill, the third
-  variant of the parent-child pattern.
+| Goal | Read |
+|---|---|
+| See the crypto-spine version of parent-child drilling | [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md) |
+| See the crypto-spine version of the streaming daemon | [Tutorial 5 — Streaming Daemons](../5_streaming_daemon.md) |
+| Fuse SpaceX launches + rockets into one composite | [Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md) |
+| See another non-crypto domain in the curriculum | [Appendix — NASCAR Tideweaver](./nascar_tideweaver.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/spacex_launches.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

@@ -120,13 +120,18 @@ next deployment.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* **[Tutorial 7 — Tideweaver](../7_tideweaver.md)** — the
-  in-window orchestration walk-through.
-* **[Deployment Guide](../deployment.md)** — Docker, systemd,
-  Prefect, and Kubernetes recipes for shipping a Tideweaver
-  pipeline.
-* **[Appendix — Parquet Snapshots in a Tideweaver Window](./tideweaver_parquet_snapshots.md)** —
-  the right place to land columnar artifacts in the
-  Prefect-wraps-Tideweaver pattern above.
+| Goal | Read |
+|---|---|
+| Master the Tideweaver orchestrator first | [Tutorial 7 — Tideweaver](../7_tideweaver.md) |
+| Ship pipelines with Docker + secrets | [Deployment Guide](../deployment.md) |
+| Land columnar artifacts in the hybrid pattern | [Appendix — Parquet Snapshots in a Tideweaver Window](./tideweaver_parquet_snapshots.md) |
+| See the same diamond shape against a non-crypto domain | [Appendix — NASCAR Tideweaver](./nascar_tideweaver.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/tideweaver_vs_prefect.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

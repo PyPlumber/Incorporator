@@ -186,4 +186,22 @@ incorporator validate pipeline.json
 incorporator fjord pipeline.json
 ```
 
-`audit_jimmy.py` defines the `Invoice` and `NHTSASpec` classes, and the `outflow(state)` function that issues the bulk POST with `join_all(";")`, then reconciles each invoice VIN against the federal registry in O(1). See [`examples/fjord_code/outflow_example.py`](../examples/fjord_code/outflow_example.py) for the pattern and [the CLI guide](./cli_and_configuration.md) for the full schema.
+`audit_jimmy.py` defines the `Invoice` and `NHTSASpec` classes, and the `outflow(state)` function that issues the bulk POST with `join_all(";")`, then reconciles each invoice VIN against the federal registry in O(1). See [`examples/fjord_code/outflow_example.py`](../../examples/fjord_code/outflow_example.py) for the pattern and [the CLI guide](../cli_and_configuration.md) for the full schema.
+
+---
+
+## Where to Go Next
+
+| Goal | Read |
+|---|---|
+| See the canonical parent-child intro | [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md) |
+| Fuse the audit output into a multi-source pipeline | [Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md) |
+| Stream a giant XML feed with chunking | [Streaming & Pagination Deep Dive](../streaming_and_pagination.md) |
+| Ship the bulk-POST workflow as a daemon | [Tutorial 5 — Streaming Daemons](../5_streaming_daemon.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/xml_post_audit.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

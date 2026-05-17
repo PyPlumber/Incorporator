@@ -175,15 +175,19 @@ Run from the repo root so the relative `inc_file` / `outflow` paths resolve.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* **[Tutorial 7 — Tideweaver](../7_tideweaver.md)** — the crypto version of this
-  diamond shape (3 exchanges → 1 best-market arb signal).
-* **[Appendix — NASCAR Fantasy Fjord](./nascar_fantasy_fjord.md)** — non-Tideweaver
-  fjord pattern (7 sources, 3 outputs, state-aware `inflow(state)`).  Reach for
-  this when you don't need orchestration but want the multi-output fjord shape.
-* **[Appendix — Parquet Snapshots in a Tideweaver Window](./tideweaver_parquet_snapshots.md)** —
-  how to land columnar artifacts at the close of any Tideweaver run, including this one.
-* **[Appendix — Tideweaver vs. Prefect](./tideweaver_vs_prefect.md)** — picking
-  between in-process Tideweaver and cloud schedulers; the race-day pattern (calendar
-  schedule wraps a per-race Tideweaver window) is documented there.
+| Goal | Read |
+|---|---|
+| See the crypto-spine version of the same diamond | [Tutorial 7 — Tideweaver](../7_tideweaver.md) |
+| Run the non-Tideweaver fjord variant against NASCAR data | [Appendix — NASCAR Fantasy Fjord](./nascar_fantasy_fjord.md) |
+| Land columnar artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](./tideweaver_parquet_snapshots.md) |
+| Pick between in-process Tideweaver and cloud schedulers | [Appendix — Tideweaver vs. Prefect](./tideweaver_vs_prefect.md) |
+| Configure this watershed for the CLI | [CLI & Configuration §9](../cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/nascar_tideweaver.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

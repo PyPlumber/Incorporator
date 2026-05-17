@@ -117,14 +117,18 @@ downstream is Athena / DuckDB / Spark and you want column statistics.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* **[Tutorial 7 — Tideweaver](../7_tideweaver.md)** — the full
-  walk-through of `Watershed`, `Current`, `Tide`, and the four
-  shape helpers.
-* **[Formats & Compression Cheat Sheet](../formats_and_compression.md)** —
-  every format's kwargs, compression rules, and append semantics
-  in one table.
-* **[Appendix — Tideweaver vs. Prefect](./tideweaver_vs_prefect.md)** —
-  when to keep the snapshot inside Tideweaver vs. push it to an
-  external scheduler.
+| Goal | Read |
+|---|---|
+| Master the Tideweaver orchestrator patterns | [Tutorial 7 — Tideweaver](../7_tideweaver.md) |
+| Pick append-friendly vs columnar formats | [Formats & Compression](../formats_and_compression.md) |
+| See the data-lake round-trip patterns this builds on | [Appendix — Data Lake Pivot](./data_lake_pivot.md) |
+| Run the same Tideweaver against a different domain | [Appendix — NASCAR Tideweaver](./nascar_tideweaver.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/tideweaver_parquet_snapshots.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

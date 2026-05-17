@@ -141,4 +141,22 @@ incorporator stream pipeline.json
 * `users.parquet` → Parquet *(requires `pip install incorporator[parquet]`)*
 * `users.ndjson` / `.csv` / `.xlsx` → all native
 
-For a Dockerised daemon that polls + refreshes on a schedule, see [`examples/pipeline_daemon.json`](../examples/pipeline_daemon.json) and [the deployment guide](./deployment.md).
+For a Dockerised daemon that polls + refreshes on a schedule, see [`examples/pipeline_daemon.json`](../../examples/pipeline_daemon.json) and [the deployment guide](../deployment.md).
+
+---
+
+## Where to Go Next
+
+| Goal | Read |
+|---|---|
+| Build a per-tick snapshot warehouse | [Tutorial 2 — Universal Formats](../2_universal_formats.md) |
+| Land Parquet artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](./tideweaver_parquet_snapshots.md) |
+| Stream massive files through chunking + paginators | [Streaming & Pagination Deep Dive](../streaming_and_pagination.md) |
+| See the format kwarg reference | [Formats & Compression](../formats_and_compression.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/data_lake_pivot.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

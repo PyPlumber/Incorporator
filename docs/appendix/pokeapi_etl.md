@@ -199,4 +199,22 @@ incorporator stream pipeline.json
 
 The token resolver imports `inflow.py` at config-load time, sees `calculate_bst` in its public symbols, and resolves the `calc(...)` string to a real Python callable before the engine runs. The reducer runs **before** format dispatch, so this exact pipeline.json works for any export format — switch the extension to `.csv`, `.parquet`, `.avro`, etc., and the integer still lands in the cell.
 
-> **Tip:** for paginators and pre-built converter instances, use the cleaner `@name` syntax. Define `next_page = NextUrlPaginator("next")` in `inflow.py`, then reference it as `"inc_page": "@next_page"` in pipeline.json — zero JSON escape characters. See [the CLI guide](./cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full pattern.
+> **Tip:** for paginators and pre-built converter instances, use the cleaner `@name` syntax. Define `next_page = NextUrlPaginator("next")` in `inflow.py`, then reference it as `"inc_page": "@next_page"` in pipeline.json — zero JSON escape characters. See [the CLI guide](../cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full pattern.
+
+---
+
+## Where to Go Next
+
+| Goal | Read |
+|---|---|
+| See the canonical parent-child intro (no calc layer) | [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md) |
+| Apply `calc()` reductions in a fjord outflow | [Appendix — NASCAR Fantasy Fjord](./nascar_fantasy_fjord.md) |
+| Stream paginated APIs with custom paginators | [Streaming & Pagination Deep Dive](../streaming_and_pagination.md) |
+| Land the reduced output in a warehouse | [Tutorial 2 — Universal Formats](../2_universal_formats.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/pokeapi_etl.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

@@ -675,21 +675,19 @@ apply if you ever swap one of the sources for a paid feed.
 
 ---
 
-## 📚 See Also
+## Where to Go Next
 
-* **[Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md)** —
-  the simpler two-source crypto-spread fjord that introduces the
-  basic vocabulary.  Read it first if you haven't.
-* **[Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md)** —
-  HATEOAS pattern (parent records → child URLs).  Often pairs with
-  the graph-map pattern above when a source's foreign key is a URL
-  rather than an ID.
-* **[Crypto Graph Mapping (static)](./crypto_graph_mapping.md)** —
-  the pure-Python version of the same join pattern, without the
-  daemon scaffolding.  Reach for it when you need a one-shot ETL
-  rather than a long-running fjord.
-* **[CLI & Configuration Guide](../cli_and_configuration.md)** —
-  the same pipeline expressed as `pipeline.json` and run from the
-  CLI.  Multi-output `export_params` shape works in JSON too.
-* **[Library reference](../library_reference.md)** —
-  full signatures for `fjord()`, `link_to()`, `inflow(state)`.
+| Goal | Read |
+|---|---|
+| Master the two-source fjord pattern first | [Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md) |
+| Drill parent records before fusing | [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md) |
+| Orchestrate the same multi-source join in a windowed graph | [Tutorial 7 — Tideweaver](../7_tideweaver.md) |
+| Run the diamond shape across NASCAR race telemetry | [Appendix — NASCAR Tideweaver](./nascar_tideweaver.md) |
+| Configure this pipeline as a CLI fjord run | [CLI & Configuration Guide](../cli_and_configuration.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/nascar_fantasy_fjord.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

@@ -181,4 +181,22 @@ incorporator validate pipeline.json
 incorporator fjord pipeline.json
 ```
 
+---
+
+## Where to Go Next
+
+| Goal | Read |
+|---|---|
+| Drill parent records into per-record children | [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md) |
+| Run the same multi-source join as a live daemon | [Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md) |
+| Coordinate the joined sources in a windowed graph | [Tutorial 7 — Tideweaver](../7_tideweaver.md) |
+| Configure the join from JSON for the CLI | [CLI & Configuration Guide](../cli_and_configuration.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/crypto_graph_mapping.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)
+
 The `outflow.py` defines `BinanceBook(Incorporator)`, `CryptoAsset(Incorporator)`, and the `outflow(state)` function that runs the `link_to` lookups across the two in-memory registries. With the intervals above, every 60 s the sources refresh, and every 120 s the fused dataset is flushed to disk. See [`examples/fjord_code/outflow_example.py`](../examples/fjord_code/outflow_example.py) for the pattern and [the CLI guide](./cli_and_configuration.md) for the full schema.
