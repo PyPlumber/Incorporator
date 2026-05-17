@@ -1,4 +1,4 @@
-***
+﻿***
 
 > 📎 **Appendix — Same diamond, different domain.**  The crypto-spine
 > Tutorial 7 builds a multi-exchange arbitrage scanner via

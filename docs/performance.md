@@ -1,4 +1,4 @@
-# ⚡ Performance
+﻿# ⚡ Performance
 
 This page answers two questions:
 

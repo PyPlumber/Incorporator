@@ -1,4 +1,4 @@
-# Streaming & Pagination (O(1) Memory)
+﻿# Streaming & Pagination (O(1) Memory)
 
 When dealing with massive datasets (10M+ rows) or heavily paginated REST APIs, loading everything into RAM at once will cause your server to crash with an Out-Of-Memory (OOM) error.
 

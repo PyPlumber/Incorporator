@@ -1,4 +1,4 @@
-***
+﻿***
 
 # 🔄 Stateful Refresh: Keeping Binance Tickers Live
 

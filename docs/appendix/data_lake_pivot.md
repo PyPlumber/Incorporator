@@ -1,4 +1,4 @@
-***
+﻿***
 
 > 📎 **Appendix — JSON ↔ Avro / SQLite round-trip walkthrough.**
 > Long-form reference for the format-agnostic export pattern; see

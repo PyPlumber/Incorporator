@@ -1,4 +1,4 @@
-# CLI & Pipeline Configuration
+﻿# CLI & Pipeline Configuration
 
 The Incorporator CLI transforms the framework from a lightweight micro-client into an **Autonomous Pipeline Daemon**. 
 

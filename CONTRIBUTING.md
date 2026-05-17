@@ -1,4 +1,4 @@
-# Contributing to Incorporator
+﻿# Contributing to Incorporator
 
 Thanks for your interest in improving Incorporator. This document covers
 the workflow, conventions, and quality bar.

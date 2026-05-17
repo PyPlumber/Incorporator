@@ -1,4 +1,4 @@
-# 📦 Installation & Environment Setup
+﻿# 📦 Installation & Environment Setup
 
 Incorporator is designed with a **"Zero-Bloat"** philosophy. The base package relies purely on the Python Standard Library, Pydantic, and HTTPX. 
 

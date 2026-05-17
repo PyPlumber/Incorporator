@@ -1,4 +1,4 @@
-# 📖 Library Reference
+﻿# 📖 Library Reference
 
 > **Why not "API Reference"?** Incorporator is a client-side framework
 > that *consumes* HTTP APIs — so "API Reference" was semantically

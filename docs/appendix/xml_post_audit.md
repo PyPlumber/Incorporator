@@ -1,4 +1,4 @@
-***
+﻿***
 
 > 📎 **Appendix — XML ingestion + declarative bulk POST + fraud
 > audit.**  XML parsing, state-carrier graph drilling, and a

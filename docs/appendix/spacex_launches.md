@@ -1,4 +1,4 @@
-***
+﻿***
 
 > 📎 **Appendix — Same patterns, different domain.**  The crypto-spine
 > tutorials (T3 and T5) demonstrate parent-child drilling and the

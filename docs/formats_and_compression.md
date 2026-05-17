@@ -1,4 +1,4 @@
-***
+﻿***
 
 # 🗄️ Formats & Compression Cheat Sheet
 

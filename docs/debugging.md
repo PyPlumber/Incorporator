@@ -1,4 +1,4 @@
-***
+﻿***
 
 > 📑 **Reference** — production-debugging deep dive. Not a numbered
 > tutorial; reach for this when you need durable error logs and DLQ

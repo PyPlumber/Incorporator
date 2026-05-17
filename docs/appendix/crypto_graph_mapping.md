@@ -1,4 +1,4 @@
-***
+﻿***
 
 > 📎 **Appendix — Static graph join.**  `link_to`-based one-shot
 > in-memory join across CoinGecko + Binance.  See

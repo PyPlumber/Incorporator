@@ -1,4 +1,4 @@
-***
+﻿***
 
 > 📎 **Advanced fjord pattern.**  Builds on Tutorial 6 (the two-source
 > crypto-spread fjord).  Read that one first if you haven't — this

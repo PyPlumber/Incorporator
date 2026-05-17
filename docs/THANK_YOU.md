@@ -1,4 +1,4 @@
-# 💖 Acknowledgements & Open Source Thanks
+﻿# 💖 Acknowledgements & Open Source Thanks
 
 **Incorporator** was built on the philosophy of "Zero-Bloat" and maximum leverage. We did not reinvent the wheel; instead, we orchestrated some of the finest, most battle-tested open-source libraries in the Python ecosystem into a single unified gateway.
 

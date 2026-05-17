@@ -1,4 +1,4 @@
-***
+﻿***
 
 > 📎 **Appendix — `calc()` reductions over a HATEOAS drill.**
 > Sums and aggregations across a parent-child fan-out (PokéAPI).

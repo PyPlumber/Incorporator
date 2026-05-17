@@ -1,4 +1,4 @@
-***
+﻿***
 
 > 📎 **Appendix — Parquet snapshots inside a Tideweaver window.**
 > NDJSON / CSV / SQLite are append-friendly per tick; columnar

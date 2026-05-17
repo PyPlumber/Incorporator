@@ -1,4 +1,4 @@
-***
+﻿***
 
 > 📎 **Appendix — Picking the right orchestrator.**  Tideweaver is
 > an in-process, window-bounded scheduler.  Prefect (and Dagster,

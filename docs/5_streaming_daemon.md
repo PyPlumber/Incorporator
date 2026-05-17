@@ -1,4 +1,4 @@
-***
+﻿***
 
 # 🌊 Streaming Daemon: Two Polling Modes for Two Real Use Cases
 
