@@ -1,0 +1,34 @@
+# .editorconfig — https://editorconfig.org/
+#
+# Pin the project to UTF-8 so editors render multi-byte glyphs (emoji,
+# em-dashes, smart quotes) correctly regardless of the OS default
+# encoding.  On Windows, PyCharm and other editors otherwise fall back
+# to cp1252 for files that don't carry a UTF-8 BOM, which mangles the
+# emoji icons in our markdown headers into null / box glyphs.
+#
+# PyCharm bundles the EditorConfig plugin; it picks these settings up
+# the first time the project is reopened after this file is added.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+# Markdown uses two trailing spaces to signal a line break — keep them.
+trim_trailing_whitespace = false
+
+[*.py]
+indent_style = space
+indent_size = 4
+max_line_length = 120
+
+[*.{json,yml,yaml,toml}]
+indent_style = space
+indent_size = 2
+
+[Makefile]
+indent_style = tab
