@@ -175,3 +175,81 @@ async def test_stream_outflow_without_stateful_polling_raises(tmp_path: Path) ->
     with pytest.raises(ValueError, match="stateful_polling=True"):
         async for _ in gen:
             pass  # pragma: no cover — generator should raise on first iteration
+
+
+@pytest.mark.asyncio
+async def test_stream_stateful_shim_wave_ops_remapped(
+    tmp_path: Path, stream_target_model: Type[LoggedIncorporator]
+) -> None:
+    """The stateful-stream shim hides fjord's per-class op-string suffixes.
+
+    Pre-collapse: stream(stateful_polling=True) used _run_stateful_engine
+    and emitted ``operation == "incorp"``.  Post-collapse: the same
+    surface routes through _run_fjord_engine which emits
+    ``"fjord_incorp:StreamTargetModel"``.  The shim must remap so the
+    documented Wave contract on stream() doesn't drift.
+    """
+    StreamTargetModel = stream_target_model
+    json_file = tmp_path / "live_data.json"
+    json_file.write_text(
+        json.dumps([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]),
+        encoding="utf-8",
+    )
+
+    waves: List[Wave] = []
+    async for wave in StreamTargetModel.stream(
+        incorp_params={"inc_file": str(json_file), "code_attr": "id"},
+        refresh_params=None,
+        stateful_polling=True,
+        poll_interval=None,
+    ):
+        waves.append(wave)
+
+    # Seed wave's operation must be the public-contract "incorp", not the
+    # per-class-suffixed "fjord_incorp:StreamTargetModel".
+    assert len(waves) >= 1
+    assert waves[0].operation == "incorp", (
+        f"shim must remap fjord op-strings back to stream's contract; "
+        f"got operation={waves[0].operation!r}"
+    )
+    assert not any(w.operation.startswith("fjord_") for w in waves)
+    assert not any(":" in w.operation for w in waves)
+
+
+@pytest.mark.asyncio
+async def test_stream_stateful_shim_preserves_class_identity(
+    tmp_path: Path, stream_target_model: Type[LoggedIncorporator]
+) -> None:
+    """Stateful streaming must keep ``cls.inc_dict`` populated with the seeded class.
+
+    Before the engine collapse, the stateful engine used ``cls`` directly
+    so the seeded instances lived in ``cls.inc_dict``.  After collapse,
+    the shim routes through fjord — the regression-vulnerable step is
+    flush() clearing inc_dict and re-instantiating from row dicts.  The
+    IncorporatorList pass-through fast path prevents that; this test
+    pins the contract.
+    """
+    StreamTargetModel = stream_target_model
+    json_file = tmp_path / "live_data.json"
+    json_file.write_text(
+        json.dumps([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]),
+        encoding="utf-8",
+    )
+
+    async for _wave in StreamTargetModel.stream(
+        incorp_params={"inc_file": str(json_file), "code_attr": "id"},
+        refresh_params=None,
+        stateful_polling=True,
+        poll_interval=None,
+    ):
+        # Seed produces an "incorp" wave after which the daemons would
+        # tick — but with poll_interval=None and refresh_params=None there
+        # are no daemons, so we exit after the single wave.
+        pass
+
+    # Original keys must be present in the registry — same class identity
+    # the user sees by name (StreamTargetModel.inc_dict[1]).
+    assert StreamTargetModel.inc_dict.get(1) is not None
+    assert StreamTargetModel.inc_dict.get(2) is not None
+    assert StreamTargetModel.inc_dict[1].name == "Alice"
+    assert StreamTargetModel.inc_dict[2].name == "Bob"

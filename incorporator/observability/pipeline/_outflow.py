@@ -17,6 +17,7 @@ import logging
 from types import ModuleType
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple, cast
 
+from ...list import IncorporatorList
 from ..logger import Wave  # re-export for callers
 from ._shared import _daemon_tick, _interruptible_sleep, _resolve_if_exists_for_export
 
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 def _normalise_outflow_return(
     result: Any,
     default_class_name: str,
-) -> Tuple[Dict[str, List[Dict[str, Any]]], bool]:
+) -> Tuple[Dict[str, List[Any]], bool]:
     """Coerce any ``outflow(state)`` return shape into ``{class_name: rows}``.
 
     Returns ``(grouped, is_multi_output)`` so the daemon can decide whether
@@ -37,7 +38,11 @@ def _normalise_outflow_return(
 
     Shapes:
       * ``list[dict]`` → ``{default_class_name: list}`` (legacy single-output)
+      * ``IncorporatorList`` → ``{default_class_name: list}`` (preserved
+        verbatim so :func:`flush` can detect the pass-through identity case)
       * ``dict`` of ``str → list[dict]`` → multi-output (one derived class per key)
+      * ``dict`` of ``str → IncorporatorList`` → multi-output, values preserved
+        verbatim for the pass-through fast path
       * ``dict`` of ``str → str`` (NOT list-valued) → ambiguous; treat as a
         single legacy row (wrap in list).  Backwards-compat for users who
         previously returned a single dict per tick.
@@ -46,6 +51,8 @@ def _normalise_outflow_return(
     if result is None:
         return {default_class_name: []}, False
     if isinstance(result, list):
+        # IncorporatorList is a subclass of list — keep it verbatim so the
+        # pass-through fast path in flush() can detect ``rows._model_class``.
         return {default_class_name: result}, False
     if isinstance(result, dict):
         # Empty dict in multi-output flavor → no derived classes, no waves.
@@ -54,8 +61,10 @@ def _normalise_outflow_return(
         # Heuristic: if EVERY value is a list, it's the multi-output shape.
         # Otherwise it's a single-row dict (current single-output behaviour).
         if all(isinstance(v, list) for v in result.values()):
-            # Type-narrow each value to list[dict] (defensive cast for mypy).
-            return {k: list(v) for k, v in result.items()}, True
+            # Preserve values verbatim — copying with ``list(v)`` would
+            # strip IncorporatorList's ``_model_class`` attribute and
+            # defeat the flush() pass-through fast path.
+            return cast(Dict[str, List[Any]], dict(result)), True
         return {default_class_name: [result]}, False
     # Anything else — fall back to wrapping in a list to match the legacy
     # "auto-coerce to list[dict]" contract.
@@ -146,8 +155,18 @@ async def flush(
             else:
                 derived_cls = cast(Any, infer_dynamic_schema(derived_name, rows, base_class))
 
-            derived_cls.inc_dict.clear()
-            instances = [derived_cls(**row) for row in rows]
+            # Pass-through fast path: when outflow returned the live
+            # IncorporatorList of this derived class, the instances are
+            # already in ``derived_cls.inc_dict`` — registered on __init__
+            # and mutated in place by _refresh_daemon.  Skip clear+rebuild
+            # so Python-object identity survives across waves (which is the
+            # whole point of stateful streaming) and we don't pay the
+            # allocation cost of materialising N new instances every tick.
+            if isinstance(rows, IncorporatorList) and getattr(rows, "_model_class", None) is derived_cls:
+                instances = list(rows)
+            else:
+                derived_cls.inc_dict.clear()
+                instances = [derived_cls(**row) for row in rows]
             derived_cls._fjord_snapshot = instances  # strong-ref keeps the WeakValueDictionary alive
 
             class_export = _resolve_export_params_for(derived_name, export_params, is_multi)

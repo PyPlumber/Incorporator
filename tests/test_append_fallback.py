@@ -156,22 +156,27 @@ async def test_enrich_and_load_monolithic_format_replaces() -> None:
 
 @pytest.mark.asyncio
 async def test_chunked_engine_rejects_paginated_monolithic_target() -> None:
-    """Paginated chunked + Parquet target → fail BEFORE running, not on chunk 2."""
-    from incorporator.observability.pipeline.chunked import _run_chunking_engine
+    """Paginated chunked + Parquet target → fail at call site, not on chunk 2.
 
-    cls = MagicMock()
-    cls.incorp = AsyncMock(return_value=[{"id": 1}])
+    Pre-collapse the guard fired from inside ``_run_chunking_engine`` (so the
+    traceback pointed at the async generator).  Post-collapse it lives at the
+    ``stream()`` entry point via ``assert_engine_supported`` — same error
+    message, friendlier traceback.  See ``tests/test_pipeline_dispatch.py``
+    for the full decision matrix.
+    """
+    from incorporator import Incorporator
+
+    class _StreamModel(Incorporator):
+        inc_code: Any = None
+
     paginator = MagicMock()
     paginator.is_exhausted = False
 
     with pytest.raises(IncorporatorFormatError, match="(?i)would lose data"):
-        async for _ in _run_chunking_engine(
-            cls=cls,
-            incorp_params={"inc_page": paginator},
+        async for _ in _StreamModel.stream(
+            incorp_params={"inc_url": "http://example.invalid", "inc_page": paginator},
             refresh_params=None,
             export_params={"file_path": "/tmp/out.parquet"},
-            poll_interval=None,
-            paginator=paginator,
         ):
             pass
 

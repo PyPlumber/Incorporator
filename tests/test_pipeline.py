@@ -18,7 +18,6 @@ from incorporator.observability.pipeline import (
     _refresh_daemon,
     _row_count,
     _run_chunking_engine,
-    _run_stateful_engine,
     run_pipeline,
 )
 
@@ -310,89 +309,7 @@ async def test_export_daemon_error_enqueues_failure_result() -> None:
 
 
 # ==========================================
-# 6. _run_stateful_engine
-# ==========================================
-
-
-@pytest.mark.asyncio
-async def test_run_stateful_engine_empty_dataset_exits_early() -> None:
-    """incorp() returning empty yields one error Wave then stops."""
-    cls = MagicMock()
-    cls.incorp = AsyncMock(return_value=[])
-
-    results = []
-    async for wave in _run_stateful_engine(
-        cls, incorp_params={}, refresh_params=None, export_params=None, r_interval=None, e_interval=None
-    ):
-        results.append(wave)
-
-    assert len(results) == 1
-    assert results[0].rows_processed == 0
-    assert results[0].failed_sources
-
-
-@pytest.mark.asyncio
-async def test_run_stateful_engine_no_daemons_emits_incorp_result() -> None:
-    """No refresh/export params → emit one incorp Wave and exit cleanly."""
-    cls = MagicMock()
-    cls.incorp = AsyncMock(return_value=[{"id": 1}, {"id": 2}])
-
-    results = []
-    async for wave in _run_stateful_engine(
-        cls, incorp_params={}, refresh_params=None, export_params=None, r_interval=None, e_interval=None
-    ):
-        results.append(wave)
-
-    assert len(results) == 1
-    assert results[0].operation == "incorp"
-    assert results[0].rows_processed == 2
-
-
-@pytest.mark.asyncio
-async def test_run_stateful_engine_with_refresh_daemon() -> None:
-    """refresh_params spawns the refresh daemon; its Wave is yielded."""
-    cls = MagicMock()
-    cls.incorp = AsyncMock(return_value=[{"id": 1}])
-    cls.refresh = AsyncMock(return_value=[{"id": 99}])
-
-    results = []
-    async for wave in _run_stateful_engine(
-        cls,
-        incorp_params={},
-        refresh_params={"new_url": "https://x"},
-        export_params=None,
-        r_interval=None,  # daemon runs once then exits
-        e_interval=None,
-    ):
-        results.append(wave)
-
-    assert any(a.operation == "refresh" for a in results)
-
-
-@pytest.mark.asyncio
-async def test_run_stateful_engine_with_export_daemon() -> None:
-    """export_params spawns the export daemon; its Wave is yielded."""
-    cls = MagicMock()
-    cls.incorp = AsyncMock(return_value=[{"id": 1}])
-    cls.export = AsyncMock()
-
-    results = []
-    async for wave in _run_stateful_engine(
-        cls,
-        incorp_params={},
-        refresh_params=None,
-        export_params={"file_path": "/tmp/out.json"},
-        r_interval=None,
-        e_interval=None,  # daemon runs once then exits
-    ):
-        results.append(wave)
-
-    assert any(a.operation == "export" for a in results)
-    cls.export.assert_awaited_once()
-
-
-# ==========================================
-# 7. _run_chunking_engine
+# 6. _run_chunking_engine
 # ==========================================
 
 
@@ -488,13 +405,13 @@ async def test_run_chunking_engine_paginator_reset_called_between_passes() -> No
 
 
 # ==========================================
-# 8. run_pipeline routing
+# 7. run_pipeline routing
 # ==========================================
 
 
 @pytest.mark.asyncio
 async def test_run_pipeline_routes_to_chunking_engine() -> None:
-    """stateful_polling=False routes through the O(1) chunking engine."""
+    """run_pipeline runs the O(1) chunking engine (stateful path now lives in stream())."""
     cls = MagicMock()
     cls.incorp = AsyncMock(return_value=[{"id": 1}])
 
@@ -505,7 +422,6 @@ async def test_run_pipeline_routes_to_chunking_engine() -> None:
         refresh_params=None,
         export_params=None,
         poll_interval=None,
-        stateful_polling=False,
     ):
         results.append(wave)
 
@@ -514,130 +430,12 @@ async def test_run_pipeline_routes_to_chunking_engine() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_pipeline_routes_to_stateful_engine() -> None:
-    """stateful_polling=True routes through the stateful polling engine."""
-    cls = MagicMock()
-    cls.incorp = AsyncMock(return_value=[])  # empty → early exit path
-
-    results = []
-    async for wave in run_pipeline(
-        cls,
-        incorp_params={},
-        refresh_params=None,
-        export_params=None,
-        poll_interval=None,
-        stateful_polling=True,
-    ):
-        results.append(wave)
-
-    assert len(results) == 1
-    assert results[0].rows_processed == 0  # empty-dataset early-exit Wave
-
-
-@pytest.mark.asyncio
-async def test_run_pipeline_refresh_interval_falls_back_to_poll_interval() -> None:
-    """refresh_interval=None cascades to poll_interval in the stateful engine.
-
-    Cascade contract: refresh_interval > poll_interval > module default
-    (DEFAULT_REFRESH_INTERVAL_SEC, currently 60 s).  This test pins the
-    middle step — poll_interval reaches the refresh daemon when
-    refresh_interval is None — by setting a tight poll cadence and
-    breaking after the first refresh wave fires.  Without the cascade
-    or the new module default the daemon could never tick at all.
-    """
-    cls = MagicMock()
-    cls.incorp = AsyncMock(return_value=[{"id": 1}])
-    cls.refresh = AsyncMock(return_value=[{"id": 2}])
-
-    results = []
-    async for wave in run_pipeline(
-        cls,
-        incorp_params={},
-        refresh_params={"new_url": "https://x"},
-        export_params=None,
-        poll_interval=0.01,                          # short poll → fast tick
-        stateful_polling=True,
-        refresh_interval=None,                       # cascades to poll_interval
-        export_interval=None,
-    ):
-        results.append(wave)
-        if any(a.operation == "refresh" for a in results):
-            break
-
-    assert any(a.operation == "refresh" for a in results)
-
-
-# Default-on / sentinel behaviour locks
-
-
-@pytest.mark.asyncio
-async def test_stateful_engine_refresh_params_empty_dict_spawns_daemon() -> None:
-    """Truthiness-fix regression: refresh_params={} must NOT skip the daemon.
-
-    Pre-fix: `if refresh_params:` treated {} as falsy → silent skip,
-    contradicting the documented "empty dict = run with defaults" contract.
-    Post-fix: `if refresh_params is not None:` correctly opts in.
-    """
-    cls = MagicMock()
-    cls.incorp = AsyncMock(return_value=[{"id": 1}])
-    cls.refresh = AsyncMock(return_value=[{"id": 2}])
-
-    from incorporator.observability.pipeline.stateful import _run_stateful_engine
-
-    results = []
-    async for wave in _run_stateful_engine(
-        cls=cls,
-        incorp_params={},
-        refresh_params={},                              # <-- empty, not None
-        export_params=None,
-        r_interval=0.01,
-        e_interval=None,
-    ):
-        results.append(wave)
-        if any(a.operation == "refresh" for a in results):
-            break
-
-    assert any(a.operation == "refresh" for a in results)
-
-
-@pytest.mark.asyncio
-async def test_stateful_engine_export_params_empty_dict_spawns_daemon(tmp_path: Any) -> None:
-    """Same truthiness-fix regression for export_params={}.
-
-    Pre-fix: stateful.py:66 used `if export_params:` (falsy {}) → silently
-    skipped.  Post-fix: `is not None` correctly opts in.
-    """
-    out_file = tmp_path / "out.ndjson"
-    cls = MagicMock()
-    cls.incorp = AsyncMock(return_value=[{"id": 1}])
-    cls.export = AsyncMock(return_value=None)
-
-    from incorporator.observability.pipeline.stateful import _run_stateful_engine
-
-    results = []
-    async for wave in _run_stateful_engine(
-        cls=cls,
-        incorp_params={},
-        refresh_params=None,                            # disable refresh daemon
-        export_params={"file_path": str(out_file)},     # <-- export with kwargs
-        r_interval=None,
-        e_interval=0.01,
-    ):
-        results.append(wave)
-        if any(a.operation == "export" for a in results):
-            break
-
-    assert any(a.operation == "export" for a in results)
-
-
-@pytest.mark.asyncio
 async def test_run_pipeline_no_intervals_uses_module_default() -> None:
     """Cascade end-of-line: when every interval kwarg is None, the module
-    default kicks in so the daemon ticks rather than exiting silently.
-
-    Pre-fix: refresh_interval=None + poll_interval=None → daemon broke
-    after one tick (_daemons.py:60-61).  Post-fix: DEFAULT_REFRESH_INTERVAL_SEC
-    keeps the daemon alive at a sane cadence (60 s).
+    default kicks in so the stateful shim (stream → fjord) ticks rather
+    than exiting silently.  Pre-fix: refresh_interval=None +
+    poll_interval=None → daemon broke after one tick.  Post-fix:
+    DEFAULT_REFRESH_INTERVAL_SEC (60 s) keeps it alive at a sane cadence.
     """
     from incorporator.observability.pipeline import DEFAULT_REFRESH_INTERVAL_SEC
 
