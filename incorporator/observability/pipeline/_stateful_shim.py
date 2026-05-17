@@ -26,9 +26,10 @@ importing ``Incorporator`` directly — keeps the import graph one-directional
 (``base.py → pipeline/`` never the reverse).
 """
 
+import re
 import time
 import types
-from typing import Any, AsyncGenerator, Dict, List, Optional, Type
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Type
 
 from ..logger import Wave
 from . import DEFAULT_EXPORT_INTERVAL_SEC, DEFAULT_REFRESH_INTERVAL_SEC
@@ -49,6 +50,7 @@ async def stream_stateful_via_fjord(
     refresh_interval: Optional[float],
     export_interval: Optional[float],
     outflow_user_module: Optional[Any],
+    inflow_callable: Optional[Callable[[Dict[str, Any]], Any]] = None,
 ) -> AsyncGenerator[Wave, None]:
     """Run ``stream(stateful_polling=True)`` semantics by adapting to fjord.
 
@@ -157,7 +159,13 @@ async def stream_stateful_via_fjord(
     ]
     effective_export_params: Dict[str, Any] = export_params if export_params is not None else {}
 
-    seed_suffix = f" for {cls_name}"
+    # Anchored regex: only strip " for <cls_name>" when it precedes " yielded".
+    # That's the exact shape fjord emits in the seed-empty failure message
+    # (fjord.py:230 ``"Initial incorp() for {cls_name} yielded no data"``).
+    # str.replace would also strip the literal " for <cls_name>" elsewhere,
+    # which mangles failure messages when the class name is a common English
+    # word (Latest, Initial, …) — see R3 in the risk audit.
+    seed_suffix_re = re.compile(r" for " + re.escape(cls_name) + r"(?= yielded)")
     async for wave in _run_fjord_engine(
         output_class_name=cls_name,
         base_class=base_class,
@@ -167,7 +175,7 @@ async def stream_stateful_via_fjord(
         r_interval=r_interval,
         e_interval=e_interval,
         outflow_module=outflow_module,
-        inflow_callable=None,
+        inflow_callable=inflow_callable,
     ):
         op = wave.operation
         if op.startswith("fjord_incorp:"):
@@ -180,7 +188,7 @@ async def stream_stateful_via_fjord(
             new_op = None  # leave unchanged (e.g. "export:<Cls>" per-source export)
 
         new_failed = (
-            [s.replace(seed_suffix, "") for s in wave.failed_sources] if wave.failed_sources else wave.failed_sources
+            [seed_suffix_re.sub("", s) for s in wave.failed_sources] if wave.failed_sources else wave.failed_sources
         )
 
         if new_op is None and new_failed == wave.failed_sources:

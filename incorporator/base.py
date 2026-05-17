@@ -1079,15 +1079,17 @@ class Incorporator(BaseModel):
                 )
             receiver_cls = candidate
 
-        # inflow= is a CLI/JSON convenience — when the trinity is driven by
-        # the engine directly (this path), the module is loaded once via
-        # importlib's sys.modules cache so per-chunk operations are free.
-        # Python users passing callables directly into conv_dict don't need
-        # this hook at all.
+        # inflow= is a CLI/JSON convenience plus, for the stateful path, an
+        # optional state-aware seed hook.  ``load_inflow_callable`` loads the
+        # sidecar (so its public symbols extend the token resolver's allow-list
+        # via sys.modules caching) AND returns the top-level ``inflow(state)``
+        # callable when one is defined.  That callable is meaningful only on
+        # the stateful path — chunking mode ignores it (no state to inject).
+        inflow_callable: Optional[Any] = None
         if inflow is not None:
-            from .usercode import load_user_module
+            from .usercode import load_inflow_callable
 
-            load_user_module(inflow, name_hint="_inc_stream_inflow")
+            inflow_callable = load_inflow_callable(inflow)
 
         # Translate the _UNSET sentinel to "{}" (run refresh with defaults).
         # Callers that explicitly want to skip refresh pass refresh_params=None,
@@ -1119,6 +1121,7 @@ class Incorporator(BaseModel):
                 refresh_interval=refresh_interval,
                 export_interval=export_interval,
                 outflow_user_module=outflow_user_module,
+                inflow_callable=inflow_callable,
             ):
                 yield wave
             return
