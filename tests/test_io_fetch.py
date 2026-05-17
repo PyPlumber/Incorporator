@@ -220,3 +220,130 @@ def test_expand_conv_dict_empty_schema_union_returns_caller_dict() -> None:
     assert _expand_conv_dict_with_schema_union(None, {}) is None
     caller = {"foo": lambda x: x}
     assert _expand_conv_dict_with_schema_union(caller, {}) is caller
+
+
+# ----------------------------------------------------------------------
+# fetch_concurrent_payloads — gather exception handling (DLQ contract)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_concurrent_non_429_error_does_not_cancel_siblings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-429 HTTP error must surface in failed_sources, not cancel batch.
+
+    Regression guard for the gather propagation trap: _safe_execute re-raises
+    non-429 HTTPStatusError as IncorporatorNetworkError. Without
+    ``return_exceptions=True``, that propagated up the gather and cancelled
+    every sibling task — turning a single bad source into a wave abort with
+    a confusing cancel cascade. Now: failure surfaces in failed_sources,
+    siblings complete normally.
+    """
+    from incorporator.exceptions import IncorporatorNetworkError
+    from incorporator.io import fetch
+
+    call_count = {"value": 0}
+
+    async def fake_process_single(
+        src: str, is_file_mode: bool, client: Any, rate_limiter: Any, **_kw: Any
+    ) -> list:
+        call_count["value"] += 1
+        if "bad" in src:
+            raise IncorporatorNetworkError(f"HTTP error 503 on {src}")
+        return [{"src": src, "ok": True}]
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    parsed, failed = await fetch.fetch_concurrent_payloads(
+        source_list=["https://good-a.test/", "https://bad.test/", "https://good-b.test/"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=3,
+    )
+
+    # All three sources attempted; siblings not cancelled.
+    assert call_count["value"] == 3
+    # Good sources returned their data.
+    assert {row["src"] for row in parsed} == {"https://good-a.test/", "https://good-b.test/"}
+    # Bad source surfaces in failed_sources rather than aborting the batch.
+    assert "https://bad.test/" in failed
+
+
+@pytest.mark.asyncio
+async def test_fetch_concurrent_all_5xx_returns_empty_with_all_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All-failures case: empty parsed_data, every URL in failed_sources."""
+    from incorporator.exceptions import IncorporatorNetworkError
+    from incorporator.io import fetch
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        raise IncorporatorNetworkError(f"HTTP error 500 on {src}")
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    urls = ["https://a.test/", "https://b.test/", "https://c.test/"]
+    parsed, failed = await fetch.fetch_concurrent_payloads(
+        source_list=urls, payload_list=None, is_file_mode=False, limit=3
+    )
+
+    assert parsed == []
+    assert sorted(failed) == sorted(urls)
+
+
+@pytest.mark.asyncio
+async def test_fetch_concurrent_unexpected_error_surfaces_in_failed_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unexpected exception types (ValueError, KeyError) surface to DLQ, not crash."""
+    from incorporator.io import fetch
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        if "boom" in src:
+            raise ValueError("malformed paginator state")
+        return [{"src": src}]
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    parsed, failed = await fetch.fetch_concurrent_payloads(
+        source_list=["https://ok.test/", "https://boom.test/"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=2,
+    )
+
+    assert any(row["src"] == "https://ok.test/" for row in parsed)
+    assert "https://boom.test/" in failed
+
+
+@pytest.mark.asyncio
+async def test_fetch_concurrent_path_a_batched_no_cancel_cascade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Path A (delay_between_batches > 0) must also use return_exceptions=True.
+
+    Mirrors the Path B test but exercises the batched-with-delay branch
+    via delay_between_batches=0.001 — both gather sites need the same
+    safety contract.
+    """
+    from incorporator.exceptions import IncorporatorNetworkError
+    from incorporator.io import fetch
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        if "bad" in src:
+            raise IncorporatorNetworkError(f"HTTP error 502 on {src}")
+        return [{"src": src}]
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    parsed, failed = await fetch.fetch_concurrent_payloads(
+        source_list=["https://good-a.test/", "https://bad.test/", "https://good-b.test/"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=2,
+        delay_between_batches=0.001,  # PATH A
+    )
+
+    assert {row["src"] for row in parsed} == {"https://good-a.test/", "https://good-b.test/"}
+    assert "https://bad.test/" in failed

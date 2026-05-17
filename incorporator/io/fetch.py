@@ -558,11 +558,23 @@ async def fetch_concurrent_payloads(
                 p_batch = p_list[i : i + limit]
 
                 # asyncio.gather natively preserves array ordering!
+                # ``return_exceptions=True``: any exception that escapes
+                # _safe_execute (e.g. the non-429 IncorporatorNetworkError
+                # re-raise at line 519) must not cancel sibling tasks.
+                # Failures surface in failed_sources just like the 429 path.
                 tasks = [_safe_execute(str(s), p) for s, p in zip(s_batch, p_batch)]
-                results = await asyncio.gather(*tasks)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                for res in results:
-                    if res:
+                for src, res in zip(s_batch, results):
+                    if isinstance(res, BaseException) and not isinstance(res, Exception):
+                        # CancelledError / SystemExit / KeyboardInterrupt — propagate.
+                        raise res
+                    if isinstance(res, Exception):
+                        logger.warning(
+                            f"⚠️ FETCH ERROR on '{src}': {type(res).__name__}: {res}. Skipping."
+                        )
+                        failed_sources.append(str(src))
+                    elif res:
                         all_parsed_data.extend(res)
 
         # ========================================================
@@ -583,14 +595,26 @@ async def fetch_concurrent_payloads(
                 cooperative multitasking guarantees no two coroutines interleave inside a
                 synchronous ``for`` body.  If this is ever migrated to a true multi-threaded
                 executor, replace ``task_iterator`` with an ``asyncio.Queue`` to restore safety.
+
+                Exception handling: catch ``Exception`` (not ``BaseException``)
+                so cancellation still propagates cleanly while non-429 fetch
+                errors degrade to a per-source failure rather than cancelling
+                every sibling worker.
                 """
                 for idx, (src, p) in task_iterator:
-                    res = await _safe_execute(str(src), p)
+                    try:
+                        res = await _safe_execute(str(src), p)
+                    except Exception as exc:
+                        logger.warning(
+                            f"⚠️ FETCH ERROR on '{src}': {type(exc).__name__}: {exc}. Skipping."
+                        )
+                        failed_sources.append(str(src))
+                        continue
                     if res:
                         ordered_results[idx] = res
 
             workers = [asyncio.create_task(_sliding_worker()) for _ in range(limit)]
-            await asyncio.gather(*workers)
+            await asyncio.gather(*workers, return_exceptions=True)
 
             # Flatten the perfectly ordered results
             for res in ordered_results:

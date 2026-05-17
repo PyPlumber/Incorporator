@@ -85,6 +85,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output isolated to its own `out/` dir.
 
 ### Fixed
+- **`fetch_concurrent_payloads` no longer cancels sibling tasks on non-429
+  HTTP errors.**  Both gather sites (Path A batched-with-delay, Path B
+  sliding-window workers) now use ``return_exceptions=True`` and route
+  failures through ``failed_sources`` the same way the 429 path always did.
+  Previously, a 503 / 502 / 504 (or a ``ValueError`` from a malformed
+  paginator) re-raised as ``IncorporatorNetworkError`` would propagate up
+  the gather, cancel every in-flight sibling, and surface as a confusing
+  cancel cascade rather than a clean partial-result wave.  **Behavior
+  change:** non-429 HTTP errors now produce a one-line warning + DLQ entry
+  per failed source, never a batch abort.  Matches the existing 429 / 5xx
+  semantics and the docs' ``LoggedIncorporator`` + ``get_error`` DLQ
+  pattern.
 - **`incorp(inc_file=Path(...))` silently returned empty list.**
   `_normalize_source_list` only handled `str` and `list`; a single
   `pathlib.Path` (or any `os.PathLike`) fell through to the
