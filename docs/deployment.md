@@ -21,7 +21,7 @@ cp .env.example .env
 mkdir -p config data logs
 
 # 3. Pick a starter pipeline.json. examples/ has four ready-to-edit configs.
-cp examples/pipeline_stream.json config/pipeline.json
+cp examples/cli-templates/stream-basic.json config/pipeline.json
 # Or, generate one from scratch:
 #   incorporator init --type stream --output-dir config
 
