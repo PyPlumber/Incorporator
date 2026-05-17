@@ -280,6 +280,6 @@ the chunking-mode pipeline.
 ---
 
 **Have a suggestion or hitting a snag?**
-[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/2_universal_formats.md) ·
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/examples/02-universal-formats/README.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)

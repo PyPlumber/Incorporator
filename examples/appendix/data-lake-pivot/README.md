@@ -9,7 +9,7 @@
 
 # 🐘 The Data Lake Pivot: Bridging JSON to Avro & SQLite
 
-**File:**[`../../examples/appendix/data_lake_pivot.py`](../../examples/appendix/data_lake_pivot.py)
+**File:**[`../../examples/appendix/data-lake-pivot/data_lake_pivot.py`](../../examples/appendix/data-lake-pivot/data_lake_pivot.py)
 
 In enterprise data engineering, moving data from flexible Web APIs (JSON) into strict analytical warehouses (SQLite/SQL) and distributed Data Lakes (Apache Avro) is notoriously tedious. It usually requires manual schema definitions, type mapping, and flattening nested dictionaries.
 
@@ -141,7 +141,7 @@ incorporator stream pipeline.json
 * `users.parquet` → Parquet *(requires `pip install incorporator[parquet]`)*
 * `users.ndjson` / `.csv` / `.xlsx` → all native
 
-For a Dockerised daemon that polls + refreshes on a schedule, see [`examples/pipeline_daemon.json`](../../examples/pipeline_daemon.json) and [the deployment guide](../deployment.md).
+For a Dockerised daemon that polls + refreshes on a schedule, see [`examples/cli-templates/daemon-mode.json`](../../examples/cli-templates/daemon-mode.json) and [the deployment guide](../deployment.md).
 
 ---
 
@@ -157,6 +157,6 @@ For a Dockerised daemon that polls + refreshes on a schedule, see [`examples/pip
 ---
 
 **Have a suggestion or hitting a snag?**
-[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/data_lake_pivot.md) ·
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/examples/appendix/data-lake-pivot/README.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)

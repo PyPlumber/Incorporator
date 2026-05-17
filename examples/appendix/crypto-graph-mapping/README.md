@@ -195,8 +195,8 @@ incorporator fjord pipeline.json
 ---
 
 **Have a suggestion or hitting a snag?**
-[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/crypto_graph_mapping.md) ·
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/examples/appendix/crypto-graph-mapping/README.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)
 
-The `outflow.py` defines `BinanceBook(Incorporator)`, `CryptoAsset(Incorporator)`, and the `outflow(state)` function that runs the `link_to` lookups across the two in-memory registries. With the intervals above, every 60 s the sources refresh, and every 120 s the fused dataset is flushed to disk. See [`examples/fjord_code/outflow_example.py`](../examples/fjord_code/outflow_example.py) for the pattern and [the CLI guide](./cli_and_configuration.md) for the full schema.
+The `outflow.py` defines `BinanceBook(Incorporator)`, `CryptoAsset(Incorporator)`, and the `outflow(state)` function that runs the `link_to` lookups across the two in-memory registries. With the intervals above, every 60 s the sources refresh, and every 120 s the fused dataset is flushed to disk. See [`examples/cli-templates/outflow_example.py`](../examples/cli-templates/outflow_example.py) for the pattern and [the CLI guide](./cli_and_configuration.md) for the full schema.

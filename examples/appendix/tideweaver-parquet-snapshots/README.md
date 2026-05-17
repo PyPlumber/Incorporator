@@ -129,6 +129,6 @@ downstream is Athena / DuckDB / Spark and you want column statistics.
 ---
 
 **Have a suggestion or hitting a snag?**
-[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/tideweaver_parquet_snapshots.md) ·
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/examples/appendix/tideweaver-parquet-snapshots/README.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)

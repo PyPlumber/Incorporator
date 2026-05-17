@@ -16,6 +16,10 @@ from incorporator import FormatType, Incorporator
 
 # Ensure you have installed the speedups: `pip install incorporator[avro]`
 
+HERE = Path(__file__).resolve().parent
+OUT = HERE / "out"
+OUT.mkdir(exist_ok=True)
+
 
 class User(Incorporator):
     pass
@@ -32,27 +36,31 @@ async def main():
     print(f"   ✅ Mapped {len(users)} users into Python memory.")
 
     print("\n🗄️ 2. Pivoting to Local SQLite Database...")
-    db_path = "users_warehouse.db"
+    db_path = OUT / "users_warehouse.db"
 
     # Flattens nested dictionaries into JSON strings and executes C-speed bulk inserts.
-    await User.export(instance=users, file_path=db_path, sql_table="employees", if_exists="replace")
+    await User.export(instance=users, file_path=str(db_path), sql_table="employees", if_exists="replace")
     print(f"   ✅ Exported natively to {db_path}")
 
     print("\n🐘 3. Pivoting to Apache Avro (Big Data Format)...")
-    avro_path = "users_datalake.avro"
+    avro_path = OUT / "users_datalake.avro"
 
     # Translates the dynamic Pydantic schema into a strict Avro binary stream.
-    await User.export(instance=users, file_path=avro_path, format_type=FormatType.AVRO)
+    await User.export(instance=users, file_path=str(avro_path), format_type=FormatType.AVRO)
     print(f"   ✅ Exported natively to {avro_path}")
 
     print("\n🔄 4. The Round Trip: Reading back from Binary Sources...")
 
     # A. Read directly from SQLite
-    sql_users = await User.incorp(inc_file=db_path, sql_query="SELECT * FROM employees", inc_code="id", inc_name="name")
+    sql_users = await User.incorp(
+        inc_file=str(db_path), sql_query="SELECT * FROM employees", inc_code="id", inc_name="name"
+    )
     print(f"   ✅ Read {len(sql_users)} users from SQLite.")
 
     # B. Read directly from Avro
-    avro_users = await User.incorp(inc_file=avro_path, format_type=FormatType.AVRO, inc_code="id", inc_name="name")
+    avro_users = await User.incorp(
+        inc_file=str(avro_path), format_type=FormatType.AVRO, inc_code="id", inc_name="name"
+    )
     print(f"   ✅ Read {len(avro_users)} users from Avro.")
 
     # Let's prove Incorporator flawlessly un-flattened the nested data AND
@@ -70,9 +78,9 @@ async def main():
     print(f"SQLite Read City:   {sql_users.inc_dict[target_id].address.city}")
     print(f"Avro Read City:     {avro_users.inc_dict[target_id].address.city}")
 
-    # Cleanup local files
-    Path(db_path).unlink(missing_ok=True)
-    Path(avro_path).unlink(missing_ok=True)
+    # Outputs are deliberately *kept* in OUT/ so you can inspect them with
+    # ``sqlite3 out/users_warehouse.db`` or ``head out/users_datalake.avro``.
+    # The directory is gitignored — delete it manually to start fresh.
 
 
 if __name__ == "__main__":

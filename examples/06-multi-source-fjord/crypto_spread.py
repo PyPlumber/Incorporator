@@ -1,5 +1,5 @@
 """
-Outflow sidecar for `examples/6_multi_source_fjord.py`.
+Outflow sidecar for `examples/06-multi-source-fjord/fjord.py`.
 
 The fjord engine imports this file at runtime, registers the two source
 classes (CoinGecko + BinancePair), and calls `outflow(state)` on each

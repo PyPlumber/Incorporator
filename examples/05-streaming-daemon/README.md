@@ -277,6 +277,6 @@ healthcheck walkthrough.
 ---
 
 **Have a suggestion or hitting a snag?**
-[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/5_streaming_daemon.md) ·
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/examples/05-streaming-daemon/README.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)

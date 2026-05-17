@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -111,72 +110,65 @@ def _write_outflow(tmpdir: Path) -> Path:
 
 
 async def main() -> None:
-    # ── Output target: per-run temp dir (keeps the repo clean) ──────────────
-    # If you'd rather persist outputs alongside the script (the convention
-    # other tutorials use), drop the `with tempfile.TemporaryDirectory()`
-    # wrapper and use a persistent directory instead.  For example:
-    #
-    #     HERE = Path(__file__).parent
-    #     tmpdir = HERE.parent / "data"
-    #     tmpdir.mkdir(exist_ok=True)
-    #     files = _seed_source_files(tmpdir)
-    #     outflow_path = _write_outflow(tmpdir)
-    #     out_file = tmpdir / "driver_state.ndjson"
-    #     # ... (no `with tempfile.TemporaryDirectory()`)
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        files = _seed_source_files(tmpdir)
-        outflow_path = _write_outflow(tmpdir)
-        out_file = tmpdir / "driver_state.ndjson"
+    # Outputs live next to the script (``examples/appendix/nascar-tideweaver/out/``)
+    # so you can inspect the driver-state log after each run.
+    # ``examples/**/out/`` is gitignored — nothing leaks into git.  Delete
+    # the directory before re-running for a clean log.
+    here = Path(__file__).resolve().parent
+    out_dir = here / "out"
+    out_dir.mkdir(exist_ok=True)
+    files = _seed_source_files(out_dir)
+    outflow_path = _write_outflow(out_dir)
+    out_file = out_dir / "driver_state.ndjson"
 
-        now = datetime.now(timezone.utc)
-        window = (now, now + timedelta(seconds=15))
+    now = datetime.now(timezone.utc)
+    window = (now, now + timedelta(seconds=15))
 
-        watershed = Watershed.diamond(
-            window=window,
-            head=Stream(
-                name="laps",
-                cls=Lap,
+    watershed = Watershed.diamond(
+        window=window,
+        head=Stream(
+            name="laps",
+            cls=Lap,
+            interval=3.0,
+            incorp_params={"inc_file": str(files["laps"]), "inc_code": "driver"},
+        ),
+        middle=[
+            Stream(
+                name="pits",
+                cls=Pit,
                 interval=3.0,
-                incorp_params={"inc_file": str(files["laps"]), "inc_code": "driver"},
+                incorp_params={"inc_file": str(files["pits"]), "inc_code": "driver"},
             ),
-            middle=[
-                Stream(
-                    name="pits",
-                    cls=Pit,
-                    interval=3.0,
-                    incorp_params={"inc_file": str(files["pits"]), "inc_code": "driver"},
-                ),
-                Stream(
-                    name="flags",
-                    cls=Flag,
-                    interval=3.0,
-                    incorp_params={"inc_file": str(files["flags"]), "inc_code": "color"},
-                ),
-            ],
-            tail=Fjord(
-                name="state",
-                cls=DriverState,
+            Stream(
+                name="flags",
+                cls=Flag,
                 interval=3.0,
-                export_params={
-                    "file_path": str(out_file),
-                    "format": "ndjson",
-                    "if_exists": "append",
-                },
+                incorp_params={"inc_file": str(files["flags"]), "inc_code": "color"},
             ),
-            outflow=outflow_path,
-            drain_timeout=10.0,
+        ],
+        tail=Fjord(
+            name="state",
+            cls=DriverState,
+            interval=3.0,
+            export_params={
+                "file_path": str(out_file),
+                "format": "ndjson",
+                "if_exists": "append",
+            },
+        ),
+        outflow=outflow_path,
+        drain_timeout=10.0,
+    )
+
+    async for tide in Tideweaver(watershed).run():
+        print(
+            f"Tide {tide.tide_number:3d} | fired: {','.join(tide.fired) or '-':<20} "
+            f"| skipped: {len(tide.skipped):2d} | {tide.duration_sec:.3f}s"
         )
 
-        async for tide in Tideweaver(watershed).run():
-            print(
-                f"Tide {tide.tide_number:3d} | fired: {','.join(tide.fired) or '-':<20} "
-                f"| skipped: {len(tide.skipped):2d} | {tide.duration_sec:.3f}s"
-            )
-
-        if out_file.exists():
-            rows = len(out_file.read_text(encoding="utf-8").splitlines())
-            print(f"\nwrote {rows} driver-state rows to {out_file}")
+    if out_file.exists():
+        rows = len(out_file.read_text(encoding="utf-8").splitlines())
+        print(f"\nwrote {rows} driver-state rows to {out_file}")
 
 
 if __name__ == "__main__":

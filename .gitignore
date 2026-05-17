@@ -59,7 +59,9 @@ Thumbs.db
 *.sqlite3
 
 # 8. Incorporator Log Files
-logs/
+# Scoped to repo-root only so a tutorial generating ``examples/<dir>/logs/`` or
+# its own .log fixture isn't silently dropped on commit.
+/logs/
 *.log
 pip-log.txt
 pip-delete-this-directory.txt
@@ -75,9 +77,17 @@ final_*.json
 *.xml
 *.avro
 
+# Every tutorial that generates output writes to its own ``out/`` subdir so
+# runtime artifacts have one consistent home that's always gitignored.
+examples/**/out/
+
 # Sample fixtures intentionally committed (override the above patterns).
+# The negation must list every extension we want to keep, since rule 9 ignores
+# the file-extension itself — any new fixture extension needs a sibling line.
 !examples/**/*.xml
 !examples/**/*.json
+!examples/**/*.csv
+!examples/**/*.tsv
 !tests/**/*.xml
 !tests/**/*.json
 !tests/**/*.csv

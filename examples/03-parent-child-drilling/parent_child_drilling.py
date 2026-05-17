@@ -15,7 +15,7 @@ top-10 coins as parents (1 call) and drill `/coins/{id}` for each
 demo run.
 
 Run with:
-    python examples/3_parent_child_drilling.py
+    python examples/03-parent-child-drilling/parent_child_drilling.py
 """
 
 import asyncio

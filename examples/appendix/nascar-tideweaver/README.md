@@ -61,7 +61,7 @@ async def main() -> None:
             name="laps",
             cls=Lap,
             interval=3.0,
-            incorp_params={"inc_file": "examples/tideweaver_code/laps.json",
+            incorp_params={"inc_file": "examples/appendix/nascar-tideweaver/fixtures/laps.json",
                            "inc_code": "driver"},
         ),
         middle=[
@@ -69,14 +69,14 @@ async def main() -> None:
                 name="pits",
                 cls=Pit,
                 interval=3.0,
-                incorp_params={"inc_file": "examples/tideweaver_code/pits.json",
+                incorp_params={"inc_file": "examples/appendix/nascar-tideweaver/fixtures/pits.json",
                                "inc_code": "driver"},
             ),
             Stream(
                 name="flags",
                 cls=Flag,
                 interval=3.0,
-                incorp_params={"inc_file": "examples/tideweaver_code/flags.json",
+                incorp_params={"inc_file": "examples/appendix/nascar-tideweaver/fixtures/flags.json",
                                "inc_code": "color"},
             ),
         ],
@@ -90,7 +90,7 @@ async def main() -> None:
                 "if_exists": "append",
             },
         ),
-        outflow="examples/tideweaver_code/race_outflow.py",
+        outflow="examples/appendix/nascar-tideweaver/race_outflow.py",
         drain_timeout=10.0,
     )
 
@@ -106,7 +106,7 @@ if __name__ == "__main__":
 ```
 
 A runnable version with local-file fixtures, an inlined outflow, and a tempdir output
-target lives at [`examples/appendix/nascar_tideweaver.py`](../../examples/appendix/nascar_tideweaver.py).
+target lives at [`examples/appendix/nascar-tideweaver/nascar_tideweaver.py`](../../examples/appendix/nascar-tideweaver/nascar_tideweaver.py).
 
 ---
 
@@ -116,7 +116,7 @@ The `DriverState` Fjord current's `outflow(state)` joins laps + pits + flags int
 row per driver:
 
 ```python
-# examples/tideweaver_code/race_outflow.py
+# examples/appendix/nascar-tideweaver/race_outflow.py
 def outflow(state):
     laps  = state.get("LapData", [])
     pits  = state.get("PitStops", [])
@@ -152,11 +152,11 @@ build a per-key composite, return as a list of dicts.
 
 ## CLI form
 
-`examples/nascar_watershed.json` ships alongside the example:
+`examples/appendix/nascar-tideweaver/watershed.json` ships alongside the example:
 
 ```bash
-incorporator validate examples/nascar_watershed.json
-incorporator tideweaver run examples/nascar_watershed.json --json-output
+incorporator validate examples/appendix/nascar-tideweaver/watershed.json
+incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json --json-output
 ```
 
 Run from the repo root so the relative `inc_file` / `outflow` paths resolve.
@@ -188,6 +188,6 @@ Run from the repo root so the relative `inc_file` / `outflow` paths resolve.
 ---
 
 **Have a suggestion or hitting a snag?**
-[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/nascar_tideweaver.md) ·
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/examples/appendix/nascar-tideweaver/README.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)

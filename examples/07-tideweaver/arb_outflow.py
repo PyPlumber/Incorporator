@@ -1,7 +1,7 @@
 """Outflow logic for the multi-exchange arb-scanner Tideweaver diamond.
 
 Defines the four ``Incorporator`` subclasses referenced from
-``examples/arb_watershed.json`` (one per exchange head/middle + the
+``examples/07-tideweaver/watershed.json`` (one per exchange head/middle + the
 tail's derived output class) plus the ``outflow(state)`` function the
 ``Fjord`` tail current calls each tick.
 
@@ -12,8 +12,8 @@ for that and let ``outflow(state)`` consume it.
 
 Run from the repo root so the relative inc_file / outflow paths resolve:
 
-    incorporator validate examples/arb_watershed.json
-    incorporator tideweaver run examples/arb_watershed.json --json-output
+    incorporator validate examples/07-tideweaver/watershed.json
+    incorporator tideweaver run examples/07-tideweaver/watershed.json --json-output
 """
 
 from typing import Any, Dict, List, Tuple

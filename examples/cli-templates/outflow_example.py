@@ -1,4 +1,4 @@
-"""Example outflow code for examples/pipeline_fjord.json.
+"""Example outflow code for examples/cli-templates/fjord-basic.json.
 
 The fjord engine builds the dynamic output class from this file's stem
 (snake_case → PascalCase), so this file's stem ``outflow_example`` yields

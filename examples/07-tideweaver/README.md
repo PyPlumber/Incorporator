@@ -375,7 +375,7 @@ applied at load time.
 {
   "window": {"start": "${WINDOW_START}", "end": "${WINDOW_END}"},
   "shape": "diamond",
-  "outflow": "tideweaver_code/arb_outflow.py",
+  "outflow": "arb_outflow.py",
   "drain_timeout": 30,
   "dependency_mode": "hard",
   "head":   {"name": "binance", "class": "BinanceBook",    "verb": "stream", "interval": 15,
@@ -429,6 +429,6 @@ stderr so log shippers can ingest stdout directly.
 ---
 
 **Have a suggestion or hitting a snag?**
-[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/7_tideweaver.md) ·
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/examples/07-tideweaver/README.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)

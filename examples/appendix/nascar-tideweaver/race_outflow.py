@@ -1,4 +1,4 @@
-"""Outflow logic for examples/nascar_watershed.json.
+"""Outflow logic for examples/appendix/nascar-tideweaver/watershed.json.
 
 Defines the four ``Incorporator`` subclasses referenced from the
 watershed config (head, two middles, and the tail's output class) plus
@@ -8,8 +8,8 @@ The three middle / head streams read from local JSON files in this
 directory so the CLI smoke-test runs without any network or
 credentials:
 
-    incorporator validate examples/nascar_watershed.json
-    incorporator tideweaver run examples/nascar_watershed.json
+    incorporator validate examples/appendix/nascar-tideweaver/watershed.json
+    incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json
 
 Run paths inside the JSON config are relative to the *current working
 directory* of the CLI process — invoke from the repo root.

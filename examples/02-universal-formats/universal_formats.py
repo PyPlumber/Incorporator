@@ -16,13 +16,12 @@ Pipeline:
 5. Re-``incorp()`` each artifact and verify the round-trip.
 
 Run with:
-    python examples/2_universal_formats.py
+    python examples/02-universal-formats/universal_formats.py
 """
 
 from __future__ import annotations
 
 import asyncio
-import tempfile
 from pathlib import Path
 
 from incorporator import Incorporator
@@ -116,15 +115,20 @@ async def verify_round_trip(data_dir: Path) -> None:
 
 
 async def main() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        data_dir = Path(tmp)
-        print(f"📁 Warehouse root: {data_dir}\n")
+    # Output lives next to the script (``examples/02-universal-formats/out/``)
+    # so you can inspect each of the four artefacts (NDJSON / CSV / SQLite /
+    # Parquet) with your own tools after the run.  ``examples/**/out/`` is
+    # gitignored — nothing leaks into git.
+    here = Path(__file__).resolve().parent
+    data_dir = here / "out"
+    data_dir.mkdir(exist_ok=True)
+    print(f"📁 Warehouse root: {data_dir}\n")
 
-        coins = await snapshot()
-        await append_log(coins, data_dir)
-        await upsert_warehouse(coins, data_dir)
-        await snapshot_parquet(coins, data_dir)
-        await verify_round_trip(data_dir)
+    coins = await snapshot()
+    await append_log(coins, data_dir)
+    await upsert_warehouse(coins, data_dir)
+    await snapshot_parquet(coins, data_dir)
+    await verify_round_trip(data_dir)
 
 
 if __name__ == "__main__":

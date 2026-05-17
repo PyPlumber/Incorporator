@@ -9,7 +9,7 @@ mutates the existing Pydantic instances in place — local Python
 references survive across refreshes without reassignment.
 
 Run with:
-    python examples/4_stateful_refresh.py
+    python examples/04-stateful-refresh/stateful_refresh.py
 """
 
 import asyncio

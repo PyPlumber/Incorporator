@@ -12,7 +12,7 @@ Two demos in one file, in the order the tutorial teaches them:
    market cap, no schema declared, full dot-notation + O(1) registry.
 
 Run with:
-    python examples/1_first_steps.py
+    python examples/01-first-steps/first_steps.py
 """
 
 import asyncio

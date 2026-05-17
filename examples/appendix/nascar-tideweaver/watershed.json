@@ -1,8 +1,8 @@
 {
   "_comment_1_": "Sample watershed.json for the NASCAR diamond pattern.",
   "_comment_2_": "Run from the repo root so the relative inc_file / outflow paths resolve:",
-  "_comment_3_": "  incorporator validate examples/nascar_watershed.json",
-  "_comment_4_": "  incorporator tideweaver run examples/nascar_watershed.json --json-output",
+  "_comment_3_": "  incorporator validate examples/appendix/nascar-tideweaver/watershed.json",
+  "_comment_4_": "  incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json --json-output",
   "_comment_5_": "Override the default window with env vars: RACE_START / RACE_END (ISO 8601, UTC).",
 
   "window": {
@@ -11,7 +11,7 @@
   },
 
   "shape": "diamond",
-  "outflow": "tideweaver_code/race_outflow.py",
+  "outflow": "examples/appendix/nascar-tideweaver/race_outflow.py",
   "drain_timeout": 30,
   "dependency_mode": "hard",
 
@@ -21,7 +21,7 @@
     "verb": "stream",
     "interval": 30,
     "incorp_params": {
-      "inc_file": "examples/tideweaver_code/laps.json",
+      "inc_file": "examples/appendix/nascar-tideweaver/fixtures/laps.json",
       "inc_code": "driver"
     }
   },
@@ -33,7 +33,7 @@
       "verb": "stream",
       "interval": 30,
       "incorp_params": {
-        "inc_file": "examples/tideweaver_code/pits.json",
+        "inc_file": "examples/appendix/nascar-tideweaver/fixtures/pits.json",
         "inc_code": "driver"
       }
     },
@@ -43,7 +43,7 @@
       "verb": "stream",
       "interval": 30,
       "incorp_params": {
-        "inc_file": "examples/tideweaver_code/flags.json",
+        "inc_file": "examples/appendix/nascar-tideweaver/fixtures/flags.json",
         "inc_code": "color"
       }
     }

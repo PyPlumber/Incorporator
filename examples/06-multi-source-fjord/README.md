@@ -62,7 +62,7 @@ reads the current data from each source, joins them, and returns a list
 of dicts for the output class.
 
 ```python
-# examples/fjord_code/crypto_spread.py
+# examples/06-multi-source-fjord/crypto_spread.py
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
@@ -126,7 +126,7 @@ import asyncio
 from incorporator import Incorporator
 
 # Bring the classes into scope so fjord() can register them.
-from examples.fjord_code.crypto_spread import BinancePair, CoinGecko
+from crypto_spread import BinancePair, CoinGecko
 
 
 async def main():
@@ -148,7 +148,7 @@ async def main():
                 },
             },
         ],
-        outflow="examples/fjord_code/crypto_spread.py",
+        outflow="examples/06-multi-source-fjord/crypto_spread.py",
         export_params={"file_path": "data/crypto_spread.ndjson"},
         refresh_interval={"CoinGecko": 60, "BinancePair": 30},   # per-source cadences
         export_interval=60.0,                                    # fused output every 60 s
@@ -238,7 +238,7 @@ The same pipeline as a `pipeline.json`:
 
 ```json
 {
-  "outflow": "examples/fjord_code/crypto_spread.py",
+  "outflow": "examples/06-multi-source-fjord/crypto_spread.py",
   "stream_params": [
     {
       "cls_name": "CoinGecko",
@@ -399,7 +399,7 @@ return = one file.
 If you'd rather see the fjord pattern applied to a different domain,
 the SpaceX launch + rocket fusion is available as a reference:
 
-* **`examples/fjord_code/launch_with_rocket.py`** — joins
+* **`examples/06-multi-source-fjord/launch_with_rocket.py`** — joins
   `/v4/launches/latest` with `/v4/rockets` so the latest launch row
   carries the matching rocket's name, height, mass, and success-rate
   percentage.
@@ -423,6 +423,6 @@ function, the dynamic output class comes from the filename stem.
 ---
 
 **Have a suggestion or hitting a snag?**
-[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/6_multi_source_fjord.md) ·
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/examples/06-multi-source-fjord/README.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)

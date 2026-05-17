@@ -23,8 +23,13 @@ Run with:
 """
 
 import asyncio
+from pathlib import Path
 
 from incorporator import Incorporator, LoggedIncorporator
+
+HERE = Path(__file__).resolve().parent
+OUT = HERE / "out"
+OUT.mkdir(exist_ok=True)
 
 
 # ----------------------------------------------------------------------
@@ -111,7 +116,7 @@ async def streaming_demo() -> None:
         },
         stateful_polling=True,
         refresh_interval=120,        # poll every 2 min
-        export_params={"file_path": "data/launches.ndjson"},
+        export_params={"file_path": str(OUT / "launches.ndjson")},
         export_interval=300,         # flush every 5 min
         enable_logging=True,
     ):

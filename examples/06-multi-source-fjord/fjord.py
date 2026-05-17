@@ -16,18 +16,28 @@ The dynamic output class is built from the outflow filename stem —
 `crypto_spread.py` → `CryptoSpread`. No output class to declare.
 
 Run with:
-    python examples/6_multi_source_fjord.py
+    python examples/06-multi-source-fjord/fjord.py
 """
 
 import asyncio
+import sys
 from pathlib import Path
 
 from incorporator import Incorporator
 
-# Bring the source classes into scope so fjord() can register them.
-from examples.fjord_code.crypto_spread import BinancePair, CoinGecko
+HERE = Path(__file__).resolve().parent
+OUT = HERE / "out"
+OUT.mkdir(exist_ok=True)
 
-HERE = Path(__file__).parent
+# Make the sidecar importable when this script is run via ``python -m`` /
+# pytest / any path other than ``python examples/06-multi-source-fjord/fjord.py``
+# (Python only adds the script's directory to sys.path automatically in the
+# bare-script case).
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+# Bring the source classes into scope so fjord() can register them.
+from crypto_spread import BinancePair, CoinGecko  # noqa: E402
 
 
 async def main() -> None:
@@ -57,8 +67,8 @@ async def main() -> None:
                 },
             },
         ],
-        outflow=str(HERE / "fjord_code/crypto_spread.py"),
-        export_params={"file_path": str(HERE.parent / "data/crypto_spread.ndjson")},
+        outflow=str(HERE / "crypto_spread.py"),
+        export_params={"file_path": str(OUT / "crypto_spread.ndjson")},
         refresh_interval={                                  # per-source cadences
             "CoinGecko": 60,                                # CoinGecko's free tier is rate-limited
             "BinancePair": 30,                              # Binance is faster

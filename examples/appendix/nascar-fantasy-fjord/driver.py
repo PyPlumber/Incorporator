@@ -7,7 +7,7 @@ one config:
 1. **State-aware inflow** — ``Race.track_id`` and
    ``Race.pole_winner_driver_id`` resolve to live ``Track`` and
    ``Driver`` instances via ``inflow(state)`` in
-   ``examples/fjord_code/nascar_fantasy.py``.  Track + Driver +
+   ``nascar_fantasy.py`` (sibling sidecar).  Track + Driver +
    three standings classes seed in parallel; Race waits for its
    peers and gets state-wired conv_dict on every refresh wave.
 
@@ -21,20 +21,31 @@ one config:
    slowly, standings refresh frequently.
 
 Run with:
-    python examples/nascar_fantasy_fjord.py
+    python examples/appendix/nascar-fantasy-fjord/driver.py
 
-Outputs:
-    data/nascar_monthly_schedule.ndjson
-    data/nascar_fantasy_scoreboard.ndjson
+Outputs (in ``out/`` next to this script — gitignored, inspect with any tool):
+    examples/appendix/nascar-fantasy-fjord/out/nascar_monthly_schedule.ndjson
+    examples/appendix/nascar-fantasy-fjord/out/nascar_fantasy_scoreboard.ndjson
+    examples/appendix/nascar-fantasy-fjord/out/nascar_manufacturer_leaderboard.ndjson
 """
 
 import asyncio
+import sys
 from datetime import datetime
 from pathlib import Path
 
 from incorporator import Incorporator, calc
 
-from examples.fjord_code.nascar_fantasy import (
+HERE = Path(__file__).resolve().parent
+DATA = HERE / "out"  # examples/appendix/nascar-fantasy-fjord/out/
+
+# Sibling sidecar import — Python only auto-adds HERE to sys.path for the
+# bare ``python <script>`` invocation; explicit insert covers ``python -m``
+# and other launch paths.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from nascar_fantasy import (  # noqa: E402
     BuschStanding,
     CupStanding,
     Driver,
@@ -43,9 +54,6 @@ from examples.fjord_code.nascar_fantasy import (
     Track,
     TruckStanding,
 )
-
-HERE = Path(__file__).parent
-DATA = HERE.parent / "data"
 
 CURRENT_YEAR = datetime.now().year
 CFC_BASE = "https://cf.nascar.com/cacher"
@@ -166,7 +174,7 @@ async def main() -> None:
             {
                 "cls": LeagueRoster,
                 "incorp_params": {
-                    "inc_file": str(HERE / "fjord_code/league_teams.json"),
+                    "inc_file": str(HERE / "fixtures/league_teams.json"),
                     "inc_code": "team_id",
                     "inc_name": "team_id",
                 },
@@ -175,8 +183,8 @@ async def main() -> None:
         ],
 
         # The state-aware inflow + outflow sidecar.
-        inflow=str(HERE / "fjord_code/nascar_fantasy.py"),
-        outflow=str(HERE / "fjord_code/nascar_fantasy.py"),
+        inflow=str(HERE / "nascar_fantasy.py"),
+        outflow=str(HERE / "nascar_fantasy.py"),
 
         # Per-class export_params — one entry per dict-key returned
         # by outflow(state).  Detection: nested dict shape = multi-output.

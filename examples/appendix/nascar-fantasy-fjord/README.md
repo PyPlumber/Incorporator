@@ -54,8 +54,8 @@ multiple analytical views from one fused state, and filter sentinel
 IDs at the graph boundary instead of the consumer.
 
 Runnable code lives at
-[`examples/fjord_code/nascar_fantasy.py`](../../examples/fjord_code/nascar_fantasy.py)
-and [`examples/nascar_fantasy_fjord.py`](../../examples/nascar_fantasy_fjord.py).
+[`examples/appendix/nascar-fantasy-fjord/nascar_fantasy.py`](../../examples/appendix/nascar-fantasy-fjord/nascar_fantasy.py)
+and [`examples/appendix/nascar-fantasy-fjord/driver.py`](../../examples/appendix/nascar-fantasy-fjord/driver.py).
 
 ---
 
@@ -100,7 +100,7 @@ https://cf.nascar.com/cacher/{YEAR}/race_list_basic.json    →  Race           
 https://cf.nascar.com/data/cacher/production/{YEAR}/1/...   →  CupStanding    (39 rows)
 https://cf.nascar.com/data/cacher/production/{YEAR}/2/...   →  BuschStanding  (59 rows)
 https://cf.nascar.com/data/cacher/production/{YEAR}/3/...   →  TruckStanding  (61 rows)
-examples/fjord_code/league_teams.json                       →  LeagueRoster   (8 rows)
+examples/appendix/nascar-fantasy-fjord/fixtures/league_teams.json                       →  LeagueRoster   (8 rows)
 ```
 
 **`Race` has three foreign keys** into the registries — `track_id`
@@ -126,7 +126,7 @@ land correctly.
 
 ## 🔧 Step 1: The Outflow Sidecar
 
-`examples/fjord_code/nascar_fantasy.py` defines the six source
+`examples/appendix/nascar-fantasy-fjord/nascar_fantasy.py` defines the six source
 classes, the league rosters, the `inflow(state)` wiring, and the
 `outflow(state)` function.  The file is the entire ETL — fjord
 imports it, registers the classes, and drives the pipeline.
@@ -254,7 +254,7 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     monthly.sort(key=lambda r: r["date"])
 
     # ── View 2: Fantasy-league scoreboard ────────────────────────
-    # (full code in examples/fjord_code/nascar_fantasy.py)
+    # (full code in examples/appendix/nascar-fantasy-fjord/nascar_fantasy.py)
     fantasy = _build_scoreboard(drivers, points_standings)
 
     return {
@@ -270,7 +270,7 @@ Two keys in the return dict → two derived classes
 
 ## 🔧 Step 2: The Driver Script
 
-`examples/nascar_fantasy_fjord.py` calls fjord with the six sources
+`examples/appendix/nascar-fantasy-fjord/driver.py` calls fjord with the six sources
 + per-class export targets:
 
 ```python
@@ -278,7 +278,7 @@ import asyncio
 from pathlib import Path
 from incorporator import Incorporator, calc
 
-from examples.fjord_code.nascar_fantasy import (
+from nascar_fantasy import (
     BuschStanding, CupStanding, Driver, Race, Track, TruckStanding,
 )
 
@@ -303,8 +303,8 @@ async def main() -> None:
             {"cls": BuschStanding, "incorp_params": {...}, "refresh_params": None},
             {"cls": TruckStanding, "incorp_params": {...}, "refresh_params": None},
         ],
-        inflow=str(HERE  / "fjord_code/nascar_fantasy.py"),
-        outflow=str(HERE / "fjord_code/nascar_fantasy.py"),
+        inflow=str(HERE  / "nascar_fantasy.py"),
+        outflow=str(HERE / "nascar_fantasy.py"),
         export_params={                                       # ← multi-output: nested dict
             "MonthlyRaceSchedule": {"file_path": str(DATA / "nascar_monthly_schedule.ndjson")},
             "FantasyTeam":         {"file_path": str(DATA / "nascar_fantasy_scoreboard.ndjson")},
@@ -454,8 +454,8 @@ which is how the multi-source registration stays JSON-serialisable.
 
 ```json
 {
-  "inflow":  "examples/fjord_code/nascar_fantasy.py",
-  "outflow": "examples/fjord_code/nascar_fantasy.py",
+  "inflow":  "examples/appendix/nascar-fantasy-fjord/nascar_fantasy.py",
+  "outflow": "examples/appendix/nascar-fantasy-fjord/nascar_fantasy.py",
   "stream_params": [
     {
       "cls_name": "Track",
@@ -603,17 +603,17 @@ and reference it with a container-relative path:
 ```bash
 # 1. Lay out the host folders.
 mkdir -p config data logs
-cp examples/fjord_code/league_teams.json config/league_teams.json
+cp examples/appendix/nascar-fantasy-fjord/fixtures/league_teams.json config/league_teams.json
 
 # 2. Write config/pipeline.json (see the JSON above) with the
 #    container path:
 #         "inc_file": "config/league_teams.json"
-#    NOT  "inc_file": "examples/fjord_code/league_teams.json"
+#    NOT  "inc_file": "examples/appendix/nascar-fantasy-fjord/fixtures/league_teams.json"
 #    — the container only sees /app/config and /app/data.
 
 # 3. Also drop the inflow/outflow sidecar in config/ so the
 #    container can import it:
-cp examples/fjord_code/nascar_fantasy.py config/nascar_fantasy.py
+cp examples/appendix/nascar-fantasy-fjord/nascar_fantasy.py config/nascar_fantasy.py
 #    and point pipeline.json at the container-side path:
 #         "inflow":  "config/nascar_fantasy.py",
 #         "outflow": "config/nascar_fantasy.py"
@@ -688,6 +688,6 @@ apply if you ever swap one of the sources for a paid feed.
 ---
 
 **Have a suggestion or hitting a snag?**
-[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/appendix/nascar_fantasy_fjord.md) ·
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/examples/appendix/nascar-fantasy-fjord/README.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)

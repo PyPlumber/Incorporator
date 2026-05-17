@@ -20,7 +20,7 @@ Uncomment the ``await stateful_demo()`` call to run the long-running
 Binance ticker daemon instead.
 
 Run with:
-    python examples/5_streaming_daemon.py
+    python examples/05-streaming-daemon/streaming_daemon.py
 """
 
 from __future__ import annotations
@@ -32,8 +32,9 @@ from incorporator import LoggedIncorporator
 from incorporator.io.pagination import PageNumberPaginator
 
 
-DATA = Path("data")
-DATA.mkdir(exist_ok=True)
+HERE = Path(__file__).resolve().parent
+OUT = HERE / "out"
+OUT.mkdir(exist_ok=True)
 
 
 # ----------------------------------------------------------------------
@@ -56,7 +57,7 @@ async def stateful_demo() -> None:
         },
         stateful_polling=True,
         refresh_interval=30,
-        export_params={"file_path": DATA / "binance_ticker.ndjson"},
+        export_params={"file_path": OUT / "binance_ticker.ndjson"},
         export_interval=300,
         enable_logging=True,
     ):
@@ -89,7 +90,7 @@ async def chunking_demo(max_pages: int = 3) -> None:
     paginator = PageNumberPaginator(page_param="page", start_page=1)
     paginator.call_lim = max_pages                  # safety cap for the demo
 
-    out = DATA / "coins_full.ndjson"
+    out = OUT / "coins_full.ndjson"
     if out.exists():
         out.unlink()                                # start fresh
 

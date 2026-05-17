@@ -1,5 +1,5 @@
 {
-  "_comment_": "Stream pipeline with bearer-token auth pulled from the environment. Copy .env.example to .env, set API_KEY, then: incorporator validate examples/pipeline_with_auth.json && incorporator stream examples/pipeline_with_auth.json",
+  "_comment_": "Stream pipeline with bearer-token auth pulled from the environment. Copy .env.example to .env, set API_KEY, then: incorporator validate examples/cli-templates/with-auth.json && incorporator stream examples/cli-templates/with-auth.json",
 
   "incorp_params": {
     "inc_url": "https://api.example.com/protected/resource",
