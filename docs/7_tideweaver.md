@@ -1,6 +1,6 @@
 ﻿***
 
-# 🪡 Tideweaver: Multi-Exchange Arbitrage Scanner Diamond
+# 🧵 Tideweaver: Multi-Exchange Arbitrage Scanner Diamond
 
 `stream()` watches one source.  `fjord()` watches N sources concurrently.
 **Tideweaver** orchestrates them — a graph of named currents over a single time window,

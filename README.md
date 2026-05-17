@@ -217,7 +217,7 @@ A focused 1–7 curriculum. Each slot introduces one new verb or technique. Runn
 4. [🔄 **Stateful Refresh**](./docs/4_stateful_refresh.md) — `refresh()` three ways against Binance's live ticker.
 5. [🌊 **Streaming Daemons — Both Polling Modes**](./docs/5_streaming_daemon.md) — stateful for live dashboards; chunking for paginated bulk drains.
 6. [🌊 **Multi-Source Fjord**](./docs/6_multi_source_fjord.md) — `fjord()` fusing CoinGecko + Binance into a live cross-venue spread metric.
-7. [🪡 **Tideweaver — Multi-Exchange Arb Scanner** *(capstone)*](./docs/7_tideweaver.md) — declarative windowed orchestration: three exchanges → one best-market record.
+7. [🧵 **Tideweaver — Multi-Exchange Arb Scanner** *(capstone)*](./docs/7_tideweaver.md) — declarative windowed orchestration: three exchanges → one best-market record.
 
 ## 📑 Reference
 
@@ -235,7 +235,7 @@ A focused 1–7 curriculum. Each slot introduces one new verb or technique. Runn
 * [🚨 **Shady Jimmy's XML Audit**](./docs/appendix/xml_post_audit.md) — XML ingestion + declarative bulk POST + fraud audit.
 * [🕸️ **Crypto Graph Mapping** (static)](./docs/appendix/crypto_graph_mapping.md) — `link_to`-based in-memory join; Tutorial 6's pattern as a one-shot.
 * [🏁 **NASCAR Fantasy Fjord** *(advanced)*](./docs/appendix/nascar_fantasy_fjord.md) — six-source fjord with state-aware `inflow(state)` and multi-output `outflow(state)`.
-* [🪡 **Tideweaver Deep Dives**](./docs/appendix/tideweaver_parquet_snapshots.md) — [Parquet at window close](./docs/appendix/tideweaver_parquet_snapshots.md) and [Tideweaver vs. Prefect](./docs/appendix/tideweaver_vs_prefect.md) — columnar artifacts plus the in-process-vs-cloud orchestration decision.
+* [🧵 **Tideweaver Deep Dives**](./docs/appendix/tideweaver_parquet_snapshots.md) — [Parquet at window close](./docs/appendix/tideweaver_parquet_snapshots.md) and [Tideweaver vs. Prefect](./docs/appendix/tideweaver_vs_prefect.md) — columnar artifacts plus the in-process-vs-cloud orchestration decision.
 * [🐘 **Data Lake Pivot** (legacy)](./docs/appendix/data_lake_pivot.md) — JSON ↔ Avro/SQLite walkthrough; T2 covers the headline pattern.
 
 ---

@@ -10,7 +10,7 @@
 
 ***
 
-# 🪡 Tideweaver vs. Prefect (or Dagster, Airflow, Argo)
+# 🧵 Tideweaver vs. Prefect (or Dagster, Airflow, Argo)
 
 Tideweaver is a **graph of named currents** running on independent
 intervals **inside one Python process**, for the duration of one

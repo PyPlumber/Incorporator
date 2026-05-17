@@ -8,7 +8,7 @@
 
 ***
 
-# 🪡 Parquet Snapshots in a Tideweaver Window
+# 🧵 Parquet Snapshots in a Tideweaver Window
 
 `stream()` and the `Fjord` current's flush both export **once per
 tick**.  That's fine for NDJSON (one line per record, append the

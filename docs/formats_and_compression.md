@@ -50,7 +50,7 @@ If a URL or File ends with a recognized compression extension, Incorporator will
 
 ---
 
-## 🪄 How "Archive Extraction" Works
+## ✨ How "Archive Extraction" Works
 
 Formats like `.zip` and `.tar` are not just compressed streams; they are directories containing multiple files. 
 

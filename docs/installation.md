@@ -47,7 +47,7 @@ pip install incorporator[xlsx]
 **What this installs:** `openpyxl` (pure-Python, ~250 KB).
 * **Why you need it:** Unlocks read/write for `.xlsx` workbooks so you can hand business stakeholders a spreadsheet straight from an API call. Lightweight enough to fit the microclient identity.
 
-### 🪶 The Columnar Data-Lake Flag
+### ⚡ The Columnar Data-Lake Flag
 ```bash
 pip install incorporator[parquet]
 ```
