@@ -89,3 +89,10 @@ Now that Incorporator is installed, head over to [**Tutorial 1 — First Steps**
 ### Why this document works:
 1. **It builds trust:** Senior engineers hate "magic" dependencies. By explicitly stating *why* `orjson` and `lxml` are used (to release the GIL), you immediately prove that this framework is built by performance experts.
 2. **It keeps the README clean:** The README stays focused on code examples and features, while this document handles the pedantic environment-setup details.
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/installation.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

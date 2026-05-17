@@ -89,3 +89,10 @@ The rest of `/docs/` covers the **how** and **why** with hands-on
 walkthroughs — start with [Tutorial 1 — First Steps](./1_first_steps.md).
 The pdoc reference covers the **what** for every parameter and return
 type.
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/library_reference.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

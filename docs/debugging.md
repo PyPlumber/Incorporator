@@ -175,11 +175,19 @@ subscribes.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) —
-  `LoggedIncorporator` is the default daemon base class.
-* [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) — re-fetch
-  what `get_error()` surfaced.
-* [Library reference](./library_reference.md) — every method on
-  `LoggedIncorporator`.
+| Goal | Read |
+|---|---|
+| Wrap a single source in a daemon and stream waves | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
+| Keep a registry live with `refresh()` and inspect `failed_sources` | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
+| Detect orchestration-level failures across N sources | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| See every public method that surfaces error state | [Library Reference](./library_reference.md) |
+| Ship `LoggedIncorporator` pipelines with structured logs | [Deployment Guide](./deployment.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/debugging.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

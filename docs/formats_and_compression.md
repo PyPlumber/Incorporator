@@ -221,3 +221,22 @@ We keep the bridge in-house because it's small, centralised,
 dep-light, and aligned with Pydantic v2's type model.  The two
 ``FORMAT_TO_PYTHON`` / ``PYTHON_TO_FORMAT`` dicts are 105 entries
 total — small enough to read end-to-end in one sitting.
+
+---
+
+## Where to Go Next
+
+| Goal | Read |
+|---|---|
+| Build a snapshot warehouse with append-friendly formats | [Tutorial 2 — Universal Formats](./2_universal_formats.md) |
+| Land columnar Parquet at the end of an orchestration window | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
+| Round-trip JSON ↔ Avro ↔ SQLite with nested reconstruction | [Appendix — Data Lake Pivot](./appendix/data_lake_pivot.md) |
+| Stream a file too big to fit in RAM | [Streaming & Pagination Deep Dive](./streaming_and_pagination.md) |
+| Tune per-format throughput | [Performance Guide](./performance.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/formats_and_compression.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

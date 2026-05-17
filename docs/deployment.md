@@ -193,3 +193,20 @@ if __name__ == "__main__":
 When you run this script, the Incorporator Engine bypasses its internal disk-logging queues and instead streams the chunk progress (e.g., `✅ Chunk 1 | 10000 rows in 1.4s`) directly to your active Prefect Server or Prefect Cloud dashboard!
 
 ---
+
+## Where to Go Next
+
+| Goal | Read |
+|---|---|
+| Pick the right CLI command for your pipeline shape | [CLI & Configuration Guide](./cli_and_configuration.md) |
+| Coordinate multiple pipelines on independent cadences | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| Decide between in-process and cloud orchestration | [Appendix — Tideweaver vs. Prefect](./appendix/tideweaver_vs_prefect.md) |
+| Get structured error logs flowing to a log aggregator | [Production Debugging](./debugging.md) |
+| Tune performance per format / payload size | [Performance Guide](./performance.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/deployment.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

@@ -250,3 +250,22 @@ Honest about the limits:
 For the architectural rationale behind these trade-offs, see
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) and the relevant docstrings
 in [`incorporator/`](../incorporator/).
+
+---
+
+## Where to Go Next
+
+| Goal | Read |
+|---|---|
+| Switch to chunking mode to keep memory flat | [Streaming & Pagination Deep Dive](./streaming_and_pagination.md) |
+| Pick append-friendly vs columnar formats deliberately | [Formats & Compression](./formats_and_compression.md) |
+| Drain a paginated API into a warehouse without OOM | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
+| Coordinate per-source intervals to spread load | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| Ship with Docker healthchecks + heartbeat files | [Deployment Guide](./deployment.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/performance.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

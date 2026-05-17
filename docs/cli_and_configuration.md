@@ -585,3 +585,22 @@ Waves.
 
 For the full method-level signature of `fjord()`, see the pdoc-built
 [Library reference](./library_reference.md).
+
+---
+
+## Where to Go Next
+
+| Goal | Read |
+|---|---|
+| See the `pipeline.json` schema in a complete tutorial | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
+| Configure a fjord pipeline with `outflow.py` | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
+| Author a `watershed.json` for Tideweaver | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| Ship the CLI as a Docker container with secrets | [Deployment Guide](./deployment.md) |
+| Get structured error logs out of the daemons | [Production Debugging](./debugging.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/cli_and_configuration.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

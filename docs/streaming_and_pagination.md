@@ -238,3 +238,22 @@ Measured throughput on commodity hardware: 200k+ rows/sec for Parquet
 parse, 140k–250k rows/sec for delimited and columnar writes. See
 [`tests/benchmarks/`](../tests/benchmarks/) for the full per-format
 matrix.
+
+---
+
+## Where to Go Next
+
+| Goal | Read |
+|---|---|
+| Pick the right polling mode for your pipeline | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
+| Snapshot millions of rows into a warehouse without OOM | [Tutorial 2 — Universal Formats](./2_universal_formats.md) |
+| Tune chunk size against memory + throughput | [Performance Guide](./performance.md) |
+| Land columnar Parquet at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
+| Get structured error logs from a chunked daemon | [Production Debugging](./debugging.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/streaming_and_pagination.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)
