@@ -506,3 +506,102 @@ def test_resolve_per_source_interval_dict_miss_returns_none() -> None:
     entry = {"cls": Coin}
     top = {"BinanceFutures": 5.0}              # no entry for Coin
     assert _resolve_per_source_interval(top, entry, "refresh_interval") is None
+
+
+# ----------------------------------------------------------------------
+# depends_on opt-in tiered seed
+# ----------------------------------------------------------------------
+
+
+class Planet(Incorporator):
+    pass
+
+
+class Moon(Incorporator):
+    pass
+
+
+class Comet(Incorporator):
+    pass
+
+
+def test_has_any_depends_on_negative() -> None:
+    from incorporator.observability.pipeline.fjord import _has_any_depends_on
+
+    entries = [{"cls": Planet}, {"cls": Moon}]
+    assert _has_any_depends_on(entries) is False
+
+
+def test_has_any_depends_on_positive() -> None:
+    from incorporator.observability.pipeline.fjord import _has_any_depends_on
+
+    entries = [{"cls": Planet}, {"cls": Moon, "depends_on": ["Planet"]}]
+    assert _has_any_depends_on(entries) is True
+
+
+def test_validate_depends_on_typo_raises() -> None:
+    """Unknown peer name in depends_on must fail fast with a clear message."""
+    from incorporator.observability.pipeline.fjord import _validate_depends_on
+
+    entries = [
+        {"cls": Planet},
+        {"cls": Moon, "depends_on": ["Plnet"]},  # typo: should be "Planet"
+    ]
+    with pytest.raises(ValueError, match="unknown peer class 'Plnet'"):
+        _validate_depends_on(entries)
+
+
+def test_validate_depends_on_clean_passes() -> None:
+    """Well-formed graph: validator silently passes."""
+    from incorporator.observability.pipeline.fjord import _validate_depends_on
+
+    entries = [
+        {"cls": Planet},
+        {"cls": Moon, "depends_on": ["Planet"]},
+        {"cls": Comet, "depends_on": ["Planet", "Moon"]},
+    ]
+    _validate_depends_on(entries)  # no raise
+
+
+def test_tiered_seed_order_basic_chain() -> None:
+    """Planet → Moon → Comet: three tiers, one entry each."""
+    from incorporator.observability.pipeline.fjord import _tiered_seed_order
+
+    entries = [
+        {"cls": Planet},
+        {"cls": Moon, "depends_on": ["Planet"]},
+        {"cls": Comet, "depends_on": ["Moon"]},
+    ]
+    tiers = _tiered_seed_order(entries)
+    assert len(tiers) == 3
+    assert tiers[0][0]["cls"] is Planet
+    assert tiers[1][0]["cls"] is Moon
+    assert tiers[2][0]["cls"] is Comet
+
+
+def test_tiered_seed_order_mixed_tier() -> None:
+    """Two independents + one dependent: tier 0 has both, tier 1 has the dependent."""
+    from incorporator.observability.pipeline.fjord import _tiered_seed_order
+
+    entries = [
+        {"cls": Planet},
+        {"cls": Comet},  # independent peer alongside Planet
+        {"cls": Moon, "depends_on": ["Planet"]},
+    ]
+    tiers = _tiered_seed_order(entries)
+    assert len(tiers) == 2
+    tier0_classes = {e["cls"] for e in tiers[0]}
+    assert tier0_classes == {Planet, Comet}
+    assert tiers[1][0]["cls"] is Moon
+
+
+def test_tiered_seed_order_cycle_raises() -> None:
+    """Cycle: A depends on B depends on A → ValueError listing the unresolved set."""
+    from incorporator.observability.pipeline.fjord import _tiered_seed_order
+
+    entries = [
+        {"cls": Planet, "depends_on": ["Moon"]},
+        {"cls": Moon, "depends_on": ["Planet"]},
+    ]
+    with pytest.raises(ValueError, match="depends_on cycle detected"):
+        _tiered_seed_order(entries)

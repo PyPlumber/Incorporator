@@ -27,6 +27,75 @@ async def _maybe_await(fn: Callable[[Any], Any], state: Dict[str, Any]) -> Any:
     return fn(state)
 
 
+def _has_any_depends_on(stream_params: List[Dict[str, Any]]) -> bool:
+    """True when at least one source entry declares ``depends_on``.
+
+    Acts as the opt-in switch for the tiered-seed path: when ``False``, the
+    engine uses the legacy declaration-order sequential seed (bit-identical
+    to pre-feature behaviour).  When ``True``, the engine validates the
+    graph and runs entries in topo tiers — within-tier parallel, between-
+    tier sequential so each tier sees prior tiers' state.
+    """
+    return any(entry.get("depends_on") for entry in stream_params)
+
+
+def _validate_depends_on(stream_params: List[Dict[str, Any]]) -> None:
+    """Validate that every ``depends_on`` name resolves to a peer in the seed.
+
+    Raises ``ValueError`` with a clear message if a name doesn't match any
+    peer entry's ``cls.__name__`` — fails fast on typos rather than later at
+    ``state[...]`` KeyError time, which is harder to debug.
+    """
+    peer_names = {entry["cls"].__name__ for entry in stream_params}
+    for entry in stream_params:
+        deps = entry.get("depends_on") or []
+        for dep in deps:
+            if dep not in peer_names:
+                raise ValueError(
+                    f"depends_on references unknown peer class {dep!r}; "
+                    f"available peers: {sorted(peer_names)}"
+                )
+
+
+def _tiered_seed_order(
+    stream_params: List[Dict[str, Any]],
+) -> List[List[Dict[str, Any]]]:
+    """Topo-sort entries into tiers; entries in a tier have no inter-tier deps.
+
+    Tier 0 contains all entries with no ``depends_on`` (or an empty list).
+    Tier N contains all entries whose declared dependencies are fully
+    satisfied by entries in tiers 0..N-1.  Within-tier order matches
+    ``stream_params`` declaration order so the gather() call returns
+    results in a stable shape.
+
+    Raises ``ValueError`` on a cycle (no entry's deps can be satisfied
+    by the resolved set, but unresolved entries remain).
+    """
+    unresolved = list(stream_params)
+    resolved_names: set[str] = set()
+    tiers: List[List[Dict[str, Any]]] = []
+
+    while unresolved:
+        ready = [
+            e
+            for e in unresolved
+            if all(d in resolved_names for d in (e.get("depends_on") or []))
+        ]
+        if not ready:
+            unresolved_names = [e["cls"].__name__ for e in unresolved]
+            raise ValueError(
+                f"depends_on cycle detected among: {unresolved_names}"
+            )
+        # Preserve declaration order within the tier.
+        ready_ids = {id(e) for e in ready}
+        ready_in_order = [e for e in stream_params if id(e) in ready_ids]
+        tiers.append(ready_in_order)
+        for e in ready_in_order:
+            resolved_names.add(e["cls"].__name__)
+            unresolved.remove(e)
+    return tiers
+
+
 def _resolve_seed_order(
     stream_params: List[Dict[str, Any]],
     refresh_interval: Union[float, Dict[Any, float], None],
@@ -186,18 +255,34 @@ async def _run_fjord_engine(
             return_exceptions=True,
         )
         results_by_idx: Dict[int, Any] = dict(enumerate(seed_results))
-    else:
-        # Sequential seed in resolved order so each source can ``link_to``
-        # its predecessors via ``state[...]``.  State is built up tick by
-        # tick; refresh daemons re-run ``inflow(state)`` later when they
-        # fire (so peer snapshots stay current across refresh cycles).
+    elif _has_any_depends_on(stream_params):
+        # Opt-in tiered seed: within-tier parallel, between-tier sequential.
+        # Entries without depends_on (or whose deps are satisfied) run together
+        # via gather; tier N waits for tiers 0..N-1 to finish so state[...] is
+        # populated for each tier's inflow(state) call.  Failures are surfaced
+        # via return_exceptions and stored in results_by_idx for the wave loop
+        # below to translate into per-source failure waves.
+        _validate_depends_on(stream_params)
         state: Dict[str, Any] = {}
-        # Map original stream_params index → result so the wave-yield loop
-        # below stays in declaration order.
         results_by_idx = dict.fromkeys(range(len(stream_params)))
-        # Pre-build id() → original-index map.  ``stream_params.index(entry)``
-        # would be O(n) per call and O(n²) overall; entries are dicts so we
-        # key by ``id()`` rather than the entry itself.
+        idx_by_id = {id(entry): i for i, entry in enumerate(stream_params)}
+        for tier in _tiered_seed_order(stream_params):
+            tier_results = await asyncio.gather(
+                *[_seed_one_source(entry, state, inflow_callable) for entry in tier],
+                return_exceptions=True,
+            )
+            for entry, result in zip(tier, tier_results):
+                orig_idx = idx_by_id[id(entry)]
+                results_by_idx[orig_idx] = result
+                if not isinstance(result, Exception):
+                    state[entry["cls"].__name__] = result
+    else:
+        # Legacy sequential seed in resolved order so each source can
+        # ``link_to`` its predecessors via ``state[...]``.  Bit-identical to
+        # pre-feature behaviour: no depends_on declared anywhere → fall
+        # through here, no parallelism, no semantic change for callers.
+        state = {}
+        results_by_idx = dict.fromkeys(range(len(stream_params)))
         idx_by_id = {id(entry): i for i, entry in enumerate(stream_params)}
         for entry in seed_order:
             idx = idx_by_id[id(entry)]

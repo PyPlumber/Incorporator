@@ -117,6 +117,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~600 listed pairs vs ~1,900 on `.com`.  Swap back if you're outside
   those regions and want the full pair universe.
 
+### Added (opt-in)
+- **`depends_on: List[str]` on fjord source entries** — declare which
+  peer classes a source's ``inflow(state)`` reads from.  When at least
+  one entry declares ``depends_on``, the seed runs in topological tiers:
+  each tier's entries are seeded in parallel via ``asyncio.gather``,
+  later tiers wait for earlier tiers' ``state[...]`` to be populated.
+  Names that don't resolve to a peer raise ``ValueError`` at engine
+  entry (fail-fast on typos).  When no entry declares ``depends_on``,
+  the engine falls through to the existing declaration-order sequential
+  seed — bit-identical to pre-feature behaviour for existing callers.
+  Real-world impact: a 6-source watershed where only 2 sources are
+  ordered no longer pays the serial cost for the other 4.
+
 ## [1.1.2] - 2026-05-15
 
 ### Changed
