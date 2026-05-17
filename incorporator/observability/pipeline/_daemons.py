@@ -19,16 +19,19 @@ async def _refresh_daemon(
     r_interval: Optional[float],
     operation_label: str = "refresh",
 ) -> None:
-    """Runs the independent refresh loop on its own schedule.
+    """Periodically re-fetch the source and atomically update the in-memory registry.
 
-    Acquires ``lock`` before mutating ``dataset_ref[0]`` so the export daemon
-    always snapshots a consistent state.  Enqueues one :class:`Wave` per
-    iteration — success or failure — for the drain loop to yield downstream.
+    Each tick calls ``cls.refresh(instance=dataset_ref[0], **refresh_params)`` under
+    ``lock`` so the export daemon never reads a half-mutated state. Sleeps
+    ``r_interval`` between ticks; exits cleanly when ``shutdown_event`` is set.
 
-    ``operation_label`` overrides the :attr:`Wave.operation` field so the
-    fjord engine can tag refreshes per source class
-    (e.g. ``"fjord_refresh:Coin"``). Defaults to ``"refresh"`` for the
-    single-source stateful engine.
+    ``operation_label`` overrides the :attr:`Wave.operation` field so the fjord
+    engine can tag refreshes per source class (e.g. ``"fjord_refresh:Coin"``).
+    Defaults to ``"refresh"`` for the single-source stateful engine.
+
+    Observability:
+        Enqueues one :class:`Wave` per iteration into ``wave_queue`` — success or
+        failure — for the drain loop to yield downstream.
     """
     loop_idx = 0
     while not shutdown_event.is_set():
@@ -62,15 +65,20 @@ async def _export_daemon(
     e_interval: Optional[float],
     operation_label: str = "export",
 ) -> None:
-    """Runs the independent export loop on its own schedule.
+    """Periodically snapshot the in-memory registry and write it to disk.
 
-    Snapshots ``dataset_ref[0]`` under ``lock`` (O(1) pointer copy), then
-    releases the lock before the actual export so ``_refresh_daemon`` can
-    proceed concurrently during long I/O writes (e.g. 10 M-row exports).
+    Each tick captures ``dataset_ref[0]`` under ``lock`` (O(1) pointer copy), then
+    releases the lock before the actual export so ``_refresh_daemon`` can proceed
+    concurrently during long I/O writes (e.g. 10 M-row exports). Sleeps
+    ``e_interval`` between ticks; exits cleanly when ``shutdown_event`` is set.
 
-    ``operation_label`` overrides the :attr:`Wave.operation` field so the
-    fjord engine can tag per-source exports (e.g. ``"export:BinanceFutures"``).
-    Defaults to ``"export"`` for the single-source stateful engine.
+    ``operation_label`` overrides the :attr:`Wave.operation` field so the fjord
+    engine can tag per-source exports (e.g. ``"export:BinanceFutures"``). Defaults
+    to ``"export"`` for the single-source stateful engine.
+
+    Observability:
+        Enqueues one :class:`Wave` per iteration into ``wave_queue`` — success or
+        failure — for the drain loop to yield downstream.
     """
     loop_idx = 0
     # The export body re-binds ``snapshot`` per tick — capture it via a

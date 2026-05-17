@@ -61,12 +61,26 @@ async def run_pipeline(
     refresh_interval: Optional[float] = None,
     export_interval: Optional[float] = None,
 ) -> AsyncGenerator[Wave, None]:
-    """Dual-engine pipeline dispatcher.
+    """Run a single-source streaming pipeline, picking the engine to match the workload.
 
-    Routes to :func:`_run_stateful_engine` when ``stateful_polling=True``
-    (independent refresh/export daemon tasks on decoupled schedules), or
-    :func:`_run_chunking_engine` for sequential O(1) chunked ingestion with
-    optional continuous polling.
+    Two engines back ``stream()``:
+
+    * **Stateful** (``stateful_polling=True``) — seed the registry once with
+      ``incorp()``, then run independent refresh and export daemons on decoupled
+      schedules. Right for live mark-to-market dashboards, slow indicators, and any
+      workload that reads ``cls.inc_dict`` between cycles.
+    * **Chunking** (the default) — paginator-driven sequential O(1) ingestion; each
+      wave loads the next chunk and releases it from memory. Right for bulk drains
+      of paginated sources and historical backfills.
+
+    The default interval cascade applies bottom-up: explicit ``refresh_interval`` /
+    ``export_interval`` override ``poll_interval``, which overrides
+    ``DEFAULT_REFRESH_INTERVAL_SEC`` / ``DEFAULT_EXPORT_INTERVAL_SEC``. This prevents
+    a daemon spawned without any interval kwargs from ticking once and exiting silently.
+
+    Yields:
+        Wave: one per daemon iteration (stateful) or one per chunk (chunking),
+        success or failure.
     """
     paginator = incorp_params.get("inc_page")
 

@@ -20,12 +20,21 @@ async def _run_stateful_engine(
     r_interval: Optional[float],
     e_interval: Optional[float],
 ) -> AsyncGenerator[Wave, None]:
-    """ENGINE 2 — Stateful Polling (Decoupled Schedules).
+    """Run independent refresh and export daemons against a live in-memory registry.
 
-    Runs ``incorp()`` once to seed the dataset, then spawns ``_refresh_daemon``
-    and ``_export_daemon`` as independent asyncio tasks on their own intervals.
-    Yields one :class:`Wave` per daemon iteration until both tasks complete
-    or the generator is cancelled.
+    Seeds the registry once with ``incorp()``, then spawns ``_refresh_daemon`` and
+    ``_export_daemon`` as independent asyncio tasks on their own intervals. The
+    refresh daemon mutates the registry in place under a shared lock; the export
+    daemon snapshots it and writes the latest view to disk. Both run until the
+    generator is cancelled (Ctrl+C / SIGTERM trigger graceful drain).
+
+    This is the engine behind ``stream(stateful_polling=True)`` — the right shape
+    for mark-to-market dashboards, slow-cadence indicators, and any workload that
+    reads ``cls.inc_dict`` between waves.
+
+    Yields:
+        Wave: one per daemon iteration, success or failure, drained from a shared
+        queue that both daemons feed.
     """
     init_start_time = time.perf_counter()
     initial_dataset = await cls.incorp(**incorp_params)
