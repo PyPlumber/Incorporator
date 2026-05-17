@@ -103,6 +103,7 @@ async def chunking_demo(max_pages: int = 3) -> None:
             "inc_page": paginator,
             "excl_lst": ["image"],
         },
+        refresh_params=None,                # chunking mode: opt out of per-chunk refresh
         export_params={
             "file_path": out,
             "if_exists": "append",
@@ -114,7 +115,10 @@ async def chunking_demo(max_pages: int = 3) -> None:
         else:
             print(f"📦 page {wave.chunk_index}: {wave.rows_processed} coins")
 
-    print(f"\n✅ Drain complete. Output: {out} ({out.stat().st_size:,} bytes)")
+    if out.exists():
+        print(f"\n✅ Drain complete. Output: {out} ({out.stat().st_size:,} bytes)")
+    else:
+        print("\n⚠️  Drain produced no output — likely rate-limited or empty source.")
 
 
 # ----------------------------------------------------------------------

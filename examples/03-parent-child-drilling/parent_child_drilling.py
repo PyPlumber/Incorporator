@@ -73,9 +73,14 @@ async def main() -> None:
         detail = CoinDetail.inc_dict.get(coin.id)
         if detail is None:
             continue
-        homepage_list = getattr(detail.links, "homepage", []) if detail.links else []
+        # Defensive guards: CoinGecko's /coins/{id} sometimes omits ``links``
+        # (memecoins / new listings); ``genesis_date`` is null for many.  Use
+        # ``getattr`` with defaults so the demo doesn't blow up on the first
+        # incomplete record.
+        links_obj = getattr(detail, "links", None)
+        homepage_list = getattr(links_obj, "homepage", []) if links_obj else []
         homepage = (homepage_list[0] if homepage_list else "")[:38]
-        genesis = detail.genesis_date or "—"
+        genesis = getattr(detail, "genesis_date", None) or "—"
         print(
             f"{coin.name:<14} "
             f"${coin.current_price:>12,.2f} "

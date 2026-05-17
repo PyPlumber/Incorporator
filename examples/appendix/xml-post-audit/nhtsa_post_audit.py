@@ -13,9 +13,12 @@ It highlights:
 """
 
 import asyncio
+from pathlib import Path
 
 from incorporator import Incorporator
 from incorporator.schema.extractors import join_all
+
+HERE = Path(__file__).resolve().parent
 
 
 # ==========================================
@@ -36,7 +39,7 @@ async def run_audit() -> None:
     # PHASE 1: Ingest the XML File
     # ==========================================
     invoices = await Invoice.incorp(
-        inc_file="jimmy_ledger.xml",
+        inc_file=HERE / "jimmy_ledger.xml",
         rec_path="Dealership.AuditFile.Invoices.Invoice",
         inc_code="id",
         inc_child="Vehicle.VIN",
