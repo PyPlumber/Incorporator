@@ -4,6 +4,7 @@ Utilizes a Strategy Pattern to safely route between Native Python and Rust-backe
 """
 
 import bz2
+import functools
 import gzip
 import io
 import lzma
@@ -59,12 +60,15 @@ _CRAMJAM_MODULE_MAP: Dict[CompressionType, str] = {
 }
 
 
+@functools.lru_cache(maxsize=4096)
 def infer_compression(path_or_url: str) -> Optional[CompressionType]:
     """Detect the compression type from a file path or URL by its extension.
 
     Returns the matching :class:`CompressionType` member, or ``None`` when the
     path has no recognised compression suffix (e.g. plain ``.json`` /
     ``.csv``). Case-insensitive — ``data.JSON.GZ`` resolves to ``GZIP``.
+
+    Cached: same callers / cardinality story as ``infer_format``.
     """
     path_lower = str(path_or_url).lower()
     for comp in CompressionType:

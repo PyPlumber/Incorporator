@@ -9,6 +9,7 @@ constructor stays available for custom shapes with mixed-mode edges.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, List, Literal, Optional, Sequence, Tuple
@@ -94,8 +95,9 @@ class Watershed(BaseModel):
         way without losing the explicit-mode option.
         """
         names = [c.name for c in self.currents]
-        if len(set(names)) != len(names):
-            dupes = sorted({n for n in names if names.count(n) > 1})
+        counts = Counter(names)
+        if any(v > 1 for v in counts.values()):
+            dupes = sorted(n for n, v in counts.items() if v > 1)
             raise ValueError(f"Watershed currents must have unique names; duplicates: {dupes}")
 
         start, end = self.window

@@ -299,8 +299,17 @@ RANKED_CONVERTERS: Dict[Any, List[Callable[[Any], Any]]] = {
 # ==========================================
 # THE INC() FACTORY
 # ==========================================
-@functools.lru_cache(maxsize=128)
+@functools.lru_cache(maxsize=4096)
 def _get_cached_adapter(actual_type: Any) -> Optional[TypeAdapter[Any]]:
+    """Per-type ``TypeAdapter`` factory, memoised.
+
+    The cache is keyed by ``actual_type`` (Optional[X], Union[X, Y], List[int],
+    custom Pydantic models, etc).  Cardinality is bounded by program
+    structure — number of distinct types passed to ``inc()`` across the
+    process lifetime — so 4096 comfortably absorbs Tideweaver topologies
+    with many derived classes.  Was 128, which evicted under realistic load
+    and forced a Pydantic-core rebuild on every miss.
+    """
     try:
         return TypeAdapter(actual_type)
     except Exception:

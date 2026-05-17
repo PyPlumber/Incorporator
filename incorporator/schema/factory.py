@@ -284,7 +284,14 @@ def build_instances(
         if "_schema_union" not in cls.__dict__:
             cls._schema_union = {}
         # Writes only on first-seen keys — O(1) miss per key, zero writes after stabilization.
-        declared = ActualClass.model_json_schema().get("properties", {})
+        # ``ActualClass.model_json_schema()`` is stable for the lifetime of the
+        # SCHEMA_REGISTRY-cached dynamic class; cache its ``properties`` dict
+        # on the class itself so long-running daemons don't pay the rebuild
+        # cost on every wave.
+        declared = getattr(ActualClass, "_cached_json_properties", None)
+        if declared is None:
+            declared = ActualClass.model_json_schema().get("properties", {})
+            ActualClass._cached_json_properties = declared
         for item in transformed_data:
             for k in item:
                 if k not in cls._schema_union:

@@ -3,6 +3,7 @@ Format Utility Algorithms for Incorporator.
 Contains purely functional data sanitization, recursion, and format inference.
 """
 
+import functools
 import json
 import re
 from datetime import datetime
@@ -176,8 +177,15 @@ def convert_type(type_str: str, from_fmt: FormatType, to_fmt: FormatType, defaul
     return PYTHON_TO_FORMAT.get((to_fmt, python_type), default)
 
 
+@functools.lru_cache(maxsize=4096)
 def infer_format(path_or_url: str) -> FormatType:
-    """Helper to auto-detect format from a file extension or URL."""
+    """Helper to auto-detect format from a file extension or URL.
+
+    Cached: callers pass the same path / URL on every paginator yield and
+    on every fan-out source.  Pure deterministic suffix scan — caching
+    is safe and bounded by program structure (number of configured
+    sources).
+    """
     path_lower = str(path_or_url).lower()
 
     for comp in [

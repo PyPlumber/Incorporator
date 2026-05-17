@@ -84,6 +84,10 @@ class Tideweaver:
         self._upstream: Dict[str, List[Tuple[str, str]]] = {c.name: [] for c in watershed.currents}
         for e in watershed.edges:
             self._upstream[e.to_name].append((e.from_name, e.mode))
+        # Watershed topology is immutable for the run, so cache the
+        # transitive-closure result per dependent.  Populated lazily by
+        # ``_transitive_upstreams``.
+        self._transitive_cache: Dict[str, List[str]] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -357,8 +361,13 @@ class Tideweaver:
         """Return the set of names reachable upstream from ``name`` (excluding self).
 
         Order is topological among the reachable ancestors so downstream
-        consumers (e.g. logging) see a stable shape.
+        consumers (e.g. logging) see a stable shape.  Memoised on
+        ``self._transitive_cache``; the watershed topology is immutable
+        for the run.
         """
+        cached = self._transitive_cache.get(name)
+        if cached is not None:
+            return cached
         seen: set[str] = set()
         stack = [up_name for up_name, _mode in self._upstream[name]]
         while stack:
@@ -367,4 +376,6 @@ class Tideweaver:
                 continue
             seen.add(up)
             stack.extend(grand for grand, _mode in self._upstream[up] if grand not in seen)
-        return [n for n in self._topo if n in seen]
+        result = [n for n in self._topo if n in seen]
+        self._transitive_cache[name] = result
+        return result

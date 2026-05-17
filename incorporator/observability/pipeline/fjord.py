@@ -195,8 +195,12 @@ async def _run_fjord_engine(
         # Map original stream_params index → result so the wave-yield loop
         # below stays in declaration order.
         results_by_idx = dict.fromkeys(range(len(stream_params)))
+        # Pre-build id() → original-index map.  ``stream_params.index(entry)``
+        # would be O(n) per call and O(n²) overall; entries are dicts so we
+        # key by ``id()`` rather than the entry itself.
+        idx_by_id = {id(entry): i for i, entry in enumerate(stream_params)}
         for entry in seed_order:
-            idx = stream_params.index(entry)
+            idx = idx_by_id[id(entry)]
             try:
                 result = await _seed_one_source(entry, state, inflow_callable)
                 results_by_idx[idx] = result

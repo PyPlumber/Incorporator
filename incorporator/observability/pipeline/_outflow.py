@@ -166,7 +166,10 @@ async def flush(
                 instances = list(rows)
             else:
                 derived_cls.inc_dict.clear()
-                instances = [derived_cls(**row) for row in rows]
+                # model_validate skips the ``**kwargs`` unpack per row and lets
+                # Pydantic's Rust core amortise field-offset lookups across the
+                # whole list — matches the build_instances:300 fast path.
+                instances = [derived_cls.model_validate(row) for row in rows]
             derived_cls._fjord_snapshot = instances  # strong-ref keeps the WeakValueDictionary alive
 
             class_export = _resolve_export_params_for(derived_name, export_params, is_multi)

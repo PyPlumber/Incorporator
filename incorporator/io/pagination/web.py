@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import AsyncGenerator, Optional, Set, Union
+from typing import Any, AsyncGenerator, List, Optional, Set, Union
 from urllib.parse import urljoin
 
 import httpx
@@ -11,6 +11,31 @@ from ...exceptions import IncorporatorFormatError
 from .base import AsyncPaginator
 
 logger = logging.getLogger(__name__)
+
+# Common response keys holding the results array.  Tried in priority order
+# when a paginator's ``result_key`` is unset.  Adding a new convention
+# means editing this tuple in one place rather than every paginator.
+_RESULT_KEY_CONVENTIONS = ("results", "data", "items", "docs", "records")
+
+
+def _extract_results_array(data: Any, result_key: Optional[str]) -> List[Any]:
+    """Pull the results array out of a paginated response body.
+
+    Honours an explicit ``result_key`` when set; otherwise walks
+    ``_RESULT_KEY_CONVENTIONS`` until a non-empty list is found.  Lists
+    pass through; anything else resolves to ``[]``.
+    """
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+    if result_key:
+        return data.get(result_key, []) or []
+    for key in _RESULT_KEY_CONVENTIONS:
+        items = data.get(key)
+        if items:
+            return items
+    return []
 
 
 class LinkHeaderPaginator(AsyncPaginator):
@@ -260,22 +285,7 @@ class OffsetPaginator(AsyncPaginator):
                 calls += 1
 
                 data = await self._parse_response(response)
-
-                if isinstance(data, dict):
-                    if self.result_key:
-                        items = data.get(self.result_key, [])
-                    else:
-                        # Auto-detect from common conventions
-                        items = (
-                            data.get("results")
-                            or data.get("data")
-                            or data.get("items")
-                            or data.get("docs")
-                            or data.get("records")
-                            or []
-                        )
-                else:
-                    items = data if isinstance(data, list) else []
+                items = _extract_results_array(data, self.result_key)
 
                 if not items:
                     self.is_exhausted = True
@@ -358,21 +368,7 @@ class PageNumberPaginator(AsyncPaginator):
                 calls += 1
 
                 data = await self._parse_response(response)
-
-                if isinstance(data, dict):
-                    if self.result_key:
-                        items = data.get(self.result_key, [])
-                    else:
-                        items = (
-                            data.get("results")
-                            or data.get("data")
-                            or data.get("items")
-                            or data.get("docs")
-                            or data.get("records")
-                            or []
-                        )
-                else:
-                    items = data if isinstance(data, list) else []
+                items = _extract_results_array(data, self.result_key)
 
                 if not items:
                     self.is_exhausted = True
