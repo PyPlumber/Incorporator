@@ -59,6 +59,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tick → wave prose drift** from the earlier user-visible rename
   cleaned up in `docs/5_stateful_refresh.md` and
   `docs/6_streaming_daemon.md`.
+- **`stream(stateful_polling=True)` collapsed into a thin shim** over
+  `fjord()`.  Two engines (chunking + stateful) became one engine
+  (chunking) plus a single-source-fjord shim — eliminates a parallel
+  code path with subtly drifting semantics.  Wave-contract preserved:
+  same `operation` strings, same `chunk_index` cadence, same instance
+  identity across refreshes.  Shim lives at
+  `observability/pipeline/_stateful_shim.py`; regex-anchored op-string
+  remap and explicit inflow wire-through keep the user-visible surface
+  unchanged.  `stateful_polling=True` continues to work as documented.
+- **Typeless-format reads now auto-coerce via `_schema_union`.**  When
+  a class has already been incorp'd from a typed source (JSON / NDJSON /
+  Parquet / SQLite / Avro) and is then read from a typeless format
+  (CSV / TSV / PSV), `build_instances()` synthesises `inc()` converters
+  for every field the user didn't name in `conv_dict`.  Round-tripping
+  an `int` field through CSV preserves the `int` automatically — the
+  30-line manual `conv_dict` friction disappears.  User-supplied
+  `conv_dict` entries still win on key conflict; the asymmetry is
+  one-way (coerce towards richer types, never towards `str`).
+  See `incorporator.schema.factory._expand_conv_dict_with_schema_union`.
+- **Examples folder reorganised** into per-tutorial directories with
+  co-located docs (`examples/02-universal-formats/{universal_formats.py,
+  README.md, out/}` etc.).  Replaces the previous flat-script root +
+  scattered subdir layout; each tutorial is now self-contained with
+  output isolated to its own `out/` dir.
+
+### Fixed
+- **`incorp(inc_file=Path(...))` silently returned empty list.**
+  `_normalize_source_list` only handled `str` and `list`; a single
+  `pathlib.Path` (or any `os.PathLike`) fell through to the
+  `payload_list` branch and was dropped.  Now coerces via `os.fspath`
+  at every entry point.  Affected tutorial 2 (CSV round-trip) and
+  the XML-post-audit appendix in real-world testing.
+- **T5 chunking demo errored on default `refresh_params`.**  Paginated
+  transient instances have no stable origin URL, so the default
+  per-chunk refresh attempt raised.  Tutorial code now opts out
+  explicitly with `refresh_params=None`; the parameter is documented
+  in the T5 chunking-mode snippet.
+- **T3 defensive `getattr` guards** for variable-shape CoinGecko
+  `/coins/{id}` responses (missing `links` on memecoins / new
+  listings, `null` `genesis_date`).  Pre-existing pathology; no
+  framework change.
+- **T4 swapped to `api.binance.us`** to bypass `api.binance.com`'s
+  451 geo-block in the US / UK / Singapore.  Same v3 endpoint shape,
+  ~600 listed pairs vs ~1,900 on `.com`.  Swap back if you're outside
+  those regions and want the full pair universe.
 
 ## [1.1.2] - 2026-05-15
 

@@ -124,6 +124,7 @@ async def main() -> None:
             "inc_page": paginator,                # makes the chunking engine fire
             "excl_lst": ["image"],
         },
+        refresh_params=None,                      # chunking: opt out of per-chunk refresh
         export_params={
             "file_path": "data/coins_full.ndjson",
             "if_exists": "append",                # accumulate every page
@@ -148,6 +149,11 @@ async def main() -> None:
 **The registry is *transient*.**  Each wave's records belong to that wave only;
 `CoinPage.inc_dict` is for in-wave processing, not for cross-wave reads.  Use chunking
 mode whenever the answer to "do I need this registry to outlive the chunk?" is no.
+
+> **Why `refresh_params=None`?**  The default refresh policy assumes a stable
+> per-instance origin URL — true for stateful registries, false for paginated
+> chunks (each wave is a different page).  Passing `None` opts out of per-chunk
+> refresh entirely; the paginator is the source of newness.
 
 ---
 

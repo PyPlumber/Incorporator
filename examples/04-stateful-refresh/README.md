@@ -38,9 +38,14 @@ Re-fetches the URL the class was loaded from. Identity mapping is
 remembered from the original `incorp()` call — no need to re-pass
 `inc_code` / `inc_name`. The most common mode by far.
 
+> **Geo-block note.** `api.binance.com` returns 451 in the US, UK, and
+> Singapore. The examples target the `api.binance.us` mirror (same v3
+> endpoint shape, ~600 listed pairs vs ~1,900). Swap back to `.com` if
+> you're outside those regions.
+
 ```python
 pairs = await Pair.incorp(
-    inc_url="https://api.binance.com/api/v3/ticker/24hr",
+    inc_url="https://api.binance.us/api/v3/ticker/24hr",
     inc_code="symbol",
 )
 btc_before = Pair.inc_dict["BTCUSDT"].lastPrice
@@ -63,7 +68,7 @@ for the lighter `price` endpoint when you only need the latest price.
 
 ```python
 # Repoint at the lighter "current price only" endpoint:
-await Pair.refresh("https://api.binance.com/api/v3/ticker/price")
+await Pair.refresh("https://api.binance.us/api/v3/ticker/price")
 ```
 
 ### 3. Targeted — `refresh(instance=[obj, obj, ...])`
@@ -167,9 +172,9 @@ class Pair(Incorporator):
 
 
 async def main():
-    # 1. Initial load — fills Pair.inc_dict with ~1,900 trading pairs.
+    # 1. Initial load — fills Pair.inc_dict (~600 pairs on .us, ~1,900 on .com).
     await Pair.incorp(
-        inc_url="https://api.binance.com/api/v3/ticker/24hr",
+        inc_url="https://api.binance.us/api/v3/ticker/24hr",
         inc_code="symbol",
     )
     price_before = Pair.inc_dict["BTCUSDT"].lastPrice
