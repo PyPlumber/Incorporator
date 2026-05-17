@@ -140,3 +140,22 @@ def test_feather_write_missing_pyarrow_message(tmp_path: Path) -> None:
     with patch("builtins.__import__", side_effect=fake_import):
         with pytest.raises(IncorporatorFormatError, match=r"pip install incorporator\[parquet\]"):
             FeatherHandler().write(DUMMY_DATA, tmp_path / "out.feather")
+
+
+def test_feather_per_wave_rolling_writes(tmp_path: Path) -> None:
+    """Stateless-stream chunking mode: each wave writes a fresh Feather file."""
+    handler = FeatherHandler()
+    wave_data = [
+        [{"wave_id": 0, "value": "first"}],
+        [{"wave_id": 1, "value": "second"}],
+        [{"wave_id": 2, "value": "third"}],
+    ]
+    paths = [tmp_path / f"wave_{i}.feather" for i in range(3)]
+
+    for rows, p in zip(wave_data, paths):
+        handler.write(rows, p)
+
+    assert all(p.exists() for p in paths)
+    for rows, p in zip(wave_data, paths):
+        readback = handler.parse(p)
+        assert readback == rows

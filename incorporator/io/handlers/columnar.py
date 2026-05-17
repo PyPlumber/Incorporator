@@ -31,10 +31,11 @@ Design choices:
   Arrow dataset APIs. Out of scope for v1.
 """
 
+import contextlib
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Union
+from typing import Any, Callable, ContextManager, Dict, Iterable, Iterator, List, Optional, Set, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType, convert_type, serialize_nested
@@ -46,6 +47,75 @@ logger = logging.getLogger(__name__)
 # default — large enough that columnar encoding is efficient, small enough that
 # memory stays bounded for arbitrarily large input streams.
 _WRITE_BATCH_ROWS = 1024
+
+
+def _stream_columnar_write(
+    data: Iterable[Dict[str, Any]],
+    file_path: Union[str, Path],
+    kwargs: Dict[str, Any],
+    *,
+    format_label: str,
+    sink_factory: Callable[[Path], ContextManager[Any]],
+    build_writer: Callable[[Any, Any], Any],
+    write_batch: Callable[[Any, Any], None],
+) -> None:
+    """Shared write scaffold for the three columnar handlers (Parquet/Feather/ORC).
+
+    The three formats share the same lifecycle — peek the first Arrow batch
+    from ``_stream_arrow_batches``, atomically write to a sibling tempfile,
+    construct a writer (with the first batch's schema), loop the remaining
+    batches, close, rename.  They differ on:
+
+    - **Sink factory.** Parquet/ORC accept a path-string directly (wrapped
+      in ``contextlib.nullcontext`` at the callsite); Feather wraps the
+      path in ``pa.OSFile``.
+    - **Writer factory.** Each format constructs its own writer class with
+      format-specific kwargs (compression, IpcWriteOptions, etc.).  ORC's
+      writer infers schema from the first ``write()`` call rather than
+      taking it at construction — its ``build_writer`` callback simply
+      ignores the ``schema`` argument.
+    - **Per-batch write method.** Parquet/Feather use ``writer.write_table``;
+      ORC uses ``writer.write``.
+
+    The append-mode guard, dep-presence sentinels, and per-format error
+    messages stay at the callsite — this helper covers only the
+    peek/atomic-write/loop/close scaffold.
+
+    Args:
+        data: Iterable of row dicts to encode.
+        file_path: Final destination; the atomic tempfile is a sibling and
+            is renamed on success.
+        kwargs: Format kwargs (``pydantic_schema``, compression hints, etc.)
+            forwarded to :func:`_stream_arrow_batches`.
+        format_label: Used in the wrapped ``IncorporatorFormatError`` message
+            ("Parquet" / "Feather" / "ORC").
+        sink_factory: ``Path -> ContextManager[sink]``.  The ``sink`` value
+            is whatever ``build_writer`` expects as its first positional arg.
+        build_writer: ``(sink, schema) -> writer``.  The returned writer
+            must support ``.close()``.
+        write_batch: ``(writer, batch) -> None``.
+    """
+    path = file_path if isinstance(file_path, Path) else Path(file_path)
+    try:
+        batches_iter = _stream_arrow_batches(data, kwargs)
+        try:
+            first_batch = next(batches_iter)
+        except StopIteration:
+            return  # nothing to write — empty input
+        # Atomic write — build to a sibling tempfile, rename on success.
+        # A mid-stream crash leaves the prior file intact instead of a
+        # half-written file with a missing footer.
+        with atomic_write_path(path) as tmp_path:
+            with sink_factory(tmp_path) as sink:
+                writer = build_writer(sink, first_batch.schema)
+                try:
+                    write_batch(writer, first_batch)
+                    for batch in batches_iter:
+                        write_batch(writer, batch)
+                finally:
+                    writer.close()
+    except Exception as e:
+        raise IncorporatorFormatError(f"{format_label} Write Error on {file_path}: {e}") from e
 
 
 def _coerce_columnar_source(source: Any, handler_name: str) -> Any:
@@ -434,29 +504,17 @@ class ParquetHandler(BaseFormatHandler):
         _require_optional("pyarrow")  # dep-presence sentinel — same error as feather/orc
         pq = _require_optional("pyarrow.parquet")
 
-        # Dispatcher pre-resolves the path; handlers always receive an absolute Path.
-        path = file_path if isinstance(file_path, Path) else Path(file_path)
         compression = kwargs.get("parquet_compression", "snappy")  # pyarrow's default
 
-        try:
-            batches_iter = _stream_arrow_batches(data, kwargs)
-            try:
-                first_batch = next(batches_iter)
-            except StopIteration:
-                return  # nothing to write — empty input
-            # Atomic write: build to a sibling tempfile, rename on success.
-            # A crash mid-write leaves the prior path intact (or absent)
-            # instead of a half-written Parquet with a corrupt footer.
-            with atomic_write_path(path) as tmp_path:
-                writer = pq.ParquetWriter(tmp_path, first_batch.schema, compression=compression)
-                try:
-                    writer.write_table(first_batch)
-                    for batch in batches_iter:
-                        writer.write_table(batch)
-                finally:
-                    writer.close()
-        except Exception as e:
-            raise IncorporatorFormatError(f"Parquet Write Error on {file_path}: {e}") from e
+        _stream_columnar_write(
+            data,
+            file_path,
+            kwargs,
+            format_label="Parquet",
+            sink_factory=lambda p: contextlib.nullcontext(p),  # ParquetWriter takes a Path directly
+            build_writer=lambda sink, schema: pq.ParquetWriter(sink, schema, compression=compression),
+            write_batch=lambda w, b: w.write_table(b),
+        )
 
 
 class FeatherHandler(BaseFormatHandler):
@@ -509,34 +567,21 @@ class FeatherHandler(BaseFormatHandler):
         pa = _require_optional("pyarrow")
         _require_optional("pyarrow.feather")  # dep-presence sentinel — same error message as the read path
 
-        # Dispatcher pre-resolves the path; handlers always receive an absolute Path.
-        path = file_path if isinstance(file_path, Path) else Path(file_path)
         compression_str = kwargs.get("feather_compression", "lz4")  # Feather V2 default
         # pyarrow.ipc.new_file accepts an ipc.IpcWriteOptions struct rather than a
         # raw compression string.  Build it here so the kwarg API stays identical
         # to the previous feather.write_feather call site.
         options = pa.ipc.IpcWriteOptions(compression=compression_str) if compression_str else None
 
-        try:
-            batches_iter = _stream_arrow_batches(data, kwargs)
-            try:
-                first_batch = next(batches_iter)
-            except StopIteration:
-                return  # nothing to write — empty input
-            # Atomic write — build to tempfile, rename on success.  A
-            # mid-stream crash leaves the prior file intact instead of a
-            # half-written Feather with a missing footer.
-            with atomic_write_path(path) as tmp_path:
-                with pa.OSFile(str(tmp_path), "wb") as sink:
-                    writer = pa.ipc.new_file(sink, first_batch.schema, options=options)
-                    try:
-                        writer.write_table(first_batch)
-                        for batch in batches_iter:
-                            writer.write_table(batch)
-                    finally:
-                        writer.close()
-        except Exception as e:
-            raise IncorporatorFormatError(f"Feather Write Error on {file_path}: {e}") from e
+        _stream_columnar_write(
+            data,
+            file_path,
+            kwargs,
+            format_label="Feather",
+            sink_factory=lambda p: pa.OSFile(str(p), "wb"),
+            build_writer=lambda sink, schema: pa.ipc.new_file(sink, schema, options=options),
+            write_batch=lambda w, b: w.write_table(b),
+        )
 
 
 class OrcHandler(BaseFormatHandler):
@@ -596,31 +641,19 @@ class OrcHandler(BaseFormatHandler):
                 "(ORC support requires pyarrow with libarrow_orc)."
             ) from None
 
-        # Dispatcher pre-resolves the path; handlers always receive an absolute Path.
-        path = file_path if isinstance(file_path, Path) else Path(file_path)
-
-        try:
-            batches_iter = _stream_arrow_batches(data, kwargs)
-            try:
-                first_batch = next(batches_iter)
-            except StopIteration:
-                return  # nothing to write — empty input
-            # Atomic write — build to tempfile, rename on success.  A
-            # mid-stream crash leaves the prior file intact instead of a
-            # half-written ORC with a missing footer.
-            with atomic_write_path(path) as tmp_path:
-                # pyarrow's ORCWriter signature is ``ORCWriter(where, *, ...)`` —
-                # schema is inferred from the first ``write()`` call rather than
-                # passed in __init__.  All subsequent batches must match that
-                # schema, which is guaranteed by ``_stream_arrow_batches`` when
-                # an explicit pydantic_schema is present, and by pyarrow's own
-                # promotion rules in the inference path.
-                writer = orc.ORCWriter(str(tmp_path))  # type: ignore[no-untyped-call]
-                try:
-                    writer.write(first_batch)  # type: ignore[no-untyped-call]
-                    for batch in batches_iter:
-                        writer.write(batch)  # type: ignore[no-untyped-call]
-                finally:
-                    writer.close()  # type: ignore[no-untyped-call]
-        except Exception as e:
-            raise IncorporatorFormatError(f"ORC Write Error on {file_path}: {e}") from e
+        # pyarrow's ORCWriter signature is ``ORCWriter(where, *, ...)`` — schema
+        # is inferred from the first ``write()`` call rather than passed at
+        # construction.  All subsequent batches must match that schema, which
+        # is guaranteed by ``_stream_arrow_batches`` when an explicit
+        # pydantic_schema is present, and by pyarrow's own promotion rules
+        # in the inference path.  The build_writer lambda below ignores the
+        # ``schema`` argument that ``_stream_columnar_write`` passes.
+        _stream_columnar_write(
+            data,
+            file_path,
+            kwargs,
+            format_label="ORC",
+            sink_factory=lambda p: contextlib.nullcontext(str(p)),
+            build_writer=lambda sink, _schema: orc.ORCWriter(sink),  # type: ignore[no-untyped-call]
+            write_batch=lambda w, b: w.write(b),
+        )

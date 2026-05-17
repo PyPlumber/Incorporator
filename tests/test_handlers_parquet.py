@@ -197,3 +197,36 @@ def test_parquet_write_missing_pyarrow_message(tmp_path: Path) -> None:
     with patch("builtins.__import__", side_effect=fake_import):
         with pytest.raises(IncorporatorFormatError, match=r"pip install incorporator\[parquet\]"):
             ParquetHandler().write(DUMMY_DATA, tmp_path / "out.parquet")
+
+
+# ==========================================
+# 5. STREAM-MODE WRITE (per-wave rolling paths)
+# ==========================================
+
+
+def test_parquet_per_wave_rolling_writes(tmp_path: Path) -> None:
+    """Stateless-stream / chunking-mode emits one columnar file per wave.
+
+    Each wave resolves a fresh ``file_path`` (rolling timestamp / wave index)
+    upstream and calls ``write()``; the helper must not carry state across
+    invocations — every call writes a complete, standalone Parquet file.
+
+    Regression guard for the _stream_columnar_write helper refactor: three
+    sequential write() calls to three distinct paths must each produce a
+    valid Parquet file whose contents match its own input.
+    """
+    handler = ParquetHandler()
+    wave_data = [
+        [{"wave_id": 0, "value": "first"}],
+        [{"wave_id": 1, "value": "second"}],
+        [{"wave_id": 2, "value": "third"}],
+    ]
+    paths = [tmp_path / f"wave_{i}.parquet" for i in range(3)]
+
+    for rows, p in zip(wave_data, paths):
+        handler.write(rows, p)
+
+    assert all(p.exists() for p in paths)
+    for rows, p in zip(wave_data, paths):
+        readback = handler.parse(p)
+        assert readback == rows

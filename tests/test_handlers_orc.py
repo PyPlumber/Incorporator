@@ -116,3 +116,22 @@ def test_orc_parse_missing_pyarrow_message(tmp_path: Path) -> None:
     with patch("builtins.__import__", side_effect=fake_import):
         with pytest.raises(IncorporatorFormatError, match=r"pip install incorporator\[parquet\]"):
             OrcHandler().parse(fake_path)
+
+
+def test_orc_per_wave_rolling_writes(tmp_path: Path) -> None:
+    """Stateless-stream chunking mode: each wave writes a fresh ORC file."""
+    handler = OrcHandler()
+    wave_data = [
+        [{"wave_id": 0, "value": "first"}],
+        [{"wave_id": 1, "value": "second"}],
+        [{"wave_id": 2, "value": "third"}],
+    ]
+    paths = [tmp_path / f"wave_{i}.orc" for i in range(3)]
+
+    for rows, p in zip(wave_data, paths):
+        handler.write(rows, p)
+
+    assert all(p.exists() for p in paths)
+    for rows, p in zip(wave_data, paths):
+        readback = handler.parse(p)
+        assert readback == rows
