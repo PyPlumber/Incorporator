@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `edges` covers everything else.  Hard / soft dependency gating,
   skip-ahead, graceful drain at window close, and per-current
   `on_error` policy (`restart` / `isolate` / `fail_watershed`).  See
-  [Tutorial 8](./docs/8_tideweaver.md).
+  [Tutorial 7](./docs/7_tideweaver.md).
 - **`incorporator tideweaver run|validate` CLI sub-commands** plus
   declarative `watershed.json` config with the same env-var interpolation
   and token-resolution pipeline that `stream` / `fjord` configs use.

@@ -211,11 +211,11 @@ Transient HTTP errors are handled by the same Tenacity retry policy
 
 ## See Also
 
-* **[Tutorial 4 — Parent-Child Drilling](./4_parent_child_drilling.md)** —
+* **[Tutorial 3 — Parent-Child Drilling](./3_parent_child_drilling.md)** —
   the registry-building patterns refresh keeps live.
-* **[Tutorial 6 — Streaming Daemons](./6_streaming_daemon.md)** — the
+* **[Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md)** — the
   daemon form of `refresh()` on a cadence.
-* **[Tutorial 7 — Multi-Source Fjord](./7_multi_source_fjord.md)** —
+* **[Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md)** —
   combine refreshes from CoinGecko + Binance into a live spread metric.
 * **[Production Debugging](./debugging.md)** — what to do when
   `failed_sources` is non-empty after a refresh.

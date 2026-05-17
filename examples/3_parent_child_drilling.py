@@ -1,7 +1,7 @@
 """
-Tutorial 4 — Parent → Child Drilling: SpaceX Launches + Rockets + Launchpads
+Tutorial 3 — Parent → Child Drilling: SpaceX Launches + Rockets + Launchpads
 ----------------------------------------------------------------------------
-Companion script for `docs/4_parent_child_drilling.md`.
+Companion script for `docs/3_parent_child_drilling.md`.
 
 Three `incorp()` calls build three registries — launches, rockets,
 and launchpads — then join them by ID in O(1).  The framework fans
@@ -10,7 +10,7 @@ handful of pads / rocket types serve hundreds of upcoming launches),
 and retries on transient failure.
 
 Run with:
-    python examples/4_parent_child_drilling.py
+    python examples/3_parent_child_drilling.py
 """
 
 import asyncio

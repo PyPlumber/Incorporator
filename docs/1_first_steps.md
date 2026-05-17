@@ -79,7 +79,8 @@ Optional but useful:
 Everything else (`conv_dict`, `excl_lst`, `name_chg`, `inc_parent`,
 `inc_page`, ...) is for the more advanced tutorials. If you're facing an
 unfamiliar endpoint and don't know which kwargs you need, `test()` will
-profile it and print the exact snippet to paste — that's Tutorial 3.
+profile it and print the exact snippet to paste — see the
+*Profiling Unknown APIs with `test()`* section below.
 
 ---
 
@@ -140,25 +141,123 @@ When you called `Coin.incorp(...)`:
 
 ---
 
+## Profiling Unknown APIs with `test()`
+
+The walkthrough above assumes you already know `inc_code="id"` and
+`inc_name="name"`. For an *unfamiliar* endpoint — third-party docs are
+sparse, you've never seen the payload — Incorporator ships a JIT API
+profiler: **`test()`**. Same call shape as `incorp()`, but it fetches a
+single safe page and prints a five-section structured report with the
+exact kwargs you should paste.
+
+### Run the inspector
+
+```python
+import asyncio
+from incorporator import Incorporator
+
+
+class Coin(Incorporator):
+    pass
+
+
+asyncio.run(Coin.test(inc_url="https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd"))
+```
+
+That's the whole invocation. **Swap `.incorp()` for `.test()`** to
+trigger the inspector.
+
+### Read the report
+
+```text
+======================================================================
+🕵️‍♂️  INCORPORATOR DX INSPECTOR
+======================================================================
+
+📦 1. PAYLOAD STRUCTURE:
+   ├── id: str = bitcoin
+   ├── name: str = Bitcoin
+   ├── current_price: float = 67234.51
+   └── last_updated: str = 2026-05-14T12:00:00.000Z
+
+🔑 2. IDENTITY MAPPING:
+   ✅ inc_code='id'
+   ✅ inc_name='name'
+
+🛠️  3. ETL / TYPE CASTING SUGGESTIONS:
+   conv_dict={'last_updated': inc(datetime), 'ath_date': inc(datetime)}
+
+📑 4. PAGINATION HINTS:
+   (Skipped — no pagination metadata.)
+
+🗑️  5. HEAVY-FIELD HINTS:
+   excl_lst=['image']
+======================================================================
+```
+
+Each section is actionable:
+
+1. **Payload structure** — tree-view of every key with types and sample values; warns when the
+   root shape suggests a `rec_path=` wrapper.
+2. **Identity mapping** — regex-scored candidates for `inc_code` (UUIDs, integer IDs, slugs) and
+   `inc_name` (display strings).
+3. **Type casting** — routes detection through the framework's own `parses_as_datetime` /
+   `parses_as_int` / `parses_as_float` predicates; every suggestion is structurally what `inc()`
+   accepts at runtime.
+4. **Pagination hints** — detects `next` / `cursor` / `offset+limit` shapes.
+5. **Heavy-field hints** — flags asset URLs, base64 blobs, oversized strings → `excl_lst`.
+
+### Turn the report into a real call
+
+Copy the suggestions verbatim. Same class, swap `.test()` for `.incorp()`, paste the kwargs:
+
+```python
+from datetime import datetime
+from incorporator.schema.converters import inc
+
+coins = await Coin.incorp(
+    inc_url="https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd",
+    inc_code="id",
+    inc_name="name",
+    conv_dict={"last_updated": inc(datetime), "ath_date": inc(datetime)},
+    excl_lst=["image"],
+)
+```
+
+You went from *"what does this API look like?"* to a fully-typed, indexed, datetime-aware object
+graph **without writing or reading a schema**.
+
+### Safety guarantees
+
+* **Single page only.** When you pass a paginator, `test()` forces `call_lim=1`.
+* **Short timeout.** Defaults to `timeout=5.0` so an unresponsive endpoint fails fast.
+* **Result preview cap.** Returns at most 3 records; the return value is a real
+  `IncorporatorList` so `sample[0].whatever` works for poking at the shape.
+* **Error analysis on failure.** If the fetch raises, `test()` routes the exception through the
+  same inspector module to suggest diagnostics (auth headers missing, wrong content type, etc.).
+
+> **Drill-down:** when the inspector finds nested list-of-dicts inside the top-level record (e.g.
+> SpaceX `/launches/latest` has `cores: [...]`), it surfaces a copy-pasteable
+> `rec_path='cores'` hint for re-running `test()` against that nested level.
+
+---
+
 ## Where to Go Next
 
 | Goal | Tutorial |
 |---|---|
 | Same call against `.csv`, `.parquet`, `.xlsx`, `.sqlite` | [Tutorial 2 — Universal Formats](./2_universal_formats.md) |
-| Don't know what an API returns? Let the framework write your kwargs | [Tutorial 3 — DX Inspector](./3_dx_inspector.md) |
-| Drill into nested API graphs (parent → child) | [Tutorial 4 — Parent-Child Drilling](./4_parent_child_drilling.md) |
-| Keep this registry live (refresh prices every minute) | [Tutorial 5 — Stateful Refresh](./5_stateful_refresh.md) |
-| Run as a long-lived daemon | [Tutorial 6 — Streaming Daemons](./6_streaming_daemon.md) |
-| Fuse CoinGecko + Binance into a live spread (capstone) | [Tutorial 7 — Multi-Source Fjord](./7_multi_source_fjord.md) |
+| Drill into nested API graphs (parent → child) | [Tutorial 3 — Parent-Child Drilling](./3_parent_child_drilling.md) |
+| Keep this registry live (refresh prices every minute) | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
+| Run as a long-lived daemon | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
+| Fuse CoinGecko + Binance into a live spread | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
+| Orchestrate multi-source pipelines in a windowed graph (capstone) | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
 
 **Common follow-ups you might be wondering about:**
 
-* **Pagination** — CoinGecko's `/coins/markets` accepts `page=N` for
-  the next batch. To fetch every page automatically, pass a paginator:
-  see [Streaming & Pagination](./streaming_and_pagination.md).
-* **Type casting** — strings that look like dates / numbers can be
-  coerced via `conv_dict={"last_updated": inc(datetime)}`. The DX
-  Inspector (Tutorial 3) prints the exact snippet to paste.
-* **Errors** — failed sources surface on `coins.failed_sources`. For
-  durable error logs and DLQ retry, see
-  [Production Debugging](./debugging.md).
+* **Pagination** — CoinGecko's `/coins/markets` accepts `page=N` for the next batch. To fetch
+  every page automatically, pass a paginator: see [Streaming & Pagination](./streaming_and_pagination.md).
+* **Type casting** — strings that look like dates / numbers can be coerced via
+  `conv_dict={"last_updated": inc(datetime)}`. The inspector above prints the exact snippet to paste.
+* **Errors** — failed sources surface on `coins.failed_sources`. For durable error logs and DLQ
+  retry, see [Production Debugging](./debugging.md).

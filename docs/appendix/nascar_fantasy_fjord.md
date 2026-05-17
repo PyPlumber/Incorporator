@@ -1,6 +1,6 @@
 ***
 
-> 📎 **Advanced fjord pattern.**  Builds on Tutorial 7 (the two-source
+> 📎 **Advanced fjord pattern.**  Builds on Tutorial 6 (the two-source
 > crypto-spread fjord).  Read that one first if you haven't — this
 > appendix assumes you know what `outflow(state)` does and why the
 > dynamic class name comes from the filename stem.
@@ -9,7 +9,7 @@
 
 # 🕸️ Graph-Map Fjord: NASCAR Fantasy League (7 sources, 3 outputs, 1 config)
 
-Tutorial 7's crypto-spread example is the *minimum viable fjord*: two
+Tutorial 6's crypto-spread example is the *minimum viable fjord*: two
 co-equal sources, one outflow, one export file.  Real production
 joins are messier.  You have **dependent sources** (one source's
 foreign keys reference another), **mixed API + local-file inputs**
@@ -677,10 +677,10 @@ apply if you ever swap one of the sources for a paid feed.
 
 ## 📚 See Also
 
-* **[Tutorial 7 — Multi-Source Fjord](../7_multi_source_fjord.md)** —
+* **[Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md)** —
   the simpler two-source crypto-spread fjord that introduces the
   basic vocabulary.  Read it first if you haven't.
-* **[Tutorial 4 — Parent-Child Drilling](../4_parent_child_drilling.md)** —
+* **[Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md)** —
   HATEOAS pattern (parent records → child URLs).  Often pairs with
   the graph-map pattern above when a source's foreign key is a URL
   rather than an ID.

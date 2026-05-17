@@ -396,9 +396,9 @@ function, the dynamic output class comes from the filename stem.
 
 ## See Also
 
-* **[Tutorial 5 — Stateful Refresh](./5_stateful_refresh.md)** — the
+* **[Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md)** — the
   refresh contract that fjord wraps in a daemon, one source at a time.
-* **[Tutorial 6 — Streaming Daemons](./6_streaming_daemon.md)** —
+* **[Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md)** —
   single-source equivalent of fjord; reach for it when you only need
   one feed.
 * **[🏁 Appendix — NASCAR Fantasy: Graph-Map Fjord](./appendix/nascar_fantasy_fjord.md)** —

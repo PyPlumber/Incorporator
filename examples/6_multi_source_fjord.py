@@ -1,7 +1,7 @@
 """
-Tutorial 7 — Multi-Source Fjord: Live Crypto Spread (capstone)
---------------------------------------------------------------
-Companion script for `docs/7_multi_source_fjord.md`.
+Tutorial 6 — Multi-Source Fjord: Live Crypto Spread
+---------------------------------------------------
+Companion script for `docs/6_multi_source_fjord.md`.
 
 `stream()` watches one source. `fjord()` watches N sources concurrently
 and lets you fuse them through a user-defined `outflow(state)` function.
@@ -16,7 +16,7 @@ The dynamic output class is built from the outflow filename stem —
 `crypto_spread.py` → `CryptoSpread`. No output class to declare.
 
 Run with:
-    python examples/7_multi_source_fjord.py
+    python examples/6_multi_source_fjord.py
 """
 
 import asyncio

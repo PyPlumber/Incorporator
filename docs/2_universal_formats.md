@@ -260,7 +260,7 @@ Memory stays flat regardless of total row count.
   every kwarg per format, plus compression details.
 * **[Streaming & Pagination](./streaming_and_pagination.md)** — the
   paginator family for files too big to fit in RAM.
-* **[Tutorial 3 — DX Inspector](./3_dx_inspector.md)** — let `test()`
-  print the kwargs you need against an unknown file or endpoint.
+* **[Tutorial 1 — Profiling with `test()`](./1_first_steps.md#profiling-unknown-apis-with-test)** —
+  let the DX Inspector print the kwargs you need against an unknown file or endpoint.
 * **[Library reference](./library_reference.md)** — full `incorp()`
   and `export()` signatures.

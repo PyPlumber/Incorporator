@@ -3,7 +3,7 @@
 > 📎 **Appendix — `calc()` reductions over a HATEOAS drill.**
 > Sums and aggregations across a parent-child fan-out (PokéAPI).
 > If you're new to parent-child, start with
-> [Tutorial 4 — Parent-Child Drilling](../4_parent_child_drilling.md)
+> [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md)
 > (SpaceX); reach for this appendix for the `calc()` reduction
 > patterns layered on top.
 

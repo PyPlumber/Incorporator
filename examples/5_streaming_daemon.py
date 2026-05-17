@@ -1,7 +1,7 @@
 """
 Streaming Daemon Tutorial: Live SpaceX Launch Watcher
 -----------------------------------------------------
-Companion script for `docs/6_streaming_daemon.md`.
+Companion script for `docs/5_streaming_daemon.md`.
 
 Demonstrates `stream()` — a long-running daemon that periodically refreshes
 a single source and flushes snapshots to disk on its own cadence.
@@ -16,7 +16,7 @@ the background QueueHandler into rotating JSON-line log files
 the event loop.
 
 Run with:
-    python examples/6_streaming_daemon.py
+    python examples/5_streaming_daemon.py
 
 Ctrl+C / SIGTERM triggers a graceful drain.
 """

@@ -177,9 +177,9 @@ subscribes.
 
 ## See Also
 
-* [Tutorial 6 — Streaming Daemons](./6_streaming_daemon.md) —
+* [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) —
   `LoggedIncorporator` is the default daemon base class.
-* [Tutorial 5 — Stateful Refresh](./5_stateful_refresh.md) — re-fetch
+* [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) — re-fetch
   what `get_error()` surfaced.
 * [Library reference](./library_reference.md) — every method on
   `LoggedIncorporator`.

@@ -145,7 +145,7 @@ watershed = Watershed.diamond(
 3. Materialise the returned rows into the dynamic output class.
 4. Export them to the configured destination (e.g. `state.ndjson`).
 
-See `examples/8_nascar_tideweaver.py` for the full runnable example using
+See `examples/7_nascar_tideweaver.py` for the full runnable example using
 local JSON files as sources — no credentials, no network.
 
 ---

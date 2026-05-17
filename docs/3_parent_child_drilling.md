@@ -216,11 +216,10 @@ ETL transformations.
 
 ## See Also
 
-* **[Tutorial 5 — Stateful Refresh](./5_stateful_refresh.md)** — keep
+* **[Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md)** — keep
   both registries live as launches and rockets change over time.
-* **[Tutorial 7 — Multi-Source Fjord](./7_multi_source_fjord.md)** —
-  the production capstone that fuses parent + child + outflow into a
-  single daemon pipeline.
+* **[Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md)** —
+  fuses parent + child + outflow into a single daemon pipeline.
 * **[XML POST Auditing](./appendix/xml_post_audit.md)** *(appendix)* —
   a related pattern that combines parent extraction with declarative
   bulk-POST batching for fraud-audit workflows.

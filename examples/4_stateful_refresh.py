@@ -1,7 +1,7 @@
 """
-Tutorial 5 — Stateful Refresh: Live Binance Ticker
+Tutorial 4 — Stateful Refresh: Live Binance Ticker
 --------------------------------------------------
-Companion script for `docs/5_stateful_refresh.md`.
+Companion script for `docs/4_stateful_refresh.md`.
 
 Demonstrates the three `refresh()` resolution modes against Binance's
 public ticker feed (~1,900 pairs, no auth required). Each call
@@ -9,7 +9,7 @@ mutates the existing Pydantic instances in place — local Python
 references survive across refreshes without reassignment.
 
 Run with:
-    python examples/5_stateful_refresh.py
+    python examples/4_stateful_refresh.py
 """
 
 import asyncio

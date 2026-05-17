@@ -190,7 +190,7 @@ async for wave in Incorporator.fjord(
     if wave.failed_sources: print(wave)
 ```
 
-**Advanced `fjord()` patterns (Tutorial 7):**
+**Advanced `fjord()` patterns (Tutorial 6):**
 
 When sources depend on each other — e.g., one source needs to resolve
 foreign-key URLs against already-loaded objects from another — define an
@@ -200,7 +200,7 @@ source's live snapshot before seeding the next dependent source. When
 `dict[ClassName, list[dict]]` instead of a flat list; fjord builds one
 derived class per key and exports one file per class per tick.
 
-→ [Tutorial 7 — Multi-Source Fjord](./docs/7_multi_source_fjord.md)
+→ [Tutorial 6 — Multi-Source Fjord](./docs/6_multi_source_fjord.md)
 
 ### `Tideweaver` — orchestrate multiple feeds on independent intervals
 
@@ -231,7 +231,7 @@ everything else.  Declarative `watershed.json` config + a
 `incorporator tideweaver run` / `validate` CLI verb mirror the
 `stream` / `fjord` workflow.
 
-→ [Tutorial 8 — Tideweaver](./docs/8_tideweaver.md)
+→ [Tutorial 7 — Tideweaver](./docs/7_tideweaver.md)
 
 ### `display()` — REPL debug print
 
@@ -288,13 +288,13 @@ Secrets stay out of `pipeline.json` — use `${API_KEY}` for env vars or `${file
 A focused 1-7 curriculum in increasing difficulty. Each slot introduces
 one new verb or technique. Runnable code lives under [`/examples`](./examples).
 
-1. [🌱 **First Steps with Incorporator**](./docs/1_first_steps.md) — your first `incorp()` against CoinGecko market data.
+1. [🌱 **First Steps with Incorporator**](./docs/1_first_steps.md) — your first `incorp()` against CoinGecko, plus `test()` for profiling unknown APIs.
 2. [📦 **Universal Formats — One Verb, Any File**](./docs/2_universal_formats.md) — same call across `.json` / `.csv` / `.parquet` / `.sqlite` / `.xlsx` / `.avro`, with a comparison table.
-3. [🕵️‍♂️ **DX Inspector — Let the Framework Write Your Kwargs**](./docs/3_dx_inspector.md) — `test()` profiles unknown APIs.
-4. [🚀 **Drilling API Graphs — Parent → Child**](./docs/4_parent_child_drilling.md) — `inc_parent` + `inc_child` for HATEOAS APIs (SpaceX launches → rockets).
-5. [🔄 **Keep It Live — Stateful Refresh**](./docs/5_stateful_refresh.md) — `refresh()` three ways against Binance's live ticker.
-6. [🌊 **Streaming Daemons**](./docs/6_streaming_daemon.md) — `stream()` for long-running pipelines.
-7. [🌊 **Multi-Source Fjord** *(capstone)*](./docs/7_multi_source_fjord.md) — `fjord()` fusing CoinGecko + Binance into a live spread metric.
+3. [🚀 **Drilling API Graphs — Parent → Child**](./docs/3_parent_child_drilling.md) — `inc_parent` + `inc_child` for HATEOAS APIs (SpaceX launches → rockets).
+4. [🔄 **Keep It Live — Stateful Refresh**](./docs/4_stateful_refresh.md) — `refresh()` three ways against Binance's live ticker.
+5. [🌊 **Streaming Daemons**](./docs/5_streaming_daemon.md) — `stream()` for long-running pipelines.
+6. [🌊 **Multi-Source Fjord**](./docs/6_multi_source_fjord.md) — `fjord()` fusing CoinGecko + Binance into a live spread metric.
+7. [🪡 **Tideweaver — Windowed Graph Orchestration** *(capstone)*](./docs/7_tideweaver.md) — coordinate multiple `stream()` and fjord-flush currents on independent intervals with dependency gating.
 
 ## 📑 Reference
 
@@ -311,8 +311,8 @@ Patterns that earned their keep before the curriculum was reshaped — productio
 
 * [🧬 **Pokémon ETL**](./docs/appendix/pokeapi_etl.md) — array reductions with `calc` / `sum_attributes`.
 * [🚨 **Shady Jimmy's XML Audit**](./docs/appendix/xml_post_audit.md) — XML ingestion + declarative bulk POST + fraud audit.
-* [🕸️ **Crypto Graph Mapping** (static)](./docs/appendix/crypto_graph_mapping.md) — `link_to`-based in-memory join across CoinGecko + Binance. Tutorial 7 covers the same fusion as a live daemon.
-* [🏁 **NASCAR Fantasy — Graph-Map Fjord** *(advanced)*](./docs/appendix/nascar_fantasy_fjord.md) — six-source fjord with state-aware `inflow(state)`, multi-output `outflow(state)`, and sentinel-ID filtering. Builds on Tutorial 7.
+* [🕸️ **Crypto Graph Mapping** (static)](./docs/appendix/crypto_graph_mapping.md) — `link_to`-based in-memory join across CoinGecko + Binance. Tutorial 6 covers the same fusion as a live daemon.
+* [🏁 **NASCAR Fantasy — Graph-Map Fjord** *(advanced)*](./docs/appendix/nascar_fantasy_fjord.md) — six-source fjord with state-aware `inflow(state)`, multi-output `outflow(state)`, and sentinel-ID filtering. Builds on Tutorial 6.
 * [🐘 **Data Lake Pivot** (legacy)](./docs/appendix/data_lake_pivot.md) — original JSON ↔ Avro/SQLite walkthrough; the headline pattern is now in Tutorial 2.
 
 ---

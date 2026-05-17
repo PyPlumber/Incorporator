@@ -220,7 +220,7 @@ graceful shutdown), see [the deployment guide](./deployment.md).
 |---|---|
 | One-shot fetch into Python objects | `incorp()` |
 | Periodic fetch + export of a single source as a daemon | `stream()` |
-| Multi-source fusion with a custom `outflow()` join | [`fjord()`](./7_multi_source_fjord.md) |
+| Multi-source fusion with a custom `outflow()` join | [`fjord()`](./6_multi_source_fjord.md) |
 
 See [`streaming_and_pagination.md`](./streaming_and_pagination.md) for
 paginator integration (handing `stream()` an `inc_page=` paginator for

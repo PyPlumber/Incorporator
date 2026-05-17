@@ -1,7 +1,7 @@
 """
-Tutorial 8 — Tideweaver: NASCAR Diamond
+Tutorial 7 — Tideweaver: NASCAR Diamond
 ---------------------------------------
-Companion script for ``docs/8_tideweaver.md``.
+Companion script for ``docs/7_tideweaver.md``.
 
 Demonstrates a four-current diamond:
 
@@ -17,7 +17,7 @@ watershed.  Real pipelines swap ``inc_file`` for ``inc_url`` against your
 live data feeds.
 
 Run with:
-    python examples/8_nascar_tideweaver.py
+    python examples/7_nascar_tideweaver.py
 """
 
 from __future__ import annotations

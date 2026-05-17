@@ -3,7 +3,7 @@
 > 📎 **Appendix — XML ingestion + declarative bulk POST + fraud
 > audit.**  XML parsing, state-carrier graph drilling, and a
 > templated bulk-POST round-trip against an audit endpoint.  See
-> [Tutorial 4 — Parent-Child Drilling](../4_parent_child_drilling.md)
+> [Tutorial 3 — Parent-Child Drilling](../3_parent_child_drilling.md)
 > for the canonical parent-child intro before tackling this one.
 
 ***

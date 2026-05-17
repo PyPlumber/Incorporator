@@ -2,7 +2,7 @@
 
 > 📎 **Appendix — Static graph join.**  `link_to`-based one-shot
 > in-memory join across CoinGecko + Binance.  See
-> [Tutorial 7 — Multi-Source Fjord](../7_multi_source_fjord.md) for
+> [Tutorial 6 — Multi-Source Fjord](../6_multi_source_fjord.md) for
 > the same fusion as a live daemon; reach for this appendix when
 > you want the static pattern without the daemon scaffolding.
 

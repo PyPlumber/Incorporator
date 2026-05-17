@@ -176,7 +176,7 @@ fails with a confusing 401.
 > allow-list (explained in this section). In a fjord pipeline it may
 > *also* define a top-level `inflow(state)` callable that seeds dependent
 > sources with prior sources' live data — a separate feature covered in
-> [Tutorial 7](./7_multi_source_fjord.md). Both roles can coexist in the
+> [Tutorial 6](./6_multi_source_fjord.md). Both roles can coexist in the
 > same file; neither filename is reserved.
 
 JSON can carry strings, numbers, lists, and dicts — but not Python
@@ -428,7 +428,7 @@ names via `getattr`, and validates each resolved object is an
 | :--- | :--- | :--- |
 | `outflow` | ✅ | Path to a `.py` file containing source Incorporator subclasses and a top-level `outflow(state)` function. **The filename's stem becomes the output class name** (snake_case → PascalCase). Resolved relative to the JSON config's directory. |
 | `stream_params` | ✅ | List of per-source dicts. Each must declare `cls_name` (string matching a subclass in the `outflow` file) and `incorp_params`. Optional: `refresh_params`, `export_params` (per-source export). |
-| `inflow` | ⬜ | Optional path to a `.py` file with two distinct roles: (1) its public symbols extend the token resolver's allow-list — reducer functions referenced from per-source `conv_dict` text tokens; (2) if it defines a top-level `inflow(state)` callable, fjord switches to sequential source seeding and calls it before each source's `incorp()` with the snapshots loaded so far (see Pattern 1 in [Tutorial 7](./7_multi_source_fjord.md)). Both roles can live in the same file. |
+| `inflow` | ⬜ | Optional path to a `.py` file with two distinct roles: (1) its public symbols extend the token resolver's allow-list — reducer functions referenced from per-source `conv_dict` text tokens; (2) if it defines a top-level `inflow(state)` callable, fjord switches to sequential source seeding and calls it before each source's `incorp()` with the snapshots loaded so far (see Pattern 1 in [Tutorial 6](./6_multi_source_fjord.md)). Both roles can live in the same file. |
 | `export_params` | ✅ | Destination for the combined output graph. |
 | `refresh_interval` | ⬜ | Cadence (seconds) for per-source refresh daemons. Each entry can override. |
 | `export_interval` | ⬜ | Cadence (seconds) for the outflow-and-export wave. |
@@ -558,7 +558,7 @@ Both accept the same observability flags as `stream` / `fjord`:
 
 Five `shape` values are supported, each driving a different edge layout:
 `chain`, `diamond`, `fanout`, `parallel`, and `custom` (raw `edges: [...]`
-list for mixed-mode topologies).  See [Tutorial 8 — Tideweaver](./8_tideweaver.md)
+list for mixed-mode topologies).  See [Tutorial 7 — Tideweaver](./7_tideweaver.md)
 for the full walk-through plus the Python-API equivalents.
 
 ### Operation tags

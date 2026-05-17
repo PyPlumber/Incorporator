@@ -156,7 +156,7 @@ window runs, omit `restart` and the container stops when the window
 closes.  `--json-output` and `--heartbeat-file` work the same as
 they do for `stream` / `fjord`.
 
-See [Tutorial 8 — Tideweaver](./8_tideweaver.md) for the watershed.json
+See [Tutorial 7 — Tideweaver](./7_tideweaver.md) for the watershed.json
 shape.
 
 ---
