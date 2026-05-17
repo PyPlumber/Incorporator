@@ -1,0 +1,67 @@
+{
+  "_comment_1_": "Sample watershed.json for the multi-exchange arb-scanner diamond pattern.",
+  "_comment_2_": "Run from the repo root so the relative inc_file / outflow paths resolve:",
+  "_comment_3_": "  incorporator validate examples/arb_watershed.json",
+  "_comment_4_": "  incorporator tideweaver run examples/arb_watershed.json --json-output",
+  "_comment_5_": "Local JSON snapshots keep the CLI smoke-test runnable without network.",
+  "_comment_6_": "Swap inc_file for inc_url against live exchange endpoints in production:",
+  "_comment_7_": "  binance:  https://api.binance.us/api/v3/ticker/bookTicker",
+  "_comment_8_": "  coinbase: https://api.exchange.coinbase.com/products/BTC-USD/ticker",
+  "_comment_9_": "  kraken:   https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD (with rec_path: result)",
+
+  "window": {
+    "start": "${WINDOW_START:-2026-05-16T00:00:00+00:00}",
+    "end":   "${WINDOW_END:-2026-12-31T23:59:59+00:00}"
+  },
+
+  "shape": "diamond",
+  "outflow": "tideweaver_code/arb_outflow.py",
+  "drain_timeout": 30,
+  "dependency_mode": "hard",
+
+  "head": {
+    "name": "binance",
+    "class": "BinanceBook",
+    "verb": "stream",
+    "interval": 15,
+    "incorp_params": {
+      "inc_file": "examples/tideweaver_code/binance_book.json",
+      "inc_code": "symbol"
+    }
+  },
+
+  "middle": [
+    {
+      "name": "coinbase",
+      "class": "CoinbaseTicker",
+      "verb": "stream",
+      "interval": 30,
+      "incorp_params": {
+        "inc_file": "examples/tideweaver_code/coinbase_ticker.json",
+        "inc_code": "trade_id"
+      }
+    },
+    {
+      "name": "kraken",
+      "class": "KrakenTicker",
+      "verb": "stream",
+      "interval": 30,
+      "incorp_params": {
+        "inc_file": "examples/tideweaver_code/kraken_ticker.json",
+        "inc_code": "_key"
+      }
+    }
+  ],
+
+  "tail": {
+    "name": "best_market",
+    "class": "BestMarket",
+    "verb": "fjord",
+    "interval": 30,
+    "export_params": {
+      "file_path": "data/arb_signals.ndjson",
+      "format": "ndjson",
+      "if_exists": "append"
+    }
+  }
+}

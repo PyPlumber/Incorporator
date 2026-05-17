@@ -1,23 +1,26 @@
 """
-Tutorial 7 — Tideweaver: NASCAR Diamond
----------------------------------------
-Companion script for ``docs/7_tideweaver.md``.
+Appendix — NASCAR Tideweaver: Diamond Across a Different Domain
+---------------------------------------------------------------
+Companion script for ``docs/appendix/nascar_tideweaver.md``.
 
-Demonstrates a four-current diamond:
+Demonstrates the same ``Watershed.diamond()`` shape that Tutorial 7
+uses for its multi-exchange crypto arb scanner — applied to race
+telemetry instead:
 
     laps + pits + flags   →   driver state (fjord flush)
 
-The three head/middle streams refresh their per-class registries; the tail
-Fjord current's tick is a *fjord flush* — snapshot upstream registries, run
-``outflow(state)``, build the dynamic ``DriverState`` class, export.
+The three head/middle streams refresh their per-class registries; the
+tail Fjord current's tick is a *fjord flush* — snapshot upstream
+registries, run ``outflow(state)``, build the dynamic ``DriverState``
+class, export.
 
-To stay runnable without credentials, all three sources read from local
-JSON files this script writes into a temp directory before starting the
-watershed.  Real pipelines swap ``inc_file`` for ``inc_url`` against your
-live data feeds.
+To stay runnable without credentials, all three sources read from
+local JSON files this script writes into a temp directory before
+starting the watershed.  Real pipelines swap ``inc_file`` for
+``inc_url`` against your live race-data feeds.
 
 Run with:
-    python examples/7_nascar_tideweaver.py
+    python examples/appendix/nascar_tideweaver.py
 """
 
 from __future__ import annotations
