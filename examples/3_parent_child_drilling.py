@@ -1,13 +1,18 @@
 """
-Tutorial 3 — Parent → Child Drilling: SpaceX Launches + Rockets + Launchpads
-----------------------------------------------------------------------------
+Tutorial 3 — Parent → Child Drilling: CoinGecko Top-N → /coins/{id}
+-------------------------------------------------------------------
 Companion script for `docs/3_parent_child_drilling.md`.
 
-Three `incorp()` calls build three registries — launches, rockets,
-and launchpads — then join them by ID in O(1).  The framework fans
-out each parent → child drill concurrently, dedupes IDs (only a
-handful of pads / rocket types serve hundreds of upcoming launches),
-and retries on transient failure.
+Two `incorp()` calls build two registries — lightweight market rows
+(parent) and full per-coin detail records (child) — then join them by
+ID in O(1).  The framework dedups parent IDs, fans out the children
+concurrently through one shared HTTP/2 client, retries on transient
+failure, and surfaces any DLQ entries on `failed_sources`.
+
+CoinGecko's free public tier allows ~5-15 requests/minute.  We pull
+top-10 coins as parents (1 call) and drill `/coins/{id}` for each
+(10 calls) for an 11-request total — well within quota for a single
+demo run.
 
 Run with:
     python examples/3_parent_child_drilling.py
@@ -18,77 +23,69 @@ import asyncio
 from incorporator import Incorporator
 
 
-class Launch(Incorporator):
-    pass
+class Coin(Incorporator):
+    """Lightweight market row from /coins/markets."""
 
 
-class Rocket(Incorporator):
-    pass
-
-
-class Pad(Incorporator):
-    pass
+class CoinDetail(Incorporator):
+    """Full per-coin detail record from /coins/{id}."""
 
 
 async def main() -> None:
     # ------------------------------------------------------------------
-    # PHASE 1 — Load the parent list (upcoming launches).
+    # PHASE 1 — Load the parent list (top 10 by market cap).
     # ------------------------------------------------------------------
-    launches = await Launch.incorp(
-        inc_url="https://api.spacexdata.com/v4/launches/upcoming",
+    coins = await Coin.incorp(
+        inc_url="https://api.coingecko.com/api/v3/coins/markets",
+        params={"vs_currency": "usd", "per_page": 10, "page": 1},
         inc_code="id",
         inc_name="name",
+        excl_lst=["image"],
     )
-    print(f"✅ Loaded {len(launches)} upcoming launches.")
+    print(f"✅ Loaded {len(coins)} parent market rows.")
 
     # ------------------------------------------------------------------
-    # PHASE 2 — Drill BOTH `rocket` and `launchpad` IDs in parallel.
+    # PHASE 2 — Drill /coins/{id} for every parent, concurrently.
     # ------------------------------------------------------------------
-    # Each drill is an independent incorp() call against the same parent
-    # registry.  The framework extracts each launch's child ID, dedups
-    # the set (5 unique pads cover 18 launches; only 2 rocket types), and
-    # fans out concurrent requests through the shared HTTP/2 client.
-    rockets, pads = await asyncio.gather(
-        Rocket.incorp(
-            inc_url="https://api.spacexdata.com/v4/rockets/{}",
-            inc_parent=launches,
-            inc_child="rocket",
-            inc_code="id",
-        ),
-        Pad.incorp(
-            inc_url="https://api.spacexdata.com/v4/launchpads/{}",
-            inc_parent=launches,
-            inc_child="launchpad",
-            inc_code="id",
-        ),
+    # The framework extracts each coin's `id`, dedups (10 unique → 10
+    # requests), substitutes into the `{}` slot, and fans out through
+    # the shared HTTP/2 client.  Heavy fields excluded to keep the
+    # response footprint tight.
+    details = await CoinDetail.incorp(
+        inc_url="https://api.coingecko.com/api/v3/coins/{}",
+        inc_parent=coins,
+        inc_child="id",
+        inc_code="id",
+        excl_lst=["image", "tickers", "community_data", "developer_data"],
     )
-    print(f"✅ Loaded {len(rockets)} unique rockets, {len(pads)} unique launchpads.")
+    print(f"✅ Drilled {len(details)} per-coin detail records.\n")
 
     # ------------------------------------------------------------------
-    # PHASE 3 — O(1) three-way join.
+    # PHASE 3 — Application-side O(1) two-way join.
     # ------------------------------------------------------------------
-    header = f"{'LAUNCH':<32} {'ROCKET':<14} {'PAD':<20} {'REGION':<18} {'SUCCESS':>8}"
-    print("\n" + "=" * len(header))
+    # Each Incorporator subclass keeps its own inc_dict.  The join lives
+    # in this loop; the framework gives you O(1) lookups on both sides.
+    header = f"{'COIN':<14} {'PRICE':>14} {'GENESIS':<12} HOMEPAGE"
+    print("=" * 80)
     print(header)
-    print("=" * len(header))
-    for launch in launches[:15]:
-        rocket = Rocket.inc_dict.get(launch.rocket)
-        pad = Pad.inc_dict.get(launch.launchpad)
-
-        rocket_name = rocket.name if rocket else "?"
-        pad_name = (pad.name if pad else "?")[:20]
-        region = (pad.region if pad else "?")[:18]
-        success = (
-            f"{pad.launch_successes}/{pad.launch_attempts}"
-            if pad and pad.launch_attempts
-            else "—"
+    print("=" * 80)
+    for coin in coins:
+        detail = CoinDetail.inc_dict.get(coin.id)
+        if detail is None:
+            continue
+        homepage_list = getattr(detail.links, "homepage", []) if detail.links else []
+        homepage = (homepage_list[0] if homepage_list else "")[:38]
+        genesis = detail.genesis_date or "—"
+        print(
+            f"{coin.name:<14} "
+            f"${coin.current_price:>12,.2f} "
+            f"{genesis:<12} "
+            f"{homepage}"
         )
-        name = (launch.name or "Unknown")[:32]
-        print(f"{name:<32} {rocket_name:<14} {pad_name:<20} {region:<18} {success:>8}")
 
     # Failed sources surface on each result list for DLQ retry.
-    if rockets.failed_sources or pads.failed_sources:
-        print(f"\n⚠️  Failed: rockets={rockets.failed_sources}, pads={pads.failed_sources}")
+    if details.failed_sources:
+        print(f"\n⚠️  Failed detail drills: {details.failed_sources}")
 
 
 if __name__ == "__main__":
