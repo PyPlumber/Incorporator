@@ -409,24 +409,20 @@ function, the dynamic output class comes from the filename stem.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* **[Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md)** — the
-  refresh contract that fjord wraps in a daemon, one source at a time.
-* **[Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md)** —
-  single-source equivalent of fjord; reach for it when you only need
-  one feed.
-* **[Tutorial 7 — Tideweaver](./7_tideweaver.md)** — when fjord sources
-  need independent intervals *and* dependency gating within a bounded
-  window, Tideweaver replaces the `fjord()` daemon with a graph of named
-  currents using the same `outflow(state)` pattern.
-* **[🏁 Appendix — NASCAR Fantasy: Graph-Map Fjord](./appendix/nascar_fantasy_fjord.md)** —
-  advanced 6-source fjord with state-aware `inflow(state)`,
-  multi-output `outflow(state)`, and sentinel-ID filtering via
-  `link_to(..., extractor=…)`.  Read this one once you've internalised
-  the two-source pattern above and want the production graph-map
-  shape.
-* **[CLI & Configuration Guide](./cli_and_configuration.md)** — the
-  full `pipeline.json` schema for fjord pipelines.
-* **[Library reference](./library_reference.md)** — full method
-  signature for `fjord()`.
+| Goal | Read |
+|---|---|
+| Master single-source stateful polling first | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
+| Master the single-source `stream()` daemon | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
+| Coordinate per-source intervals + dependency gating | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| Build a 7-source fjord with state-aware `inflow()` | [Appendix — NASCAR Fantasy Fjord](./appendix/nascar_fantasy_fjord.md) |
+| Run the static (non-daemon) join variant | [Appendix — Crypto Graph Mapping](./appendix/crypto_graph_mapping.md) |
+| Configure fjord from JSON for the CLI | [CLI & Configuration Guide](./cli_and_configuration.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/6_multi_source_fjord.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

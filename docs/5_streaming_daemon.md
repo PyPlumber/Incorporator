@@ -262,20 +262,21 @@ healthcheck walkthrough.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* **[Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md)** — the one-shot
-  `refresh()` that the stateful engine wraps in a daemon.
-* **[Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md)** — `fjord()` for
-  fusing N concurrent sources (the multi-source equivalent of stateful streaming).
-* **[Tutorial 7 — Tideweaver](./7_tideweaver.md)** — coordinate multiple `stream()`
-  pipelines on independent cadences with dependency gating inside a bounded time window.
-* **[Appendix — SpaceX Launches](./appendix/spacex_launches.md)** — the same Part 1
-  daemon shape against a non-crypto domain (slow-cadence schedule watcher).
-* **[Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md)** —
-  the right way to land columnar artifacts from a streaming pipeline (since Parquet
-  can't be appended per wave).
-* **[Streaming & Pagination Deep Dive](./streaming_and_pagination.md)** — full
-  paginator family for the Part 2 pattern (`PageNumberPaginator`, `CursorPaginator`,
-  `OffsetPaginator`, `NextUrlPaginator`, `LinkHeaderPaginator`).
-* **[Library reference](./library_reference.md)** — full `stream()` kwarg signature.
+| Goal | Read |
+|---|---|
+| Pick the right refresh mode before wrapping in a daemon | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
+| Stream multiple sources concurrently with a fused outflow | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
+| Orchestrate multiple sources on independent cadences in one window | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| Run the same daemon shape against a non-crypto domain | [Appendix — SpaceX Launches](./appendix/spacex_launches.md) |
+| Land per-window columnar artifacts (Parquet) | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
+| Master the paginator family for the chunking engine | [Streaming & Pagination Deep Dive](./streaming_and_pagination.md) |
+| Ship as a Docker daemon with health checks | [Deployment Guide](./deployment.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/5_streaming_daemon.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

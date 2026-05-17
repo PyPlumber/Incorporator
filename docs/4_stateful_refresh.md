@@ -230,19 +230,20 @@ back-to-back with a decision matrix at the close.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* **[Tutorial 3 — Parent-Child Drilling](./3_parent_child_drilling.md)** —
-  the registry-building patterns refresh keeps live.
-* **[Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md)** — the
-  daemon form of `refresh()` on a cadence.
-* **[Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md)** —
-  combine refreshes from CoinGecko + Binance into a live spread metric.
-* **[Tutorial 7 — Tideweaver](./7_tideweaver.md)** — when you need
-  multiple `refresh()` sources on independent cadences inside a single
-  time window, Tideweaver's `Stream` currents automate what you'd
-  otherwise wire by hand.
-* **[Production Debugging](./debugging.md)** — what to do when
-  `failed_sources` is non-empty after a refresh.
-* **[Library reference](./library_reference.md)** — full method
-  signature, every kwarg.
+| Goal | Read |
+|---|---|
+| Discover an unfamiliar endpoint first | [Tutorial 1 — First Steps + DX Inspector](./1_first_steps.md) |
+| Drill parent records before refreshing | [Tutorial 3 — Parent-Child Drilling](./3_parent_child_drilling.md) |
+| Wrap `refresh()` in a daemon with periodic export | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
+| Refresh multiple sources concurrently and fuse the results | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
+| Orchestrate N sources on independent cadences in one window | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| Diagnose refresh failures with structured logs | [Production Debugging](./debugging.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/4_stateful_refresh.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

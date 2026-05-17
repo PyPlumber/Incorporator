@@ -415,23 +415,20 @@ stderr so log shippers can ingest stdout directly.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* **[Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md)** — the
-  `outflow(state)` pattern that `Fjord` currents reuse each flush.  Read Tutorial 6
-  first if the dynamic-output-class concept is unfamiliar.
-* **[CLI & Configuration §9](./cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration)** —
-  the `watershed.json` schema and the `tideweaver validate` / `run` CLI verbs.
-* **[Appendix — NASCAR Tideweaver](./appendix/nascar_tideweaver.md)** — the same
-  diamond shape against a different domain (race telemetry: laps + pits + flags →
-  driver state).  Cross-domain proof that the orchestrator pattern is
-  domain-agnostic.
-* **[Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md)** —
-  one-shot Parquet export at window close (different shape from per-tick NDJSON
-  append).
-* **[Appendix — Tideweaver vs. Prefect](./appendix/tideweaver_vs_prefect.md)** —
-  picking between in-process Tideweaver and an external cloud scheduler, and the
-  recommended Prefect-wraps-Tideweaver production pattern.
-* **[Library reference](./library_reference.md)** — every public class
-  (`Tideweaver`, `Watershed`, `Current` / `Stream` / `Fjord` / `Export`, `Tide`)
-  rendered from source docstrings.
+| Goal | Read |
+|---|---|
+| Master the fjord pattern that `Fjord` currents reuse | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
+| Run the same diamond shape against a different domain | [Appendix — NASCAR Tideweaver](./appendix/nascar_tideweaver.md) |
+| Land columnar Parquet artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
+| Pick between in-process and cloud orchestration | [Appendix — Tideweaver vs. Prefect](./appendix/tideweaver_vs_prefect.md) |
+| Configure Tideweaver from `watershed.json` for the CLI | [CLI & Configuration §9](./cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration) |
+| Ship as a Docker container with environment-driven config | [Deployment Guide](./deployment.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/7_tideweaver.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

@@ -223,19 +223,21 @@ flattening.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* **[Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md)** — keep both registries
-  live as markets and detail records change over time.
-* **[Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md)** — fuses parent +
-  child + outflow into a single daemon pipeline.
-* **[Appendix — SpaceX Launches](./appendix/spacex_launches.md)** — same parent-child
-  pattern against the SpaceX v4 API (launches → rockets → launchpads with a richer
-  dedup story: 18 launches, 36 child refs, 5 unique IDs).
-* **[Appendix — PokéAPI ETL](./appendix/pokeapi_etl.md)** — paginated HATEOAS drill
-  plus `calc()` reductions over nested arrays (the same trick that handles CoinGecko's
-  `market_chart` response shape).
-* **[Appendix — XML POST Auditing](./appendix/xml_post_audit.md)** — parent-extraction
-  combined with declarative bulk-POST batching for fraud-audit workflows.
-* **[Library reference](./library_reference.md)** — full kwarg list for `inc_parent` /
-  `inc_child`.
+| Goal | Read |
+|---|---|
+| Profile the parent endpoint before drilling | [Tutorial 1 — First Steps + DX Inspector](./1_first_steps.md) |
+| Land the drilled results in a warehouse | [Tutorial 2 — Universal Formats](./2_universal_formats.md) |
+| Keep both registries live with `refresh()` | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
+| Fuse parent + child into one composite record | [Tutorial 6 — Multi-Source Fjord](./6_multi_source_fjord.md) |
+| See the same pattern against the SpaceX v4 API | [Appendix — SpaceX Launches](./appendix/spacex_launches.md) |
+| Paginated HATEOAS drill with `calc()` reductions | [Appendix — PokéAPI ETL](./appendix/pokeapi_etl.md) |
+| XML ingestion + declarative bulk POST enrichment | [Appendix — Shady Jimmy's XML Audit](./appendix/xml_post_audit.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/3_parent_child_drilling.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)

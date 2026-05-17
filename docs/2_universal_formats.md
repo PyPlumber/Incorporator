@@ -265,18 +265,21 @@ the chunking-mode pipeline.
 
 ---
 
-## See Also
+## Where to Go Next
 
-* **[Formats & Compression Cheat Sheet](./formats_and_compression.md)** — every kwarg
-  per format, plus compression details.
-* **[Streaming & Pagination](./streaming_and_pagination.md)** — the paginator family for
-  files / endpoints too big to fit in RAM.
-* **[Tutorial 1 — Profiling with `test()`](./1_first_steps.md)** — let the DX Inspector
-  print the kwargs you need against an unknown file or endpoint.
-* **[Appendix — Data Lake Pivot](./appendix/data_lake_pivot.md)** *(deeper reference)* —
-  full JSON ↔ Avro ↔ SQLite round-trip with nested-structure reconstruction.
-* **[Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md)** —
-  the right pattern for landing columnar artifacts at the close of an orchestration
-  window.
-* **[Library reference](./library_reference.md)** — full `incorp()` and `export()`
-  signatures.
+| Goal | Read |
+|---|---|
+| Discover the right kwargs for an unknown source first | [Tutorial 1 — First Steps + DX Inspector](./1_first_steps.md) |
+| Join a parent endpoint to per-record detail children | [Tutorial 3 — Parent-Child Drilling](./3_parent_child_drilling.md) |
+| Keep the warehouse source data fresh | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
+| Run the warehouse loader as a long-running daemon | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
+| Land columnar Parquet from an orchestrated pipeline | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
+| Round-trip JSON ↔ Avro ↔ SQLite with nested reconstruction | [Appendix — Data Lake Pivot](./appendix/data_lake_pivot.md) |
+| Stream a file too big for RAM | [Streaming & Pagination Deep Dive](./streaming_and_pagination.md) |
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/2_universal_formats.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)
