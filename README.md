@@ -156,12 +156,12 @@ from incorporator import Tideweaver, Watershed, Stream, Fjord
 
 watershed = Watershed.diamond(
     window=(start, end),
-    head=Stream(name="laps", cls=Lap, interval=30, incorp_params={...}),
-    middle=[Stream(name="pits", cls=Pit, interval=30, incorp_params={...}),
-            Stream(name="flags", cls=Flag, interval=30, incorp_params={...})],
-    tail=Fjord(name="state", cls=DriverState, interval=30,
-               export_params={"file_path": "state.ndjson"}),
-    outflow="race_outflow.py",
+    head=Stream(name="binance", cls=BinanceBook, interval=15, incorp_params={...}),
+    middle=[Stream(name="coinbase", cls=CoinbaseTicker, interval=30, incorp_params={...}),
+            Stream(name="kraken",   cls=KrakenTicker,   interval=30, incorp_params={...})],
+    tail=Fjord(name="best_market", cls=BestMarket, interval=30,
+               export_params={"file_path": "arb_signals.ndjson"}),
+    outflow="arb_outflow.py",
 )
 async for tide in Tideweaver(watershed).run():
     print(tide.tide_number, tide.fired, tide.skipped)
@@ -188,8 +188,7 @@ The CLI runs the same engines from declarative config. No Python required.
 
 ```bash
 incorporator init --type stream --output-dir .
-incorporator validate pipeline.json && incorporator stream pipeline.json
-# ...or run it as a Dockerised daemon: docker compose up -d
+incorporator validate pipeline.json && incorporator stream pipeline.json   # ...or: docker compose up -d
 ```
 
 Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/api_key}` for Docker / Kubernetes Secrets mounts. Set `INCORPORATOR_SECRETS_ROOT=/run/secrets` to sandbox `${file:...}` against directory-traversal.
@@ -214,13 +213,13 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
 
 A focused 1–7 curriculum. Each slot introduces one new verb or technique. Runnable code under [`/examples`](./examples).
 
-1. [🌱 **First Steps + DX Inspector**](./docs/1_first_steps.md) — your first `incorp()` against CoinGecko, plus `test()` for profiling unknown APIs.
-2. [📦 **Universal Formats — One Verb, Any File**](./docs/2_universal_formats.md) — same call across `.json` / `.csv` / `.parquet` / `.sqlite` / `.xlsx` / `.avro`.
-3. [🚀 **Drilling API Graphs — Parent → Child**](./docs/3_parent_child_drilling.md) — `inc_parent` + `inc_child` for HATEOAS APIs.
-4. [🔄 **Keep It Live — Stateful Refresh**](./docs/4_stateful_refresh.md) — `refresh()` three ways against Binance's live ticker.
-5. [🌊 **Streaming Daemons**](./docs/5_streaming_daemon.md) — `stream()` for long-running pipelines.
-6. [🌊 **Multi-Source Fjord**](./docs/6_multi_source_fjord.md) — `fjord()` fusing CoinGecko + Binance into a live spread metric.
-7. [🪡 **Tideweaver — Windowed Graph Orchestration** *(capstone)*](./docs/7_tideweaver.md) — coordinate multiple `stream()` and fjord-flush currents on independent intervals with dependency gating inside a bounded time window.
+1. [🌱 **First Steps + DX Inspector**](./docs/1_first_steps.md) — discovery-first flow: `test()` profiles a CoinGecko endpoint, then `incorp()` applies its recommendations.
+2. [📦 **Snapshot Warehouse — Universal Formats**](./docs/2_universal_formats.md) — fan CoinGecko top-100 snapshots into NDJSON / CSV / SQLite / Parquet, then round-trip every artifact.
+3. [🚀 **Parent → Child Drilling**](./docs/3_parent_child_drilling.md) — CoinGecko `/coins/markets` → `/coins/{id}` fan-out — the canonical backtest-data-prep pattern.
+4. [🔄 **Stateful Refresh**](./docs/4_stateful_refresh.md) — `refresh()` three ways against Binance's live ticker.
+5. [🌊 **Streaming Daemons — Both Polling Modes**](./docs/5_streaming_daemon.md) — `stateful_polling=True` for mark-to-market dashboards; `stateful_polling=False` for paginated bulk drains.
+6. [🌊 **Multi-Source Fjord**](./docs/6_multi_source_fjord.md) — `fjord()` fusing CoinGecko + Binance into a live cross-venue spread metric.
+7. [🪡 **Tideweaver — Multi-Exchange Arb Scanner** *(capstone)*](./docs/7_tideweaver.md) — declarative windowed orchestration: three exchanges → one composite best-market record with arb-opportunity flag.
 
 ## 📑 Reference
 
@@ -231,15 +230,17 @@ A focused 1–7 curriculum. Each slot introduces one new verb or technique. Runn
 * [🐳 **CLI & Configuration**](./docs/cli_and_configuration.md) — running pipelines from `pipeline.json` / `watershed.json`.
 * [⚡ **Performance**](./docs/performance.md) — measured throughput per format, memory profile, tuning knobs.
 
-## 📎 Appendices
+## 📎 Appendices — same patterns, different domains
 
-* [🧬 **Pokémon ETL**](./docs/appendix/pokeapi_etl.md) — array reductions with `calc` / `sum_attributes`.
+* [🚀 **SpaceX Launches**](./docs/appendix/spacex_launches.md) — T3 + T5 patterns against SpaceX v4 (launches → rockets → launchpads; slow-cadence daemon).
+* [🏁 **NASCAR Tideweaver**](./docs/appendix/nascar_tideweaver.md) — Tutorial 7's diamond shape against race telemetry (laps + pits + flags → driver state).
+* [🧬 **Pokémon ETL**](./docs/appendix/pokeapi_etl.md) — paginated HATEOAS drill + array reductions with `calc` / `sum_attributes`.
 * [🚨 **Shady Jimmy's XML Audit**](./docs/appendix/xml_post_audit.md) — XML ingestion + declarative bulk POST + fraud audit.
-* [🕸️ **Crypto Graph Mapping** (static)](./docs/appendix/crypto_graph_mapping.md) — `link_to`-based in-memory join. Tutorial 6 covers the same fusion as a live daemon.
-* [🏁 **NASCAR Fantasy — Graph-Map Fjord** *(advanced)*](./docs/appendix/nascar_fantasy_fjord.md) — six-source fjord with state-aware `inflow(state)`, multi-output `outflow(state)`, sentinel-ID filtering. Builds on Tutorial 6.
+* [🕸️ **Crypto Graph Mapping** (static)](./docs/appendix/crypto_graph_mapping.md) — `link_to`-based in-memory join; Tutorial 6's pattern as a one-shot.
+* [🏁 **NASCAR Fantasy Fjord** *(advanced)*](./docs/appendix/nascar_fantasy_fjord.md) — six-source fjord with state-aware `inflow(state)` and multi-output `outflow(state)`.
 * [🪡 **Parquet Snapshots in a Tideweaver Window**](./docs/appendix/tideweaver_parquet_snapshots.md) — landing columnar artifacts at window close.
-* [🪡 **Tideweaver vs. Prefect**](./docs/appendix/tideweaver_vs_prefect.md) — when to reach for each, and the recommended Prefect-wraps-Tideweaver pattern.
-* [🐘 **Data Lake Pivot** (legacy)](./docs/appendix/data_lake_pivot.md) — original JSON ↔ Avro/SQLite walkthrough; the headline pattern is now in Tutorial 2.
+* [🪡 **Tideweaver vs. Prefect**](./docs/appendix/tideweaver_vs_prefect.md) — picking between in-process and cloud orchestration, plus the recommended hybrid pattern.
+* [🐘 **Data Lake Pivot** (legacy)](./docs/appendix/data_lake_pivot.md) — JSON ↔ Avro/SQLite walkthrough; T2 covers the headline pattern.
 
 ---
 
