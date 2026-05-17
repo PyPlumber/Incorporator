@@ -10,16 +10,135 @@ Dependency direction: ``base.py → schema/factory.py → schema/{builder,router
 
 import logging
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type, Union, cast
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Type, Union, cast
 
 from ..list import IncorporatorList, _deduplicate_extracted
 from . import builder as schema_builder
-from . import router
+from . import converters, router
 
 if TYPE_CHECKING:
     from ..base import Incorporator
 
 logger = logging.getLogger(__name__)
+
+
+# JSON-Schema "type" string → Python type.  Mirrors the table at
+# ``incorporator/io/formats.py``.  Deliberately omits ``"string"`` —
+# coercing values to ``str`` is either a no-op (real strings) or actively
+# wrong (would cast numeric / boolean values to strings if a previous
+# typeless-format read populated _schema_union with ``"string"``).  See
+# ``_expand_conv_dict_with_schema_union`` below.
+_JSON_SCHEMA_TYPE_TO_PYTHON: Dict[str, type] = {
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+}
+
+
+def _target_type_from_schema_info(schema_info: Mapping[str, Any]) -> Optional[type]:
+    """Pick a Python coercion target from a JSON-Schema dict.
+
+    Handles both flat-schema shapes (``{"type": "integer"}``) and the
+    ``anyOf`` shape Pydantic emits for ``Optional[...]`` / ``Union[...]``
+    fields (``{"anyOf": [{"type": "integer"}, {"type": "null"}]}``).
+
+    Returns ``None`` for:
+      * Plain ``"string"`` entries (see asymmetry note on
+        ``_expand_conv_dict_with_schema_union``).
+      * Unrecognised types.
+      * Schemas with no ``"type"`` or ``"anyOf"`` key.
+
+    The left-most non-null union member wins — mirrors Pydantic's own
+    union resolution order.
+    """
+
+    def _from_member(member: Mapping[str, Any]) -> Optional[type]:
+        mt = member.get("type")
+        # Datetime carries ``{"type": "string", "format": "date-time"}``.
+        if mt == "string" and member.get("format") == "date-time":
+            return datetime
+        if isinstance(mt, str):
+            return _JSON_SCHEMA_TYPE_TO_PYTHON.get(mt)
+        return None
+
+    # Flat schema first.
+    if isinstance(schema_info.get("type"), str) or "type" in schema_info:
+        flat = _from_member(schema_info)
+        if flat is not None:
+            return flat
+    # anyOf union — pick the first non-null member that maps to a target type.
+    any_of = schema_info.get("anyOf")
+    if isinstance(any_of, list):
+        for member in any_of:
+            if not isinstance(member, dict):
+                continue
+            if member.get("type") == "null":
+                continue
+            target = _from_member(member)
+            if target is not None:
+                return target
+    return None
+
+
+def _expand_conv_dict_with_schema_union(
+    conv_dict: Optional[Dict[str, Any]],
+    schema_union: Mapping[str, Any],
+    declared_field_names: Optional[frozenset[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Backfill ``inc()`` converters for fields the caller didn't name.
+
+    Bridges the gap between ``_schema_union`` (which records the JSON-Schema
+    type per field observed across prior incorps) and the ranked-converter
+    engine (``incorporator.schema.converters``).  Without this bridge,
+    typeless formats — CSV / TSV / PSV (and XML / HTML text nodes) —
+    surface every cell as ``str`` and the converter chain never runs
+    unless the caller manually writes ``conv_dict={"current_price":
+    inc(int), "market_cap": inc(int), ...}`` for every field.  With this
+    bridge, a tutorial-2-style round-trip (CoinGecko JSON → CSV → re-incorp)
+    preserves types automatically.
+
+    Three skip rules:
+
+    1. **User wins.**  Fields already in ``conv_dict`` are left alone —
+       caller's explicit choice always trumps.
+    2. **Base-class fields stay with Pydantic.**  Fields declared on the
+       calling class (``cls.model_fields`` — includes the inherited
+       ``inc_code`` / ``inc_name`` / ``last_rcd`` from ``Incorporator``)
+       get coerced by Pydantic itself via their declared annotations
+       (``datetime``, ``str``, etc.).  Synthesising an ``inc()`` here
+       would return ``default=None`` for garbage inputs and then fail
+       Pydantic's strict-typed validation; skipping leaves Pydantic in
+       charge of the decision.
+    3. **Asymmetry on string.**  Only coerce TOWARDS richer types
+       (``int`` / ``float`` / ``bool`` / ``datetime``).  Skip plain
+       ``"string"`` entries — coercing values TO ``str`` is either a
+       no-op or actively wrong (would cast numeric values back to
+       strings when a typeless first-read populated ``_schema_union``
+       with ``"string"``).
+
+    Args:
+        conv_dict: The user's explicit converter mapping (may be ``None``).
+        schema_union: ``cls._schema_union`` — JSON-Schema-shaped dict
+            of ``{field_name: {"type": ..., "format": ...}}`` entries.
+        declared_field_names: Names already declared on the class
+            hierarchy.  Pass ``frozenset(cls.model_fields.keys())`` to
+            cede those fields to Pydantic's own coercion.
+
+    Returns:
+        An expanded conv_dict (or ``None`` if both inputs are empty).
+    """
+    if not schema_union:
+        return conv_dict
+    effective = dict(conv_dict or {})
+    declared = declared_field_names or frozenset()
+    for field, schema_info in schema_union.items():
+        if field in effective or field in declared or not isinstance(schema_info, dict):
+            continue
+        target = _target_type_from_schema_info(schema_info)
+        if target is not None:
+            effective[field] = converters.inc(target)
+    return effective or None
 
 
 async def child_incorp(
@@ -131,12 +250,26 @@ def build_instances(
     if is_single and len(parsed_data) == 1:
         parsed_data = parsed_data[0]
 
+    # Auto-coerce based on previously-observed types.  ``_schema_union``
+    # carries the JSON-Schema type per field from prior incorps; the helper
+    # synthesises ``inc()`` converters for any field the caller didn't name
+    # in ``conv_dict``.  This is what makes a CSV / TSV / PSV round-trip
+    # preserve types automatically after a typed source (JSON / NDJSON /
+    # SQLite / Parquet / Avro) has populated ``_schema_union``.  Caller
+    # overrides always win, and fields declared on the base class (e.g.
+    # ``last_rcd: datetime`` on ``Incorporator``) are left to Pydantic.
+    effective_conv = _expand_conv_dict_with_schema_union(
+        conv_dict,
+        getattr(cls, "_schema_union", {}),
+        declared_field_names=frozenset(cls.model_fields.keys()),
+    )
+
     transformed_data = schema_builder.apply_etl_transformations(
         parsed_data=parsed_data,
         code_attr=inc_code,
         name_attr=inc_name,
         excl_lst=excl_lst,
-        conv_dict=conv_dict,
+        conv_dict=effective_conv,
         name_chg=name_chg,
     )
 
