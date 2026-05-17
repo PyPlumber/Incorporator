@@ -8,6 +8,7 @@ assembles the resulting dynamic Pydantic object graphs.
 
 import asyncio
 import logging
+import os
 import threading
 import weakref
 from datetime import datetime, timezone
@@ -249,7 +250,7 @@ class Incorporator(BaseModel):
     async def incorp(
         cls: Type[TIncorporator],
         inc_url: Optional[Union[str, List[str]]] = None,
-        inc_file: Optional[Union[str, List[str]]] = None,
+        inc_file: Optional[Union[str, "os.PathLike[str]", List[Union[str, "os.PathLike[str]"]]]] = None,
         inc_parent: Optional[Union[TIncorporator, "IncorporatorList[TIncorporator]"]] = None,
         inc_child: Optional[str] = None,
         inc_code: Optional[str] = None,

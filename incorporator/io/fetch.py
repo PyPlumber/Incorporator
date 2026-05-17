@@ -7,6 +7,7 @@ and asynchronous connection-pooling for maximum throughput.
 import asyncio
 import ipaddress
 import logging
+import os
 import re
 import socket
 from pathlib import Path
@@ -416,8 +417,13 @@ async def _process_single_source(
 # ==========================================
 
 
-def _inject_sqlite_query(source: Union[str, List[str]], table_name: str, kwargs: Dict[str, Any]) -> None:
-    """Auto-injects a default SELECT query for SQLite sources when sql_query is not provided."""
+def _inject_sqlite_query(source: Any, table_name: str, kwargs: Dict[str, Any]) -> None:
+    """Auto-injects a default SELECT query for SQLite sources when sql_query is not provided.
+
+    Accepts any source shape ``incorp()`` accepts (``str``, ``PathLike``, or
+    a list of either) — values are str-coerced via ``infer_format``'s own
+    ``str()`` call before format detection.
+    """
     sample = source[0] if isinstance(source, list) else source
     if infer_format(str(sample)) == FormatType.SQLITE and not kwargs.get("sql_query"):
         safe_table = re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
@@ -425,14 +431,31 @@ def _inject_sqlite_query(source: Union[str, List[str]], table_name: str, kwargs:
 
 
 def _normalize_source_list(
-    source: Optional[Union[str, List[str]]],
+    source: Any,
     payload_list: Optional[List[Any]],
 ) -> List[str]:
-    """Normalizes a Union[str, List[str]] source into a flat List[str] for concurrent dispatch."""
+    """Normalises any single-source-or-list input into a flat ``List[str]``.
+
+    Accepts:
+      * ``str`` (URL or local path) → single-element list.
+      * ``os.PathLike`` (``pathlib.Path`` and friends) → str-coerced via
+        ``os.fspath``, single-element list.  Without this branch a Path
+        argument silently dropped through to ``return []`` — the file was
+        never read and ``incorp()`` returned an empty IncorporatorList with
+        no diagnostic.  See the regression test in ``test_io_fetch.py``.
+      * ``list`` of any of the above → str-coerced, ``None``-filtered list.
+      * ``None`` with ``payload_list`` set → placeholder list matching
+        ``payload_list``'s length (the payload-driven flow doesn't need real
+        source URLs).
+      * Anything else → empty list (defers to the caller's source-required
+        check at ``base.py:438`` for the diagnostic).
+    """
     if isinstance(source, list):
-        return [str(s) for s in source if s is not None]
+        return [os.fspath(s) if isinstance(s, os.PathLike) else str(s) for s in source if s is not None]
     if isinstance(source, str):
         return [source]
+    if isinstance(source, os.PathLike):
+        return [os.fspath(source)]
     if payload_list:
         return [""] * len(payload_list)
     return []
