@@ -111,50 +111,23 @@ def validate_stream_config(config: Dict[str, Any], config_dir: Path) -> List[str
         errors.append("'stateful_polling', if present, must be a boolean.")
 
     # Optional inflow file — must import cleanly if specified.
-    inflow_raw = config.get("inflow")
-    if inflow_raw:
-        if not isinstance(inflow_raw, str):
-            errors.append("'inflow', if present, must be a string path.")
-        else:
-            inflow_path = _resolve_outflow_file(inflow_raw, config_dir)
-            if not inflow_path.is_file():
-                errors.append(f"inflow file not found: {inflow_path}")
-            else:
-                load_err = _try_import(inflow_path)
-                if load_err:
-                    errors.append(f"inflow file failed to import: {load_err}")
+    _validate_sidecar_file(config, "inflow", config_dir, errors)
 
     # Optional outflow — stateful-polling pipelines only.
-    outflow_raw = config.get("outflow")
-    if outflow_raw:
-        if not config.get("stateful_polling"):
-            errors.append(
-                "'outflow' requires 'stateful_polling': true.  Chunking-mode streams "
-                "release per-chunk state and have no persistent registry for a "
-                "user-defined Incorporator subclass to attach to.  Drop 'outflow', "
-                "or switch to stateful polling."
-            )
-        else:
-            outflow_path = _resolve_outflow_file(str(outflow_raw), config_dir)
-            if not outflow_path.is_file():
-                errors.append(f"outflow file not found: {outflow_path}")
-            else:
-                load_err = _try_import(outflow_path)
-                if load_err:
-                    errors.append(f"outflow file failed to import: {load_err}")
+    if config.get("outflow") and not config.get("stateful_polling"):
+        errors.append(
+            "'outflow' requires 'stateful_polling': true.  Chunking-mode streams "
+            "release per-chunk state and have no persistent registry for a "
+            "user-defined Incorporator subclass to attach to.  Drop 'outflow', "
+            "or switch to stateful polling."
+        )
+    elif config.get("outflow"):
+        _validate_sidecar_file(config, "outflow", config_dir, errors)
 
     # Optional export_params.outflow — confirm the file loads (transform optional).
     export_params = config.get("export_params")
     if isinstance(export_params, dict):
-        export_outflow = export_params.get("outflow")
-        if export_outflow:
-            resolved = _resolve_outflow_file(export_outflow, config_dir)
-            if not resolved.is_file():
-                errors.append(f"export_params.outflow not found: {resolved}")
-            else:
-                load_err = _try_import(resolved)
-                if load_err:
-                    errors.append(f"export_params.outflow failed to import: {load_err}")
+        _validate_sidecar_file(export_params, "outflow", config_dir, errors, file_label="export_params.outflow")
 
     return errors
 
@@ -180,31 +153,16 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
         return errors
 
     # Optional inflow file — must import cleanly if specified.
-    inflow_raw = config.get("inflow")
-    if inflow_raw:
-        if not isinstance(inflow_raw, str):
-            errors.append("'inflow', if present, must be a string path.")
-        else:
-            inflow_path = _resolve_outflow_file(inflow_raw, config_dir)
-            if not inflow_path.is_file():
-                errors.append(f"inflow file not found: {inflow_path}")
-            else:
-                load_err_inflow = _try_import(inflow_path)
-                if load_err_inflow:
-                    errors.append(f"inflow file failed to import: {load_err_inflow}")
+    _validate_sidecar_file(config, "inflow", config_dir, errors)
 
-    outflow_path = _resolve_outflow_file(str(outflow_raw), config_dir)
-    if not outflow_path.is_file():
-        errors.append(f"outflow not found: {outflow_path}")
+    # Required outflow — capture the loaded module for downstream symbol checks.
+    # Bare ``"outflow"`` label (no "file") preserves the fjord-specific wording
+    # asserted by tests/test_cli.py::test_cli_fjord_outflow_not_found.
+    outflow_path, module = _validate_sidecar_file(
+        config, "outflow", config_dir, errors, capture_module=True, file_label="outflow"
+    )
+    if outflow_path is None or module is None:
         return errors
-
-    load_err = _try_import(outflow_path)
-    if load_err:
-        errors.append(f"outflow failed to import: {load_err}")
-        return errors
-
-    # Reload via importlib for symbol access (cheap — same module spec).
-    module = _import_module(outflow_path)
 
     # outflow() arity check via usercode.load_outflow_module — it already
     # raises with the right diagnostic if the function is missing or has the
@@ -288,38 +246,8 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
         errors.append(f"'dependency_mode' must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}.")
 
     # --- sidecars (import-check) ---------------------------------------
-    inflow_raw = config.get("inflow")
-    inflow_module: Any | None = None
-    if inflow_raw:
-        if not isinstance(inflow_raw, str):
-            errors.append("'inflow', if present, must be a string path.")
-        else:
-            inflow_path = _resolve_outflow_file(inflow_raw, config_dir)
-            if not inflow_path.is_file():
-                errors.append(f"inflow file not found: {inflow_path}")
-            else:
-                load_err = _try_import(inflow_path)
-                if load_err:
-                    errors.append(f"inflow file failed to import: {load_err}")
-                else:
-                    inflow_module = _import_module(inflow_path)
-
-    outflow_raw = config.get("outflow")
-    outflow_module: Any | None = None
-    outflow_path: Path | None = None
-    if outflow_raw:
-        if not isinstance(outflow_raw, str):
-            errors.append("'outflow', if present, must be a string path.")
-        else:
-            outflow_path = _resolve_outflow_file(outflow_raw, config_dir)
-            if not outflow_path.is_file():
-                errors.append(f"outflow file not found: {outflow_path}")
-            else:
-                load_err = _try_import(outflow_path)
-                if load_err:
-                    errors.append(f"outflow file failed to import: {load_err}")
-                else:
-                    outflow_module = _import_module(outflow_path)
+    _, inflow_module = _validate_sidecar_file(config, "inflow", config_dir, errors, capture_module=True)
+    outflow_path, outflow_module = _validate_sidecar_file(config, "outflow", config_dir, errors, capture_module=True)
 
     # --- gather currents per shape -------------------------------------
     current_entries: List[Tuple[str, Dict[str, Any]]] = []  # (path-label, entry)
@@ -575,3 +503,68 @@ def _import_module(code_path: Path) -> Any:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _validate_sidecar_file(
+    config: Dict[str, Any],
+    key: str,
+    config_dir: Path,
+    errors: List[str],
+    *,
+    capture_module: bool = False,
+    file_label: str | None = None,
+) -> Tuple[Path | None, Any | None]:
+    """Validate an optional sidecar-file path declared in ``config[key]``.
+
+    Centralises the three-step check (string type → file exists → imports
+    cleanly) shared by every config validator (stream / fjord / tideweaver)
+    and every sidecar key (``"inflow"``, ``"outflow"``,
+    ``"export_params.outflow"``).  Before this helper existed the same
+    ~12-line block was inlined seven times across three validators — same
+    anti-pattern that produced the duplicate ``load_outflow_function`` /
+    ``load_outflow_module`` pair in ``usercode.py``.
+
+    Args:
+        config: Validator-scope config dict (e.g. the top-level config or a
+            nested ``export_params``).
+        key: The dict key naming the sidecar (``"inflow"``, ``"outflow"``).
+        config_dir: Directory used to resolve relative paths.
+        errors: Validator's running error list — mutated in place.
+        capture_module: When True, load the module once and return it so
+            the caller can inspect symbols.  When False the helper validates
+            via ``_try_import`` and skips the second exec to avoid running
+            the user's sidecar twice.
+        file_label: Human label used in error messages.  Defaults to
+            ``f"{key} file"`` (matches inflow / stream-outflow / tideweaver
+            wording).  Pass ``"outflow"`` (no "file") for the fjord wording
+            asserted by ``test_cli.py::test_cli_fjord_outflow_not_found``,
+            or ``"export_params.outflow"`` for the nested case.
+
+    Returns:
+        ``(path, module)``.  ``path`` is the resolved Path when the file
+        exists, otherwise ``None``.  ``module`` is the loaded module on
+        full success with ``capture_module=True``, otherwise ``None``.
+    """
+    raw = config.get(key)
+    if not raw:
+        return None, None
+    if not isinstance(raw, str):
+        errors.append(f"'{key}', if present, must be a string path.")
+        return None, None
+    label = file_label if file_label is not None else f"{key} file"
+    path = _resolve_outflow_file(raw, config_dir)
+    if not path.is_file():
+        errors.append(f"{label} not found: {path}")
+        return None, None
+    if capture_module:
+        try:
+            module = _import_module(path)
+        except Exception as exc:  # noqa: BLE001 — surface as a clean diagnostic
+            errors.append(f"{label} failed to import: {type(exc).__name__}: {exc}")
+            return None, None
+        return path, module
+    load_err = _try_import(path)
+    if load_err:
+        errors.append(f"{label} failed to import: {load_err}")
+        return None, None
+    return path, None
