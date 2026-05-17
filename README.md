@@ -24,8 +24,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/PyPlumber/incorporator?color=yellow&label=stars)](https://github.com/PyPlumber/incorporator/stargazers)
 
 ### ✨ Highlights
-* **Works with unpredictable JSON APIs** — and digests XML, CSV, NDJSON, SQLite, Parquet without a line of schema.
-* **Native Python objects instantly**, no manual model definitions.
+* **Works with unpredictable JSON APIs** — and digests XML, CSV, NDJSON, SQLite, Parquet without a line of schema. Native Python objects instantly, no manual model definitions.
 * **Handles changing structures at runtime** — missing keys and mutating types absorbed without validation errors.
 * **Pydantic + HTTPX under the hood** — no data classes, connection poolers, or pagination loops to write.
 
@@ -202,8 +201,7 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
 * **GIL-free hyperthreading** via the `[speedups]` extra. → [Installation](./docs/installation.md)
 * **Invisible decompression** for `.gz`, `.bz2`, `.lzma`, `.zip`, `.tar` — ZIP/TAR paths validated against directory-traversal and a 1 GB bomb cap. → [Formats](./docs/formats_and_compression.md)
 * **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity backoff, failed URLs on `wave.failed_sources`. Opt-in `block_internal_redirects=True` rejects 3xx Locations to RFC1918 / loopback / cloud-metadata IPs.
-* **Atomic writes** — Parquet, Feather, ORC, JSON, XML, XLSX build to a tempfile and `os.replace()` on success; crash mid-write never leaves a corrupt-footer file.
-* **Spreadsheet-injection guard** — CSV / XLSX cells starting with `=` / `@` / `+` / `-` are quoted on export (OWASP default).
+* **Atomic writes + spreadsheet-injection guard** — Parquet / Feather / ORC / JSON / XML / XLSX build via tempfile + `os.replace()` (no half-written files); CSV / XLSX cells starting with `=` / `@` / `+` / `-` are quoted on export (OWASP).
 * **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop.
 * **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML. → [Tutorial 2](./docs/2_universal_formats.md)
 
@@ -217,16 +215,15 @@ A focused 1–7 curriculum. Each slot introduces one new verb or technique. Runn
 2. [📦 **Snapshot Warehouse — Universal Formats**](./docs/2_universal_formats.md) — fan CoinGecko top-100 snapshots into NDJSON / CSV / SQLite / Parquet, then round-trip every artifact.
 3. [🚀 **Parent → Child Drilling**](./docs/3_parent_child_drilling.md) — CoinGecko `/coins/markets` → `/coins/{id}` fan-out — the canonical backtest-data-prep pattern.
 4. [🔄 **Stateful Refresh**](./docs/4_stateful_refresh.md) — `refresh()` three ways against Binance's live ticker.
-5. [🌊 **Streaming Daemons — Both Polling Modes**](./docs/5_streaming_daemon.md) — `stateful_polling=True` for mark-to-market dashboards; `stateful_polling=False` for paginated bulk drains.
+5. [🌊 **Streaming Daemons — Both Polling Modes**](./docs/5_streaming_daemon.md) — stateful for live dashboards; chunking for paginated bulk drains.
 6. [🌊 **Multi-Source Fjord**](./docs/6_multi_source_fjord.md) — `fjord()` fusing CoinGecko + Binance into a live cross-venue spread metric.
-7. [🪡 **Tideweaver — Multi-Exchange Arb Scanner** *(capstone)*](./docs/7_tideweaver.md) — declarative windowed orchestration: three exchanges → one composite best-market record with arb-opportunity flag.
+7. [🪡 **Tideweaver — Multi-Exchange Arb Scanner** *(capstone)*](./docs/7_tideweaver.md) — declarative windowed orchestration: three exchanges → one best-market record.
 
 ## 📑 Reference
 
 * [📖 **Library Reference**](./docs/library_reference.md) — every public class, rendered from source docstrings.
 * [🩺 **Production Debugging with `get_error()`**](./docs/debugging.md) — `LoggedIncorporator` + structured error logs + DLQ retry.
-* [📦 **Formats & Compression**](./docs/formats_and_compression.md) — every format kwarg, compression rules.
-* [🌊 **Streaming & Pagination**](./docs/streaming_and_pagination.md) — paginator family for endpoints / files too big for RAM.
+* [📦 **Formats & Compression**](./docs/formats_and_compression.md) + [🌊 **Streaming & Pagination**](./docs/streaming_and_pagination.md) — every format kwarg, compression rules, and the paginator family for endpoints / files too big for RAM.
 * [🐳 **CLI & Configuration**](./docs/cli_and_configuration.md) — running pipelines from `pipeline.json` / `watershed.json`.
 * [⚡ **Performance**](./docs/performance.md) — measured throughput per format, memory profile, tuning knobs.
 
@@ -238,8 +235,7 @@ A focused 1–7 curriculum. Each slot introduces one new verb or technique. Runn
 * [🚨 **Shady Jimmy's XML Audit**](./docs/appendix/xml_post_audit.md) — XML ingestion + declarative bulk POST + fraud audit.
 * [🕸️ **Crypto Graph Mapping** (static)](./docs/appendix/crypto_graph_mapping.md) — `link_to`-based in-memory join; Tutorial 6's pattern as a one-shot.
 * [🏁 **NASCAR Fantasy Fjord** *(advanced)*](./docs/appendix/nascar_fantasy_fjord.md) — six-source fjord with state-aware `inflow(state)` and multi-output `outflow(state)`.
-* [🪡 **Parquet Snapshots in a Tideweaver Window**](./docs/appendix/tideweaver_parquet_snapshots.md) — landing columnar artifacts at window close.
-* [🪡 **Tideweaver vs. Prefect**](./docs/appendix/tideweaver_vs_prefect.md) — picking between in-process and cloud orchestration, plus the recommended hybrid pattern.
+* [🪡 **Tideweaver Deep Dives**](./docs/appendix/tideweaver_parquet_snapshots.md) — [Parquet at window close](./docs/appendix/tideweaver_parquet_snapshots.md) and [Tideweaver vs. Prefect](./docs/appendix/tideweaver_vs_prefect.md) — columnar artifacts plus the in-process-vs-cloud orchestration decision.
 * [🐘 **Data Lake Pivot** (legacy)](./docs/appendix/data_lake_pivot.md) — JSON ↔ Avro/SQLite walkthrough; T2 covers the headline pattern.
 
 ---
@@ -247,3 +243,7 @@ A focused 1–7 curriculum. Each slot introduces one new verb or technique. Runn
 ## 🤝 Philosophy & Contributing
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the dev install, quality bar, and architecture conventions. Security disclosures: [`SECURITY.md`](./SECURITY.md). Release notes: [`CHANGELOG.md`](./CHANGELOG.md).
+
+---
+
+**Have a suggestion or hitting a snag?** [Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/README.md) · [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) · [Browse open issues](https://github.com/PyPlumber/incorporator/issues)

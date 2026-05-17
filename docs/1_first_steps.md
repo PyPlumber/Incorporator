@@ -272,3 +272,10 @@ And the discovery loop you ran *before* that:
   timeout).
 * **Errors** — failed sources surface on `coins.failed_sources`.  For durable error logs
   and DLQ retry, see [Production Debugging](./debugging.md).
+
+---
+
+**Have a suggestion or hitting a snag?**
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/1_first_steps.md) ·
+[Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
+[Browse open issues](https://github.com/PyPlumber/incorporator/issues)
