@@ -405,21 +405,6 @@ return = one file.
 
 ---
 
-## Secondary Example — Non-Financial Domain
-
-If you'd rather see the fjord pattern applied to a different domain,
-the SpaceX launch + rocket fusion is available as a reference:
-
-* **`examples/10-multi-source-fjord/launch_with_rocket.py`** — joins
-  `/v4/launches/latest` with `/v4/rockets` so the latest launch row
-  carries the matching rocket's name, height, mass, and success-rate
-  percentage.
-
-The pattern is identical: two source classes, one `outflow(state)`
-function, the dynamic output class comes from the filename stem.
-
----
-
 ## Where to Go Next
 
 > 👉 **Up next: [Tutorial 11 — Tideweaver](../11-tideweaver/README.md).**  T11 is the capstone — a declarative diamond orchestration across three exchanges in a windowed graph.  Runs entirely against local JSON fixtures, no APIs touched.

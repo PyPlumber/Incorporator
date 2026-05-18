@@ -52,8 +52,8 @@ By the end of this tutorial you'll have laid down three files:
 examples/09-nascar-fantasy-fjord/
 ├── fixtures/
 │   └── league_teams.json     ← Step 1 — the roster
-├── nascar_fantasy.py         ← Step 2 — source classes + inflow + outflow
-└── driver.py                 ← Step 3 — the runner
+├── outflow.py                ← Step 2 — source classes + inflow + outflow
+└── nascar_fantasy.py         ← Step 3 — the runner
 ```
 
 The output directory (`out/`) is created at runtime; you don't need to make it.
@@ -182,7 +182,7 @@ EOF
 
 ## 🔧 Step 2: The Inflow / Outflow Sidecar
 
-`nascar_fantasy.py` is the entire ETL.  It defines the seven source classes, the sentinel-filter helper, the `inflow(state)` callable that wires `Race`'s foreign keys against `Track` + `Driver`, and the `outflow(state)` function that emits the three derived views.  Fjord imports it, registers the classes, and drives the pipeline — no other Python is required apart from the runner in Step 3.
+`outflow.py` is the entire ETL.  It defines the seven source classes, the sentinel-filter helper, the `inflow(state)` callable that wires `Race`'s foreign keys against `Track` + `Driver`, and the `outflow(state)` function that emits the three derived views.  Fjord imports it, registers the classes, and drives the pipeline — no other Python is required apart from the runner in Step 3.  The filename matches the framework's CLI-scaffold convention (`incorporator init --type fjord` generates a `pipeline.json` + `outflow.py` pair).
 
 Lay the file down whole; we'll walk it in chunks below.
 
@@ -553,7 +553,7 @@ The three dict keys land verbatim as fjord-built class names and match the keys 
 
 ## 🔧 Step 3: The Driver Script
 
-`driver.py` is the runner.  It declares the seven sources (six API + one local file), points fjord at `nascar_fantasy.py` for both inflow and outflow, and configures the three export targets.  `refresh_params=None` on every source = single-wave test mode; the pipeline exits cleanly after one outflow wave.
+`nascar_fantasy.py` is the runner.  It declares the seven sources (six API + one local file), points fjord at `outflow.py` for both inflow and outflow, and configures the three export targets.  `refresh_params=None` on every source = single-wave test mode; the pipeline exits cleanly after one outflow wave.
 
 ```python
 """NASCAR fantasy league as a multi-output fjord pipeline."""
@@ -571,7 +571,7 @@ DATA = HERE / "out"
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from nascar_fantasy import (  # noqa: E402
+from outflow import (  # noqa: E402
     BuschStanding,
     CupStanding,
     Driver,
@@ -624,8 +624,8 @@ async def main() -> None:
             {"cls": TruckStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/3/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": _STANDINGS_CONV}, "refresh_params": None},
             {"cls": LeagueRoster, "incorp_params": {"inc_file": str(HERE / "fixtures/league_teams.json"), "inc_code": "team_id", "inc_name": "team_id"}, "refresh_params": None},
         ],
-        inflow=str(HERE / "nascar_fantasy.py"),
-        outflow=str(HERE / "nascar_fantasy.py"),
+        inflow=str(HERE / "outflow.py"),
+        outflow=str(HERE / "outflow.py"),
         export_params={
             "MonthlyRaceSchedule":     {"file_path": str(DATA / "nascar_monthly_schedule.ndjson")},
             "FantasyTeam":             {"file_path": str(DATA / "nascar_fantasy_scoreboard.ndjson")},
@@ -645,7 +645,7 @@ if __name__ == "__main__":
 
 Notable wiring:
 
-* **Same-file inflow + outflow.**  Both `inflow=` and `outflow=` point at `nascar_fantasy.py` because both callables live there.  Fjord loads the module once via `importlib`'s cache, so the second import is free.
+* **Same-file inflow + outflow.**  Both `inflow=` and `outflow=` point at `outflow.py` because both callables live there.  Fjord loads the module once via `importlib`'s cache, so the second import is free.
 * **`refresh_params=None` everywhere = single-wave test mode.**  Drop those lines (refresh defaults on at 60s) and the daemons stay alive — perfect for production but blocks the `async for` loop indefinitely.  Mix and match: leave `Track`'s refresh off (tracks never change) while letting standings refresh every 5 minutes.
 * **`export_params` is keyed by output class name.**  Each key matches a key returned by `outflow(state)`; fjord's multi-output detection is "is there a top-level `file_path`?  No → multi-output."
 
@@ -655,7 +655,7 @@ Notable wiring:
 
 ```bash
 cd examples/09-nascar-fantasy-fjord
-python driver.py
+python nascar_fantasy.py
 ```
 
 Expected console output (numbers depend on which races have been run this season):
@@ -774,8 +774,8 @@ The same seven-source pipeline expressed as a JSON config — no Python wrapper 
 
 ```json
 {
-  "inflow":  "examples/09-nascar-fantasy-fjord/nascar_fantasy.py",
-  "outflow": "examples/09-nascar-fantasy-fjord/nascar_fantasy.py",
+  "inflow":  "examples/09-nascar-fantasy-fjord/outflow.py",
+  "outflow": "examples/09-nascar-fantasy-fjord/outflow.py",
   "stream_params": [
     {
       "cls_name": "Track",
@@ -892,16 +892,16 @@ The repo's `docker-compose.yml` and `Dockerfile` work for this pipeline as-is.  
 
 | Host | Container | What goes here |
 |---|---|---|
-| `./config` | `/app/config` *(read-only)* | `pipeline.json`, `nascar_fantasy.py`, and `league_teams.json` |
+| `./config` | `/app/config` *(read-only)* | `pipeline.json`, `outflow.py`, and `league_teams.json` |
 | `./data` | `/app/data` | Three NDJSON outputs land here |
 | `./logs` | `/app/logs` | Rotating JSON log files (when `--logs` is set) |
 
-The wrinkle compared to a single-source fjord: **the `league_teams.json` file must live where the container can read it**.  Easiest pattern is to drop it next to `pipeline.json` in `config/` and reference it with a container-relative path (`"inc_file": "config/league_teams.json"` — *not* the `examples/...` path the host uses).  Same for `nascar_fantasy.py`: copy it into `config/` and point both `inflow` and `outflow` at `"config/nascar_fantasy.py"`.
+The wrinkle compared to a single-source fjord: **the `league_teams.json` file must live where the container can read it**.  Easiest pattern is to drop it next to `pipeline.json` in `config/` and reference it with a container-relative path (`"inc_file": "config/league_teams.json"` — *not* the `examples/...` path the host uses).  Same for `outflow.py`: copy it into `config/` and point both `inflow` and `outflow` at `"config/outflow.py"`.
 
 ```bash
 mkdir -p config data logs
 cp examples/09-nascar-fantasy-fjord/fixtures/league_teams.json config/league_teams.json
-cp examples/09-nascar-fantasy-fjord/nascar_fantasy.py          config/nascar_fantasy.py
+cp examples/09-nascar-fantasy-fjord/outflow.py                 config/outflow.py
 # edit config/pipeline.json so inflow/outflow/inc_file point at config/* paths
 incorporator validate config/pipeline.json
 docker compose up -d
@@ -936,7 +936,7 @@ For an off-season demo (one-shot run with no refresh), set every `refresh_params
 | **Sentinel-ID filter** | `extractor=_driver_id_or_none` short-circuits ID 0 to `None` at the graph boundary — applied to BOTH `pole_winner_driver_id` and `winner_driver_id` |
 | **`stream()` vs `fjord()` vs `refresh()`** | `stream()` is paginated bulk-export chunking; `refresh()` is manual one-shot; `fjord()` (this tutorial) is the stateful multi-source daemon |
 | **Empty-state contract in `inflow(state)`** | First call arrives with `state == {}`; guard with `if "Track" in state and "Driver" in state:` and let fjord re-call you once peers exist |
-| **Dynamic output classes** | The three derived classes (`MonthlyRaceSchedule`, `FantasyTeam`, `ManufacturerLeaderboard`) are **not** pre-declared in `nascar_fantasy.py` — fjord builds one Pydantic class per dict key returned from `outflow(state)`.  Bare pre-declarations would suppress field inference |
+| **Dynamic output classes** | The three derived classes (`MonthlyRaceSchedule`, `FantasyTeam`, `ManufacturerLeaderboard`) are **not** pre-declared in `outflow.py` — fjord builds one Pydantic class per dict key returned from `outflow(state)`.  Bare pre-declarations would suppress field inference |
 | **Multi-output dict return** | `outflow(state) -> {"MonthlyRaceSchedule": …, "FantasyTeam": …, "ManufacturerLeaderboard": …}` → three derived classes, three files |
 | **Per-class export config** | Top-level `export_params` keyed by class name |
 | **Registry navigation** | `state["Cls"]` is an `IncorporatorList`; `.inc_dict.get(key)` is O(1) primary-key lookup; iteration yields live Pydantic instances |
