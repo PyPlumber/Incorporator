@@ -87,8 +87,12 @@ async def chunking_demo(max_pages: int = 3) -> None:
     backfill, drop the cap and let the paginator run to exhaustion.
     """
     print("📦 Starting CoinGecko paginated drain (chunking mode)...\n")
+    # NOTE: ``paginator.call_lim`` is clobbered every wave by stream()'s
+    # chunked engine (it forces call_lim=1 per wave for O(1) memory).
+    # The demo cap lives in the consumer loop instead — break after
+    # ``max_pages`` waves have come through.  In a real backfill, drop
+    # the break and let the paginator run to exhaustion naturally.
     paginator = PageNumberPaginator(page_param="page", start_page=1)
-    paginator.call_lim = max_pages                  # safety cap for the demo
 
     out = OUT / "coins_full.ndjson"
     if out.exists():
@@ -114,6 +118,8 @@ async def chunking_demo(max_pages: int = 3) -> None:
             print(f"⚠️  page {wave.chunk_index}: {wave.failed_sources}")
         else:
             print(f"📦 page {wave.chunk_index}: {wave.rows_processed} coins")
+        if wave.chunk_index >= max_pages:
+            break                            # demo cap; remove for full drain
 
     if out.exists():
         print(f"\n✅ Drain complete. Output: {out} ({out.stat().st_size:,} bytes)")
