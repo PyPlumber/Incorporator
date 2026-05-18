@@ -111,17 +111,41 @@ class _LocalChunkedPaginator(AsyncPaginator):
 
 
 class SQLitePaginator(_LocalChunkedPaginator):
-    """Stream a SQLite query in O(1)-memory chunks via a persistent cursor.
+    """Drain a SQLite database table or query in O(1)-memory chunks without
+    slurping every row into RAM.
 
-    Opens one connection on first ``paginate()`` call, executes ``sql_query``
-    once, then yields ``chunk_size`` rows per iteration via
-    ``cursor.fetchmany()`` — the C driver streams rows lazily so peak memory
-    stays bounded by ``chunk_size`` regardless of the total row count.
+    Reach for this when the source is a SQLite file on disk — a
+    data-warehouse dump, a logging archive, a local analytics replica —
+    and the row count exceeds what comfortably fits in memory.  Canonical
+    fit: process a 50M-row warehouse dump on a laptop, transform with
+    ``conv_dict``, re-export to NDJSON / Parquet / a different SQLite,
+    all without OOM.
 
-    Cleanup: connection is closed on exhaustion, ``reset()``, or ``__del__``
-    (lifecycle inherited from :class:`_LocalChunkedPaginator`).  The
+    Example::
+
+        async for wave in Trade.stream(
+            incorp_params={
+                "inc_file": "warehouse.sqlite",
+                "sql_query": "SELECT * FROM trades WHERE date >= '2024-01-01'",
+                "inc_code": "trade_id",
+                "inc_page": SQLitePaginator(
+                    db_path="warehouse.sqlite",
+                    sql_query="SELECT * FROM trades WHERE date >= '2024-01-01'",
+                    chunk_size=10_000,
+                ),
+            },
+            export_params={"file_path": "trades_2024.parquet"},
+        ):
+            print(wave.chunk_index, wave.rows_processed)
+
+    Opens one connection on first ``paginate()`` call, executes
+    ``sql_query`` once, then yields ``chunk_size`` rows per iteration via
+    ``cursor.fetchmany()`` — the C driver streams lazily so peak memory
+    stays bounded by ``chunk_size`` regardless of total row count.  The
     connection uses ``check_same_thread=False`` so it survives the
-    ``asyncio.to_thread`` round-trip.
+    ``asyncio.to_thread`` round-trip; cleanup (close on exhaustion,
+    ``reset()``, or ``__del__``) is inherited from
+    :class:`_LocalChunkedPaginator`.
 
     Args:
         db_path: Filesystem path to the SQLite database.
@@ -152,15 +176,37 @@ class SQLitePaginator(_LocalChunkedPaginator):
 
 
 class CSVPaginator(_LocalChunkedPaginator):
-    """Stream a CSV/TSV/PSV file in O(1)-memory chunks via ``csv.DictReader``.
+    """Drain a CSV / TSV / PSV file in O(1)-memory chunks without
+    ``pandas.read_csv`` slurping the whole file at once.
 
-    Opens the file once on first ``paginate()`` call, then yields chunks of
-    ``chunk_size`` rows via ``itertools.islice``. Peak memory stays bounded
-    by one chunk plus the DictReader's line buffer.
+    Reach for this when the source is a flat text file too large for an
+    in-memory DataFrame — a multi-GB daily transaction export, a USPS-style
+    pipe-delimited drop, a tail of access logs ingested as CSV.  Canonical
+    fit: parse a vendor's daily transaction dump and route each chunk into
+    an ``Incorporator`` subclass's registry for transform-and-re-export.
 
-    Cleanup inherited from :class:`_LocalChunkedPaginator`: file handle is
-    closed on exhaustion, ``reset()``, or ``__del__``.  All I/O runs inside
-    ``asyncio.to_thread`` so the event loop never blocks on disk reads.
+    Example::
+
+        async for wave in Transaction.stream(
+            incorp_params={
+                "inc_file": "daily_transactions.csv",
+                "inc_code": "txn_id",
+                "inc_page": CSVPaginator(
+                    file_path="daily_transactions.csv",
+                    chunk_size=10_000,
+                ),
+            },
+            export_params={"file_path": "transactions.parquet"},
+        ):
+            print(wave.chunk_index, wave.rows_processed)
+
+    Opens the file once on first ``paginate()`` call, then yields chunks
+    of ``chunk_size`` rows via ``itertools.islice`` over a
+    ``csv.DictReader`` — peak memory stays bounded by one chunk plus the
+    reader's line buffer.  Switch ``delimiter`` for TSV (``"\\t"``), PSV
+    (``"|"``), or any single-character separator.  All I/O runs inside
+    ``asyncio.to_thread`` so the event loop never blocks on disk reads;
+    cleanup is inherited from :class:`_LocalChunkedPaginator`.
 
     Args:
         file_path: Filesystem path to the CSV file (must be UTF-8).
@@ -190,18 +236,39 @@ class CSVPaginator(_LocalChunkedPaginator):
 
 
 class AvroPaginator(_LocalChunkedPaginator):
-    """Stream an Apache Avro file in O(1)-memory chunks via ``fastavro.reader``.
+    """Drain a Kafka-archive / Hadoop-staged Apache Avro file chunk-by-chunk —
+    the schema-evolution-aware binary format common in event-pipeline
+    archives.
+
+    Reach for this when the source is an Avro file dropped by an upstream
+    streaming system: a daily-rotated dump from a Kafka topic, a Hadoop
+    staging area, a data-lake landing zone.  Canonical fit: process a
+    daily Avro export from a Kafka topic without loading the full file —
+    decode rows with ``fastavro``, transform via ``conv_dict``, re-emit
+    as NDJSON / Parquet / SQLite.
+
+    Example::
+
+        async for wave in Event.stream(
+            incorp_params={
+                "inc_file": "kafka_events_2026-05-18.avro",
+                "inc_code": "event_id",
+                "inc_page": AvroPaginator(
+                    file_path="kafka_events_2026-05-18.avro",
+                    chunk_size=10_000,
+                ),
+            },
+            export_params={"file_path": "events.parquet"},
+        ):
+            print(wave.chunk_index, wave.rows_processed)
 
     Opens the binary file once on first ``paginate()`` call and yields
-    ``chunk_size`` decoded records per iteration. ``fastavro`` reads one
+    ``chunk_size`` decoded records per iteration.  ``fastavro`` reads one
     Avro block at a time, so peak memory is bounded by block size +
-    chunk size regardless of total file size.
-
-    Requires the optional ``fastavro`` extra (``pip install incorporator[avro]``).
-    A clear :class:`RuntimeError` is raised if it is missing.
-
-    Cleanup inherited from :class:`_LocalChunkedPaginator`: file handle is
-    closed on exhaustion, ``reset()``, or ``__del__``.
+    chunk size regardless of total file size.  Requires the optional
+    ``fastavro`` extra (``pip install incorporator[avro]``); a clear
+    :class:`RuntimeError` is raised if it is missing.  Cleanup is
+    inherited from :class:`_LocalChunkedPaginator`.
 
     Args:
         file_path: Filesystem path to the Avro file.

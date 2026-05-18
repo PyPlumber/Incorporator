@@ -39,18 +39,32 @@ def _extract_results_array(data: Any, result_key: Optional[str]) -> List[Any]:
 
 
 class LinkHeaderPaginator(AsyncPaginator):
-    """Paginator for RFC 5988 ``Link`` header–based APIs (GitHub, GitLab, etc.).
+    """Walk paginated REST responses that ship the next-page URL in the HTTP
+    ``Link`` header — the GitHub / GitLab style, RFC 5988.
 
-    Reads the response's ``Link`` header on every page and follows the URL
-    in the entry tagged ``rel="next"``. Stops when no such entry is present.
+    Reach for this when the source advertises the next page by emitting a
+    ``Link: <...>; rel="next"`` header on every response and keeps the JSON
+    body free of pagination metadata.  This is the canonical pattern for
+    GitHub (``/repos/{org}/{repo}/issues``, ``/users/{u}/repos``), GitLab
+    projects, and most RFC-5988-compliant REST APIs.
+
+    Example::
+
+        async for wave in Issue.stream(
+            incorp_params={
+                "inc_url": "https://api.github.com/repos/python/cpython/issues",
+                "inc_code": "number",
+                "inc_page": LinkHeaderPaginator(),
+            },
+            export_params={"file_path": "issues.ndjson", "if_exists": "append"},
+        ):
+            print(wave.chunk_index, wave.rows_processed)
 
     State: ``current_url`` advances through the chain; ``is_first_call``
     seeds it from the ``start_url`` argument exactly once.  ``reset()``
     restores both for daemon-polling reuse in :meth:`Incorporator.stream`.
-
-    Memory: yields raw response bytes per page — the format handler
-    parses them downstream so the paginator never materialises the full
-    page list.
+    Yields raw response bytes per page so the format handler parses them
+    downstream and the paginator never materialises the full page list.
     """
 
     def __init__(self) -> None:
@@ -122,20 +136,37 @@ class LinkHeaderPaginator(AsyncPaginator):
 
 
 class CursorPaginator(AsyncPaginator):
-    """Paginator for cursor / continuation-token APIs (Twitter, Stripe, etc.).
+    """Walk paginated APIs that return a continuation-token / cursor in the
+    response body — Twitter, Stripe, Google Cloud APIs, most modern REST.
 
-    Reads the next cursor from one of the conventional response keys
-    (``meta.next_token``, ``next_cursor``, or the configured ``cursor_param``)
-    and forwards it as a query parameter on the next request.
+    Reach for this when each response carries the next page's identifier
+    inside its JSON body (rather than in a ``Link`` header or as an offset),
+    and the client is expected to echo that identifier back as a query
+    parameter on the following request.  Canonical fits: Stripe customers
+    / charges, Twitter timelines, Google Cloud list endpoints with
+    ``page_token``.
 
-    Infinite-loop defence: every cursor seen is recorded in ``seen_cursors``;
-    if the API ever returns a cursor it has already issued, the paginator
-    treats it as exhaustion and stops.  This is a real production hazard
-    when upstream cursors are non-monotonic or buggy.
+    Example::
 
-    State: ``current_cursor`` carries the in-flight token; ``seen_cursors``
-    is a ``Set[str]`` of all tokens observed. ``reset()`` clears both for
-    daemon-polling reuse.
+        async for wave in Customer.stream(
+            incorp_params={
+                "inc_url": "https://api.stripe.com/v1/customers",
+                "inc_code": "id",
+                "inc_page": CursorPaginator(cursor_param="starting_after"),
+            },
+            export_params={"file_path": "customers.ndjson", "if_exists": "append"},
+        ):
+            print(wave.chunk_index, wave.rows_processed)
+
+    The next-cursor field is auto-detected from the conventional response
+    keys ``meta.next_token``, ``next_cursor``, and whatever ``cursor_param``
+    is set to — so most endpoints work without further tuning.  Set
+    ``cursor_param`` for the query-string name the API expects
+    (``"page_token"`` for Google APIs, ``"starting_after"`` for Stripe,
+    ``"next_token"`` for AWS).  Infinite-loop defence: every cursor seen is
+    recorded in ``seen_cursors``; if the API ever returns one it has
+    already issued, the paginator treats it as exhaustion and stops — a
+    real production hazard when upstream cursors are non-monotonic.
 
     Args:
         cursor_param: Query-parameter name to send the cursor on
@@ -213,14 +244,33 @@ class CursorPaginator(AsyncPaginator):
 
 
 class OffsetPaginator(AsyncPaginator):
-    """Paginator for offset/limit APIs (most SQL-backed REST endpoints).
+    """Walk classic SQL-backed REST endpoints with ``?offset=N&limit=M``
+    semantics — the default style for DRF, FastAPI, and Flask-SQLAlchemy.
 
-    Sends ``?offset=N&limit=M`` on every request and advances ``offset`` by
-    ``limit`` between pages. Stops when the response's results list is empty.
+    Reach for this against any backend whose pagination is a thin wrapper
+    over a SQL ``LIMIT ... OFFSET ...`` clause and whose responses look like
+    ``{"data": [...], "total": 10000}``.  Canonical fits: enterprise
+    back-office APIs, internal microservices, search endpoints that don't
+    bother with cursors.
 
-    Results list is detected from ``result_key`` if provided; otherwise it
-    falls back through the conventional keys ``results``, ``data``,
-    ``items``, ``docs``, ``records`` in that order.
+    Example::
+
+        async for wave in Order.stream(
+            incorp_params={
+                "inc_url": "https://backoffice.example.com/api/orders",
+                "inc_code": "order_id",
+                "inc_page": OffsetPaginator(limit=500),
+            },
+            export_params={"file_path": "orders.ndjson", "if_exists": "append"},
+        ):
+            print(wave.chunk_index, wave.rows_processed)
+
+    ``limit`` controls per-chunk memory footprint — raise it to amortise
+    HTTP round-trip overhead on a fat pipe, drop it when the source is
+    rate-limited or each row is heavy.  Stops when the results list is
+    empty, auto-detecting it from ``result_key`` if provided or falling
+    back through the conventional keys ``results``, ``data``, ``items``,
+    ``docs``, ``records`` in that order.
 
     Args:
         limit: Page size to request (default 50). Sent as ``?limit=...``.
@@ -302,11 +352,34 @@ class OffsetPaginator(AsyncPaginator):
 
 
 class PageNumberPaginator(AsyncPaginator):
-    """Paginator for ``?page=N`` APIs (WordPress, generic CMS, many REST APIs).
+    """Walk APIs paginated by a plain ``?page=N`` / ``?page_number=N`` query
+    parameter — WordPress, Drupal, most CMS REST APIs, CoinGecko
+    ``/coins/markets``.
 
-    Sends a single page-number query parameter and increments it after each
-    response. Stops when the response's results list is empty (auto-detected
-    the same way as :class:`OffsetPaginator`).
+    Reach for this when the source has no cursors, no offsets, and no
+    next-URL — just a sequential integer page number that the client
+    increments until results dry up.  This is the canonical T8
+    bulk-drain pattern: paginated CoinGecko market data, WordPress posts,
+    most public-data REST endpoints.
+
+    Example::
+
+        async for wave in Coin.stream(
+            incorp_params={
+                "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
+                "inc_code": "id",
+                "request_params": {"vs_currency": "usd", "per_page": 250},
+                "inc_page": PageNumberPaginator(page_param="page"),
+            },
+            export_params={"file_path": "coins.ndjson", "if_exists": "append"},
+        ):
+            print(wave.chunk_index, wave.rows_processed)
+
+    Set ``start_page=0`` for APIs that index from zero (a minority but
+    a real one — some Elasticsearch wrappers, a few enterprise CMSs).
+    Stops when the results list is empty, using the same auto-detection
+    as :class:`OffsetPaginator` (``results`` / ``data`` / ``items`` /
+    ``docs`` / ``records``, or ``result_key`` when set explicitly).
 
     Args:
         page_param: Query-parameter name for the page number (default ``"page"``).
@@ -385,20 +458,35 @@ class PageNumberPaginator(AsyncPaginator):
 
 
 class NextUrlPaginator(AsyncPaginator):
-    """Paginator for "next URL inside the JSON body" APIs (SpaceDevs, SWAPI, DRF, etc.).
+    """Walk APIs that embed the full next-page URL inside the JSON body —
+    Django REST Framework's default style, SWAPI, SpaceDevs Launch
+    Library, JSON:API.
 
-    Drills into the response JSON using one or more dot-notation keys to
-    find the absolute or relative URL of the next page, then re-fetches it
-    until the value is ``None`` or absent.
+    Reach for this when each response carries a ready-to-fetch URL like
+    ``{"next": "https://.../page=2", "results": [...]}`` and the client's
+    job is simply to follow it.  Canonical fits: SWAPI starships, the
+    SpaceDevs Launch Library, any DRF-style enterprise endpoint that
+    inherits ``PageNumberPagination`` or ``LimitOffsetPagination`` without
+    customisation, JSON:API responses with ``links.next``.
 
-    Example:
-        Response body ``{"results": [...], "next": "https://api/page/2"}``::
+    Example::
 
-            inc_page=NextUrlPaginator("next")        # single top-level key
+        async for wave in Starship.stream(
+            incorp_params={
+                "inc_url": "https://swapi.dev/api/starships/",
+                "inc_code": "url",
+                "inc_page": NextUrlPaginator(),  # auto-detects `next` key
+            },
+            export_params={"file_path": "starships.ndjson", "if_exists": "append"},
+        ):
+            print(wave.chunk_index, wave.rows_processed)
 
-        Nested ``{"meta": {"pagination": {"next": "..."}}}``::
-
-            inc_page=NextUrlPaginator("meta", "pagination", "next")
+    The default ``NextUrlPaginator()`` looks for a top-level ``"next"`` key
+    (the DRF / SWAPI convention).  Pass one or more positional ``path_keys``
+    to drill into nested envelopes — ``NextUrlPaginator("meta",
+    "pagination", "next")`` for JSON:API-style ``{"meta": {"pagination":
+    {"next": "..."}}}``.  Relative URLs are resolved against the response
+    URL so APIs that emit bare paths still work.
 
     Args:
         *path_keys: One or more keys to drill through to find the next URL.

@@ -13,27 +13,40 @@ def _deserialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class AsyncPaginator:
-    """Base class for every paginator the framework ships.
+    """Escape-hatch base for vendors whose pagination contract doesn't match
+    any of the bundled paginators.
 
-    Pass any concrete subclass (``NextUrlPaginator``, ``CursorPaginator``,
-    ``OffsetPaginator``, ``PageNumberPaginator``, ``LinkHeaderPaginator``,
-    ``SQLitePaginator``, ``CSVPaginator``, ``AvroPaginator``) to
-    :meth:`Incorporator.incorp` as ``inc_page=`` and the engine drives the
-    pagination loop for you::
+    Reach for a subclass only when the bundled paginators (LinkHeader,
+    Cursor, Offset, PageNumber, NextUrl for web; SQLite, CSV, Avro for
+    local files) can't model the source's shape — that's rare in practice
+    because the bundled five cover Link-header, continuation-token, classic
+    offset/limit, ``?page=N``, and DRF-style next-URL-in-body, which is
+    the long tail of public REST APIs.  When you do subclass, override
+    :meth:`paginate` and ``yield`` raw bytes / pre-parsed rows; override
+    :meth:`reset` if your subclass holds persistent state (a cursor, file
+    handle, sequence token) that needs clearing between daemon polls.
 
-        from incorporator import Incorporator
-        from incorporator.io.pagination import NextUrlPaginator
+    Example::
 
-        launches = await Launch.incorp(
-            inc_url="https://api.example.com/launches/",
-            inc_page=NextUrlPaginator("next"),
-            call_lim=5,          # cap at 5 pages while exploring
+        class MyVendorPaginator(AsyncPaginator):
+            async def paginate(self, start_url):
+                token = None
+                while not self.is_exhausted:
+                    response = await self._fetch(start_url, params={"t": token})
+                    yield response.read()
+                    token = response.json().get("continue")
+                    if not token:
+                        self.is_exhausted = True
+
+        await Order.incorp(
+            inc_url="https://vendor.example.com/orders",
+            inc_page=MyVendorPaginator(),
         )
 
-    Implement a subclass when you need a strategy the bundled paginators
-    don't cover — override :meth:`paginate` and ``yield`` parsed page
-    payloads.  :meth:`reset` is called between daemon polls so any
-    persistent state (cursor, offset, file handle) can be cleared.
+    The engine drives the loop, binds ``self.fetch_func`` to the network
+    client, honours ``self.call_lim`` for O(1)-memory streaming, and
+    propagates ``self.strict_mode`` so subclasses can re-raise instead of
+    swallowing transport errors.
     """
 
     def __init__(self) -> None:
