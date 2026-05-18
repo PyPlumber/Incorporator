@@ -1,5 +1,5 @@
 """
-Tutorial 4 — Stateful Refresh: Live Binance Ticker
+Tutorial 7 — Stateful Refresh: Live Binance Ticker
 --------------------------------------------------
 Companion script for `examples/07-stateful-refresh/README.md`.
 

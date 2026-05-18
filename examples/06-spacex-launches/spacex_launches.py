@@ -1,12 +1,13 @@
 """
-Appendix — SpaceX Launches: Parent-Child + Streaming
-----------------------------------------------------
+Tutorial 6 — SpaceX Launches: Parent-Child + Streaming
+------------------------------------------------------
 Companion script for `examples/06-spacex-launches/README.md`.
 
-Re-runs the patterns from Tutorial 3 (parent-child drilling) and the
-stateful-mode half of Tutorial 5 (streaming daemon) against the
-SpaceX v4 public API.  No new framework concepts here — read T3 / T5
-first; this script demonstrates that the verbs are domain-agnostic.
+Re-runs the patterns from Tutorial 5 (parent-child drilling) and the
+single-source stateful_polling=True shim from Tutorial 8 (streaming
+daemon) against the SpaceX v4 public API.  No new framework concepts
+here — read T5 / T8 first; this script demonstrates that the verbs
+are domain-agnostic.
 
 Two demos in one file:
 

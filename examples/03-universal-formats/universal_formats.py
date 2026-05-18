@@ -1,5 +1,5 @@
 """
-Tutorial 2 — Universal Formats: Build a Crypto Snapshot Warehouse
+Tutorial 3 — Universal Formats: Build a Crypto Snapshot Warehouse
 -----------------------------------------------------------------
 Companion script for `examples/03-universal-formats/README.md`.
 

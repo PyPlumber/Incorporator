@@ -1,6 +1,6 @@
 """
-Tutorial 6 — Multi-Source Fjord: Live Crypto Spread
----------------------------------------------------
+Tutorial 10 — Multi-Source Fjord: Live Crypto Spread
+----------------------------------------------------
 Companion script for `examples/10-multi-source-fjord/README.md`.
 
 `stream()` watches one source. `fjord()` watches N sources concurrently

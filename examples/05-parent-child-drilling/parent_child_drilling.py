@@ -1,5 +1,5 @@
 """
-Tutorial 3 — Parent → Child Drilling: CoinGecko Top-N → /coins/{id}
+Tutorial 5 — Parent → Child Drilling: CoinGecko Top-N → /coins/{id}
 -------------------------------------------------------------------
 Companion script for `examples/05-parent-child-drilling/README.md`.
 
