@@ -59,65 +59,63 @@ _UNSET: Any = object()
 
 
 class Incorporator(BaseModel):
-    """The Incorporator base class — subclass it to build an async ETL pipeline.
+    """Typed dot-notation against any REST / CSV / Parquet / XML source — no schema declaration.
 
-    Subclassing (not instantiation) is the primary user interaction.  Every
-    subclass automatically gets its own dynamically generated Pydantic V2
-    model and its own instance registry, so unrelated data sources never
-    share state.
+    Subclass once, point a verb at a URL or file path, and you get a
+    Pydantic V2 object graph with O(1) registry lookups, weakref-backed
+    memory, and converters wired in.  The framework infers the schema
+    from the payload, so the DX scanning pdoc never has to hand-write a
+    dataclass before exploring an endpoint.  Pair with :meth:`test` for
+    discovery, :meth:`export` for persistence, :meth:`stream` for
+    overnight chunked drains, and :meth:`fjord` for live multi-source
+    fusion.
 
-    Public verbs you call on a subclass:
+    Example::
 
+        from incorporator import Incorporator
+
+        class Coin(Incorporator):
+            pass
+
+        coins = await Coin.incorp(
+            "https://api.coingecko.com/api/v3/coins/markets",
+            params={"vs_currency": "usd", "per_page": 10},
+            inc_code="id",
+        )
+        print(coins.inc_dict["bitcoin"].current_price)   # O(1) lookup by id
+
+    Verbs you'll call on a subclass:
+
+    - :meth:`test` — Shady Jimmy probe of an unknown endpoint; prints
+      the kwargs you'd hand-write for :meth:`incorp`.
     - :meth:`incorp` — fetch + parse + build the object graph.
-    - :meth:`test` — let the framework write your ``incorp()`` kwargs for
-      you by inspecting an unknown endpoint.
-    - :meth:`refresh` — re-fetch live data into existing instances,
-      deduplicated by origin URL/file.
-    - :meth:`export` — serialise the object graph out to any supported
-      format (JSON, NDJSON, CSV, Parquet, SQLite, Avro, Feather, ORC,
-      Excel, XML, …).
-    - :meth:`stream` — run a long-running pipeline as a daemon; yield one
-      :class:`Wave` per wave.
-    - :meth:`fjord` — fuse multiple sources through a user-supplied
-      ``outflow(state)`` function and export the combined output.
-    - :meth:`display` — REPL identity print for ad-hoc debugging.
+    - :meth:`refresh` — one-shot live mark-to-market re-fetch into
+      existing instances.
+    - :meth:`export` — serialise the graph to JSON, NDJSON, CSV,
+      Parquet, SQLite, Avro, Feather, ORC, Excel, XML, …
+    - :meth:`stream` — unattended overnight chunked drain of a
+      paginated source, flat on RSS.
+    - :meth:`fjord` — live stateful daemon that fuses N concurrent
+      sources through your ``outflow(state)``.
+    - :meth:`display` — REPL identity print for ad-hoc Jupyter
+      spot-checks.
 
-    Design contract:
+    Implementation note: subclassing (not instantiation) is the
+    primary user interaction.  Each subclass gets its own dynamically
+    generated Pydantic V2 model and its own instance registry, so
+    unrelated data sources never share state.  Inherits from
+    :class:`pydantic.BaseModel` with ``extra='allow'`` so messy APIs
+    never raise ``ValidationError``.  Every instance auto-registers
+    into its subclass's :attr:`inc_dict` via :meth:`model_post_init`,
+    **and** into every parent class's registry up the MRO (the
+    "Bubble-Up" pattern).  Together with ``weakref``-backed storage
+    this is what keeps 10M-row ingestion O(1) in memory: entries vanish
+    from the registry as soon as the holding list goes out of scope.
+    Sibling subclasses keep registries isolated::
 
-    - Inherits from :class:`pydantic.BaseModel` with ``extra='allow'`` so
-      unexpected fields from messy APIs never raise ``ValidationError``.
-    - Every instance auto-registers into its subclass's :attr:`inc_dict`
-      via :meth:`model_post_init`, **and** into every parent class's
-      registry up the MRO (the "Bubble-Up" pattern — see that method).
-      Together with ``weakref``-backed storage this means 10M-row
-      ingestion stays O(1) in memory: entries vanish from the registry
-      as soon as the holding list goes out of scope.
-
-    Example:
-        Minimal subclass + fetch::
-
-            from incorporator import Incorporator
-
-            class User(Incorporator):
-                pass
-
-            users = await User.incorp("https://api.example.com/users", inc_code="id")
-            print(users.inc_dict[42].name)         # O(1) lookup by id
-
-        Concurrent fan-out (list source triggers ``asyncio.gather``)::
-
-            users = await User.incorp([
-                "https://api.example.com/users/1",
-                "https://api.example.com/users/2",
-            ])
-
-        Subclasses do **not** share registries::
-
-            class A(Incorporator): pass
-            class B(Incorporator): pass
-            await A.incorp(...)
-            await B.incorp(...)
-            assert A.inc_dict is not B.inc_dict      # Always true.
+        class A(Incorporator): pass
+        class B(Incorporator): pass
+        assert A.inc_dict is not B.inc_dict      # Always true.
     """
 
     # ------------------------------------------------------------------
@@ -198,11 +196,15 @@ class Incorporator(BaseModel):
     )
 
     def display(self) -> None:
-        """Print this instance's identity fields to stdout.
+        """REPL spot-check while poking at an ``inc_dict`` in a Jupyter cell.
 
-        Emits a compact line containing ``class``, ``inc_code``, ``inc_name``,
-        and ``last_rcd`` — useful for REPL inspection and ad-hoc debugging.
-        For structured output use :meth:`pydantic.BaseModel.model_dump_json`.
+        Reach for ``obj.display()`` when you're exploring a freshly
+        fetched object graph and want to confirm identity fields landed
+        the way you expected, without expanding a full ``model_dump()``.
+        Emits a compact line containing ``class``, ``inc_code``,
+        ``inc_name``, and ``last_rcd`` to stdout.  For structured
+        machine-readable output use
+        :meth:`pydantic.BaseModel.model_dump_json` instead.
 
         Returns:
             ``None``.
@@ -262,19 +264,58 @@ class Incorporator(BaseModel):
         inflow: Optional[Union[str, Path]] = None,
         **kwargs: Any,
     ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
-        """Fetch data from an HTTP API or local file and return Pydantic objects.
+        """The entry-point verb every pipeline starts with — fetch a source into typed objects.
 
-        The single entry point for Extract + Transform.  Builds a dynamic
-        Pydantic V2 model from the raw payload, coerces every field through
-        the converter pipeline (``conv_dict``), registers each instance in
-        ``cls.inc_dict``, and returns either a single instance (when the
-        source resolves to one record) or an :class:`IncorporatorList`
-        wrapping multiple records.
+        Reach for ``incorp()`` once you know the URL or file path, the
+        identity field (``inc_code``), and roughly what shape the
+        response is in.  If any of those are still unknown, run
+        :meth:`test` first to print suggested kwargs.  Builds a dynamic
+        Pydantic V2 model from the raw payload, coerces every field
+        through the ``conv_dict`` converter pipeline, registers each
+        instance in ``cls.inc_dict`` for O(1) lookups, and returns
+        either a single instance or an :class:`IncorporatorList`.
 
-        Concurrency: if ``inc_url`` or ``inc_file`` is a ``List[str]``, the
-        sources are fetched concurrently via an ``asyncio.gather`` sliding
-        window (size ``concurrency_limit``, default 50) with built-in
-        per-source rate limiting and exponential-backoff retries.
+        Example::
+
+            class Coin(Incorporator):
+                pass
+
+            coins = await Coin.incorp(
+                "https://api.coingecko.com/api/v3/coins/markets",
+                params={"vs_currency": "usd", "per_page": 10},
+                inc_code="id",
+                inc_name="name",
+            )
+            print(coins.inc_dict["bitcoin"].current_price)
+
+        Headline kwargs:
+
+        - ``inc_url`` / ``inc_file`` — HTTP source or local path; a
+          ``List[str]`` triggers concurrent fan-out.
+        - ``inc_code`` / ``inc_name`` — source-field names used as the
+          registry key and the human-readable label.
+        - ``inc_parent`` / ``inc_child`` — Parent-Child HATEOAS
+          enrichment; child URLs are drilled out of parent records via
+          dot-notation.
+        - ``inc_page`` — :class:`AsyncPaginator` for streaming
+          pagination (NextUrl, Cursor, Offset, PageNumber, LinkHeader,
+          SQLite, CSV, Avro).
+        - ``excl_lst`` — field names to drop before Pydantic compiles
+          the schema (strip heavy keys like ``"image_data"``).
+        - ``conv_dict`` — ``field_name → converter`` map applied before
+          validation (:func:`inc`, :func:`calc`, :func:`link_to`,
+          :func:`pluck`, :func:`split_and_get`, :func:`each`,
+          :func:`join_all`, :func:`as_list`).
+        - ``name_chg`` — list of ``(old_name, new_name)`` renames for
+          normalising heterogeneous sources.
+
+        Concurrency: list-typed ``inc_url`` / ``inc_file`` arguments
+        fan out via an ``asyncio.gather`` sliding window (size
+        ``concurrency_limit``, default 50) with built-in per-source
+        rate limiting and exponential-backoff retries.  The first call
+        also stashes its identity-mapping kwargs and network context
+        on the class so :meth:`refresh` can replay the same fetch
+        without re-passing them.
 
         Args:
             inc_url: HTTP source. ``str`` for a single endpoint;
@@ -531,27 +572,55 @@ class Incorporator(BaseModel):
         inflow: Optional[Union[str, Path]] = None,
         **kwargs: Any,
     ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
-        """Re-fetch live data and hydrate existing instances in-place.
+        """One-shot live mark-to-market re-fetch into the instances you already hold.
 
-        ``refresh()`` is the stateful-update verb of the framework.  It is
-        designed for long-running pipelines that need to keep an in-memory
-        object graph synchronised with a changing remote source without
-        rebuilding from scratch.
+        Reach for ``refresh()`` from a REPL, a notebook, or your own
+        scheduler when you want to manually pull fresh values for an
+        already-loaded class — the classic Binance ticker pattern:
+        ``incorp()`` once at startup, ``refresh()`` whenever a strategy
+        loop wants the latest price.  References you already hold are
+        mutated in-place via Pydantic field updates, so the existing
+        list keeps pointing at the refreshed objects without
+        reassignment.  For an unattended daemon that keeps doing this
+        forever on a cadence, reach for :meth:`fjord` instead — its
+        engine is built around stateful concurrent refresh + fusion.
 
-        Instance resolution has three modes, chosen by the ``instance`` arg:
+        Example::
 
-        - **In-state (``instance=None``)**: refresh every object currently
-          in ``cls.inc_dict``. Origin URLs/files are read from each
-          instance's stored ``inc_url`` / ``inc_file`` attributes.
-        - **Re-source (``instance=str | Path``)**: re-fetch ``cls.inc_dict``
-          from a brand-new URL or file. If the string starts with ``http``
-          it is treated as a URL; otherwise as a local file path.
-        - **Targeted (``instance=List[obj] | obj``)**: refresh only the
-          listed instances. Useful for partial updates.
+            coins = await Coin.incorp(COINGECKO_URL, inc_code="id")
+            # ... time passes ...
+            await Coin.refresh()                     # in-state — reuses stored URL + params
+            print(coins.inc_dict["bitcoin"].current_price)   # latest tick
 
-        Deduplication: HTTP requests are deduplicated across the resolved
-        instance set via origin URL/file, so 1000 instances sharing
-        20 source URLs trigger 20 fetches, not 1000.
+        Headline kwargs:
+
+        - ``instance`` — resolution mode selector (see closing table).
+        - ``new_url`` / ``new_file`` — typed override of the source
+          when re-sourcing onto a different endpoint.
+        - ``inc_code`` / ``inc_name`` — override the identity-mapping
+          fields stored at incorp time.
+        - ``conv_dict`` / ``excl_lst`` / ``name_chg`` — override the
+          transform pipeline persisted from the original incorp.
+        - ``inc_page`` — paginator for streaming refresh.
+
+        Instance resolution has three modes, chosen by ``instance``:
+
+        - **In-state (``instance=None``)** — refresh every object
+          currently in ``cls.inc_dict``.  Origin URLs/files come from
+          each instance's stored ``inc_url`` / ``inc_file``; the
+          network context (params, headers, ``rec_path``, ``conv_dict``)
+          persisted by :meth:`incorp` is replayed so endpoints with
+          required query params (CoinGecko ``vs_currency=usd``) keep
+          working.
+        - **Re-source (``instance=str | Path``)** — re-fetch
+          ``cls.inc_dict`` from a new URL or local file.  Strings
+          starting with ``http`` are URLs; anything else is a path.
+        - **Targeted (``instance=List[obj] | obj``)** — refresh only
+          the listed instances; useful for partial updates.
+
+        Deduplication: HTTP requests are deduplicated across the
+        resolved instance set by origin URL/file, so 1000 instances
+        sharing 20 source URLs trigger 20 fetches, not 1000.
 
         Args:
             instance: Resolution mode selector (see above). Defaults to
@@ -742,24 +811,48 @@ class Incorporator(BaseModel):
         outflow: Optional[Union[str, Path]] = None,
         **kwargs: Any,
     ) -> None:
-        """Serialise Incorporator instances out to a file in any supported format.
+        """Persist an Incorporator graph to disk — backtest snapshot, warehouse stage, hand-off file.
+
+        Reach for ``export()`` whenever you need the in-memory object
+        graph on disk: capturing a backtest input set as Parquet,
+        staging a CSV for an analyst, dropping NDJSON onto S3, or
+        materialising a SQLite warehouse table.  Supported formats:
+        JSON, NDJSON, CSV / TSV / PSV, XML, SQLite, Parquet, Feather,
+        ORC, Avro, XLSX (some require opt-in extras — see
+        :doc:`/docs/formats_and_compression`).  Optional compression
+        (``gz``, ``bz2``, ``xz``, ``zip``, ``tar``, ``zstd``, ``lz4``,
+        ``snappy``, ``brotli``) is applied in a background thread.
+
+        Example::
+
+            launches = await Launch.incorp(LL2_URL, rec_path="results")
+            await Launch.export(instance=launches, file_path="launches.parquet")
+
+        Headline kwargs (all keyword-only, enforced by the bare ``*``):
+
+        - ``instance`` — the data source (or the destination path in
+          in-state mode; see the closing aside below).
+        - ``file_path`` — destination file path.  Omit for in-state mode.
+        - ``format_type`` — override the format inferred from the file
+          extension.
+        - ``compression`` — post-write compression codec.
+        - ``outflow`` — path to a ``transform(instances)`` sidecar that
+          rewrites rows before serialisation (great for shaping warehouse
+          tables).
+        - ``sql_table`` / ``if_exists`` — SQLite destination controls
+          (``"replace"`` / ``"append"`` / ``"fail"``).
 
         Streaming-first: records flow through a lazy generator and
-        ``model_dump()`` is called per-row only when the handler asks for the
-        next item.  No full-list copy is materialised in RAM, so 10M-row
-        exports stay flat on RSS.
+        ``model_dump()`` runs per-row only when the handler asks for
+        the next item, so 10M-row exports stay flat on RSS.
 
-        All parameters after ``cls`` are keyword-only (enforced by the bare ``*``).
-
-        The ``instance`` argument is polymorphic:
-
-        - **In-state mode** (``file_path=None``, default): ``instance`` is
-          interpreted as the **output path** and the data source is
-          ``cls.inc_dict.values()``.  Convenient one-liner for "dump my
-          current state to disk."
-        - **Explicit mode** (``file_path`` provided): ``instance`` is the
-          data source (a single instance or a list) and ``file_path`` is
-          the destination.
+        When the first arg is a path vs. data — ``instance`` is
+        polymorphic.  With ``file_path`` omitted (in-state mode),
+        ``instance`` is read as the **output path** and the data
+        source is ``cls.inc_dict.values()``: a tidy one-liner for
+        "dump my current state to disk."  With ``file_path`` set,
+        ``instance`` must be the data source (a Pydantic ``BaseModel``
+        or a ``list`` of them); passing a string raises ``TypeError``.
 
         Args:
             instance: Either the output path (in-state mode) or the data
@@ -930,32 +1023,52 @@ class Incorporator(BaseModel):
         inflow: Optional[Union[str, Path]] = None,
         outflow: Optional[Union[str, Path]] = None,
     ) -> AsyncGenerator["Wave", None]:
-        """Run a long-running pipeline; yield one :class:`Wave` per wave.
+        """Overnight unattended drain of a paginated source — one chunk in memory at a time.
 
-        ``stream()`` is the production verb for daemons that keep fetching,
-        transforming, and exporting until exhausted or cancelled.  Two modes,
-        selected by ``stateful_polling``:
+        Reach for ``stream()`` when you have a paginated source big
+        enough that loading it all at once would blow RSS — a 10M-row
+        warehouse dump, a multi-day archive, an exchange's full
+        historical klines.  Each wave fetches the next page, hands you
+        a :class:`Wave` you can log or count, and releases the chunk
+        before the next page lands, so memory stays O(1) for the whole
+        drain.  When the paginator runs out, the generator exits — no
+        babysitting required.
 
-        - **Chunking mode** (default, ``stateful_polling=False``): every
-          wave calls ``incorp(**incorp_params)`` for the next chunk, then
-          optionally ``refresh()`` and ``export()``, then yields one Wave.
-          Memory stays O(1) because each chunk is released before the next
-          one fetches.  Use this for paginated sources where you want a
-          steady throughput trace and an exit when the API runs out.
+        Example::
 
-        - **Stateful daemon mode** (``stateful_polling=True``): keeps a
-          live in-memory object graph synchronised against an upstream
-          API while exporting snapshots on independent cadences.  Seeds
-          the dataset with one ``incorp()`` call, then runs refresh and
-          export on independent schedules until cancelled.  For
-          multi-source live streaming, call :meth:`fjord` directly.
-          Under the hood this delegates to the fjord engine with a
-          synthesised identity outflow — a single source with an
-          in-place mutating registry.
+            from incorporator import NextUrlPaginator
 
-        Interval cascade: ``refresh_interval`` and ``export_interval`` each
-        fall back to ``poll_interval`` when not set, so a single
-        ``poll_interval=60.0`` drives both rhythms identically.
+            async for wave in Launch.stream(
+                incorp_params={
+                    "inc_url": "https://ll.thespacedevs.com/2.2.0/launch/upcoming/",
+                    "rec_path": "results",
+                    "inc_page": NextUrlPaginator("next"),
+                },
+                export_params={"file_path": "launches.ndjson"},
+            ):
+                print(f"chunk {wave.chunk_index}: {wave.rows_processed} rows")
+
+        Headline kwargs:
+
+        - ``incorp_params`` — kwargs forwarded to :meth:`incorp` every
+          wave; usually contains ``inc_url`` plus an ``inc_page=``
+          paginator.
+        - ``export_params`` — kwargs for :meth:`export`.  In chunking
+          mode ``if_exists`` is forced to ``"append"`` so chunks
+          accumulate into a single output file.
+        - ``poll_interval`` — sleep between waves.  ``None`` means
+          "one-shot then exit" — useful in tests.
+        - ``inflow`` / ``outflow`` — sidecar paths for user-defined
+          helpers and (stateful only) a user-defined receiver class.
+
+        Chunking is the default; ``stateful_polling=True`` delegates
+        to the :meth:`fjord` engine with a synthesised identity
+        outflow for single-source stateful runs.  For new live
+        dashboards, reach for :meth:`fjord` directly — it's the
+        user-facing daemon framing and scales to N concurrent sources.
+        ``refresh_interval`` and ``export_interval`` each fall back to
+        ``poll_interval`` when omitted, so a single ``poll_interval=60.0``
+        drives both rhythms identically.
 
         Args:
             incorp_params: kwargs forwarded to :meth:`incorp` every wave.
@@ -1149,30 +1262,77 @@ class Incorporator(BaseModel):
         export_interval: Optional[float] = None,
         inflow: Optional[Union[str, Path]] = None,
     ) -> AsyncGenerator["Wave", None]:
-        """Run a multi-source pipeline; fuse the live sources through your ``outflow``.
+        """The stateful live-daemon verb — concurrent source refresh fused through your ``outflow``.
 
-        ``fjord()`` is the multi-source production verb.  It fetches N
-        independent Incorporator subclasses concurrently, keeps each one
-        refreshed on its own schedule, hands a live snapshot of all of
-        them to your ``outflow(state)`` function on every export wave,
-        and writes whatever ``outflow()`` returns to a single combined
-        file.  Think of it as: N rivers (streams) → one fjord (combined
-        body) → one exported output.
+        Reach for ``fjord()`` when you need an unattended daemon that
+        keeps N sources live and joined: a live mark-to-market
+        dashboard combining CoinGecko USD with Binance USDT,
+        Sunday-afternoon fantasy NASCAR fusion of leaderboard +
+        lineup state, cross-exchange arbitrage spreads on a 30-second
+        cadence.  Each source refreshes on its own schedule; on every
+        export tick the engine hands a snapshot of all of them to your
+        ``outflow(state)`` function and writes the returned rows to a
+        single combined output.  N=1 is legitimate too — call
+        ``fjord()`` on one source when you want the daemon shape
+        without writing a custom loop around :meth:`refresh`.
 
-        Two things ``fjord()`` does that :meth:`stream` does not:
+        Example — ``coin_market.py`` defines two source classes plus
+        the outflow::
 
-        - **Multi-source orchestration.**  Per-source refresh and export
-          cadences are independent — define them on each
-          ``stream_params`` entry and the engine schedules them in
-          parallel.
-        - **Dynamic output class.**  You don't declare the type of the
-          combined row; the engine infers it from whatever
-          ``outflow(state)`` returns and names it after the outflow
-          file's stem in PascalCase (``coin_market.py`` → ``CoinMarket``).
-          The dynamic class behaves like any other :class:`Incorporator`
-          subclass — it has its own ``inc_dict`` and ``export()``.
+            from incorporator import Incorporator
 
-        Stateful by design.  For single-source streaming, use :meth:`stream`.
+            class Coin(Incorporator): pass
+            class BinanceFutures(Incorporator): pass
+
+            def outflow(state):
+                return [
+                    {"inc_code": c.inc_code,
+                     "spot": getattr(c, "current_price", 0.0),
+                     "futures": getattr(state["BinanceFutures"].inc_dict.get(c.inc_code), "price", 0.0)}
+                    for c in state["Coin"]
+                ]
+
+        Driver — no ``CoinMarket`` class to declare; the engine infers it::
+
+            async for wave in Incorporator.fjord(
+                stream_params=[
+                    {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"},
+                     "refresh_params": {}},
+                    {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                     "refresh_params": {}},
+                ],
+                outflow="coin_market.py",
+                export_params={"file_path": "markets.ndjson"},
+                refresh_interval=60.0,
+                export_interval=300.0,
+            ):
+                print(f"{wave.operation}: {wave.rows_processed} rows")
+
+        Headline kwargs:
+
+        - ``stream_params`` — list of per-source config dicts; each
+          carries ``cls`` (Incorporator subclass) + ``incorp_params``
+          (seed kwargs), optionally ``refresh_params``, per-source
+          ``export_params``, and per-entry ``refresh_interval`` /
+          ``export_interval`` overrides.
+        - ``outflow`` — path to a Python file defining
+          ``outflow(state) -> list[dict]``; the engine infers the
+          dynamic output class and names it after the file stem in
+          PascalCase (``coin_market.py`` → ``CoinMarket``).
+        - ``export_params`` — kwargs forwarded to the dynamic class's
+          :meth:`export` for the combined output (required).
+        - ``refresh_interval`` / ``export_interval`` — default
+          cadences for the per-source refresh daemons and the
+          outflow-and-export wave.  ``None`` means "one-shot then exit".
+        - ``inflow`` — optional sidecar whose public symbols extend the
+          token resolver's allow-list for ``conv_dict`` callables.
+
+        The dynamic output class behaves like any other
+        :class:`Incorporator` subclass — it has its own ``inc_dict``
+        and its own :meth:`export`.  ``outflow(state)`` returning ``[]``
+        yields a zero-row Wave and skips the export, which is useful
+        for gating output on a join condition.  For chunked drains of
+        a single paginated source, use :meth:`stream` instead.
 
         Args:
             stream_params: List of source-stream config dicts. Each entry
@@ -1324,26 +1484,42 @@ class Incorporator(BaseModel):
         cls: Type[TIncorporator],
         **kwargs: Any,
     ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]", List[Any]]:
-        """Explore an unknown endpoint without writing any schema first.
+        """The 30-second Shady Jimmy probe — point it at an unknown URL and read the suggestions.
 
-        Swap ``await Class.incorp(...)`` for ``await Class.test(...)`` when
-        you don't yet know what shape an API returns.  ``test()`` fetches
-        a single safe sample, walks the payload tree, identifies primary-
-        key candidates (UUIDs, integer IDs, slugs) and human-readable
-        labels, detects type-cast candidates (ISO-8601 timestamps,
-        numeric strings), then prints the **exact** ``inc_code``,
-        ``inc_name``, ``rec_path``, and ``conv_dict`` you'd hand-write
-        for a real ``incorp()`` call.  On a fetch failure it prints
-        diagnostics instead of the tree.
+        Reach for ``test()`` when you have a URL, no docs, and no idea
+        what shape the response is in.  Swap ``await Class.incorp(...)``
+        for ``await Class.test(...)`` on the same kwargs you'd guess,
+        and the framework fetches a single safe sample, walks the
+        payload tree, identifies primary-key candidates (UUIDs, integer
+        IDs, slugs) and human-readable labels, detects type-cast
+        candidates (ISO-8601 timestamps, numeric strings), and prints
+        the **exact** ``inc_code``, ``inc_name``, ``rec_path``, and
+        ``conv_dict`` you'd hand-write for a real :meth:`incorp` call.
+        Paste the suggestions into your code and you're done.
 
-        Safety guards baked in:
+        Example::
 
-        - Short timeout (5 s) so unresponsive endpoints fail fast.
+            class User(Incorporator):
+                pass
+
+            sample = await User.test(inc_url="https://api.unknown.com/v1/users")
+            # → tree + suggested kwargs printed to stdout
+            # → `sample` is a 3-record preview for poking at structure
+
+        Headline kwargs: anything :meth:`incorp` accepts is forwarded
+        unchanged.  The two values ``test()`` rewrites for safety are
+        ``timeout`` (defaulted to 5 s) and ``call_lim`` (capped at 1
+        when a paginator is set).
+
+        Safety guards baked in so an exploratory probe can never run
+        away:
+
+        - 5-second HTTP timeout so unresponsive endpoints fail fast.
         - When a paginator is supplied, only one page is fetched even
           if ``call_lim`` would normally allow more.
-        - The returned list is sliced to at most 3 records so a giant
-          endpoint doesn't flood your terminal — enough to poke at the
-          shape, not enough to be a real ingest.
+        - The returned list is sliced to at most 3 records — enough to
+          poke at shape in the REPL, not enough to flood a terminal or
+          rack up rate-limit hits.
 
         Args:
             **kwargs: Same as :meth:`incorp`.  ``timeout`` and ``call_lim``
@@ -1354,15 +1530,6 @@ class Incorporator(BaseModel):
             or an empty list when the fetch raises.  Either way, the
             inspector's tree-view and suggestions have already been
             printed to stdout by the time this returns.
-
-        Example::
-
-            class User(Incorporator):
-                pass
-
-            sample = await User.test(inc_url="https://api.unknown.com/v1/users")
-            # → tree + suggested kwargs printed to stdout
-            # → `sample` is a 3-record preview for poking at structure
         """
         kwargs["__inspect"] = True
 
