@@ -126,12 +126,13 @@ async for wave in Launch.stream(
         "inc_url": "https://api.example.com/launches",
         "inc_page": PageNumberPaginator(page_param="page"),
     },
-    export_params={"file_path": "launches.parquet"},
+    refresh_params=None,                                 # chunking: opt out of per-chunk refresh
+    export_params={"file_path": "launches.ndjson", "if_exists": "append"},
 ):
     if wave.failed_sources: print(wave)
 ```
 
-For live dashboards keeping a registry hot across many sources, reach for `fjord()` instead.
+Use an append-friendly format (`.ndjson` / `.csv` / `.sqlite` / `.avro`) — Parquet, Feather, ORC, and Excel rebuild the whole file every wave and aren't safe for per-tick streams. For live dashboards keeping a registry hot across many sources, reach for `fjord()` instead.
 
 → [Streaming & pagination](./docs/streaming_and_pagination.md) · [Tutorial 8](./examples/08-streaming-daemon/README.md)
 
@@ -232,7 +233,7 @@ The eleven-tutorial curriculum.  Each slot introduces one new verb or technique,
 5. [🚀 **Parent → Child Drilling**](./examples/05-parent-child-drilling/README.md) — CoinGecko `/coins/markets` → `/coins/{id}` fan-out — the canonical backtest-data-prep pattern.
 6. [🚀 **SpaceX Launches**](./examples/06-spacex-launches/README.md) — ops-dashboard feed: upcoming launches drilled for rocket + launchpad detail.
 7. [🔄 **Stateful Refresh**](./examples/07-stateful-refresh/README.md) — `refresh()` three ways against Binance's live ticker.
-8. [🌊 **Streaming Daemons — Both Polling Modes**](./examples/08-streaming-daemon/README.md) — stateful for live dashboards; chunking for paginated bulk drains.
+8. [🌊 **Streaming Daemon — Paginated Bulk Export at O(1) Memory**](./examples/08-streaming-daemon/README.md) — `stream()`'s canonical job: chunking-mode drain of a paginated source. Plus a single-source `stateful_polling=True` compatibility shim with a pointer to T10 for the multi-source live-daemon path.
 9. [🏁 **NASCAR Fantasy Fjord**](./examples/09-nascar-fantasy-fjord/README.md) — fantasy-sports scoring fjord across Cup, Xfinity, Truck series; previews T10's abstraction.
 10. [🌊 **Multi-Source Fjord**](./examples/10-multi-source-fjord/README.md) — `fjord()` fusing CoinGecko + Binance into a live cross-venue spread metric.
 11. [🧵 **Tideweaver — Multi-Exchange Arb Scanner** *(capstone)*](./examples/11-tideweaver/README.md) — declarative windowed orchestration: three exchanges → one best-market record.
