@@ -61,6 +61,14 @@ def _normalise_outflow_return(
         # Heuristic: if EVERY value is a list, it's the multi-output shape.
         # Otherwise it's a single-row dict (current single-output behaviour).
         if all(isinstance(v, list) for v in result.values()):
+            # Degenerate single-key-matching-default shape (synthesised by
+            # the stateful-stream shim's identity outflow) is morally single
+            # output — the user's export_params is single-shape and they get
+            # exactly one file.  Flagging it as multi-output here would emit
+            # a spurious "multi-output dict but export_params is single-
+            # output" warning at _resolve_export_params_for.
+            if len(result) == 1 and default_class_name in result:
+                return cast(Dict[str, List[Any]], dict(result)), False
             # Preserve values verbatim — copying with ``list(v)`` would
             # strip IncorporatorList's ``_model_class`` attribute and
             # defeat the flush() pass-through fast path.

@@ -104,3 +104,50 @@ async def test_flush_rebuilds_on_non_passthrough_return(tmp_path: Any) -> None:
     # Old keys are gone (registry rebuild semantics for the non-passthrough path).
     assert "a" not in _PassthroughTarget.inc_dict
     assert "z" in _PassthroughTarget.inc_dict
+
+
+def test_normalise_single_key_dict_matching_default_is_single_output() -> None:
+    """Identity-outflow shape from the stateful-stream shim is morally single-output.
+
+    ``stream(stateful_polling=True)`` synthesises an identity outflow that
+    returns ``{cls_name: state[cls_name]}`` — a single-key dict whose key
+    matches the default output class name.  Treating this as multi-output
+    would emit a spurious "multi-output dict but export_params is single-
+    output" warning at ``_resolve_export_params_for`` when the caller's
+    ``export_params`` (correctly) uses the single-shape ``file_path`` form.
+
+    The fix in ``_normalise_outflow_return`` returns ``is_multi=False`` for
+    this degenerate shape so the warning fires only for genuine multi-output.
+    """
+    from incorporator.observability.pipeline._outflow import _normalise_outflow_return
+
+    grouped, is_multi = _normalise_outflow_return(
+        {"BinancePair": [{"id": 1}, {"id": 2}]},
+        default_class_name="BinancePair",
+    )
+    assert grouped == {"BinancePair": [{"id": 1}, {"id": 2}]}
+    assert is_multi is False
+
+
+def test_normalise_multi_key_dict_is_multi_output() -> None:
+    """Genuine multi-output (two class keys) still flags is_multi=True."""
+    from incorporator.observability.pipeline._outflow import _normalise_outflow_return
+
+    _, is_multi = _normalise_outflow_return(
+        {"FantasyTeam": [{"id": 1}], "Manufacturer": [{"id": 2}]},
+        default_class_name="FantasyTeam",
+    )
+    assert is_multi is True
+
+
+def test_normalise_single_key_dict_not_matching_default_is_multi_output() -> None:
+    """Single-key dict whose key DOESN'T match the default class name is still
+    a multi-output config (the user picked an unexpected name).  Don't suppress
+    the warning in that case — it correctly flags the mismatch."""
+    from incorporator.observability.pipeline._outflow import _normalise_outflow_return
+
+    _, is_multi = _normalise_outflow_return(
+        {"UnexpectedClass": [{"id": 1}]},
+        default_class_name="ExpectedClass",
+    )
+    assert is_multi is True
