@@ -1,7 +1,7 @@
 """
 Appendix — SpaceX Launches: Parent-Child + Streaming
 ----------------------------------------------------
-Companion script for `docs/6_spacex_launches.md`.
+Companion script for `examples/06-spacex-launches/README.md`.
 
 Re-runs the patterns from Tutorial 3 (parent-child drilling) and the
 stateful-mode half of Tutorial 5 (streaming daemon) against the

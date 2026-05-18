@@ -1,7 +1,7 @@
 """
 Tutorial 4 — Stateful Refresh: Live Binance Ticker
 --------------------------------------------------
-Companion script for `docs/4_stateful_refresh.md`.
+Companion script for `examples/07-stateful-refresh/README.md`.
 
 Demonstrates the three `refresh()` resolution modes against Binance's
 public ticker feed (~1,900 pairs, no auth required). Each call

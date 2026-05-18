@@ -1,7 +1,7 @@
 """
 Tutorial 6 — Multi-Source Fjord: Live Crypto Spread
 ---------------------------------------------------
-Companion script for `docs/6_multi_source_fjord.md`.
+Companion script for `examples/10-multi-source-fjord/README.md`.
 
 `stream()` watches one source. `fjord()` watches N sources concurrently
 and lets you fuse them through a user-defined `outflow(state)` function.

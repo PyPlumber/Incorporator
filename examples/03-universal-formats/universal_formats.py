@@ -1,7 +1,7 @@
 """
 Tutorial 2 — Universal Formats: Build a Crypto Snapshot Warehouse
 -----------------------------------------------------------------
-Companion script for `docs/2_universal_formats.md`.
+Companion script for `examples/03-universal-formats/README.md`.
 
 Demonstrates the framework's universal-format promise via the real
 crypto-ETL pattern: snapshot CoinGecko's top-100 markets, land each

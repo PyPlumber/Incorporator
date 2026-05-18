@@ -1,7 +1,7 @@
 """
 Tutorial 5 — Streaming Daemon: Two Polling Modes for Two Real Use Cases
 -----------------------------------------------------------------------
-Companion script for `docs/5_streaming_daemon.md`.
+Companion script for `examples/08-streaming-daemon/README.md`.
 
 Demonstrates the two engines that `stream()` exposes via the
 `stateful_polling` flag:

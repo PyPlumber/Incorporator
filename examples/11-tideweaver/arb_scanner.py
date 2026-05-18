@@ -1,7 +1,7 @@
 """
 Tutorial 7 — Tideweaver: Multi-Exchange Arbitrage Scanner Diamond
 -----------------------------------------------------------------
-Companion script for ``docs/7_tideweaver.md``.
+Companion script for ``examples/11-tideweaver/README.md``.
 
 Demonstrates a four-current diamond against three crypto exchanges:
 

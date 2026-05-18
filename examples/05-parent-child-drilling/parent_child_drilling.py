@@ -1,7 +1,7 @@
 """
 Tutorial 3 — Parent → Child Drilling: CoinGecko Top-N → /coins/{id}
 -------------------------------------------------------------------
-Companion script for `docs/3_parent_child_drilling.md`.
+Companion script for `examples/05-parent-child-drilling/README.md`.
 
 Two `incorp()` calls build two registries — lightweight market rows
 (parent) and full per-coin detail records (child) — then join them by

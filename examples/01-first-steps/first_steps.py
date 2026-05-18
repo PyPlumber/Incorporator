@@ -1,7 +1,7 @@
 """
 Tutorial 1 — First Steps with Incorporator: CoinGecko Market Data
 -----------------------------------------------------------------
-Companion script for `docs/1_first_steps.md`.
+Companion script for `examples/01-first-steps/README.md`.
 
 Two demos in one file, in the order the tutorial teaches them:
 
@@ -61,7 +61,7 @@ async def inspector_demo() -> None:
         params={"vs_currency": "usd", "per_page": 10},
     )
     # The kwargs in incorp_demo() above are exactly what the inspector
-    # recommends for this endpoint.  See `docs/1_first_steps.md` for the
+    # recommends for this endpoint.  See `examples/01-first-steps/README.md` for the
     # five-section report breakdown.
 
 
