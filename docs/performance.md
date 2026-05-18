@@ -259,8 +259,8 @@ in [`incorporator/`](../incorporator/).
 |---|---|
 | Switch to chunking mode to keep memory flat | [Streaming & Pagination Deep Dive](./streaming_and_pagination.md) |
 | Pick append-friendly vs columnar formats deliberately | [Formats & Compression](./formats_and_compression.md) |
-| Drain a paginated API into a warehouse without OOM | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
-| Coordinate per-source intervals to spread load | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| Drain a paginated API into a warehouse without OOM | [Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md) |
+| Coordinate per-source intervals to spread load | [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) |
 | Ship with Docker healthchecks + heartbeat files | [Deployment Guide](./deployment.md) |
 
 ---

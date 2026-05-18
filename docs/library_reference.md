@@ -77,7 +77,7 @@ For a paste-ready lookup map of every public callable — signature, 3-7 step ps
   `LoggingMixin`, plus the pipeline engines
 - `incorporator.observability.tideweaver` — `Tideweaver`, `Watershed`,
   `Current` / `Stream` / `Fjord` / `Export`, `Tide` — orchestration layer
-  over `stream()` and fjord-flush primitives (see [Tutorial 7](./7_tideweaver.md))
+  over `stream()` and fjord-flush primitives (see [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md))
 - `incorporator.io.formats` — `FormatType` enum + extension inference
   *(see the [Cross-Format Type Bridge](./formats_and_compression.md#-cross-format-type-bridge)
   for how every Python type round-trips through every supported format)*

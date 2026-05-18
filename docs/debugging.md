@@ -179,9 +179,9 @@ subscribes.
 
 | Goal | Read |
 |---|---|
-| Wrap a single source in a daemon and stream waves | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
-| Keep a registry live with `refresh()` and inspect `failed_sources` | [Tutorial 4 — Stateful Refresh](./4_stateful_refresh.md) |
-| Detect orchestration-level failures across N sources | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| Wrap a single source in a daemon and stream waves | [Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md) |
+| Keep a registry live with `refresh()` and inspect `failed_sources` | [Tutorial 7 — Stateful Refresh](../examples/07-stateful-refresh/README.md) |
+| Detect orchestration-level failures across N sources | [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) |
 | See every public method that surfaces error state | [Library Reference](./library_reference.md) |
 | Ship `LoggedIncorporator` pipelines with structured logs | [Deployment Guide](./deployment.md) |
 

@@ -228,7 +228,7 @@ total — small enough to read end-to-end in one sitting.
 
 | Goal | Read |
 |---|---|
-| Build a snapshot warehouse with append-friendly formats | [Tutorial 2 — Universal Formats](./2_universal_formats.md) |
+| Build a snapshot warehouse with append-friendly formats | [Tutorial 3 — Universal Formats](../examples/03-universal-formats/README.md) |
 | Land columnar Parquet at the end of an orchestration window | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
 | Round-trip JSON ↔ Avro ↔ SQLite with nested reconstruction | [Appendix — Data Lake Pivot](./appendix/data_lake_pivot.md) |
 | Stream a file too big to fit in RAM | [Streaming & Pagination Deep Dive](./streaming_and_pagination.md) |

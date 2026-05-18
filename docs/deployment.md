@@ -156,7 +156,7 @@ window runs, omit `restart` and the container stops when the window
 closes.  `--json-output` and `--heartbeat-file` work the same as
 they do for `stream` / `fjord`.
 
-See [Tutorial 7 — Tideweaver](./7_tideweaver.md) for the watershed.json
+See [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) for the watershed.json
 shape.
 
 ---
@@ -199,7 +199,7 @@ When you run this script, the Incorporator Engine bypasses its internal disk-log
 | Goal | Read |
 |---|---|
 | Pick the right CLI command for your pipeline shape | [CLI & Configuration Guide](./cli_and_configuration.md) |
-| Coordinate multiple pipelines on independent cadences | [Tutorial 7 — Tideweaver](./7_tideweaver.md) |
+| Coordinate multiple pipelines on independent cadences | [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) |
 | Decide between in-process and cloud orchestration | [Appendix — Tideweaver vs. Prefect](./appendix/tideweaver_vs_prefect.md) |
 | Get structured error logs flowing to a log aggregator | [Production Debugging](./debugging.md) |
 | Tune performance per format / payload size | [Performance Guide](./performance.md) |

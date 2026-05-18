@@ -245,7 +245,7 @@ matrix.
 
 | Goal | Read |
 |---|---|
-| Pick the right polling mode for your pipeline | [Tutorial 5 — Streaming Daemons](./5_streaming_daemon.md) |
+| Pick the right polling mode for your pipeline | [Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md) |
 | Snapshot millions of rows into a warehouse without OOM | [Tutorial 2 — Universal Formats](./2_universal_formats.md) |
 | Tune chunk size against memory + throughput | [Performance Guide](./performance.md) |
 | Land columnar Parquet at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
