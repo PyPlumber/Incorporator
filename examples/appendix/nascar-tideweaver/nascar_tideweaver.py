@@ -1,9 +1,9 @@
 """
 Appendix — NASCAR Tideweaver: Diamond Across a Different Domain
 ---------------------------------------------------------------
-Companion script for ``docs/appendix/nascar_tideweaver.md``.
+Companion script for ``examples/appendix/nascar-tideweaver/README.md``.
 
-Demonstrates the same ``Watershed.diamond()`` shape that Tutorial 7
+Demonstrates the same ``Watershed.diamond()`` shape that Tutorial 11
 uses for its multi-exchange crypto arb scanner — applied to race
 telemetry instead:
 
