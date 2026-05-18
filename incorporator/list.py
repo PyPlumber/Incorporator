@@ -38,24 +38,28 @@ def _deduplicate_extracted(data: List[Any]) -> List[Any]:
 
 
 class IncorporatorList(List[T]):
-    """The list type returned by :meth:`Incorporator.incorp` for multi-record sources.
+    """Typed-list-plus-O(1)-registry — what :meth:`Incorporator.incorp` hands back for multi-record sources.
 
-    Behaves like a standard Python list — index it, iterate it, slice it,
-    pass it to ``len()`` — and adds two pieces of pipeline metadata:
+    Use it like any Python list (iterate, slice, ``len()``, pass to
+    ``link_to`` joins) and reach for two extras when you need them:
+    :attr:`inc_dict` for point lookups by primary key, and
+    :attr:`failed_sources` as the dead-letter queue for retry
+    orchestrators.
 
-    - :attr:`inc_dict` (property) — look up any record by its primary key
-      in O(1).
-    - :attr:`failed_sources` — every URL or file path that hit a permanent
-      error (HTTP 4xx-other-than-429, network failure, unparseable
-      payload).  The dead-letter queue for retry orchestrators::
+    Example::
 
-          launches = await Launch.incorp(inc_url=[...])
-          if launches.failed_sources:
-              retry_later(launches.failed_sources)
+        coins = await Coin.incorp(inc_url="...", inc_code="id")
+        for coin in coins:                       # IncorporatorList behaves as list
+            print(coin.name)
+        btc = coins.inc_dict["bitcoin"]          # O(1) primary-key lookup
+        if coins.failed_sources:                 # DLQ for retry
+            retry_later(coins.failed_sources)
 
     The same instance can be used wherever ``List[Incorporator]`` is
     accepted — including ``Class.export(instance=this_list)`` and any
-    ``link_to(this_list)`` join from another class.
+    ``link_to(this_list)`` join from another class.  ``failed_sources``
+    collects every URL or file path that hit a permanent error (HTTP
+    4xx-other-than-429, network failure, unparseable payload).
     """
 
     failed_sources: List[str]
@@ -92,15 +96,17 @@ class IncorporatorList(List[T]):
 
     @property
     def inc_dict(self) -> "weakref.WeakValueDictionary[Any, Any]":
-        """Look up any incorporated record by its primary key.
+        """The O(1) registry mapping primary key → instance — no list-scanning, no manual dict-building.
 
-        Returns the registry dict mapping ``inc_code`` → instance for the
-        Incorporator subclass that produced this list.  Use it to find
-        records by ID without scanning::
+        Reach for it whenever a list-walk would be quadratic: parent-child
+        drilling, dedup checks, point queries by ID.  The registry is
+        already built (every ``incorp()`` populates it as instances are
+        constructed), so the lookup is a single dict hit.
+
+        Example::
 
             launches = await Launch.incorp(inc_url="...", inc_code="id")
             launch = launches.inc_dict["abc123"]      # O(1) lookup
-            print(launch.name)
 
         ``inc_dict.get(key)`` returns ``None`` for missing keys rather than
         raising — the same way Python's ``dict.get()`` does.  The registry

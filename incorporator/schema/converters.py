@@ -65,19 +65,26 @@ class CalcAllOp:
 
 
 def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None) -> CalcOp:
-    """Compute one field's value per row from one or more source fields.
+    """Synthesise a derived field per row from one or more source fields.
 
-    Drop the return value into a ``conv_dict`` entry; the framework calls
-    ``func`` once per row, passing the named source fields as positional
-    arguments::
+    Use it whenever the value you want lives in the row but the API
+    doesn't ship it directly — PokéAPI Base Stat Total
+    (``hp + attack + defense + ...``), cross-exchange spread in basis
+    points (``(ask - bid) / mid * 10_000``), full names, percentages,
+    any per-row aggregation.  Drop the return value into a ``conv_dict``
+    entry; the framework calls ``func`` once per row with the named
+    source fields as positional arguments.
 
-        def full_name(first, last):
-            return f"{first} {last}"
+    Example::
 
-        users = await User.incorp(
+        def spread_bps(bid: float, ask: float) -> float:
+            mid = (bid + ask) / 2
+            return (ask - bid) / mid * 10_000
+
+        books = await Book.incorp(
             inc_url="...",
             conv_dict={
-                "name": calc(full_name, "first_name", "last_name"),
+                "spread_bps": calc(spread_bps, "bid", "ask", target_type=float),
             },
         )
 
@@ -101,11 +108,16 @@ def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target
 
 
 def calc_all(func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None) -> CalcAllOp:
-    """Compute one field's value from the **entire column** in a single call.
+    """Window-aggregation pass — compute a per-row value that depends on **every** row in one shot.
 
-    Like :func:`calc` but ``func`` is invoked **once** with the full list
-    of values across every row — use for window aggregations, ranking,
-    or any reduction that needs the whole column::
+    Reach for this when the answer for row N requires knowing rows
+    ``0..M``: market-cap rank percentile, z-score against the dataset
+    mean, normalisations, dense ranks.  Contrast with :func:`calc`,
+    which is invoked once per row in isolation — ``calc_all`` is
+    invoked once total with the full column lists, and must return one
+    value per row in input order.
+
+    Example::
 
         def rank_by_score(scores):
             ranked = sorted(enumerate(scores), key=lambda p: -p[1])
@@ -317,17 +329,15 @@ def _get_cached_adapter(actual_type: Any) -> Optional[TypeAdapter[Any]]:
 
 
 def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
-    """Coerce a raw API value into a Python type — the workhorse of ``conv_dict``.
+    """Type-coercion workhorse for ``conv_dict`` — turn messy API values into clean Python types.
 
-    Use ``inc(SomeType)`` in :meth:`Incorporator.incorp`'s ``conv_dict`` to
-    convert every value of that field to ``SomeType`` before Pydantic sees
-    it.  Handles the common pain points of messy API payloads:
-
-    - Strings that are really numbers (``"42"`` → ``42``).
-    - ISO-8601 timestamps (``"2026-05-12T14:32:00Z"`` → ``datetime``).
-    - Boolean-shaped strings (``"yes"``, ``"true"``, ``1`` → ``True``).
-    - The standard garbage-value family (``"N/A"``, ``"null"``,
-      ``"unknown"``, empty string) silently becomes ``default``.
+    Reach for ``inc(SomeType)`` whenever an API returns numeric strings,
+    ISO-8601 timestamps, inconsistent boolean encodings, or the usual
+    garbage-value family (``"N/A"``, ``"null"``, ``"unknown"``, empty
+    string).  ``"42"`` becomes ``42``, ``"2026-05-12T14:32:00Z"`` becomes
+    a ``datetime``, ``"true"`` / ``"yes"`` / ``1`` becomes ``True``, and
+    garbage values silently fall through to ``default`` so the row never
+    fails Pydantic validation on a single bad cell.
 
     Example::
 
@@ -336,9 +346,9 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
         launches = await Launch.incorp(
             inc_url="...",
             conv_dict={
-                "net": inc(datetime),          # ISO-8601 → datetime
-                "altitude_m": inc(float),      # "120.5" → 120.5
-                "is_recovered": inc(bool, default=False),
+                "price": inc(float),                    # "120.5" → 120.5
+                "created_at": inc(datetime),            # ISO-8601 → datetime
+                "is_active": inc(bool, default=False),  # "yes" → True
             },
         )
 
@@ -351,6 +361,13 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
 
     Returns:
         A converter closure suitable for placing in ``conv_dict``.
+
+    Under the hood ``inc()`` builds a ranked converter chain: the
+    Pydantic ``TypeAdapter`` is tried first, then a type-specific
+    fallback (ISO-8601 parser for ``datetime``, comma-stripping for
+    ``int`` / ``float``, truthy-string normalisation for ``bool``).
+    Only when every rank raises does the warning fire and ``default``
+    return.
     """
     # 1. The 'new' mapping: If 'new', accept ANY valid Python type.
     actual_type = Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type

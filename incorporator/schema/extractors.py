@@ -20,18 +20,23 @@ logger = logging.getLogger(__name__)
 # COMMON CALC() FUNCTIONS (Built-ins)
 # ==========================================
 def sum_attributes(*args: Any) -> float:
-    """Sum any number of values, treating non-numeric and ``None`` as zero.
+    """Ready-made reducer for :func:`calc` — safely sum N fields, treating ``None`` and non-numeric as zero.
 
-    A ready-made reducer for :func:`calc` — pair it with field names that
-    hold numeric strings or floats and you get a safe total regardless of
-    whether the API returns the values as ``int``, ``"42"``, or ``None``::
+    Reach for it whenever you'd otherwise write a 3-line try/except to
+    total a handful of row fields: PokéAPI Base Stat Total, revenue
+    sums across line items, point-totals in fantasy NASCAR scoring.
+    Numeric strings (``"42"``), floats, ints, and ``None`` all mix
+    safely — anything that can't be cast contributes zero rather than
+    raising.
+
+    Example::
 
         from incorporator import calc, sum_attributes
 
-        await User.incorp(
+        await Pokemon.incorp(
             inc_url="...",
             conv_dict={
-                "total": calc(sum_attributes, "subtotal", "tax", "tip"),
+                "total_stats": calc(sum_attributes, "hp", "attack", "defense", "speed"),
             },
         )
 
@@ -57,14 +62,22 @@ def sum_attributes(*args: Any) -> float:
 def split_and_get(
     delimiter: str = "/", index: int = -1, cast_type: Optional[Callable[[Any], Any]] = None
 ) -> Callable[[Any], Any]:
-    """Split a string by ``delimiter`` and return one position.
+    """Extract an ID from a delimited string — the HATEOAS URL-tail / colon-separated-key one-liner.
 
-    Common pattern for extracting an ID from the tail of a HATEOAS URL::
+    Reach for it whenever an API hands back a delimited value and the
+    useful bit is one position inside: ``"/api/items/42/"`` (HATEOAS
+    URL, the ``42`` is the FK), ``"namespace:resource:id"`` (composite
+    key), a single column inside a CSV-style cell.
 
-        # "https://api.example.com/pokemon/25/" → 25
-        conv_dict={
-            "id": split_and_get("/", index=-2, cast_type=int),
-        }
+    Example::
+
+        # "https://pokeapi.co/api/v2/pokemon/25/" → 25
+        await Move.incorp(
+            inc_url="...",
+            conv_dict={
+                "pokemon_id": split_and_get("/", index=-2, cast_type=int),
+            },
+        )
 
     Args:
         delimiter: Character(s) to split on.  Surrounding occurrences are
@@ -99,21 +112,28 @@ def split_and_get(
 
 
 def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
-    """Join one source's foreign-key field to another source's instances.
+    """SQL-style JOIN as a one-liner — replace a foreign-key value with the actual instance.
 
-    Pass an :class:`IncorporatorList` (or any object with an ``inc_dict``)
-    and a value from the current row will be looked up in that list's
-    registry — turning a string ID into the actual instance::
+    Reach for it whenever the row has an FK and the related dataset is
+    already on hand: SpaceX launches carry a ``rocket`` UUID and you
+    want the actual :class:`Rocket` instance; CoinGecko assets carry a
+    ``symbol`` and you want the live Binance book.  The lookup goes
+    through the other class's :attr:`inc_dict`, so it's an O(1) hit per
+    row — no quadratic scan.
 
-        binance_books = await BinanceBook.incorp(inc_url="...", inc_code="symbol")
+    Example::
 
-        assets = await Asset.incorp(
+        rockets = await Rocket.incorp(inc_url="...", inc_code="id")
+
+        launches = await Launch.incorp(
             inc_url="...",
             conv_dict={
-                # "BTC" → binance_books.inc_dict["BTC"]  (the actual record)
-                "live_book": link_to(binance_books),
+                # "5e9d0d95eda69973a809d1ec" → rockets.inc_dict["5e9d..."]  (Rocket instance)
+                "rocket": link_to(rockets),
             },
         )
+        # Before: launch.rocket == "5e9d0d95eda69973a809d1ec"
+        # After:  launch.rocket is the actual Rocket instance — launch.rocket.name works
 
     Args:
         dataset: The right-hand side of the join.  Typically an
@@ -197,19 +217,24 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
 
 
 def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], List[Any]]:
-    """Plural variant of :func:`link_to` — resolve a list of foreign keys to objects.
+    """1-to-N JOIN — resolve a list of foreign-key IDs to the corresponding instances.
 
-    Use when the source field is itself a list of IDs (e.g. ``tag_ids``,
-    ``author_uuids``).  Returns a list of matched instances; unmatched
-    keys are filtered out silently.
+    Reach for it whenever the source field is itself a list of IDs:
+    a SpaceX launch has ``payloads: list[str]`` of payload UUIDs, an
+    article has ``tag_ids: list[str]``, a player has a roster of
+    ``team_member_uuids``.  Same registry-backed lookup as
+    :func:`link_to`, applied element-wise — unmatched individual keys
+    are silently dropped from the result.
 
     Example::
 
-        articles = await Article.incorp(
+        payloads = await Payload.incorp(inc_url="...", inc_code="id")
+
+        launches = await Launch.incorp(
             inc_url="...",
             conv_dict={
-                # "tag_ids": ["python", "etl"] → [Tag(python), Tag(etl)]
-                "tags": link_to_list(tags),
+                # ["payload_a", "payload_b"] → [Payload(a), Payload(b)]
+                "payloads": link_to_list(payloads),
             },
         )
 
@@ -236,18 +261,25 @@ def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None)
 
 
 def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
-    """Drill into a nested dict and return one value by dotted path.
+    """Lift a deeply-nested field to a top-level attribute using a dot-notation path.
 
-    Common pattern for lifting a deeply-nested field up to a top-level
-    attribute on the resulting object::
+    Reach for it whenever the API buries the value you actually want
+    inside two or three layers of envelope: JSON:API-style
+    ``{"data": {"attributes": {"price": 42}}}``, SpaceX
+    ``{"pad": {"location": {"name": "Kennedy SC"}}}``, anything with a
+    ``meta`` / ``attributes`` / ``links`` wrapper.  Missing path
+    segments resolve to ``None`` rather than raising, so partially
+    populated rows don't blow up the build.
 
-        # Source row: {"pad": {"location": {"name": "Kennedy SC"}}}
-        # Target:     launch.pad_name == "Kennedy SC"
+    Example::
 
-        await Launch.incorp(
+        # Source row: {"data": {"attributes": {"price": 42}}}
+        # Target:     asset.price == 42
+
+        await Asset.incorp(
             inc_url="...",
             conv_dict={
-                "pad_name": pluck("pad.location.name"),
+                "price": pluck("data.attributes.price"),
             },
         )
 
@@ -286,34 +318,45 @@ def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[A
 
 
 def each() -> _EachSentinel:
-    """POST-payload token: send one HTTP request per extracted parent ID.
+    """Fan out N POST requests, one per parent ID — for APIs that won't accept a bulk body.
 
-    Place inside a ``json_payload`` / ``form_payload`` dict when you want
-    :meth:`Incorporator.incorp` to fan out **N concurrent POSTs** — one
-    per row in the parent dataset — each carrying the corresponding
-    parent ID at that position::
+    Reach for it when the target endpoint takes exactly one ID per
+    call: the NHTSA VPIC ``DecodeVin/`` endpoint accepts one VIN per
+    request, plenty of older REST APIs reject batch payloads outright.
+    You have 200 VINs in :attr:`IncorporatorList.inc_dict` from the
+    parent dataset; ``each()`` says "do 200 concurrent POSTs and stitch
+    the results back into one :class:`IncorporatorList`."
+
+    Example::
 
         results = await Decoded.incorp(
-            inc_url="https://api.example.com/decode",
+            inc_url="https://vpic.nhtsa.dot.gov/.../DecodeVin/",
             inc_parent=invoices,
-            inc_child="vehicle_id",
+            inc_child="Vehicle.VIN",
             http_method="POST",
-            json_payload={"vehicle_id": each(), "format": "json"},
+            json_payload={"vin": each(), "format": "json"},
         )
 
-    Pair with :func:`join_all` (one bulk request) or :func:`as_list`
-    (one request carrying an array) when the target endpoint accepts a
-    batch shape — your choice of token controls the request count.
+    Pair with :func:`join_all` (one bulk request with a delimited
+    string) or :func:`as_list` (one bulk request carrying a JSON array)
+    when the endpoint accepts a batch shape — your choice of token is
+    what controls the request count.
     """
     return _EachSentinel()
 
 
 def join_all(delimiter: str = ",") -> Callable[[Any], str]:
-    """POST-payload token: send one bulk request with all parent IDs joined.
+    """Collapse all parent IDs into one delimited string for a single bulk POST.
 
-    Place inside a ``json_payload`` / ``form_payload`` dict to collapse
-    every extracted parent ID into a **single delimited string** the
-    target endpoint can scan in one request::
+    Reach for it when the endpoint supports a delimited-batch shape:
+    the NHTSA VPIC ``DecodeVINValuesBatch/`` endpoint takes
+    ``vin1;vin2;vin3``, plenty of older audit APIs accept
+    comma-separated ID lists.  One HTTP request total, the IDs
+    collapsed into the string format the server expects — the right
+    choice when ``each`` (N requests) would be wasteful and ``as_list``
+    (JSON array body) isn't what the endpoint accepts.
+
+    Example::
 
         specs = await NHTSASpec.incorp(
             inc_url="https://vpic.nhtsa.dot.gov/.../DecodeVINValuesBatch/",
@@ -344,14 +387,20 @@ def join_all(delimiter: str = ",") -> Callable[[Any], str]:
 
 
 def as_list() -> Callable[[Any], List[Any]]:
-    """POST-payload token: send one bulk request carrying parent IDs as a JSON array.
+    """Ship all parent IDs in one POST as a JSON array — the natural shape for typed REST endpoints.
 
-    Place inside a ``json_payload`` dict to ship every extracted parent ID
-    in a **single request** with the IDs as a JSON list — the natural
-    shape for endpoints that accept a typed array body::
+    Reach for it when the endpoint expects ``{"ids": [1, 2, 3]}`` (or
+    any other JSON-array-bodied bulk POST) — the dominant shape for
+    modern typed REST APIs and the natural fit for bulk-POST audit
+    endpoints.  One HTTP request total, IDs delivered as a proper JSON
+    list — the right choice when ``each`` (N requests) would be
+    wasteful and ``join_all`` (delimited string) would force the server
+    to re-parse a stringified payload.
 
-        results = await Endpoint.incorp(
-            inc_url="https://api.example.com/bulk",
+    Example::
+
+        results = await Audit.incorp(
+            inc_url="https://api.example.com/bulk-audit",
             inc_parent=invoices,
             inc_child="id",
             http_method="POST",
