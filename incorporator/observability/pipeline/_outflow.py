@@ -26,6 +26,70 @@ __all__ = ["Wave", "_outflow_daemon", "flush"]
 logger = logging.getLogger(__name__)
 
 
+# One-time-per-class WARNING dedup for ``_warn_on_bare_user_class`` so a
+# long-running daemon doesn't spam the same diagnosis every wave.  Keyed
+# by ``id(class)`` because user-declared classes are typically defined
+# at module load and live forever.
+_BARE_CLASS_WARNED: set[int] = set()
+
+
+def _warn_on_bare_user_class(
+    user_cls: Any,
+    base_class: Any,
+    sample_row: Optional[Dict[str, Any]],
+) -> None:
+    """Warn once when a bare user class declaration suppresses field inference.
+
+    ``flush()`` prefers a user-pre-declared subclass over
+    :func:`infer_dynamic_schema` when the outflow module exposes a class
+    with the matching ``__name__``.  But a bare declaration like::
+
+        class Race(Incorporator):
+            pass
+
+    declares zero new fields beyond the base three, and the Incorporator
+    base class doesn't set ``extra='allow'`` — so Pydantic V2's default
+    ``extra='ignore'`` silently drops every row field on
+    ``model_validate``.  The user thinks they're being explicit; the
+    framework is dropping their data on the floor.
+
+    This helper emits one WARNING per class identity when:
+
+    1. The user class adds zero fields beyond the base, AND
+    2. The class isn't opted into ``extra='allow'``, AND
+    3. The first row carries field names the class won't accept.
+
+    The fix suggested in the message is concrete: either declare the
+    fields explicitly, or delete the class so inference takes over.
+    """
+    if user_cls is base_class or id(user_cls) in _BARE_CLASS_WARNED:
+        return
+    extra_fields = set(user_cls.model_fields) - set(base_class.model_fields)
+    if extra_fields:
+        return  # user declared fields explicitly — no inference suppression
+    if user_cls.model_config.get("extra") == "allow":
+        return  # extra='allow' → fields go to __pydantic_extra__, no data loss
+    if not sample_row:
+        return
+    declared = set(user_cls.model_fields)
+    dropped = [k for k in sample_row if k not in declared]
+    if not dropped:
+        return  # row only contains declared fields — no loss
+    _BARE_CLASS_WARNED.add(id(user_cls))
+    logger.warning(
+        "Class %r is declared in your outflow module but adds no fields beyond "
+        "Incorporator's base — %d field(s) on each row will be silently dropped "
+        "on model_validate (%s%s).  Fix: either declare the fields explicitly "
+        "(e.g. ``class %s(Incorporator): name: str = ...``) or delete the class "
+        "so the engine can infer the schema from the data.",
+        user_cls.__name__,
+        len(dropped),
+        ", ".join(dropped[:5]),
+        ", ..." if len(dropped) > 5 else "",
+        user_cls.__name__,
+    )
+
+
 def _normalise_outflow_return(
     result: Any,
     default_class_name: str,
@@ -160,6 +224,10 @@ async def flush(
             user_cls = getattr(outflow_module, derived_name, None) if outflow_module is not None else None
             if user_cls is not None and isinstance(user_cls, type) and issubclass(user_cls, base_class):
                 derived_cls = cast(Any, user_cls)
+                # Defensive: warn once if the user's class is "bare" (no fields
+                # beyond Incorporator's base three) — Pydantic's default
+                # extra='ignore' would silently drop every row field.
+                _warn_on_bare_user_class(derived_cls, base_class, rows[0] if rows else None)
             else:
                 derived_cls = cast(Any, infer_dynamic_schema(derived_name, rows, base_class))
 

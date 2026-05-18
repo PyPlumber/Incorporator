@@ -96,6 +96,28 @@ def _tiered_seed_order(
     return tiers
 
 
+def _format_seed_error(cls_name: str, exc: Exception, inflow_active: bool) -> str:
+    """Build the ``failed_sources`` entry for a seed exception.
+
+    ``KeyError`` raised under an active ``inflow_callable`` is almost always the
+    ``state[ClassName]`` lookup failing — message it that way so the user
+    knows to either guard ``inflow(state)`` against missing peers or declare
+    a ``depends_on`` edge so the prerequisite seeds first.  Everything else
+    falls back to a typed-message format that still names the source class
+    (raw ``str(exc)`` alone often gives just the missing key in quotes —
+    ``"'Track'"`` — useless without context).
+    """
+    exc_type = type(exc).__name__
+    if inflow_active and isinstance(exc, KeyError) and exc.args:
+        missing = exc.args[0]
+        return (
+            f"inflow(state) for source {cls_name!r} raised KeyError on missing peer "
+            f"{missing!r} — guard inflow(state) against missing keys "
+            f"(e.g. state.get({missing!r}) or add depends_on={[missing]!r} to enforce ordering)"
+        )
+    return f"Seed Error in source {cls_name!r}: {exc_type}: {exc}"
+
+
 def _resolve_seed_order(
     stream_params: List[Dict[str, Any]],
     refresh_interval: Union[float, Dict[Any, float], None],
@@ -307,7 +329,7 @@ async def _run_fjord_engine(
                 chunk_index=1,
                 operation=f"fjord_incorp:{cls_name}",
                 rows_processed=0,
-                failed_sources=[f"Seed Error: {result}"],
+                failed_sources=[_format_seed_error(cls_name, result, inflow_callable is not None)],
                 processing_time_sec=seed_elapsed,
             )
             return

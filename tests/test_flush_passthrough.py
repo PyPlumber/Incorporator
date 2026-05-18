@@ -151,3 +151,80 @@ def test_normalise_single_key_dict_not_matching_default_is_multi_output() -> Non
         default_class_name="ExpectedClass",
     )
     assert is_multi is True
+
+
+# ----------------------------------------------------------------------
+# _warn_on_bare_user_class — silent-data-loss diagnostic
+# ----------------------------------------------------------------------
+
+
+def test_bare_user_class_warns_on_dropped_fields(caplog: pytest.LogCaptureFixture) -> None:
+    """A bare class declaration whose row carries unknown fields gets one WARNING.
+
+    ``class BareRace(Incorporator): pass`` declares zero new fields.  With
+    Pydantic V2's default extra='ignore', a row like {"id": 1, "name": "X"}
+    has every non-base field silently dropped on model_validate.  The warning
+    surfaces the data loss with a concrete fix suggestion.  Subsequent calls
+    with the SAME class are suppressed (one-time-per-class dedup).
+    """
+    import logging
+
+    from incorporator.observability.pipeline._outflow import (
+        _BARE_CLASS_WARNED,
+        _warn_on_bare_user_class,
+    )
+
+    class BareRace(Incorporator):  # bare — no extra fields
+        pass
+
+    # Belt-and-suspenders: clear the dedup set in case another test ran first.
+    _BARE_CLASS_WARNED.discard(id(BareRace))
+
+    caplog.set_level(logging.WARNING, logger="incorporator.observability.pipeline._outflow")
+    _warn_on_bare_user_class(BareRace, Incorporator, {"id": 1, "name": "Alice", "speed": 200})
+
+    matching = [r for r in caplog.records if "BareRace" in r.getMessage()]
+    assert len(matching) == 1, f"expected 1 warning, got {len(matching)}: {[r.getMessage() for r in caplog.records]}"
+    assert "silently dropped" in matching[0].getMessage()
+    assert "name" in matching[0].getMessage()
+    assert "speed" in matching[0].getMessage()
+
+    # Second call with the same class is suppressed.
+    caplog.clear()
+    _warn_on_bare_user_class(BareRace, Incorporator, {"id": 2, "name": "Bob"})
+    matching = [r for r in caplog.records if "BareRace" in r.getMessage()]
+    assert matching == []
+
+
+def test_user_class_with_fields_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """A user class that declares fields beyond the base does NOT trigger the warning."""
+    import logging
+
+    from incorporator.observability.pipeline._outflow import _warn_on_bare_user_class
+
+    class TypedRace(Incorporator):
+        name: str = ""  # one explicit field — user opted in to inference suppression
+
+    caplog.set_level(logging.WARNING, logger="incorporator.observability.pipeline._outflow")
+    _warn_on_bare_user_class(TypedRace, Incorporator, {"name": "Alice", "speed": 200})
+
+    matching = [r for r in caplog.records if "TypedRace" in r.getMessage()]
+    assert matching == []
+
+
+def test_bare_class_with_extra_allow_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """A bare class that opts into extra='allow' is safe — fields land in __pydantic_extra__."""
+    import logging
+
+    from pydantic import ConfigDict
+
+    from incorporator.observability.pipeline._outflow import _warn_on_bare_user_class
+
+    class ExtraAllowRace(Incorporator):
+        model_config = ConfigDict(extra="allow")
+
+    caplog.set_level(logging.WARNING, logger="incorporator.observability.pipeline._outflow")
+    _warn_on_bare_user_class(ExtraAllowRace, Incorporator, {"id": 1, "name": "Alice", "speed": 200})
+
+    matching = [r for r in caplog.records if "ExtraAllowRace" in r.getMessage()]
+    assert matching == []

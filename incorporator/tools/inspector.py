@@ -372,11 +372,25 @@ def _print_heavy_field_hints(target_obj: Dict[str, Any]) -> None:
 
 def analyze_error(e: Exception) -> None:
     """Centralized DX Error Inspector providing actionable fixes for modern formats."""
-    print("\n" + "=" * 70)
-    print("🚨 INCORPORATOR DX INSPECTOR: EXECUTION FAILED")
-    print("=" * 70)
-    print(f"[{e.__class__.__name__}] {e}")
-    print("\n💡 QUICK FIX SUGGESTIONS:")
+
+    def p(text: str) -> None:
+        """print() that survives consoles that can't encode the inspector's emojis.
+
+        Windows cp1252 console (the default for many users) can't encode
+        🚨 / 💡 / 👉.  Without this fallback, the inspector itself crashes on
+        ``UnicodeEncodeError`` and the actionable hint never reaches the user.
+        ASCII-replace and re-emit so the diagnosis still lands.
+        """
+        try:
+            print(text)
+        except UnicodeEncodeError:
+            print(text.encode("ascii", errors="replace").decode("ascii"))
+
+    p("\n" + "=" * 70)
+    p("🚨 INCORPORATOR DX INSPECTOR: EXECUTION FAILED")
+    p("=" * 70)
+    p(f"[{e.__class__.__name__}] {e}")
+    p("\n💡 QUICK FIX SUGGESTIONS:")
 
     if isinstance(e, IncorporatorNetworkError):
         cause = getattr(e, "__cause__", None)
@@ -385,56 +399,56 @@ def analyze_error(e: Exception) -> None:
         if cause_name == "HTTPStatusError":
             status = getattr(getattr(cause, "response", None), "status_code", 0)
             if status in (401, 403):
-                print(f"   👉 Auth Blocked (HTTP {status}): Pass `headers={{'Authorization': 'Bearer ...'}}`.")
+                p(f"   👉 Auth Blocked (HTTP {status}): Pass `headers={{'Authorization': 'Bearer ...'}}`.")
             elif status == 406:
-                print("   👉 Format Rejected (HTTP 406): Try `headers={{'Accept': 'application/json'}}`.")
+                p("   👉 Format Rejected (HTTP 406): Try `headers={{'Accept': 'application/json'}}`.")
             else:
-                print(f"   👉 Server returned HTTP {status}. Verify the endpoint requirements.")
+                p(f"   👉 Server returned HTTP {status}. Verify the endpoint requirements.")
 
         elif cause_name == "ConnectError":
             cause_str = str(cause).upper()
             if "SSL" in cause_str or "CERTIFICATE" in cause_str:
-                print("   👉 SSL Verification Failed: Add `ignore_ssl=True` to bypass proxies.")
+                p("   👉 SSL Verification Failed: Add `ignore_ssl=True` to bypass proxies.")
             else:
-                print("   👉 Connection Refused: Verify the URL or check if a VPN is required.")
+                p("   👉 Connection Refused: Verify the URL or check if a VPN is required.")
 
         elif cause_name in ("TimeoutException", "ReadTimeout", "ConnectTimeout"):
-            print("   👉 Connection Timed Out: The server is unresponsive. Add `timeout=30.0` if it's just slow.")
+            p("   👉 Connection Timed Out: The server is unresponsive. Add `timeout=30.0` if it's just slow.")
         else:
-            print("   👉 Check your URL or network connection.")
+            p("   👉 Check your URL or network connection.")
 
     elif isinstance(e, IncorporatorFormatError):
         e_str = str(e).lower()
 
         # Modern Format Hints
         if "avro" in e_str or "fastavro" in e_str:
-            print(
+            p(
                 "   👉 Missing Dependency: Apache Avro requires `fastavro`. Run `pip install incorporator[orchestrate]`."  # noqa: E501
             )
         elif "sqlite" in e_str or "sql" in e_str:
-            print("   👉 SQLite Execution: Ensure you provide `sql_query='SELECT * FROM ...'`.")
-            print("      Or check that the file path resolves to a valid `.db` / `.sqlite` file.")
+            p("   👉 SQLite Execution: Ensure you provide `sql_query='SELECT * FROM ...'`.")
+            p("      Or check that the file path resolves to a valid `.db` / `.sqlite` file.")
         elif "json" in e_str and ("decode" in e_str or "invalid" in e_str):
-            print("   👉 JSON Decode Failed: If the file is JSON Lines, specify `format_type=FormatType.NDJSON`.")
-            print("      If it's an API, it might be returning a text/html firewall or CAPTCHA.")
+            p("   👉 JSON Decode Failed: If the file is JSON Lines, specify `format_type=FormatType.NDJSON`.")
+            p("      If it's an API, it might be returning a text/html firewall or CAPTCHA.")
         elif "xml" in e_str:
-            print(
+            p(
                 "   👉 XML Parsing Failed: Check if the XML declaration is malformed, or if DTDs are blocked by security policy."  # noqa: E501
             )
         elif "delimited" in e_str or "csv" in e_str:
-            print(
+            p(
                 "   👉 CSV Parsing Failed: Check the delimiter. Use `format_type=FormatType.TSV` or `PSV` if it's not a comma."  # noqa: E501
             )
         elif "cramjam" in e_str:
-            print(
+            p(
                 "   👉 Missing Dependency: Rust compression requires Cramjam. Run `pip install incorporator[cramjam]`."
             )
         else:
-            print("   👉 HTML Firewall/Login Page: If the parser choked, the API likely returned HTML.")
-            print("      Open the URL in your browser to check for captchas or login portals.")
-            print("   👉 Local File: Check `format_type=...` if relying on a file without an extension.")
+            p("   👉 HTML Firewall/Login Page: If the parser choked, the API likely returned HTML.")
+            p("      Open the URL in your browser to check for captchas or login portals.")
+            p("   👉 Local File: Check `format_type=...` if relying on a file without an extension.")
 
     else:
-        print("   👉 A schema or configuration error occurred. Check your payload syntax.")
+        p("   👉 A schema or configuration error occurred. Check your payload syntax.")
 
-    print("=" * 70 + "\n")
+    p("=" * 70 + "\n")

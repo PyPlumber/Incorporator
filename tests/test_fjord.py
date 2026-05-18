@@ -605,3 +605,48 @@ def test_tiered_seed_order_cycle_raises() -> None:
     ]
     with pytest.raises(ValueError, match="depends_on cycle detected"):
         _tiered_seed_order(entries)
+
+
+# ----------------------------------------------------------------------
+# _format_seed_error — actionable seed-failure messages
+# ----------------------------------------------------------------------
+
+
+def test_format_seed_error_keyerror_under_inflow_is_actionable() -> None:
+    """KeyError raised under an active inflow_callable points at the missing peer.
+
+    Before this helper, the wave's failed_sources[0] read "Seed Error: 'Track'"
+    (str(KeyError('Track')) is literally "'Track'") — telling the user nothing
+    about which source raised or what stage failed.  Now the message names
+    the source class, identifies inflow(state) as the stage, names the missing
+    peer, and suggests both the state.get() guard and the depends_on edge.
+    """
+    from incorporator.observability.pipeline.fjord import _format_seed_error
+
+    msg = _format_seed_error("Race", KeyError("Track"), inflow_active=True)
+    assert "inflow(state) for source 'Race'" in msg
+    assert "missing peer 'Track'" in msg
+    assert "state.get('Track')" in msg
+    assert "depends_on" in msg
+
+
+def test_format_seed_error_generic_exc_falls_back_to_typed_message() -> None:
+    """Non-KeyError exceptions get a typed-message fallback that still names the source."""
+    from incorporator.observability.pipeline.fjord import _format_seed_error
+
+    msg = _format_seed_error("Race", RuntimeError("boom"), inflow_active=True)
+    assert msg == "Seed Error in source 'Race': RuntimeError: boom"
+
+
+def test_format_seed_error_keyerror_without_inflow_uses_fallback() -> None:
+    """KeyError raised without an inflow_callable is NOT the state-lookup pattern.
+
+    The actionable-message branch only fires when inflow_active=True — otherwise
+    a KeyError from somewhere inside cls.incorp() would get a misleading
+    "guard inflow(state)" suggestion.
+    """
+    from incorporator.observability.pipeline.fjord import _format_seed_error
+
+    msg = _format_seed_error("Race", KeyError("Track"), inflow_active=False)
+    assert "inflow(state)" not in msg
+    assert msg.startswith("Seed Error in source 'Race': KeyError:")
