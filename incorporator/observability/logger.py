@@ -128,7 +128,14 @@ def _safe_log_filename(prefix: str, suffix: str) -> str:
 
 
 class JSONFormatter(logging.Formatter):
-    """Formats log records as JSON Lines for easy dynamic parsing."""
+    """Emit one JSON-line record per log call so `jq`, log aggregators, and :meth:`LoggingMixin.get_error` can read it back without a regex.
+
+    Wired automatically onto every rotating handler set up by
+    :func:`setup_class_logger` — DXs don't instantiate this directly.
+    Each record is a complete dict with ``level``, ``msg``, ``time``,
+    plus optional ``meta`` / ``wave`` / ``exc_info`` keys depending on
+    what the caller attached as ``extra``.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
         log_obj: Dict[str, Any] = {
@@ -148,14 +155,26 @@ class JSONFormatter(logging.Formatter):
 
 
 class APIFilter(logging.Filter):
-    """Ensures only API-tagged traffic reaches the api.log."""
+    """Routes :meth:`LoggingMixin.log_api` records to ``api.log`` and blocks them from ``error.log``.
+
+    Half of the API/standard split — paired with :class:`StandardFilter`
+    to keep outbound HTTP audit traces in their own file separate from
+    generic lifecycle info.  Activated by the ``is_api: True`` extra
+    that :meth:`LoggingMixin.log_api` attaches to every record.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
         return bool(getattr(record, "is_api", False))
 
 
 class StandardFilter(logging.Filter):
-    """Prevents API-tagged traffic from cluttering the main error.log."""
+    """Blocks API-tagged records from ``error.log`` so the audit-trail stream stays out of the generic error stream.
+
+    The flip side of :class:`APIFilter` — together they enforce the
+    intent split: anything carrying ``is_api: True`` lives only in
+    ``api.log``; everything else flows to ``error.log`` (filtered
+    further by the file handler's level).
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
         return not bool(getattr(record, "is_api", False))
@@ -242,16 +261,54 @@ def setup_class_logger(cls: Type[Any]) -> None:
 
 
 class LoggingMixin:
-    """Provides targeted logging methods and error retrieval to instances and classes."""
+    """Escape-hatch mixin that adds structured per-instance and per-class logging methods to any Incorporator subclass.
+
+    Most DXs reach for :class:`LoggedIncorporator` instead — it already
+    blends this mixin with :class:`Incorporator` and wires the verb
+    wrappers.  Subclass ``LoggingMixin`` directly only when you want
+    ``log_debug`` / ``log_info`` / ``log_error`` / ``log_api`` /
+    ``log_cls_info`` / ``log_cls_error`` plus :meth:`get_error`
+    retrieval on a custom Incorporator subclass without inheriting the
+    full verb-wrapper machinery.
+
+    Example::
+
+        from incorporator import Incorporator
+        from incorporator.observability.logger import (
+            LoggingMixin, setup_class_logger,
+        )
+
+        class Audited(LoggingMixin, Incorporator):
+            pass
+
+        setup_class_logger(Audited)
+        instance.log_info("backtest prep started")
+        failures = await Audited.get_error()
+
+    All methods silently noop when the class hasn't been wired through
+    :func:`setup_class_logger` yet, so calls are cheap to leave in
+    code paths that may run before logging is enabled.  Records land in
+    rotating JSONL files at ``logs/<ClassName>_{api,error,debug}.log``
+    via a ``QueueHandler``-backed background thread, so the event loop
+    is never blocked on disk I/O.
+    """
 
     @classmethod
     async def get_error(cls) -> List[Dict[str, Any]]:
-        """Read every error this class has logged and return it as parsed records.
+        """Pull every error this class has logged for a DLQ-retry pass after an overnight pipeline finishes.
 
-        Tails ``logs/<ClassName>_error.log`` and returns each JSON line as
-        a dict.  Useful for post-run inspection of a stream/fjord daemon,
-        for retry orchestrators that want to re-fan failed URLs, and for
-        unit tests that assert on logged failure shape.
+        Reach for ``get_error()`` when a stream or fjord daemon has
+        drained against a flaky source and you want a structured list
+        of failures to feed back into a retry loop, post-mortem
+        inspection, or a unit test asserting on logged failure shape.
+
+        Example::
+
+            errors = await Launch.get_error()
+            for rec in errors:
+                wave = rec.get("wave", {})
+                for url in wave.get("failed_sources", []):
+                    await retry_queue.put(url)
 
         Each record contains at minimum:
 
@@ -261,12 +318,12 @@ class LoggingMixin:
         - ``wave``: the full :class:`Wave` dump as a dict (when the error
           came from a pipeline wave — chunk index, rows, failed sources,
           processing time, etc.)
-        - ``timestamp`` and other standard ``logging`` fields
+        - ``time`` and other standard ``logging`` fields
 
         Safe to call when no errors have been logged yet — returns an
-        empty list rather than raising.  Disk read runs in a worker
-        thread via :func:`asyncio.to_thread` so the event loop is never
-        blocked.
+        empty list rather than raising.  Tails
+        ``logs/<ClassName>_error.log`` in a worker thread via
+        :func:`asyncio.to_thread` so the event loop is never blocked.
         """
 
         def _read_disk() -> List[Dict[str, Any]]:
@@ -299,14 +356,24 @@ class LoggingMixin:
 
     @classmethod
     def log_cls_info(cls, msg: str) -> None:
-        """Write an INFO-level message to this class's ``api.log`` file.
+        """Record a lifecycle event from inside a ``@classmethod`` factory where ``self`` isn't available.
 
-        Use from inside :classmethod:`classmethod` factories (where no
-        ``self`` is available) to record lifecycle events.  The record
-        carries a ``class:"<Name>"`` meta field for later retrieval.
-        Silently noops when the class's logger isn't configured for INFO
-        — safe to sprinkle through code paths that might run before
-        ``enable_logging=True`` ever fires.
+        Rare in user code; common in framework helpers like
+        :meth:`LoggedIncorporator.export` that bracket a pipeline run
+        with ``"Initiating ..."`` / ``"... completed"`` entries before
+        any instance exists.
+
+        Example::
+
+            @classmethod
+            async def my_factory(cls):
+                cls.log_cls_info("Factory run starting")
+
+        The record lands in ``logs/<ClassName>_api.log`` carrying a
+        ``class:"<Name>"`` meta field.  Silently noops when the class's
+        logger isn't configured for INFO — safe to sprinkle through
+        code paths that might run before ``enable_logging=True`` ever
+        fires.
         """
         logger = cls._get_cls_logger()
         if logger.isEnabledFor(logging.INFO):
@@ -315,13 +382,25 @@ class LoggingMixin:
 
     @classmethod
     def log_cls_error(cls, msg: str, exc_info: bool = False) -> None:
-        """Write an ERROR-level message to this class's ``error.log`` file.
+        """Record a failure from inside a ``@classmethod`` factory where ``self`` isn't available, optionally attaching the active traceback.
 
-        Class-level counterpart to :meth:`log_error` — use from inside
-        ``@classmethod`` factories to record failures without a ``self``.
-        Pass ``exc_info=True`` to attach the active exception's traceback
-        (suitable for use inside ``except`` blocks).  Retrievable via
+        Class-level counterpart to :meth:`log_error` — use inside a
+        factory's ``except`` block to capture failures before an
+        instance has been constructed.  Retrievable later via
         :meth:`get_error`.
+
+        Example::
+
+            try:
+                await super().export(**kwargs)
+            except Exception as e:
+                cls.log_cls_error(f"Export failed: {e}", exc_info=True)
+                raise
+
+        The record lands in ``logs/<ClassName>_error.log`` carrying a
+        ``class:"<Name>"`` meta field and (when ``exc_info=True``) the
+        formatted traceback under the ``exc_info`` key.  Silently noops
+        when the class's logger isn't configured for ERROR.
         """
         logger = cls._get_cls_logger()
         if logger.isEnabledFor(logging.ERROR):
@@ -331,17 +410,28 @@ class LoggingMixin:
     # --- INSTANCE-LEVEL LOGGING ---
 
     def log_meta(self) -> str:
-        """Build the ``meta`` string attached to every log record this instance writes.
+        """Stamp a wave or custom log call with this instance's identity from inside an ``outflow(state)`` or other hot-path callback.
 
-        Returns a flat ``key:"value"`` summary containing the class name,
-        primary key (``inc_code``), display name (``inc_name``), and origin
-        URL/file.  Surfaces under ``record["meta"]`` in the JSON log lines
-        so :meth:`get_error` consumers can identify which instance a
-        message came from without scanning the whole record.
+        Returns the flat ``key:"value"`` summary that every
+        instance-level ``log_*`` method auto-attaches to its records —
+        useful when you want to surface that same metadata on a record
+        you're emitting through a different channel (e.g. inside a
+        custom ``outflow`` that writes its own log line).
 
-        Override on a subclass if you want extra identity fields in the
-        meta string — keep the ``key:"value"`` shape so existing log
-        consumers stay compatible.
+        Example::
+
+            async def outflow(state):
+                row = next(iter(state.values()))
+                row.log_info(f"Outflow stamping {row.log_meta()}")
+
+        The string contains the class name, primary key (``inc_code``),
+        display name (``inc_name``), and origin URL/file.  Surfaces
+        under ``record["meta"]`` in the JSON log lines so
+        :meth:`get_error` consumers can identify which instance a
+        message came from without scanning the whole record.  Override
+        on a subclass to add extra identity fields — keep the
+        ``key:"value"`` shape so existing log consumers stay
+        compatible.
         """
         cls = self.__class__
         cls_name = getattr(cls, "__name__", "UnknownClass")
@@ -355,48 +445,83 @@ class LoggingMixin:
         return logging.getLogger(self.__class__.__name__)
 
     def log_debug(self, msg: str) -> None:
-        """Write a DEBUG-level message to this class's ``debug.log`` file.
+        """Verbose per-instance tracing you keep on during dev and turn off in prod — or a post-mortem trail when something later goes wrong.
 
-        Use for verbose tracing that you don't want in production but
-        still want available when something goes wrong.  The record
-        carries :meth:`log_meta` so you can grep by ``inc_code`` later.
-        Silently noops when DEBUG isn't enabled — cheap to leave in.
+        Reach for ``self.log_debug(...)`` to leave breadcrumbs through
+        a parser or a custom ``outflow`` so that, weeks later, a
+        production failure can be replayed by tailing
+        ``logs/<ClassName>_debug.log``.
+
+        Example::
+
+            self.log_debug(f"Parsed {len(rows)} rows from {self.inc_url}")
+
+        The record carries :meth:`log_meta` so you can grep by
+        ``inc_code`` later.  Silently noops when DEBUG isn't enabled —
+        cheap to leave in.
         """
         logger = self._get_logger()
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(msg, extra={"meta": self.log_meta(), "is_api": False})
 
     def log_info(self, msg: str) -> None:
-        """Write an INFO-level message to this class's ``api.log`` file.
+        """Mark per-instance lifecycle events worth keeping — fetch started, 100 rows parsed, daemon resumed after a pause.
 
-        Default channel for "things happened" messages tied to a specific
-        instance.  Pairs with :meth:`log_error` for the failure case and
-        :meth:`log_api` for outbound HTTP request tracing.
+        The default channel for "things happened" messages tied to a
+        specific instance.  Pairs with :meth:`log_error` for the failure
+        case and :meth:`log_api` for outbound HTTP request tracing.
+
+        Example::
+
+            self.log_info(f"Fetched {len(rows)} rows for {self.inc_code}")
+
+        The record lands in ``logs/<ClassName>_api.log`` with
+        :meth:`log_meta` attached.  Silently noops when INFO isn't
+        enabled.
         """
         logger = self._get_logger()
         if logger.isEnabledFor(logging.INFO):
             logger.info(msg, extra={"meta": self.log_meta(), "is_api": False})
 
     def log_error(self, msg: str, exc_info: bool = False) -> None:
-        """Write an ERROR-level message to this class's ``error.log`` file.
+        """Capture caught exceptions and recoverable failures on an instance so a retry loop can pick them up via :meth:`get_error` later.
 
-        Use inside ``except`` blocks with ``exc_info=True`` to attach the
-        active traceback to the record.  Retrievable later via
-        :meth:`get_error`, which returns this and every other error the
-        class has logged as a list of parsed records.
+        Reach for ``self.log_error(..., exc_info=True)`` inside
+        ``except`` blocks to attach the active traceback to the record.
+        Retrievable later via :meth:`get_error`, which returns this and
+        every other error the class has logged as a list of parsed
+        records suitable for a DLQ-retry pass.
+
+        Example::
+
+            try:
+                await self._fetch_chunk(url)
+            except httpx.HTTPError as e:
+                self.log_error(f"Chunk fetch failed: {e}", exc_info=True)
+
+        The record lands in ``logs/<ClassName>_error.log`` with
+        :meth:`log_meta` and (when ``exc_info=True``) the formatted
+        traceback under the ``exc_info`` key.
         """
         logger = self._get_logger()
         if logger.isEnabledFor(logging.ERROR):
             logger.error(msg, exc_info=exc_info, extra={"meta": self.log_meta(), "is_api": False})
 
     def log_api(self, msg: str) -> None:
-        """Write an INFO-level message tagged as an outbound HTTP event.
+        """Maintain a clean outbound HTTP request/response audit trail separate from generic lifecycle info.
 
-        The ``is_api: True`` flag on the record lets log handlers route
-        request/response traces to a separate sink from generic info
-        messages — useful when you want a clean audit trail of every
-        outbound call this instance made without the surrounding lifecycle
-        noise.
+        Reach for ``self.log_api(...)`` when you want a grep-able
+        record of every outbound call this instance made without the
+        surrounding lifecycle noise — handy when a flaky upstream
+        forces you to reconstruct a request sequence after the fact.
+
+        Example::
+
+            self.log_api(f"GET {url} -> {response.status_code}")
+
+        The ``is_api: True`` flag on the record routes it to
+        ``logs/<ClassName>_api.log`` via :class:`APIFilter` and keeps
+        it out of ``error.log`` via :class:`StandardFilter`.
         """
         logger = self._get_logger()
         if logger.isEnabledFor(logging.INFO):
@@ -404,50 +529,78 @@ class LoggingMixin:
 
 
 class LoggedIncorporator(LoggingMixin, Incorporator):
-    """Drop-in replacement for :class:`Incorporator` that writes structured logs.
+    """Swap in for :class:`Incorporator` when an overnight pipeline needs structured JSON-line logs you can grep, ship to an aggregator, or feed into a DLQ-retry loop.
 
-    Use ``LoggedIncorporator`` instead of ``Incorporator`` whenever you want
-    production observability — every pipeline call writes JSON-line records
-    to disk under ``logs/<ClassName>_{api,error,debug}.log``, queried
-    afterwards via :meth:`get_error`.
+    Subclass ``LoggedIncorporator`` exactly like ``Incorporator``, then
+    pass ``enable_logging=True`` on any verb call to wire up rotating
+    JSONL files at ``logs/<ClassName>_{api,error,debug}.log``.  Every
+    wave, every caught exception, and every ``self.log_*`` call from
+    inside your code lands on disk for post-mortem inspection or
+    automated retry orchestration.
 
-    Logging is **opt-in per call** via ``enable_logging=True``::
+    Example::
+
+        from incorporator import LoggedIncorporator
 
         class Launch(LoggedIncorporator):
             pass
 
         async for wave in Launch.stream(
-            incorp_params={"inc_url": "..."},
+            incorp_params={"inc_url": "https://api.example.com/launches"},
             enable_logging=True,
         ):
             handle(wave)
 
         # Later, in any process with the same logs/ dir:
         failures = await Launch.get_error()
+        for rec in failures:
+            await retry_queue.put(rec["wave"]["failed_sources"])
 
-    All public verbs (:meth:`incorp`, :meth:`refresh`, :meth:`export`,
-    :meth:`stream`, :meth:`fjord`) accept the same kwargs as their
-    :class:`Incorporator` counterparts plus ``enable_logging``.  Disk I/O
-    runs through a ``QueueHandler`` background thread so the event loop
-    never blocks on log writes.
+    Public verbs you'll reach for:
+
+    - :meth:`incorp` / :meth:`refresh` / :meth:`export` — one-shot
+      verbs with optional bracketed lifecycle logging.
+    - :meth:`stream` / :meth:`fjord` — long-running daemons that
+      mirror every yielded :class:`Wave` to disk.
+    - :meth:`get_error` — replay logged failures as parsed records.
+
+    Logging is **opt-in per call** via ``enable_logging=True`` —
+    default-off keeps wire-compatible parity with :class:`Incorporator`.
+    Disk I/O runs through a ``QueueHandler``-backed background thread
+    so the async event loop never blocks on log writes, and rotating
+    handlers cap each file at ~5 MB × 3 backups.
     """
 
     @classmethod
     async def incorp(
         cls: Type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
     ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
-        """Fetch + parse + register, with optional per-class log file writing.
+        """Production-observable variant of :meth:`Incorporator.incorp` — fetch + parse + register, with an ``enable_logging=True`` opt-in for JSON-line logs to disk.
 
-        Identical to :meth:`Incorporator.incorp` (all kwargs forwarded
-        unchanged) except for one extra option:
+        Reach for this wrapper when the very first fetch into a fresh
+        subclass already matters for your audit trail — typically the
+        cold-boot leg of a stream or fjord daemon, or a one-shot pull
+        that has to survive a post-mortem.
+
+        Example::
+
+            class Launch(LoggedIncorporator):
+                pass
+
+            launches = await Launch.incorp(
+                "https://api.example.com/launches",
+                inc_code="id",
+                enable_logging=True,
+            )
 
         Args:
-            enable_logging: When ``True``, the call also wires up a
-                ``QueueHandler``-backed logger for this class.  Subsequent
-                instance-level log calls (``self.log_info(...)``, etc.)
-                and any failures during the fetch land in
-                ``logs/<ClassName>_*.log``.  Off by default for parity
-                with :class:`Incorporator`.
+            enable_logging: When ``True``, wires up the per-class
+                ``QueueHandler`` logger so subsequent
+                ``self.log_info(...)`` calls and any failures during
+                the fetch land in ``logs/<ClassName>_*.log``.  Off by
+                default for parity with :class:`Incorporator`.
+            *args: Forwarded to :meth:`Incorporator.incorp`.
+            **kwargs: Forwarded to :meth:`Incorporator.incorp`.
 
         Returns:
             Same return shape as :meth:`Incorporator.incorp` — a single
@@ -472,17 +625,23 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     async def refresh(
         cls: Type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
     ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
-        """Re-fetch live data into existing instances, with optional log writing.
+        """Production-observable variant of :meth:`Incorporator.refresh` — re-fetch live data into existing instances, with an ``enable_logging=True`` opt-in for JSON-line logs to disk.
 
-        Identical to :meth:`Incorporator.refresh` (all kwargs forwarded
-        unchanged) except for the extra ``enable_logging`` option, which
-        wires up the per-class disk logger so subsequent
-        ``self.log_info(...)`` / ``self.log_error(...)`` calls land in
-        ``logs/<ClassName>_*.log``.
+        Reach for this wrapper on a manual one-shot mark-to-market
+        re-fetch when you want the refresh leg recorded — useful when
+        a scheduled cron runs ``refresh()`` and you need to prove
+        afterwards what data was current at what time.
+
+        Example::
+
+            await Launch.refresh(enable_logging=True)
+            errors = await Launch.get_error()
 
         Args:
-            enable_logging: Route throughput records and failures to rotating
-                JSON-line log files under ``logs/``.  Defaults to ``False``.
+            enable_logging: When ``True``, wires up the per-class
+                ``QueueHandler`` logger so subsequent
+                ``self.log_info(...)`` / ``self.log_error(...)`` calls
+                land in ``logs/<ClassName>_*.log``.  Off by default.
             *args: Forwarded to :meth:`Incorporator.refresh`.
             **kwargs: Forwarded to :meth:`Incorporator.refresh`.
 
@@ -503,20 +662,27 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
 
     @classmethod
     async def export(cls: Type[TLoggedIncorporator], *, enable_logging: bool = False, **kwargs: Any) -> None:
-        """Serialise instances to a file, with optional log-bracketed lifecycle.
+        """Production-observable variant of :meth:`Incorporator.export` — serialise the object graph to disk, with an ``enable_logging=True`` opt-in that brackets the run with INFO entries and captures any raised exception.
 
-        Identical to :meth:`Incorporator.export` (all kwargs forwarded
-        unchanged).  When ``enable_logging=True`` is also passed, the
-        export is bracketed by ``"Initiating export..."`` and
-        ``"Export process completed successfully."`` info-log entries on
-        ``logs/<ClassName>_api.log``, and any raised exception is logged
-        to ``logs/<ClassName>_error.log`` with the traceback attached
-        before re-raising.
+        Reach for this wrapper inside scheduled batch jobs where the
+        export is the deliverable and a silent failure would go
+        unnoticed until the consumer notices stale data the next day.
+
+        Example::
+
+            await Launch.export(
+                file_type="parquet",
+                filename="launches",
+                enable_logging=True,
+            )
 
         Args:
-            enable_logging: Bracket the export with INFO entries and route
-                any raised exception to ``logs/<ClassName>_error.log``.
-                Defaults to ``False``.
+            enable_logging: When ``True``, brackets the export with
+                ``"Initiating export..."`` / ``"Export process
+                completed successfully."`` INFO entries on
+                ``logs/<ClassName>_api.log``, and routes any raised
+                exception to ``logs/<ClassName>_error.log`` with the
+                traceback attached before re-raising.  Off by default.
             **kwargs: Forwarded to :meth:`Incorporator.export`.
 
         Returns:
@@ -549,29 +715,39 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         outflow: Optional[Any] = None,
         enable_logging: bool = False,
     ) -> AsyncGenerator[Wave, None]:
-        """Long-running pipeline, with each wave mirrored to disk on opt-in.
+        """Production-observable variant of :meth:`Incorporator.stream` — overnight chunked drain with an ``enable_logging=True`` opt-in that mirrors every yielded :class:`Wave` to JSON-line logs on disk.
 
-        Identical to :meth:`Incorporator.stream` (every kwarg forwarded
-        unchanged).  When ``enable_logging=True`` is also passed:
+        Reach for this wrapper on the unattended overnight drain you
+        intend to grep over the next morning — every successful chunk,
+        every failed source, and every fatal pipeline error lands on
+        disk while the caller keeps consuming waves in real time.
 
-        - Every :class:`Wave` yielded by the engine is also written to
-          ``logs/<ClassName>_api.log`` (successful chunks) or
-          ``logs/<ClassName>_error.log`` (chunks with ``failed_sources``).
-          Each log record carries the full Pydantic dump under the
-          ``wave`` key, accessible later via :meth:`get_error`.
-        - Fatal pipeline failures land in ``logs/<ClassName>_error.log``
-          with the traceback before re-raising to the caller.
+        Example::
 
-        The Wave itself is yielded to the caller **before** any disk write
-        completes — the QueueHandler thread handles the write
-        asynchronously, so the async-for loop is never blocked on I/O.
+            async for wave in Launch.stream(
+                incorp_params={"inc_url": "https://api.example.com/launches"},
+                poll_interval=300,
+                enable_logging=True,
+            ):
+                handle(wave)
+
+            failures = await Launch.get_error()
 
         Args:
-            enable_logging: Mirror every :class:`Wave` to disk and route
-                fatal errors to ``logs/<ClassName>_error.log``.
-                Defaults to ``False``.
+            enable_logging: When ``True``, mirrors every :class:`Wave`
+                to ``logs/<ClassName>_api.log`` (successful chunks) or
+                ``logs/<ClassName>_error.log`` (chunks with
+                ``failed_sources``), and routes fatal pipeline failures
+                to the error log with traceback before re-raising.
+                Off by default.
 
         All other kwargs are forwarded unchanged to :meth:`Incorporator.stream`.
+
+        Each log record carries the full Pydantic dump under the
+        ``wave`` key, accessible later via :meth:`get_error`.  The
+        Wave itself is yielded to the caller **before** any disk write
+        completes — the QueueHandler thread handles the write
+        asynchronously, so the async-for loop is never blocked on I/O.
 
         Yields:
             :class:`Wave` — same shape as :meth:`Incorporator.stream`.
@@ -618,26 +794,36 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         inflow: Optional[Any] = None,
         enable_logging: bool = False,
     ) -> AsyncGenerator[Wave, None]:
-        """Multi-source pipeline, with each wave mirrored to disk on opt-in.
+        """Production-observable variant of :meth:`Incorporator.fjord` — live stateful multi-source daemon with an ``enable_logging=True`` opt-in that mirrors every yielded :class:`Wave` to JSON-line logs on disk.
 
-        Identical to :meth:`Incorporator.fjord` (every kwarg forwarded
-        unchanged).  When ``enable_logging=True`` is also passed:
+        Reach for this wrapper when the fjord fuses N concurrent
+        sources through your ``outflow(state)`` and you need a single
+        unified audit log — every source's waves and every outflow
+        emission land under *this* class regardless of which source
+        produced them, so one :meth:`get_error` call returns the full
+        pipeline's error history.
 
-        - Every :class:`Wave` yielded by the fjord engine — including
-          per-source ``"fjord_refresh:<Class>"`` and
-          ``"outflow:<DynamicClass>"`` operations — is mirrored to
-          ``logs/<ClassName>_api.log`` (throughput) or
-          ``logs/<ClassName>_error.log`` (failures).  All waves log
-          under *this* class regardless of which source produced them,
-          so :meth:`get_error` returns the full pipeline's error history
-          from one call.
-        - Fatal failures land in the error log with traceback attached
-          before re-raising.
+        Example::
+
+            async for wave in Combined.fjord(
+                stream_params=[
+                    {"incorp_params": {"inc_url": prices_url}},
+                    {"incorp_params": {"inc_url": orders_url}},
+                ],
+                outflow=my_fuse_fn,
+                export_params={"file_type": "parquet", "filename": "fused"},
+                enable_logging=True,
+            ):
+                handle(wave)
 
         Args:
-            enable_logging: Mirror every :class:`Wave` to disk and route
-                fatal errors to ``logs/<ClassName>_error.log``.
-                Defaults to ``False``.
+            enable_logging: When ``True``, mirrors every :class:`Wave`
+                — including per-source ``"fjord_refresh:<Class>"`` and
+                ``"outflow:<DynamicClass>"`` operations — to
+                ``logs/<ClassName>_api.log`` (throughput) or
+                ``logs/<ClassName>_error.log`` (failures), and routes
+                fatal pipeline failures to the error log with traceback
+                before re-raising.  Off by default.
 
         All other kwargs are forwarded unchanged to :meth:`Incorporator.fjord`.
 
