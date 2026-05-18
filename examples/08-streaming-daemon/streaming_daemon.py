@@ -1,23 +1,24 @@
 """
-Tutorial 5 — Streaming Daemon: Two Polling Modes for Two Real Use Cases
------------------------------------------------------------------------
+Tutorial 8 — Streaming Daemon: Paginated Bulk Export at O(1) Memory
+-------------------------------------------------------------------
 Companion script for `examples/08-streaming-daemon/README.md`.
 
-Demonstrates the two engines that `stream()` exposes via the
-`stateful_polling` flag:
+``stream()``'s canonical job is paginated bulk-export chunking: drain
+a multi-page source one page at a time, append each chunk to disk,
+release the chunk, repeat — peak memory pinned at one page regardless
+of dataset size.  ``chunking_demo`` below shows that pattern against
+CoinGecko's ``/coins/markets`` catalogue.
 
-1. ``stateful_demo`` — ``stateful_polling=True`` against Binance's
-   live ticker.  Live registry, refresh in place every 30 s, snapshot
-   to NDJSON every 5 min.  This is the long-running dashboard pattern;
-   Ctrl+C / SIGTERM drains gracefully.
-2. ``chunking_demo`` — ``stateful_polling=False`` (default) against
-   paginated CoinGecko ``/coins/markets``.  Each wave is one page;
-   chunks appended to NDJSON; daemon exits cleanly when the paginator
-   exhausts.  This is a one-shot bulk-drain pattern.
+For live single-source registries that need to stay hot in memory and
+snapshot to disk on a cadence, ``stream(stateful_polling=True)``
+survives as a compatibility shim over the fjord engine.
+``stateful_demo`` shows that path against Binance's live ticker.
+For multi-source live registries or any cross-source join, reach
+for ``fjord()`` directly (see Tutorial 10) — the shim is single-
+source only.
 
-``main()`` runs only the chunking demo by default (it terminates).
-Uncomment the ``await stateful_demo()`` call to run the long-running
-Binance ticker daemon instead.
+``main()`` toggles between the two demos so the file is runnable
+either way — flip which call is commented in / out.
 
 Run with:
     python examples/08-streaming-daemon/streaming_daemon.py
