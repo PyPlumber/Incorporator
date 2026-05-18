@@ -66,6 +66,10 @@ Thumbs.db
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Session-only benchmark output (per-run timing capture); the curated
+# results live in docs/benchmark_results_*.md if/when committed.
+bench_*.txt
+
 # 9. ETL Data Feeds & Local Outputs
 data/
 output_data/
