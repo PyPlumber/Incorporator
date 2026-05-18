@@ -112,5 +112,14 @@ class IncorporatorList(List[T]):
         raising — the same way Python's ``dict.get()`` does.  The registry
         is shared with the class itself, so ``Launch.inc_dict[key]`` and
         ``launches.inc_dict[key]`` return the same instance.
+
+        **The registry is a ``weakref.WeakValueDictionary`` — keep the
+        ``IncorporatorList`` alive.** The list returned by ``incorp()`` is
+        the only strong-ref holder for the instances it registered.  If
+        you discard it (``await Class.incorp(...)`` without binding to a
+        variable), Python's garbage collector reaps the instances and the
+        registry will be empty at the next read.  Always bind the return
+        into a local variable for as long as you need
+        ``Class.inc_dict[key]`` to resolve.
         """
         return cast("weakref.WeakValueDictionary[Any, Any]", self._model_class.inc_dict)
