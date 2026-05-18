@@ -27,7 +27,13 @@ OnErrorPolicy = Literal["restart", "isolate", "fail_watershed"]
 
 
 class Current(BaseModel):
-    """One node in a :class:`Watershed`.
+    """One node in a :class:`Watershed` graph.
+
+    Most users reach for the verb-typed subclasses :class:`Stream`,
+    :class:`Fjord`, or :class:`Export` — they carry the kwargs each tick
+    action needs and give callers good mypy ergonomics. The bare
+    ``Current(...)`` constructor stays available as the escape hatch for
+    tests or unusual integrations that need to drive their own tick body.
 
     Attributes:
         name: Unique identifier within the watershed.
@@ -61,20 +67,49 @@ class Current(BaseModel):
 
 
 class Stream(Current):
-    """A per-tick chunking-mode ``stream()`` drain.
+    """One source, pulled fresh on every tick of a Watershed window.
 
-    Each tick consumes :meth:`Incorporator.stream` in chunking mode
-    (``stateful_polling=False``) until the source is drained, then exits.
-    Tideweaver's ``interval`` IS the polling cadence between drains.
+    Use a ``Stream`` current when you want a single :meth:`incorp` call
+    to run on a steady cadence inside a Watershed — the equivalent of
+    ``cls.stream()`` as a single node in an orchestrated graph. Each
+    tick fires a chunking-mode :meth:`Incorporator.stream` drain against
+    the source until exhausted, then exits; the watershed's
+    ``interval`` IS the polling cadence between drains. The class
+    registry persists between ticks (via a ``_tideweaver_snapshot``
+    strong-ref the scheduler parks on the class), so a downstream
+    :class:`Fjord` current sees accumulated upstream state on each
+    flush.
 
-    The Stream's class registry persists between ticks via a
-    ``_tideweaver_snapshot`` strong-ref the scheduler parks on the class,
-    so a downstream :class:`Fjord` current sees accumulated upstream state
-    on each flush.  If what you actually want is the standalone
-    ``stream(stateful_polling=True)`` long-running daemon — with its own
-    internal ``refresh_interval`` / ``export_interval`` — call that verb
-    directly (``cls.stream(stateful_polling=True, ...)``) instead of
-    wrapping it in a Watershed.
+    Example — a head Stream in a diamond watershed pulling Binance
+    top-of-book every 15 seconds::
+
+        head = Stream(
+            name="binance",
+            cls=BinanceBook,
+            interval=15,
+            incorp_params={
+                "inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
+                "inc_code": "symbol",
+            },
+        )
+
+    If you instead want a long-running stateful daemon — with its own
+    internal ``refresh_interval`` / ``export_interval`` — call
+    ``cls.stream(stateful_polling=True, ...)`` directly outside any
+    Watershed. ``Stream(stateful_polling=True)`` is rejected at
+    construction time precisely because it conflicts with the
+    watershed's tick model; see :meth:`_reject_stateful_polling` for
+    the two intent-aware alternatives.
+
+    Attributes:
+        incorp_params: Forwarded to :meth:`Incorporator.stream` as the
+            ``incorp_params`` dict (``inc_url``, ``inc_code``, headers,
+            params, paginator, etc.).
+        refresh_params: Optional override of refresh-time kwargs. Rarely
+            needed inside a Watershed since Tideweaver controls cadence.
+        export_params: Optional per-tick export target. Most pipelines
+            leave this empty and let a downstream :class:`Fjord` or
+            :class:`Export` current handle persistence.
     """
 
     incorp_params: Dict[str, Any] = Field(default_factory=dict)
@@ -114,32 +149,84 @@ class Stream(Current):
 
 
 class Fjord(Current):
-    """A per-tick "fjord flush": snapshot upstream + ``outflow(state)`` + export.
+    """Fuse one or more upstream currents into a composite output every tick.
 
-    The flush does NOT call ``cls.fjord()`` (which is a long-running daemon).
-    Each tick snapshots the upstream :class:`Current` classes' registries
-    (``cls.inc_dict``), invokes the user-supplied ``outflow(state)`` function
-    loaded from the resolved outflow sidecar, builds (or looks up) a dynamic
-    output class, and exports.
+    Use a ``Fjord`` current as the tail of a multi-source Watershed
+    shape (``diamond``, ``fanout-into-flush``, custom edges) when you
+    need to join live data from upstream :class:`Stream` or
+    :class:`Fjord` currents into a single derived dataset on a steady
+    cadence — the live mark-to-market dashboard, the fantasy-NASCAR
+    Sunday fusion, the cross-exchange arbitrage spread.
 
-    The outflow sidecar is resolved per-current first, then per-watershed,
-    then erroring if neither is set.
+    Example — diamond tail joining three exchange Streams into a
+    best-market record every 30 seconds, exporting to NDJSON::
+
+        tail = Fjord(
+            name="best_market",
+            cls=BestMarket,
+            interval=30,
+            export_params={"file_path": "arb_signals.ndjson"},
+        )
+        watershed = Watershed.diamond(
+            window=(start, end),
+            head=binance_stream,
+            middle=[coinbase_stream, kraken_stream],
+            tail=tail,
+            outflow="arb_outflow.py",
+        )
+
+    On every tick the current snapshots the upstream classes'
+    registries (``cls.inc_dict``), invokes the user-supplied
+    ``outflow(state)`` from the resolved outflow sidecar, materialises
+    the returned rows into a dynamic output class, and exports.  The
+    outflow sidecar is resolved per-current first, then per-watershed,
+    then errors if neither is set.
+
+    This is the per-tick *flush* primitive — it does NOT call
+    ``cls.fjord()`` (which is a long-running daemon, ill-suited to
+    windowed orchestration).  For multi-source live streaming OUTSIDE a
+    Watershed, call :meth:`Incorporator.fjord` directly.
 
     Attributes:
-        export_params: Forwarded to :meth:`Incorporator.export`.  May be a
-            single-output dict (``{"file_path": "..."}``) or a multi-output
-            dict keyed by derived class name (matching ``fjord()``'s shape).
+        export_params: Forwarded to :meth:`Incorporator.export`. Pass a
+            single-output dict (``{"file_path": "..."}``) for the common
+            case, or a multi-output dict keyed by derived class name
+            (matching :meth:`Incorporator.fjord`'s shape) when the
+            ``outflow(state)`` function returns multiple class rosters.
     """
 
     export_params: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Export(Current):
-    """A per-tick :meth:`Incorporator.export` call.
+    """Periodically snapshot an existing Incorporator subclass's registry to disk.
 
-    The simplest verb — useful for periodic snapshots of an existing
-    Incorporator subclass's registry (populated by an upstream
-    :class:`Stream` or :class:`Fjord`).
+    Use an ``Export`` current when you want to persist an upstream's
+    data on a different cadence than the upstream produces it — for
+    example, capture a Parquet snapshot at the close of a Watershed
+    window while an upstream :class:`Stream` keeps refreshing every 30
+    seconds. The current calls :meth:`Incorporator.export` against the
+    referenced class's ``inc_dict`` registry.
+
+    Example — daily Parquet snapshot of a Stream-fed registry at
+    midnight::
+
+        snapshot = Export(
+            name="daily_parquet",
+            cls=BinanceBook,
+            interval=86400,
+            depends_on=["binance"],
+            export_params={"file_path": "binance_daily.parquet"},
+        )
+
+    The simplest of the three verb-typed Currents — no outflow sidecar
+    needed, no upstream snapshotting, just one ``export()`` call per
+    tick.
+
+    Attributes:
+        export_params: Forwarded to :meth:`Incorporator.export`. The
+            ``file_path`` extension picks the format
+            (``.parquet`` / ``.ndjson`` / ``.csv`` / ``.sqlite`` / etc.).
     """
 
     export_params: Dict[str, Any] = Field(default_factory=dict)
