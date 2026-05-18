@@ -40,7 +40,7 @@ With a single command, Incorporator creates the `employees` table, infers the co
 
 ```python
 await User.export(
-    users, 
+    instance=users,
     file_path="users_warehouse.db", 
     sql_table="employees", 
     if_exists="replace"
@@ -52,7 +52,7 @@ Avro requires a highly strict schema definition. Incorporator dynamically genera
 
 ```python
 await User.export(
-    users, 
+    instance=users,
     file_path="users_datalake.avro", 
     format_type=FormatType.AVRO
 )

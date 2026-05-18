@@ -174,7 +174,7 @@ class Pair(Incorporator):
 
 async def main():
     # 1. Initial load — fills Pair.inc_dict (~600 pairs on .us, ~1,900 on .com).
-    await Pair.incorp(
+    pairs = await Pair.incorp(
         inc_url="https://api.binance.us/api/v3/ticker/24hr",
         inc_code="symbol",
     )
