@@ -15,60 +15,75 @@ every public callable.
 
 ## Table of Contents
 
-- [Visual orientation](#visual-orientation)
-- [If you want X, reach for Y](#if-you-want-x-reach-for-y)
-- [`incorp`](#incorp)
-- [`test`](#test)
-- [`refresh`](#refresh)
-- [`export`](#export)
-- [`stream`](#stream)
-- [`fjord`](#fjord)
-- [`display`](#display)
-- [`LoggedIncorporator` — shared `enable_logging=` note](#loggedincorporator--shared-enable_logging-note)
-- [`get_error`](#loggedincorporator-get_error)
-- [`log_debug` / `log_info` / `log_error`](#loggedincorporator-log_debug--log_info--log_error)
-- [`log_api`](#loggedincorporator-log_api)
-- [`log_meta`](#loggedincorporator-log_meta)
-- [`log_cls_info` / `log_cls_error`](#loggedincorporator-log_cls_info--log_cls_error)
-- [Tideweaver orchestration surface](#tideweaver-orchestration-surface)
-- [`Wave.log_meta`](#wavelog_meta)
+- [Discovery & ingestion](#discovery--ingestion)
+  - [`test`](#test)
+  - [`incorp`](#incorp)
+- [Live updates](#live-updates)
+  - [`refresh`](#refresh)
+- [Persistence](#persistence)
+  - [`export`](#export)
+- [Daemons](#daemons)
+  - [`stream`](#stream)
+  - [`fjord`](#fjord)
+- [REPL](#repl)
+  - [`display`](#display)
+- [Orchestration](#orchestration)
+  - [`Tideweaver orchestration surface`](#tideweaver-orchestration-surface)
+- [Telemetry](#telemetry)
+  - [`Wave.log_meta`](#wavelog_meta)
+- [Observability layer (`LoggedIncorporator`)](#observability-layer-loggedincorporator)
+  - [`LoggedIncorporator` — shared `enable_logging=` note](#loggedincorporator--shared-enable_logging-note)
+  - [`get_error`](#loggedincorporator-get_error)
+  - [`log_debug` / `log_info` / `log_error`](#loggedincorporator-log_debug--log_info--log_error)
+  - [`log_api`](#loggedincorporator-log_api)
+  - [`log_meta`](#loggedincorporator-log_meta)
+  - [`log_cls_info` / `log_cls_error`](#loggedincorporator-log_cls_info--log_cls_error)
 - [Class-attribute reference](#class-attribute-reference)
 - [Shared kwargs glossary](#shared-kwargs-glossary)
 - [Where to Go Next](#where-to-go-next)
 
 ---
 
-## Visual orientation
+## Discovery & ingestion
 
-```mermaid
-flowchart LR
-    incorp([incorp]) -->|seeds| registry[(inc_dict registry)]
-    test -.->|scouts first| incorp
-    registry -->|keeps live| refresh([refresh])
-    registry -->|daemonises| stream([stream])
-    registry -->|persists| export([export])
-    refresh --> registry
-    stream --> registry
-    fjord[fjord] -->|fuses N sources via outflow_state| export
-    src1[Source A] --> fjord
-    src2[Source B] --> fjord
-    src3[Source C] --> fjord
-    display[display REPL-only] -.- registry
+### test
+
+**Signature**
+```python
+@classmethod
+async def test(
+    cls: Type[TIncorporator],
+    **kwargs: Any,
+) -> Union[TIncorporator, "IncorporatorList[TIncorporator]", List[Any]]:
 ```
 
-### If you want X, reach for Y
+**What it does (pseudocode)**
+1. Force `__inspect=True` so the network engine returns the raw payload tree alongside the parsed instances.
+2. Cap `call_lim=1` when a paginator is set; default `timeout=5.0` so unresponsive endpoints fail fast.
+3. Delegate to `incorp(**kwargs)` inside a try/except that traps every exception and routes to `analyze_error()`.
+4. The inspector walks the payload, prints a tree view plus suggested `inc_code` / `inc_name` / `rec_path` / `conv_dict`.
+5. Slice the resulting list down to at most 3 records so a giant endpoint can't flood your terminal.
+6. Return the truncated list (or an empty `IncorporatorList` on failure) — diagnostics have already printed by then.
 
-| You want | Reach for |
-|---|---|
-| Cold-start ETL pull of a fresh endpoint | `incorp()` |
-| Live mark-to-market dashboard | `refresh()` or `stream(stateful_polling=True)` |
-| Unattended overnight 10M-row drain | `stream()` chunking mode |
-| Fantasy NASCAR Sunday — fuse five APIs | `fjord()` |
-| 30-second Shady Jimmy probe of an unknown endpoint | `test()` |
+**When to reach for it**
+The 30-second Shady Jimmy probe — point it at an endpoint you've never seen, read the printed suggestions, paste them into a real `incorp()` call. Use it whenever you're about to hand-write `rec_path` and `conv_dict` from a tab full of raw JSON.
+
+**Common kwargs**
+- Everything `incorp()` accepts — `test()` forwards `**kwargs` unchanged.
+- `timeout` — overrides the 5-second safety default if your endpoint is genuinely slow.
+- `call_lim` — explicitly override the 1-page paginator cap.
+- `inc_page` — pass a paginator to inspect how pagination shapes the payload.
+
+**Yields / returns**
+An `IncorporatorList` of at most 3 records on success, an empty `IncorporatorList` on fetch failure. Inspector output is the real product — the return value is for poking at structure in the REPL afterward.
+
+**See also**
+[Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md) ·
+[Debugging Guide](./debugging.md)
 
 ---
 
-## incorp
+### incorp
 
 **Signature**
 ```python
@@ -120,44 +135,9 @@ Returns a single `TIncorporator` for one-record sources, otherwise an `Incorpora
 
 ---
 
-## test
+## Live updates
 
-**Signature**
-```python
-@classmethod
-async def test(
-    cls: Type[TIncorporator],
-    **kwargs: Any,
-) -> Union[TIncorporator, "IncorporatorList[TIncorporator]", List[Any]]:
-```
-
-**What it does (pseudocode)**
-1. Force `__inspect=True` so the network engine returns the raw payload tree alongside the parsed instances.
-2. Cap `call_lim=1` when a paginator is set; default `timeout=5.0` so unresponsive endpoints fail fast.
-3. Delegate to `incorp(**kwargs)` inside a try/except that traps every exception and routes to `analyze_error()`.
-4. The inspector walks the payload, prints a tree view plus suggested `inc_code` / `inc_name` / `rec_path` / `conv_dict`.
-5. Slice the resulting list down to at most 3 records so a giant endpoint can't flood your terminal.
-6. Return the truncated list (or an empty `IncorporatorList` on failure) — diagnostics have already printed by then.
-
-**When to reach for it**
-The 30-second Shady Jimmy probe — point it at an endpoint you've never seen, read the printed suggestions, paste them into a real `incorp()` call. Use it whenever you're about to hand-write `rec_path` and `conv_dict` from a tab full of raw JSON.
-
-**Common kwargs**
-- Everything `incorp()` accepts — `test()` forwards `**kwargs` unchanged.
-- `timeout` — overrides the 5-second safety default if your endpoint is genuinely slow.
-- `call_lim` — explicitly override the 1-page paginator cap.
-- `inc_page` — pass a paginator to inspect how pagination shapes the payload.
-
-**Yields / returns**
-An `IncorporatorList` of at most 3 records on success, an empty `IncorporatorList` on fetch failure. Inspector output is the real product — the return value is for poking at structure in the REPL afterward.
-
-**See also**
-[Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md) ·
-[Debugging Guide](./debugging.md)
-
----
-
-## refresh
+### refresh
 
 **Signature**
 ```python
@@ -188,7 +168,7 @@ async def refresh(
 6. Rebuild instances in a worker thread; Pydantic field updates mutate existing Python references in-place — callers holding the old list see fresh values without reassignment.
 
 **When to reach for it**
-The live mark-to-market verb. Use it when your object graph is already built and you want the latest field values without rebuilding the world — Binance ticker polling, SaaS roster sync, anything where Python identity needs to survive between fetches.
+The one-shot re-fetch verb — call it from a REPL or wrap it in your own scheduler when you want fresh field values mutated into the existing object graph without rebuilding the world. For daemonised live mark-to-market reach for `fjord()` (Tutorial 10) instead; `refresh()` itself is manual.
 
 **Common kwargs**
 - `instance` — mode selector (`None`, new URL string, or specific instances).
@@ -206,7 +186,9 @@ Same as `incorp()` — a single instance or an `IncorporatorList[TIncorporator]`
 
 ---
 
-## export
+## Persistence
+
+### export
 
 **Signature**
 ```python
@@ -255,7 +237,9 @@ The fan-out write verb — point `incorp()`'s result at a Parquet warehouse, a S
 
 ---
 
-## stream
+## Daemons
+
+### stream
 
 **Signature**
 ```python
@@ -283,13 +267,13 @@ async def stream(
 6. Yield one `Wave` per iteration (chunk in chunking, refresh / export tick in stateful) — engine completion ends the generator.
 
 **When to reach for it**
-The unattended overnight drain verb. Chunking mode for paginated bulk pulls that need to keep RSS flat over 10M rows; stateful mode for live dashboards where one source needs both fresh field values and snapshot exports on independent cadences.
+The chunking daemon — unattended overnight drain of a paginated source, one page in memory at a time, so 10M-row pulls stay flat on RSS. Reach for `fjord()` instead when you want the live stateful daemon shape (mark-to-market dashboards, multi-source polling).
 
 **Common kwargs**
 - `incorp_params` — kwargs forwarded to `incorp()` every wave (or just once in stateful mode).
 - `refresh_params` — kwargs for `refresh()`; omit to skip refresh, pass `{}` to run with defaults.
 - `export_params` — kwargs for `export()`; chunking mode forces `if_exists="append"`.
-- `stateful_polling` — `False` (chunking, default) vs `True` (daemon).
+- `stateful_polling` — `False` (chunking, default) vs `True` (delegates to the fjord engine for single-source stateful runs).
 - `poll_interval` / `refresh_interval` / `export_interval` — interval cascade; refresh and export each fall back to `poll_interval`.
 - `inflow=` — sidecar for token-resolver helpers plus an optional `inflow(state)` hook (stateful only).
 - `outflow=` — user-defined subclass for the receiver; **stateful only** (raises `ValueError` in chunking mode).
@@ -303,7 +287,7 @@ The unattended overnight drain verb. Chunking mode for paginated bulk pulls that
 
 ---
 
-## fjord
+### fjord
 
 **Signature**
 ```python
@@ -329,7 +313,7 @@ async def fjord(
 7. Yield a `Wave` per phase: `"fjord_incorp:<Class>"`, `"fjord_refresh:<Class>"`, `"export:<Class>"`, and `"outflow:<DynamicClass>"`.
 
 **When to reach for it**
-Fantasy NASCAR Sunday — when you need five APIs alive at once, each refreshing on its own schedule, fused into one row per export tick. Cross-venue spread metrics, multi-exchange arb scans, race-day driver-state synthesis. The verb that turns N rivers into one fjord.
+The stateful live-daemon verb — concurrent source refresh + outflow fusion. Live mark-to-market dashboard fusing CoinGecko USD + Binance USDT, fantasy NASCAR Sunday fusing five APIs into one truth file, or a single-source live registry that keeps mutating in place (N=1 fjord is legitimate when you want the daemon shape without writing a custom loop).
 
 **Common kwargs**
 - `stream_params` — list of `{"cls": ..., "incorp_params": {...}, "refresh_params": {...}, "refresh_interval": ..., "export_params": {...}}` per source.
@@ -348,7 +332,9 @@ Fantasy NASCAR Sunday — when you need five APIs alive at once, each refreshing
 
 ---
 
-## display
+## REPL
+
+### display
 
 **Signature**
 ```python
@@ -374,168 +360,9 @@ The REPL spot-check. Use it when you're tabbing through `launches.inc_dict` inte
 
 ---
 
-## LoggedIncorporator — shared `enable_logging=` note
+## Orchestration
 
-Every verb on `LoggedIncorporator` (`incorp`, `refresh`, `export`, `stream`, `fjord`)
-accepts every kwarg its `Incorporator` counterpart accepts, plus one extra:
-`enable_logging: bool = False`. When set to `True`, the call wires up a
-per-class `QueueHandler`-backed logger that writes rotating JSON-line records
-to `logs/<ClassName>_{api,error,debug}.log`. Disk I/O runs on a background
-thread — the event loop never blocks on log writes. Logging is **opt-in per
-call**, so the same class can run unobserved one moment and fully-traced the
-next. Failures, fatal pipeline errors, and per-`Wave` throughput are all
-routed through `_route_wave_to_log()` and queryable later via `get_error()`.
-
----
-
-<a id="loggedincorporator-get_error"></a>
-## LoggedIncorporator.get_error
-
-**Signature**
-```python
-@classmethod
-async def get_error(cls) -> List[Dict[str, Any]]:
-```
-
-**What it does (pseudocode)**
-1. Resolve `logs/<ClassName>_error.log`; return `[]` if the file does not exist (safe to call before any error has been logged).
-2. In a worker thread (`asyncio.to_thread`), walk the file line-by-line and parse each JSON line into a dict.
-3. Silently skip malformed lines; treat `OSError` as "no errors yet" — never propagate disk-read failures.
-4. Return the list of parsed records (level, msg, meta, wave dump, timestamp, optional exc_info).
-
-**When to reach for it**
-The post-run forensics verb. After an overnight stream daemon, call `await Class.get_error()` to walk every failure the pipeline saw — feed `.failed_sources` into a retry orchestrator, assert on logged failure shape in tests, or generate a Slack digest of what broke.
-
-**Common kwargs**
-- None — `get_error()` is parameter-free.
-
-**Yields / returns**
-`List[Dict[str, Any]]` — each dict has `level`, `msg`, `meta`, optional `wave` (full Pydantic dump), `time`, optional `exc_info`.
-
-**See also**
-[Production Debugging with `get_error()`](./debugging.md) ·
-[Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md)
-
----
-
-<a id="loggedincorporator-log_debug--log_info--log_error"></a>
-## LoggedIncorporator.log_debug / log_info / log_error
-
-**Signature**
-```python
-def log_debug(self, msg: str) -> None: ...
-def log_info(self, msg: str) -> None: ...
-def log_error(self, msg: str, exc_info: bool = False) -> None: ...
-```
-
-**What it does (pseudocode)**
-1. Grab the class-scoped logger via `_get_logger()`; cheap `isEnabledFor` check noops when the level is off — free to sprinkle through unlogged code paths.
-2. Build a flat `meta` string via `self.log_meta()` (class, `inc_code`, `inc_name`, origin URL/file).
-3. Dispatch to `logger.<level>()` with `extra={"meta": ..., "is_api": False}`; `log_error` additionally honours `exc_info=True` for traceback attach inside `except` blocks.
-4. The `QueueHandler` enqueues the record on a background thread; the caller returns immediately.
-
-**When to reach for it**
-The per-instance trace verbs — use `log_debug` for verbose noise you want grep-able later, `log_info` for "this happened to this instance" milestones, `log_error` (with `exc_info=True`) inside `except` blocks to capture the traceback alongside instance identity for later forensics.
-
-**Common kwargs**
-- `msg` — the human-readable message; `meta` is attached automatically.
-- `exc_info` (`log_error` only) — `True` inside `except` to attach the active traceback.
-
-**Yields / returns**
-`None`. The record is enqueued for the background log thread.
-
-**See also**
-[Production Debugging with `get_error()`](./debugging.md)
-
----
-
-<a id="loggedincorporator-log_api"></a>
-## LoggedIncorporator.log_api
-
-**Signature**
-```python
-def log_api(self, msg: str) -> None:
-```
-
-**What it does (pseudocode)**
-1. Cheap level check on the class logger; build the `meta` string from `self.log_meta()`.
-2. Emit an INFO record with `extra={"meta": ..., "is_api": True}`.
-3. The `APIFilter` on `api.log` lets the record through; `StandardFilter` on `error.log` drops it — outbound HTTP traces accumulate cleanly in `logs/<ClassName>_api.log`, separated from instance lifecycle noise.
-
-**When to reach for it**
-The audit-trail verb for outbound HTTP. Use it to record "I called endpoint X with payload Y at time T" without polluting your generic info channel — handy when you want a clean record of every request a long-running daemon made overnight.
-
-**Common kwargs**
-- `msg` — the human-readable trace line; identity meta is attached automatically.
-
-**Yields / returns**
-`None`. The record is routed to `api.log` by the `is_api=True` filter flag.
-
-**See also**
-[Production Debugging with `get_error()`](./debugging.md)
-
----
-
-<a id="loggedincorporator-log_meta"></a>
-## LoggedIncorporator.log_meta
-
-**Signature**
-```python
-def log_meta(self) -> str:
-```
-
-**What it does (pseudocode)**
-1. Read `self.__class__.__name__` (fallback `"UnknownClass"`), plus `self.inc_code`, `self.inc_name`, `cls.inc_file`, `cls.inc_url`.
-2. Format as a flat `key:"value", key:"value", ...` string.
-3. Return — used by every instance log call as the `extra["meta"]` payload.
-
-**When to reach for it**
-You rarely call it directly — every `log_info` / `log_error` / `log_api` call invokes it for you. Override it on a subclass when you want extra identity fields in the meta string; keep the `key:"value"` shape so existing `get_error()` consumers still parse the records.
-
-**Common kwargs**
-- None — bound method on the instance.
-
-**Yields / returns**
-`str` — one-line identity summary.
-
-**See also**
-[Production Debugging with `get_error()`](./debugging.md)
-
----
-
-<a id="loggedincorporator-log_cls_info--log_cls_error"></a>
-## LoggedIncorporator.log_cls_info / log_cls_error
-
-**Signature**
-```python
-@classmethod
-def log_cls_info(cls, msg: str) -> None: ...
-@classmethod
-def log_cls_error(cls, msg: str, exc_info: bool = False) -> None: ...
-```
-
-**What it does (pseudocode)**
-1. Look up the class logger via `_get_cls_logger()`; cheap level check noops when the level is off.
-2. Build a class-only meta string (`class:"<Name>"`), since there is no `self` to inspect.
-3. Dispatch to `logger.info()` / `logger.error()` with `extra={"meta": ..., "is_api": False}`; `log_cls_error` honours `exc_info=True` to ride the active traceback along.
-4. Factory / `@classmethod` lifecycle events land in the same `api.log` / `error.log` files as instance-level events.
-
-**When to reach for it**
-The class-level counterpart to `log_info` / `log_error` — use these inside `@classmethod` factory paths where no `self` exists. They're how `LoggedIncorporator.stream()` brackets daemon runs with "Initiating ..." / "Stream process completed gracefully." entries.
-
-**Common kwargs**
-- `msg` — human-readable message.
-- `exc_info` (`log_cls_error` only) — `True` to attach the active traceback.
-
-**Yields / returns**
-`None`. The record lands in `api.log` (info) or `error.log` (error).
-
-**See also**
-[Production Debugging with `get_error()`](./debugging.md)
-
----
-
-## Tideweaver orchestration surface
+### Tideweaver orchestration surface
 
 **Signatures**
 ```python
@@ -590,7 +417,9 @@ The windowed orchestration verb — when one source's `stream()` isn't enough, w
 
 ---
 
-## Wave.log_meta
+## Telemetry
+
+### Wave.log_meta
 
 **Signature**
 ```python
@@ -613,6 +442,169 @@ Rarely called directly — the routing adapter calls it on every `Wave` written 
 **See also**
 [Production Debugging with `get_error()`](./debugging.md) ·
 [Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md)
+
+---
+
+## Observability layer (`LoggedIncorporator`)
+
+### LoggedIncorporator — shared `enable_logging=` note
+
+Every verb on `LoggedIncorporator` (`incorp`, `refresh`, `export`, `stream`, `fjord`)
+accepts every kwarg its `Incorporator` counterpart accepts, plus one extra:
+`enable_logging: bool = False`. When set to `True`, the call wires up a
+per-class `QueueHandler`-backed logger that writes rotating JSON-line records
+to `logs/<ClassName>_{api,error,debug}.log`. Disk I/O runs on a background
+thread — the event loop never blocks on log writes. Logging is **opt-in per
+call**, so the same class can run unobserved one moment and fully-traced the
+next. Failures, fatal pipeline errors, and per-`Wave` throughput are all
+routed through `_route_wave_to_log()` and queryable later via `get_error()`.
+
+---
+
+<a id="loggedincorporator-get_error"></a>
+### LoggedIncorporator.get_error
+
+**Signature**
+```python
+@classmethod
+async def get_error(cls) -> List[Dict[str, Any]]:
+```
+
+**What it does (pseudocode)**
+1. Resolve `logs/<ClassName>_error.log`; return `[]` if the file does not exist (safe to call before any error has been logged).
+2. In a worker thread (`asyncio.to_thread`), walk the file line-by-line and parse each JSON line into a dict.
+3. Silently skip malformed lines; treat `OSError` as "no errors yet" — never propagate disk-read failures.
+4. Return the list of parsed records (level, msg, meta, wave dump, timestamp, optional exc_info).
+
+**When to reach for it**
+The post-run forensics verb. After an overnight stream daemon, call `await Class.get_error()` to walk every failure the pipeline saw — feed `.failed_sources` into a retry orchestrator, assert on logged failure shape in tests, or generate a Slack digest of what broke.
+
+**Common kwargs**
+- None — `get_error()` is parameter-free.
+
+**Yields / returns**
+`List[Dict[str, Any]]` — each dict has `level`, `msg`, `meta`, optional `wave` (full Pydantic dump), `time`, optional `exc_info`.
+
+**See also**
+[Production Debugging with `get_error()`](./debugging.md) ·
+[Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md)
+
+---
+
+<a id="loggedincorporator-log_debug--log_info--log_error"></a>
+### LoggedIncorporator.log_debug / log_info / log_error
+
+**Signature**
+```python
+def log_debug(self, msg: str) -> None: ...
+def log_info(self, msg: str) -> None: ...
+def log_error(self, msg: str, exc_info: bool = False) -> None: ...
+```
+
+**What it does (pseudocode)**
+1. Grab the class-scoped logger via `_get_logger()`; cheap `isEnabledFor` check noops when the level is off — free to sprinkle through unlogged code paths.
+2. Build a flat `meta` string via `self.log_meta()` (class, `inc_code`, `inc_name`, origin URL/file).
+3. Dispatch to `logger.<level>()` with `extra={"meta": ..., "is_api": False}`; `log_error` additionally honours `exc_info=True` for traceback attach inside `except` blocks.
+4. The `QueueHandler` enqueues the record on a background thread; the caller returns immediately.
+
+**When to reach for it**
+The per-instance trace verbs — use `log_debug` for verbose noise you want grep-able later, `log_info` for "this happened to this instance" milestones, `log_error` (with `exc_info=True`) inside `except` blocks to capture the traceback alongside instance identity for later forensics.
+
+**Common kwargs**
+- `msg` — the human-readable message; `meta` is attached automatically.
+- `exc_info` (`log_error` only) — `True` inside `except` to attach the active traceback.
+
+**Yields / returns**
+`None`. The record is enqueued for the background log thread.
+
+**See also**
+[Production Debugging with `get_error()`](./debugging.md)
+
+---
+
+<a id="loggedincorporator-log_api"></a>
+### LoggedIncorporator.log_api
+
+**Signature**
+```python
+def log_api(self, msg: str) -> None:
+```
+
+**What it does (pseudocode)**
+1. Cheap level check on the class logger; build the `meta` string from `self.log_meta()`.
+2. Emit an INFO record with `extra={"meta": ..., "is_api": True}`.
+3. The `APIFilter` on `api.log` lets the record through; `StandardFilter` on `error.log` drops it — outbound HTTP traces accumulate cleanly in `logs/<ClassName>_api.log`, separated from instance lifecycle noise.
+
+**When to reach for it**
+The audit-trail verb for outbound HTTP. Use it to record "I called endpoint X with payload Y at time T" without polluting your generic info channel — handy when you want a clean record of every request a long-running daemon made overnight.
+
+**Common kwargs**
+- `msg` — the human-readable trace line; identity meta is attached automatically.
+
+**Yields / returns**
+`None`. The record is routed to `api.log` by the `is_api=True` filter flag.
+
+**See also**
+[Production Debugging with `get_error()`](./debugging.md)
+
+---
+
+<a id="loggedincorporator-log_meta"></a>
+### LoggedIncorporator.log_meta
+
+**Signature**
+```python
+def log_meta(self) -> str:
+```
+
+**What it does (pseudocode)**
+1. Read `self.__class__.__name__` (fallback `"UnknownClass"`), plus `self.inc_code`, `self.inc_name`, `cls.inc_file`, `cls.inc_url`.
+2. Format as a flat `key:"value", key:"value", ...` string.
+3. Return — used by every instance log call as the `extra["meta"]` payload.
+
+**When to reach for it**
+You rarely call it directly — every `log_info` / `log_error` / `log_api` call invokes it for you. Override it on a subclass when you want extra identity fields in the meta string; keep the `key:"value"` shape so existing `get_error()` consumers still parse the records.
+
+**Common kwargs**
+- None — bound method on the instance.
+
+**Yields / returns**
+`str` — one-line identity summary.
+
+**See also**
+[Production Debugging with `get_error()`](./debugging.md)
+
+---
+
+<a id="loggedincorporator-log_cls_info--log_cls_error"></a>
+### LoggedIncorporator.log_cls_info / log_cls_error
+
+**Signature**
+```python
+@classmethod
+def log_cls_info(cls, msg: str) -> None: ...
+@classmethod
+def log_cls_error(cls, msg: str, exc_info: bool = False) -> None: ...
+```
+
+**What it does (pseudocode)**
+1. Look up the class logger via `_get_cls_logger()`; cheap level check noops when the level is off.
+2. Build a class-only meta string (`class:"<Name>"`), since there is no `self` to inspect.
+3. Dispatch to `logger.info()` / `logger.error()` with `extra={"meta": ..., "is_api": False}`; `log_cls_error` honours `exc_info=True` to ride the active traceback along.
+4. Factory / `@classmethod` lifecycle events land in the same `api.log` / `error.log` files as instance-level events.
+
+**When to reach for it**
+The class-level counterpart to `log_info` / `log_error` — use these inside `@classmethod` factory paths where no `self` exists. They're how `LoggedIncorporator.stream()` brackets daemon runs with "Initiating ..." / "Stream process completed gracefully." entries.
+
+**Common kwargs**
+- `msg` — human-readable message.
+- `exc_info` (`log_cls_error` only) — `True` to attach the active traceback.
+
+**Yields / returns**
+`None`. The record lands in `api.log` (info) or `error.log` (error).
+
+**See also**
+[Production Debugging with `get_error()`](./debugging.md)
 
 ---
 
