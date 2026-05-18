@@ -13,16 +13,37 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Tide(BaseModel):
-    """One scheduler pass: which currents fired, which were skipped, how long it took.
+    """The per-pass log record yielded by :meth:`Tideweaver.run` — use it to diagnose orchestration scheduling.
 
-    A :class:`Tideweaver` emits one ``Tide`` per pass through its currents
-    list.  ``fired`` lists the currents that produced a wave this pass;
-    ``skipped`` records the currents that were eligible (in topological
-    order) but gated out, paired with a short reason string
-    (``"not_due"``, ``"awaiting_upstream"``, ``"skip_ahead"``).
+    Inspect each ``Tide`` to see which currents fired this pass,
+    which got gated (and why), and how long the pass took — the
+    primary signal for debugging a windowed daemon that is dropping
+    ticks or stalling on hard edges:
 
-    The model is frozen so callers can pass instances around without
-    worrying about mutation.
+    .. code-block:: python
+
+        async for tide in Tideweaver(watershed).run():
+            print(
+                f"Pass {tide.tide_number}: fired={tide.fired}, "
+                f"skipped={tide.skipped}, dt={tide.duration_sec:.2f}s"
+            )
+
+    Attributes:
+        tide_number: Monotonic 1-indexed counter of scheduler passes.
+        fired: Names of currents that produced a wave this pass.
+        skipped: ``(name, reason)`` pairs for currents gated out;
+            reasons are ``"not_due"`` (interval not elapsed),
+            ``"still_running"`` (previous tick still in flight),
+            ``"awaiting_upstream"`` (hard edge waiting on a fresh
+            upstream wave), or ``"skip_ahead"`` (upstream in-flight
+            tick exceeded the skip threshold).
+        duration_sec: Wall-clock duration of the pass in seconds.
+        timestamp: UTC timestamp when the pass completed.
+
+    Frozen Pydantic model — instances can be passed around without
+    worrying about mutation, and the shape mirrors :class:`Wave` so
+    ``Tide`` records route through the same
+    ``observability/logger.py`` machinery.
     """
 
     model_config = ConfigDict(frozen=True)

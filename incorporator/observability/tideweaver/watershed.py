@@ -22,14 +22,22 @@ DependencyMode = Literal["hard", "soft"]
 
 
 class Edge(BaseModel):
-    """One directed edge in a :class:`Watershed` graph.
+    """The dependency-edge contract: link one current to another with a gating mode.
+
+    ``"hard"`` blocks the downstream until the upstream emits a new
+    wave since the downstream last consumed; ``"soft"`` is
+    fire-and-forget, only sequencing the in-pass order:
+
+    .. code-block:: python
+
+        Edge(from_name="binance", to_name="arb_fjord", mode="hard")
 
     Attributes:
         from_name: The upstream current name.
         to_name: The dependent current name.
-        mode: ``"hard"`` gates the dependent until the upstream emits a new
-            wave; ``"soft"`` only sequences the in-tick order without a
-            data wait.
+        mode: ``"hard"`` gates the dependent until the upstream emits a
+            new wave; ``"soft"`` only sequences the in-tick order
+            without a data wait.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -66,15 +74,45 @@ def _toposort(currents: Sequence[Current], edges: Sequence[Edge]) -> List[str]:
 
 
 class Watershed(BaseModel):
-    """A Tideweaver plan: window + currents + edges.
+    """The declarative plan describing what runs, when, and in what order inside a Tideweaver window.
 
-    Sidecar paths (``inflow`` / ``outflow``) on ``Watershed`` are graph-level
-    defaults.  A :class:`Current` can override them via its own ``inflow`` /
-    ``outflow`` fields.
+    Instead of writing custom asyncio code to coordinate multi-source
+    pipelines, declare the topology — window, currents, edges — and
+    let :class:`Tideweaver` schedule it.  The four shape constructors
+    (:meth:`chain`, :meth:`diamond`, :meth:`fanout`, :meth:`parallel`)
+    cover the common topologies; the bare ``Watershed(...)``
+    constructor stays available for custom shapes with mixed-mode
+    edges:
 
-    Use one of the shape constructors for common topologies; fall back to
-    ``Watershed(currents=..., edges=...)`` for custom graphs with mixed-mode
-    edges.
+    .. code-block:: python
+
+        watershed = Watershed.diamond(
+            window=(start, end),
+            head=binance_stream,
+            middle=[coinbase_stream, kraken_stream],
+            tail=arb_fjord,
+        )
+        async for tide in Tideweaver(watershed).run():
+            ...
+
+    Attributes:
+        window: ``(start, end)`` UTC bounds — start inclusive, end
+            exclusive.  Defines the orchestration window.
+        currents: The :class:`Current` nodes in the graph; names must
+            be unique.
+        edges: Directed :class:`Edge` list; any
+            ``Current.depends_on`` declarations are folded in as
+            ``"hard"`` edges at validation time.
+        inflow: Graph-level default sidecar path; per-current
+            ``inflow`` overrides.
+        outflow: Graph-level default outflow path; per-current
+            ``outflow`` overrides.
+        drain_timeout: Seconds the scheduler waits for in-flight ticks
+            to finish after the window closes.
+
+    The post-construction validator enforces unique names, a
+    window with ``end > start``, edge endpoints that reference real
+    currents, and a directed acyclic graph (cycles are rejected).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -142,7 +180,24 @@ class Watershed(BaseModel):
         dependency_mode: DependencyMode = "hard",
         **kwargs: Any,
     ) -> "Watershed":
-        """Build a linear chain: ``currents[0] → currents[1] → ... → currents[-1]``."""
+        """Sequential pipeline where each current waits for its upstream's data.
+
+        Use it for ETL stages where stage N depends on stage N-1 —
+        load, then enrich, then validate, then export — so each stage
+        runs against the freshest output of the previous one:
+
+        .. code-block:: python
+
+            watershed = Watershed.chain(
+                window=(start, end),
+                currents=[load, enrich, validate, export],
+            )
+
+        Builds ``currents[0] → currents[1] → ... → currents[-1]`` with
+        all edges in ``dependency_mode`` (default ``"hard"``).  Contrast
+        with :meth:`parallel`, which produces the same currents list
+        but with no edges at all.
+        """
         currents = list(currents)
         edges = [
             Edge(from_name=a.name, to_name=b.name, mode=dependency_mode) for a, b in zip(currents[:-1], currents[1:])
@@ -160,7 +215,27 @@ class Watershed(BaseModel):
         dependency_mode: DependencyMode = "hard",
         **kwargs: Any,
     ) -> "Watershed":
-        """Build a diamond: ``head → each middle → tail``."""
+        """The canonical multi-source fusion shape — one head feeds N middle stages that all converge into one tail.
+
+        Use it for cross-exchange arbitrage scanners (Binance +
+        Coinbase + Kraken → composite best market), fantasy NASCAR
+        diamonds (qualifying + practice + race feeds → fused driver
+        scoreboard), and multi-region replica fusion.  The tail is
+        typically a :class:`Fjord` current that mark-to-markets the
+        merged upstream state:
+
+        .. code-block:: python
+
+            watershed = Watershed.diamond(
+                window=(start, end),
+                head=binance_stream,
+                middle=[coinbase_stream, kraken_stream],
+                tail=arb_fjord,
+            )
+
+        Builds ``head → each middle → tail`` with every edge in
+        ``dependency_mode`` (default ``"hard"``).
+        """
         middle = list(middle)
         if not middle:
             raise ValueError("Watershed.diamond requires at least one middle current.")
@@ -181,7 +256,26 @@ class Watershed(BaseModel):
         dependency_mode: DependencyMode = "hard",
         **kwargs: Any,
     ) -> "Watershed":
-        """Build a fan-out: one ``source`` with N independent ``sinks``."""
+        """Broadcast a single source to multiple downstream consumers, each on its own interval.
+
+        Use it for one upstream feed with N output formats — raw
+        orders fanning out to NDJSON for downstream pipelines, Parquet
+        for analysts, and SQLite for ops dashboards — where each sink
+        ticks on its own cadence:
+
+        .. code-block:: python
+
+            watershed = Watershed.fanout(
+                window=(start, end),
+                source=raw_orders_stream,
+                sinks=[ndjson_export, parquet_export, sqlite_export],
+            )
+
+        Builds ``source → each sink`` with edges in
+        ``dependency_mode`` (default ``"hard"``).  Contrast with
+        :meth:`diamond`, which adds a tail that fuses all middle
+        currents back together.
+        """
         sinks = list(sinks)
         if not sinks:
             raise ValueError("Watershed.fanout requires at least one sink current.")
@@ -197,9 +291,22 @@ class Watershed(BaseModel):
         currents: Iterable[Current],
         **kwargs: Any,
     ) -> "Watershed":
-        """Build a parallel watershed: N unrelated currents sharing only the window.
+        """Run N independent pipelines concurrently in the same orchestration window, with no edges between them.
 
-        Rejects any ``dependency_mode`` kwarg — parallel has no edges to mode.
+        Use it when you want an overnight chunked drain across
+        unrelated sources — Binance, CoinGecko, NHTSA — all running
+        on their own cadences within a shared window, none of them
+        waiting on each other:
+
+        .. code-block:: python
+
+            watershed = Watershed.parallel(
+                window=(start, end),
+                currents=[binance_stream, coingecko_stream, nhtsa_stream],
+            )
+
+        Rejects any ``dependency_mode`` kwarg — parallel has no edges
+        to mode.
         """
         if "dependency_mode" in kwargs:
             raise TypeError(

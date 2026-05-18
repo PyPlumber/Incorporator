@@ -14,12 +14,38 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Wave(BaseModel):
-    """A single wave of pipeline telemetry yielded by ``stream()`` / ``fjord()``.
+    """Per-chunk telemetry record yielded by a running pipeline — what a DX inspects to watch progress.
 
-    Each ``Wave`` reports one cycle of work in the engine — a chunk in
-    the chunking pipeline, or one refresh / export wave in the stateful
-    daemons.  Frozen Pydantic model so callers can pass instances
-    around without worrying about mutation.
+    Use it for real-time progress monitoring, failed-source detection
+    (route to a DLQ), and feeding downstream dashboards as the chunked
+    drain advances across an overnight window:
+
+    .. code-block:: python
+
+        async for wave in Coin.stream(...):
+            if wave.failed_sources:
+                log_dlq(wave.failed_sources)
+            if wave.rows_processed > 1000:
+                notify_slack(f"Wave {wave.chunk_index}: {wave.rows_processed} rows")
+
+    Attributes:
+        chunk_index: Sequential 0-indexed position of this chunk in the
+            stream.
+        operation: Pipeline phase that produced the wave.  In stream
+            mode: ``"incorp"``, ``"refresh"``, ``"export"``, or
+            ``"chunk"``.  In fjord mode: ``"fjord_incorp:<ClassName>"``,
+            ``"fjord_refresh:<ClassName>"``, ``"export:<ClassName>"``,
+            or ``"outflow:<DynamicClassName>"``.
+        rows_processed: Count of rows successfully processed by this
+            chunk.
+        failed_sources: Source URIs that errored during the chunk —
+            non-empty means partial-failure semantics kicked in.
+        processing_time_sec: Wall-clock duration of the chunk in
+            seconds, useful for live mark-to-market latency tracking.
+        timestamp: UTC timestamp at which the wave was emitted.
+
+    Frozen Pydantic model so instances can be passed around (and
+    cached in dashboards) without worrying about mutation.
     """
 
     model_config = ConfigDict(frozen=True)

@@ -43,19 +43,43 @@ TickFactory = Callable[[Current], Awaitable[None]]
 
 
 class Tideweaver:
-    """Run a :class:`Watershed` to completion.
+    """Orchestrate multiple Incorporator pipelines on independent intervals within one time window.
 
-    Use :meth:`run` as an async iterator — it yields one :class:`Tide` per
-    scheduler pass and exits when the window closes (after the graceful
-    drain).
+    Use it for windowed batch jobs (a 4-hour market session, a NASCAR
+    race weekend), multi-source diamond dashboards that fuse parallel
+    feeds into a single mark-to-market view, and dependency-gated
+    workflows where a downstream stage must wait on fresh upstream
+    data:
+
+    .. code-block:: python
+
+        watershed = Watershed.diamond(
+            window=(start, end),
+            head=binance_stream,
+            middle=[coinbase_stream, kraken_stream],
+            tail=arb_fjord,
+        )
+        async for tide in Tideweaver(watershed).run():
+            log_tide(tide)
 
     Args:
-        watershed: The plan to run.
-        tick_factory: Optional override for per-current tick bodies, used by
-            tests to inject deterministic stubs.  Defaults to the production
-            dispatch on :class:`Stream` / :class:`Fjord` / :class:`Export`.
+        watershed: The :class:`Watershed` plan to run.
+        tick_factory: Optional override for per-current tick bodies,
+            used by tests to inject deterministic stubs.  Defaults to
+            the production dispatch on :class:`Stream` / :class:`Fjord`
+            / :class:`Export`.
         pass_interval: Seconds between scheduler passes.  Defaults to
-            ``min(c.interval for c in currents) / 2`` clamped to ``[0.05, 1.0]``.
+            ``min(c.interval for c in currents) / 2`` clamped to
+            ``[0.05, 1.0]``.
+
+    Internally the scheduler walks the watershed's topological order
+    each pass, tracking per-current last-tick times, in-flight tasks,
+    and per-edge consumption watermarks.  Hard edges gate the
+    dependent until the upstream emits a new wave since the dependent
+    last consumed; soft edges only sequence the in-pass order.  A
+    skip-ahead short-circuit drops a dependent when the upstream's
+    in-flight tick has run longer than
+    ``skip_threshold * dependent.interval``.
     """
 
     def __init__(
@@ -94,7 +118,15 @@ class Tideweaver:
     # ------------------------------------------------------------------
 
     async def run(self) -> AsyncIterator[Tide]:
-        """Run the watershed; yield one :class:`Tide` per scheduler pass."""
+        """Enter the orchestration loop — one async iteration per scheduler pass until the window closes.
+
+        Each yielded :class:`Tide` carries the names of currents that
+        ``fired`` this pass, ``(name, reason)`` pairs for currents that
+        were ``skipped`` (gated by interval or upstream wait), and the
+        pass ``duration_sec``.  When the watershed window's end is
+        reached the loop drains in-flight ticks (bounded by
+        ``watershed.drain_timeout``) and then exits cleanly.
+        """
         shutdown_event = asyncio.Event()
         stopper = asyncio.create_task(self._shutdown_at_window_end(shutdown_event))
         try:
