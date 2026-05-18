@@ -1,12 +1,12 @@
-﻿***
+***
 
 # 🚨 Tutorial 4 — XML Post Audit: Federal-VIN Fraud Detection
 
 **Prerequisites:** [Tutorial 3 — Universal Formats](../03-universal-formats/README.md) (warehouse round-trip).
 
-T3 built a warehouse.  Real-world compliance teams audit those warehouses against authoritative sources every day — banking against the SEC, healthcare against the FDA, vehicle resale against NHTSA.  This tutorial walks the audit arc on a used-car dealership: an XML invoice ledger is enriched against the federal VIN database via **one batched POST**, then joined on VIN to flag discrepancies between what the dealer claimed and what the government says.
+You're a state auditor.  You've seized an XML ledger from **Shady Jimmy's Used Cars** and have 24 hours to flag every fraudulent VIN before he gets a tip-off and disappears.  One `incorp()` to parse the ledger, one batched POST to NHTSA's federal VIN database, one O(1) join on VIN — and the audit report writes itself.
 
-You play the role of a State Auditor.  You have seized an XML ledger from **"Shady Jimmy's Used Cars"**.  Your job is to extract his vehicle inventory from the local XML file and `POST` those VINs to the official **NHTSA** batch database to verify Jimmy isn't selling fraudulent cars.  REST APIs aren't just `GET`; bulk endpoints (government databases, GraphQL, batch lookup services) often require `POST` with a **dynamic payload** mapping multiple records — and that's where this tutorial earns its slot.
+Real-world compliance teams run this arc every day: banking against the SEC, healthcare against the FDA, vehicle resale against NHTSA.  REST APIs aren't just `GET`; bulk endpoints (government databases, GraphQL, batch lookup services) often require `POST` with a **dynamic payload** mapping multiple records — and that's where this tutorial earns its slot.
 
 ## 🗄️ The Input Data (`jimmy_ledger.xml`)
 Save the seized XML data into a local file called `jimmy_ledger.xml`. Notice how deeply nested the vehicle data is inside the dealership audit wrapper:
@@ -17,18 +17,46 @@ Save the seized XML data into a local file called `jimmy_ledger.xml`. Notice how
     <AuditFile generatedAt="2026-04-24T10:15:00Z">
         <Invoices>
             <Invoice id="INV-001">
-                <!-- ... nested buyer data ... -->
                 <Vehicle>
                     <VIN>1HGCM82633A004352</VIN>
                     <Make>Honda</Make>
                     <Model>Accord</Model>
                 </Vehicle>
             </Invoice>
-            <!-- ... more invoices ... -->
+            <Invoice id="INV-002">
+                <Vehicle>
+                    <VIN>1FTFW1ET5DFC10312</VIN>
+                    <Make>Ford</Make>
+                    <Model>F-150</Model>
+                </Vehicle>
+            </Invoice>
+            <Invoice id="INV-003">
+                <Vehicle>
+                    <VIN>5YJ3E1EA7KF317856</VIN>
+                    <Make>Ferrari</Make>
+                    <Model>458</Model>
+                </Vehicle>
+            </Invoice>
+            <Invoice id="INV-004">
+                <Vehicle>
+                    <VIN>WBAFR7C50BC804113</VIN>
+                    <Make>BMW</Make>
+                    <Model>5 Series</Model>
+                </Vehicle>
+            </Invoice>
+            <Invoice id="INV-005">
+                <Vehicle>
+                    <VIN>JTDKN3DU8E1750020</VIN>
+                    <Make>Toyota</Make>
+                    <Model>Prius</Model>
+                </Vehicle>
+            </Invoice>
         </Invoices>
     </AuditFile>
 </Dealership>
 ```
+
+> **The planted fraud.**  VIN `5YJ3E1EA7KF317856` on INV-003 is a Tesla Model 3 that Jimmy has misfiled as a Ferrari 458.  NHTSA's batch decoder will return the true make/model — the join on VIN surfaces the mismatch on exactly one row.  The other four invoices should match cleanly.
 
 ---
 

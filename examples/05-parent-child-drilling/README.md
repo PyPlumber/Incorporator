@@ -1,38 +1,28 @@
-﻿***
+***
 
 # 🚀 Tutorial 5 — Parent-Child Drilling: Backtest Data Prep
 
-Most REST APIs are **graphs**, not tables.  A CoinGecko market row references a coin by
-ID.  A GitHub repository references commits, issues, and contributors via URL fragments.
-Loading one endpoint gets you the nodes; you still need a second round-trip to load each
-edge.
+You're prepping a backtest.  Top-10 coins by market cap is a `/coins/markets` call.  The actual research signal — developer activity, sentiment, genesis date, full description — lives behind `/coins/{id}` for each of those ten.  A `for` loop would be sequential, fragile, and hit the rate limit.  `inc_parent` + `inc_child` makes it one concurrent fan-out with retry and dedup baked in.
 
-The naive solution is a `for` loop that fires N requests sequentially, dies on the first
-rate-limit hit, and crashes if any single endpoint returns malformed JSON.  The
-Incorporator solution is **declarative**: tell the framework which parent field carries
-the child ID and let it fan out the requests concurrently with retry + dedup baked in.
-
-This tutorial uses the canonical crypto research pattern — **backtest data prep**.
-We'll load CoinGecko's top-N coins as parents, then drill each coin's `/coins/{id}`
-endpoint for the rich per-coin detail you actually need for analytics (full description,
-homepage links, developer activity, full market data, sentiment).  All in two `incorp()`
-calls.
+Most REST APIs are **graphs**, not tables.  Loading one endpoint gets you the nodes; you still need a second round-trip to load each edge.  This tutorial uses the canonical crypto research pattern — load CoinGecko's top-N coins as parents, then drill each coin's `/coins/{id}` endpoint for the rich per-coin detail (full description, homepage links, developer activity, full market data, sentiment).  All in two `incorp()` calls.
 
 **Prerequisites:** [Tutorial 1](../01-first-steps/README.md) (`incorp()`, `test()`, `inc_dict`),
 [Tutorial 3](../03-universal-formats/README.md) (knows what `export()` looks like; you'll often
 land child-drilled detail in a warehouse), [Tutorial 4](../04-xml-post-audit/README.md)
 (POST + form payload shapes for non-GET enrichment paths).
 
-> **CoinGecko rate-limit note.** The free public API allows roughly 5–15 calls
-> per *minute* (not per second).  Incorporator's default rate limiter is
-> 15 req/*sec* — 60× too fast.  Two safeguards are in play:
+> ## ⚠️ CoinGecko rate-limit warning — READ THIS FIRST
+>
+> The free public API allows roughly **5–15 calls per *minute*** (not per second).
+> Incorporator's default rate limiter is **15 req/*sec* — 60× too fast**.  Without a
+> safeguard you will be throttled or banned within seconds.  Two safeguards are in play:
 >
 > 1. **Host-aware default.** When you don't pass `requests_per_second`, the
 >    framework looks up the source's host in an internal registry; calls to
 >    `api.coingecko.com` get capped at 0.2 req/sec (12 req/min) automatically.
 > 2. **Explicit throttle in this tutorial.** The script passes
->    `requests_per_second=0.2` so the kwarg is visible to readers.  Crank it up
->    if you have an API key (see below).  Total wall-clock without a key: ~50 s.
+>    `requests_per_second=0.2` so the kwarg is visible to readers.  Total
+>    wall-clock without a key: ~50 s.
 >
 > **Bumping the rate with a free Demo key.**  CoinGecko's [Demo plan](https://www.coingecko.com/en/developers/dashboard)
 > gives 30 req/min stable (requires email signup, no card).  Set

@@ -1,12 +1,14 @@
-﻿***
+***
 
 # 🚀 Tutorial 6 — SpaceX Launches: Ops Dashboard Feed
 
 **Prerequisites:** [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md).
 
-T5 introduced parent-child fan-out on crypto (top-N coins + per-coin detail drills).  **The same pattern powers operational dashboards in every vertical** — aerospace launch trackers, vehicle telemetry, e-commerce order pipelines, healthcare claims.  This tutorial re-runs the parent-child shape on SpaceX's v4 API to prove Incorporator's verbs are domain-agnostic, **and** gives you the second half of T5's pattern (the streaming daemon variant) on an unlimited-rate API so you can iterate without CoinGecko's per-minute window pressure.
+Your ops dashboard needs the next SpaceX launches and their full rocket + launchpad context — joined, deduped, and ready to render.  SpaceX's v4 API is a clean HATEOAS graph; `inc_parent` + `inc_child` against 18 launches dedups 36 child references into 5 unique IDs and 5 HTTP requests.
 
-The SpaceX v4 public API (`api.spacexdata.com/v4`) is a clean HATEOAS graph: every launch references a rocket, a launchpad, and a list of payload IDs.  Plenty of overlap (a handful of rocket variants and launchpads serve hundreds of historical launches), so dedup actually *matters* here — which makes it a great cross-check for T5's patent-child mechanics.
+T5 introduced parent-child fan-out on crypto (top-N coins + per-coin detail drills).  **The same pattern powers operational dashboards in every vertical** — aerospace launch trackers, vehicle telemetry, e-commerce order pipelines, healthcare claims.  This tutorial re-runs the parent-child shape on SpaceX's v4 API to prove Incorporator's verbs are domain-agnostic, **and** gives you the streaming-daemon variant on an unlimited-rate API so you can iterate without CoinGecko's per-minute window pressure.
+
+Plenty of overlap in this graph (a handful of rocket variants and launchpads serve hundreds of historical launches), so dedup actually *matters* here — which makes it a great cross-check for T5's parent-child mechanics.
 
 We'll cover two patterns in one tutorial:
 
@@ -14,8 +16,11 @@ We'll cover two patterns in one tutorial:
    + launchpads concurrently, three-way O(1) join.  Mirrors
    [T5](../05-parent-child-drilling/README.md) on a different vertical.
 2. **Streaming daemon** — periodic refresh + export of the launch
-   feed, log shipping via `LoggedIncorporator`.  Previews
-   [T8](../08-streaming-daemon/README.md) (Part 1, stateful mode).
+   feed via the `stateful_polling=True` shim, log shipping via
+   `LoggedIncorporator`.  Previews
+   [T8](../08-streaming-daemon/README.md) (the demoted Part 2 shim
+   path; for the canonical multi-source live-daemon pattern reach
+   for [T10's `fjord()`](../10-multi-source-fjord/README.md)).
 
 ---
 
@@ -118,8 +123,8 @@ payloads = await Payload.incorp(
 
 The SpaceX upcoming-launch feed updates infrequently — perfect for a slow-cadence
 daemon (every few minutes) that snapshots changes to disk as the schedule slips and
-shuffles.  This is the **stateful_polling=True** mode covered in T8 Part 1:
-one live registry, refreshed in place.
+shuffles.  Single-source live registry, so the `stateful_polling=True` shim is fine
+here.  For multi-source live registries reach for `fjord()` directly (T10).
 
 ```python
 from incorporator import LoggedIncorporator
