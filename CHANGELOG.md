@@ -36,6 +36,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Tide`).
 
 ### Changed
+- **Curriculum renumbered to T1–T11.**  Four formerly-appendix tutorials
+  are promoted into the main learning path so the curriculum is a single
+  coherent sequence instead of two parallel tracks (the prior speed-run
+  callouts in commit `371a1aa` made the intent clear; this lands the
+  structural change).  Folder renames:
+  - `examples/appendix/data-lake-pivot/` → `examples/02-data-lake-pivot/`
+  - `examples/02-universal-formats/` → `examples/03-universal-formats/`
+  - `examples/appendix/xml-post-audit/` → `examples/04-xml-post-audit/`
+  - `examples/03-parent-child-drilling/` → `examples/05-parent-child-drilling/`
+  - `examples/appendix/spacex-launches/` → `examples/06-spacex-launches/`
+  - `examples/04-stateful-refresh/` → `examples/07-stateful-refresh/`
+  - `examples/05-streaming-daemon/` → `examples/08-streaming-daemon/`
+  - `examples/appendix/nascar-fantasy-fjord/` → `examples/09-nascar-fantasy-fjord/`
+  - `examples/06-multi-source-fjord/` → `examples/10-multi-source-fjord/`
+  - `examples/07-tideweaver/` → `examples/11-tideweaver/`
+  Matching `docs/N_*.md` redirect stubs were also renumbered.  The five
+  remaining appendices (`pokeapi-etl`, `crypto-graph-mapping`,
+  `nascar-tideweaver`, `tideweaver-parquet-snapshots`,
+  `tideweaver-vs-prefect`) stay in `examples/appendix/` as optional
+  side-quests.  Cross-references across READMEs, scripts, the CLI
+  watershed config, and the top-level README updated to match.
 - **`cli/validate.py`** auto-detects watershed configs (top-level
   `window` + `shape` keys) and now exposes `tideweaver` in the
   `ConfigType` literal and the `--type` flag.  No behaviour change for

@@ -252,16 +252,20 @@ And the discovery loop you ran *before* that:
 
 ## Where to Go Next
 
-> 🛣️ **Recommended detour before T2 — [Data Lake Pivot](../appendix/data-lake-pivot/README.md).**  T1 loaded a single endpoint.  Real ETL adds one more step: pivot the rows into BI-ready columnar shape before persisting.  Walk through that arc on a SaaS-style `/users` endpoint (jsonplaceholder stands in for Auth0 / Okta / HR-export feeds) — same `incorp → transform → persist` pattern T2 builds on, on a different API shape.  Runs in ~2 s and doesn't compete with CoinGecko's per-minute window.
+> 👉 **Up next: [Tutorial 2 — Data Lake Pivot](../02-data-lake-pivot/README.md).**  T1 loaded a single endpoint; T2 takes those rows and pivots them into BI-ready columnar shape — the second universal step in every ETL job.  Runs in ~2 s against a SaaS-style `/users` endpoint that doesn't compete with CoinGecko's per-minute window.
 
 | Goal | Tutorial |
 |---|---|
-| Snapshot CoinGecko into a Parquet/SQLite/NDJSON warehouse | [Tutorial 2 — Universal Formats](../02-universal-formats/README.md) |
-| Drill into nested API graphs (parent → child) for backtest data | [Tutorial 3 — Parent-Child Drilling](../03-parent-child-drilling/README.md) |
-| Keep this registry live (refresh prices every minute) | [Tutorial 4 — Stateful Refresh](../04-stateful-refresh/README.md) |
-| Run as a long-lived daemon | [Tutorial 5 — Streaming Daemons](../05-streaming-daemon/README.md) |
-| Fuse CoinGecko + Binance into a live spread | [Tutorial 6 — Multi-Source Fjord](../06-multi-source-fjord/README.md) |
-| Orchestrate multi-exchange pipelines in a windowed graph (capstone) | [Tutorial 7 — Tideweaver](../07-tideweaver/README.md) |
+| Pivot a transactional roster into BI-ready columnar shape | [Tutorial 2 — Data Lake Pivot](../02-data-lake-pivot/README.md) |
+| Snapshot CoinGecko into a Parquet/SQLite/NDJSON warehouse | [Tutorial 3 — Universal Formats](../03-universal-formats/README.md) |
+| Audit a warehouse against a federal source (XML + POST) | [Tutorial 4 — XML Post Audit](../04-xml-post-audit/README.md) |
+| Drill into nested API graphs (parent → child) for backtest data | [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md) |
+| Apply parent-child to an ops dashboard (SpaceX launches) | [Tutorial 6 — SpaceX Launches](../06-spacex-launches/README.md) |
+| Keep a live registry fresh with `refresh()` | [Tutorial 7 — Stateful Refresh](../07-stateful-refresh/README.md) |
+| Run as a long-lived streaming daemon | [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md) |
+| Coordinate multi-source extracts (fantasy NASCAR) | [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md) |
+| Fuse CoinGecko + Binance into a live spread | [Tutorial 10 — Multi-Source Fjord](../10-multi-source-fjord/README.md) |
+| Orchestrate multi-exchange pipelines in a windowed graph (capstone) | [Tutorial 11 — Tideweaver](../11-tideweaver/README.md) |
 
 **Common follow-ups you might be wondering about:**
 

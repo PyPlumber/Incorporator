@@ -4,7 +4,7 @@
 > NDJSON / CSV / SQLite are append-friendly per tick; columnar
 > formats (Parquet, Feather, ORC) are not.  This appendix shows two
 > safe patterns for landing Parquet from a `Tideweaver` run.  Read
-> [Tutorial 7 — Tideweaver](../../07-tideweaver/README.md) first.
+> [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md) first.
 
 ***
 
@@ -121,7 +121,7 @@ downstream is Athena / DuckDB / Spark and you want column statistics.
 
 | Goal | Read |
 |---|---|
-| Master the Tideweaver orchestrator patterns | [Tutorial 7 — Tideweaver](../../07-tideweaver/README.md) |
+| Master the Tideweaver orchestrator patterns | [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md) |
 | Pick append-friendly vs columnar formats | [Formats & Compression](../../../docs/formats_and_compression.md) |
 | See the data-lake round-trip patterns this builds on | [Appendix — Data Lake Pivot](../data-lake-pivot/README.md) |
 | Run the same Tideweaver against a different domain | [Appendix — NASCAR Tideweaver](../nascar-tideweaver/README.md) |

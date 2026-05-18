@@ -5,7 +5,7 @@
 > Airflow, Argo) is an out-of-process, cluster-aware scheduler.
 > They solve adjacent problems and compose well; this appendix
 > walks through when to reach for each — and how to run them
-> together.  Read [Tutorial 7 — Tideweaver](../../07-tideweaver/README.md)
+> together.  Read [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md)
 > first.
 
 ***
@@ -124,7 +124,7 @@ next deployment.
 
 | Goal | Read |
 |---|---|
-| Master the Tideweaver orchestrator first | [Tutorial 7 — Tideweaver](../../07-tideweaver/README.md) |
+| Master the Tideweaver orchestrator first | [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md) |
 | Ship pipelines with Docker + secrets | [Deployment Guide](../../../docs/deployment.md) |
 | Land columnar artifacts in the hybrid pattern | [Appendix — Parquet Snapshots in a Tideweaver Window](../tideweaver-parquet-snapshots/README.md) |
 | See the same diamond shape against a non-crypto domain | [Appendix — NASCAR Tideweaver](../nascar-tideweaver/README.md) |

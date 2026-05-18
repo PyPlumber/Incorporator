@@ -2,7 +2,7 @@
 
 > 📎 **Appendix — Static graph join.**  `link_to`-based one-shot
 > in-memory join across CoinGecko + Binance.  See
-> [Tutorial 6 — Multi-Source Fjord](../../06-multi-source-fjord/README.md) for
+> [Tutorial 10 — Multi-Source Fjord](../../10-multi-source-fjord/README.md) for
 > the same fusion as a live daemon; reach for this appendix when
 > you want the static pattern without the daemon scaffolding.
 
@@ -187,9 +187,9 @@ incorporator fjord pipeline.json
 
 | Goal | Read |
 |---|---|
-| Drill parent records into per-record children | [Tutorial 3 — Parent-Child Drilling](../../03-parent-child-drilling/README.md) |
-| Run the same multi-source join as a live daemon | [Tutorial 6 — Multi-Source Fjord](../../06-multi-source-fjord/README.md) |
-| Coordinate the joined sources in a windowed graph | [Tutorial 7 — Tideweaver](../../07-tideweaver/README.md) |
+| Drill parent records into per-record children | [Tutorial 5 — Parent-Child Drilling](../../05-parent-child-drilling/README.md) |
+| Run the same multi-source join as a live daemon | [Tutorial 10 — Multi-Source Fjord](../../10-multi-source-fjord/README.md) |
+| Coordinate the joined sources in a windowed graph | [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md) |
 | Configure the join from JSON for the CLI | [CLI & Configuration Guide](../../../docs/cli_and_configuration.md) |
 
 ---

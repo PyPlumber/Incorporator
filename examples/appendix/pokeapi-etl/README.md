@@ -3,7 +3,7 @@
 > 📎 **Appendix — `calc()` reductions over a HATEOAS drill.**
 > Sums and aggregations across a parent-child fan-out (PokéAPI).
 > If you're new to parent-child, start with
-> [Tutorial 3 — Parent-Child Drilling](../../03-parent-child-drilling/README.md)
+> [Tutorial 5 — Parent-Child Drilling](../../05-parent-child-drilling/README.md)
 > (CoinGecko top-N → `/coins/{id}` drill); reach for this appendix
 > for the `calc()` reduction patterns layered on top.
 
@@ -217,10 +217,10 @@ The token resolver imports `inflow.py` at config-load time, sees `calculate_bst`
 
 | Goal | Read |
 |---|---|
-| See the canonical parent-child intro (no calc layer) | [Tutorial 3 — Parent-Child Drilling](../../03-parent-child-drilling/README.md) |
+| See the canonical parent-child intro (no calc layer) | [Tutorial 5 — Parent-Child Drilling](../../05-parent-child-drilling/README.md) |
 | Apply `calc()` reductions in a fjord outflow | [Appendix — NASCAR Fantasy Fjord](../nascar-fantasy-fjord/README.md) |
 | Stream paginated APIs with custom paginators | [Streaming & Pagination Deep Dive](../../../docs/streaming_and_pagination.md) |
-| Land the reduced output in a warehouse | [Tutorial 2 — Universal Formats](../../02-universal-formats/README.md) |
+| Land the reduced output in a warehouse | [Tutorial 3 — Universal Formats](../../03-universal-formats/README.md) |
 
 ---
 

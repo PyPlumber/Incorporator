@@ -1,11 +1,11 @@
 ﻿***
 
 > 📎 **Appendix — Same diamond, different domain.**  The crypto-spine
-> Tutorial 7 builds a multi-exchange arbitrage scanner via
+> Tutorial 11 builds a multi-exchange arbitrage scanner via
 > `Watershed.diamond()`.  This appendix re-runs the same shape against
 > a completely different domain — NASCAR race telemetry — so the
 > reader can confirm the orchestrator is domain-agnostic.  No new
-> framework concepts here; read [Tutorial 7](../../07-tideweaver/README.md) first.
+> framework concepts here; read [Tutorial 11](../../11-tideweaver/README.md) first.
 
 ***
 
@@ -20,7 +20,7 @@ Race telemetry is a natural fit for `Watershed.diamond()`:
   interval so a downstream dashboard sees a coherent per-driver snapshot.
 
 Three Stream currents feed one Fjord tail.  Same shape as the crypto arb scanner
-in [Tutorial 7](../../07-tideweaver/README.md); different sources, different outflow logic, same
+in [Tutorial 11](../../11-tideweaver/README.md); different sources, different outflow logic, same
 five-name vocabulary.
 
 ---
@@ -145,7 +145,7 @@ def outflow(state):
     return list(by_driver.values())
 ```
 
-Same structure as Tutorial 7's `arb_outflow.outflow()` — snapshot upstream registries,
+Same structure as Tutorial 11's `arb_outflow.outflow()` — snapshot upstream registries,
 build a per-key composite, return as a list of dicts.
 
 ---
@@ -179,7 +179,7 @@ Run from the repo root so the relative `inc_file` / `outflow` paths resolve.
 
 | Goal | Read |
 |---|---|
-| See the crypto-spine version of the same diamond | [Tutorial 7 — Tideweaver](../../07-tideweaver/README.md) |
+| See the crypto-spine version of the same diamond | [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md) |
 | Run the non-Tideweaver fjord variant against NASCAR data | [Appendix — NASCAR Fantasy Fjord](../nascar-fantasy-fjord/README.md) |
 | Land columnar artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../tideweaver-parquet-snapshots/README.md) |
 | Pick between in-process Tideweaver and cloud schedulers | [Appendix — Tideweaver vs. Prefect](../tideweaver-vs-prefect/README.md) |

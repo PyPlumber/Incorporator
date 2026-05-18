@@ -144,7 +144,7 @@ async for wave in Incorporator.fjord(
 ):
     if wave.failed_sources: print(wave)
 ```
-→ [Tutorial 6 — Multi-Source Fjord](./examples/06-multi-source-fjord/README.md)
+→ [Tutorial 10 — Multi-Source Fjord](./examples/10-multi-source-fjord/README.md)
 
 ### `Tideweaver` — orchestrate multiple feeds on independent intervals
 
@@ -167,7 +167,7 @@ async for tide in Tideweaver(watershed).run():
 ```
 Four shape helpers (`parallel`, `chain`, `fanout`, `diamond`) plus `custom` with explicit `edges`. Declarative `watershed.json` config + `incorporator tideweaver run / validate` CLI mirror the `stream` / `fjord` workflow.
 
-→ [Tutorial 7 — Tideweaver](./examples/07-tideweaver/README.md)
+→ [Tutorial 11 — Tideweaver](./examples/11-tideweaver/README.md)
 
 ### `display()` — REPL debug print: `launches[0].display()`
 
@@ -203,21 +203,25 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
 * **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity backoff, failed URLs on `wave.failed_sources`. Opt-in `block_internal_redirects=True` rejects 3xx Locations to RFC1918 / loopback / cloud-metadata IPs.
 * **Atomic writes + spreadsheet-injection guard** — Parquet / Feather / ORC / JSON / XML / XLSX build via tempfile + `os.replace()` (no half-written files); CSV / XLSX cells starting with `=` / `@` / `+` / `-` are quoted on export (OWASP).
 * **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop.
-* **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML. → [Tutorial 2](./examples/02-universal-formats/README.md)
+* **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML. → [Tutorial 3](./examples/03-universal-formats/README.md)
 
 ---
 
 ## 📚 Tutorials (in order)
 
-A focused 1–7 curriculum. Each slot introduces one new verb or technique. Runnable code under [`/examples`](./examples).
+The eleven-tutorial curriculum.  Each slot introduces one new verb or technique, alternating CoinGecko-heavy steps with non-CG domain examples so per-minute rate-limit windows refresh between CG calls and each Incorporator pattern lands across multiple real-world verticals.  Runnable code under [`/examples`](./examples).
 
 1. [🌱 **First Steps + DX Inspector**](./examples/01-first-steps/README.md) — discovery-first flow: `test()` profiles a CoinGecko endpoint, then `incorp()` applies its recommendations.
-2. [📦 **Snapshot Warehouse — Universal Formats**](./examples/02-universal-formats/README.md) — fan CoinGecko top-100 snapshots into NDJSON / CSV / SQLite / Parquet, then round-trip every artifact.
-3. [🚀 **Parent → Child Drilling**](./examples/03-parent-child-drilling/README.md) — CoinGecko `/coins/markets` → `/coins/{id}` fan-out — the canonical backtest-data-prep pattern.
-4. [🔄 **Stateful Refresh**](./examples/04-stateful-refresh/README.md) — `refresh()` three ways against Binance's live ticker.
-5. [🌊 **Streaming Daemons — Both Polling Modes**](./examples/05-streaming-daemon/README.md) — stateful for live dashboards; chunking for paginated bulk drains.
-6. [🌊 **Multi-Source Fjord**](./examples/06-multi-source-fjord/README.md) — `fjord()` fusing CoinGecko + Binance into a live cross-venue spread metric.
-7. [🧵 **Tideweaver — Multi-Exchange Arb Scanner** *(capstone)*](./examples/07-tideweaver/README.md) — declarative windowed orchestration: three exchanges → one best-market record.
+2. [🔁 **Data Lake Pivot**](./examples/02-data-lake-pivot/README.md) — SaaS roster → BI-ready columnar; pivot a `/users` endpoint into Avro + SQLite.
+3. [📦 **Snapshot Warehouse — Universal Formats**](./examples/03-universal-formats/README.md) — fan CoinGecko top-100 snapshots into NDJSON / CSV / SQLite / Parquet, then round-trip every artifact.
+4. [🛡️ **XML Post Audit**](./examples/04-xml-post-audit/README.md) — federal-VIN fraud audit: XML invoice ledger enriched via one batched POST.
+5. [🚀 **Parent → Child Drilling**](./examples/05-parent-child-drilling/README.md) — CoinGecko `/coins/markets` → `/coins/{id}` fan-out — the canonical backtest-data-prep pattern.
+6. [🚀 **SpaceX Launches**](./examples/06-spacex-launches/README.md) — ops-dashboard feed: upcoming launches drilled for rocket + launchpad detail.
+7. [🔄 **Stateful Refresh**](./examples/07-stateful-refresh/README.md) — `refresh()` three ways against Binance's live ticker.
+8. [🌊 **Streaming Daemons — Both Polling Modes**](./examples/08-streaming-daemon/README.md) — stateful for live dashboards; chunking for paginated bulk drains.
+9. [🏁 **NASCAR Fantasy Fjord**](./examples/09-nascar-fantasy-fjord/README.md) — fantasy-sports scoring fjord across Cup, Xfinity, Truck series; previews T10's abstraction.
+10. [🌊 **Multi-Source Fjord**](./examples/10-multi-source-fjord/README.md) — `fjord()` fusing CoinGecko + Binance into a live cross-venue spread metric.
+11. [🧵 **Tideweaver — Multi-Exchange Arb Scanner** *(capstone)*](./examples/11-tideweaver/README.md) — declarative windowed orchestration: three exchanges → one best-market record.
 
 ## 📑 Reference
 
@@ -227,16 +231,12 @@ A focused 1–7 curriculum. Each slot introduces one new verb or technique. Runn
 * [🐳 **CLI & Configuration**](./docs/cli_and_configuration.md) — running pipelines from `pipeline.json` / `watershed.json`.
 * [⚡ **Performance**](./docs/performance.md) — measured throughput per format, memory profile, tuning knobs.
 
-## 📎 Appendices — same patterns, different domains
+## 📎 Appendices — optional side-quests
 
-* [🚀 **SpaceX Launches**](./examples/appendix/spacex-launches/README.md) — T3 + T5 patterns against SpaceX v4 (launches → rockets → launchpads; slow-cadence daemon).
-* [🏁 **NASCAR Tideweaver**](./examples/appendix/nascar-tideweaver/README.md) — Tutorial 7's diamond shape against race telemetry (laps + pits + flags → driver state).
-* [🧬 **Pokémon ETL**](./examples/appendix/pokeapi-etl/README.md) — paginated HATEOAS drill + array reductions with `calc` / `sum_attributes`.
-* [🚨 **Shady Jimmy's XML Audit**](./examples/appendix/xml-post-audit/README.md) — XML ingestion + declarative bulk POST + fraud audit.
-* [🕸️ **Crypto Graph Mapping** (static)](./examples/appendix/crypto-graph-mapping/README.md) — `link_to`-based in-memory join; Tutorial 6's pattern as a one-shot.
-* [🏁 **NASCAR Fantasy Fjord** *(advanced)*](./examples/appendix/nascar-fantasy-fjord/README.md) — six-source fjord with state-aware `inflow(state)` and multi-output `outflow(state)`.
+* [🧬 **Pokémon ETL**](./examples/appendix/pokeapi-etl/README.md) — paginated HATEOAS drill + array reductions with `calc` / `sum_attributes`.  Mirrors T5.
+* [🕸️ **Crypto Graph Mapping** (static)](./examples/appendix/crypto-graph-mapping/README.md) — `link_to`-based in-memory join; T10's fjord pattern as a one-shot.
+* [🏁 **NASCAR Tideweaver**](./examples/appendix/nascar-tideweaver/README.md) — T11's diamond shape against race telemetry (laps + pits + flags → driver state).
 * [🧵 **Tideweaver Deep Dives**](./examples/appendix/tideweaver-parquet-snapshots/README.md) — [Parquet at window close](./examples/appendix/tideweaver-parquet-snapshots/README.md) and [Tideweaver vs. Prefect](./examples/appendix/tideweaver-vs-prefect/README.md) — columnar artifacts plus the in-process-vs-cloud orchestration decision.
-* [🐘 **Data Lake Pivot** (legacy)](./examples/appendix/data-lake-pivot/README.md) — JSON ↔ Avro/SQLite walkthrough; T2 covers the headline pattern.
 
 ---
 
