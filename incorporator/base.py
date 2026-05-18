@@ -943,15 +943,15 @@ class Incorporator(BaseModel):
           one fetches.  Use this for paginated sources where you want a
           steady throughput trace and an exit when the API runs out.
 
-        - **Stateful daemon mode** (``stateful_polling=True``): seeds the
-          dataset with one ``incorp()`` call, then runs refresh and export
-          on independent schedules until cancelled.  Use this to keep a
+        - **Stateful daemon mode** (``stateful_polling=True``): keeps a
           live in-memory object graph synchronised against an upstream
-          API while exporting snapshots at a different cadence.  Under the
-          hood this delegates to the fjord engine with a synthesised
-          identity outflow — a single source with an in-place mutating
-          registry.  For multi-source live streaming, call :meth:`fjord`
-          directly.
+          API while exporting snapshots on independent cadences.  Seeds
+          the dataset with one ``incorp()`` call, then runs refresh and
+          export on independent schedules until cancelled.  For
+          multi-source live streaming, call :meth:`fjord` directly.
+          Under the hood this delegates to the fjord engine with a
+          synthesised identity outflow — a single source with an
+          in-place mutating registry.
 
         Interval cascade: ``refresh_interval`` and ``export_interval`` each
         fall back to ``poll_interval`` when not set, so a single

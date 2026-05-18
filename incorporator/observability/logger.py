@@ -570,15 +570,8 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             enable_logging: Mirror every :class:`Wave` to disk and route
                 fatal errors to ``logs/<ClassName>_error.log``.
                 Defaults to ``False``.
-            incorp_params: Forwarded to :meth:`Incorporator.stream`.
-            refresh_params: Forwarded to :meth:`Incorporator.stream`.
-            export_params: Forwarded to :meth:`Incorporator.stream`.
-            poll_interval: Forwarded to :meth:`Incorporator.stream`.
-            stateful_polling: Forwarded to :meth:`Incorporator.stream`.
-            refresh_interval: Forwarded to :meth:`Incorporator.stream`.
-            export_interval: Forwarded to :meth:`Incorporator.stream`.
-            inflow: Forwarded to :meth:`Incorporator.stream`.
-            outflow: Forwarded to :meth:`Incorporator.stream`.
+
+        All other kwargs are forwarded unchanged to :meth:`Incorporator.stream`.
 
         Yields:
             :class:`Wave` — same shape as :meth:`Incorporator.stream`.
@@ -645,12 +638,8 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             enable_logging: Mirror every :class:`Wave` to disk and route
                 fatal errors to ``logs/<ClassName>_error.log``.
                 Defaults to ``False``.
-            stream_params: Forwarded to :meth:`Incorporator.fjord`.
-            outflow: Forwarded to :meth:`Incorporator.fjord`.
-            export_params: Forwarded to :meth:`Incorporator.fjord`.
-            refresh_interval: Forwarded to :meth:`Incorporator.fjord`.
-            export_interval: Forwarded to :meth:`Incorporator.fjord`.
-            inflow: Forwarded to :meth:`Incorporator.fjord`.
+
+        All other kwargs are forwarded unchanged to :meth:`Incorporator.fjord`.
 
         Yields:
             :class:`Wave` — same shape as :meth:`Incorporator.fjord`.

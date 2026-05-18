@@ -1,7 +1,7 @@
 """Prefect orchestration nodes for Incorporator stream and flow pipelines.
 
 Requires the ``[orchestrate]`` extra (``pip install incorporator[orchestrate]``).
-Provides a Prefect ``@task`` wrapping :meth:`LoggedIncorporator.stream` and
+Provides a Prefect ``@task`` wrapping :meth:`Incorporator.stream` and
 a ``@flow`` entry-point that loads a ``pipeline.json`` configuration.
 When Prefect is not installed the decorators fall back to no-ops so the
 module can be imported without raising.
@@ -49,7 +49,7 @@ async def run_incorporator_stream(
     poll_interval: Optional[float] = None,
     stateful_polling: bool = False,
 ) -> List[Wave]:
-    """Prefect task wrapping :meth:`LoggedIncorporator.stream`.
+    """Prefect task wrapping :meth:`Incorporator.stream` (with optional disk logging via ``enable_logging=True``).
 
     Drives an O(1)-memory incorporator stream and routes each
     :class:`Wave` to the Prefect run logger. Returns the full list

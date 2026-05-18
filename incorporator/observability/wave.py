@@ -25,7 +25,14 @@ class Wave(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     chunk_index: int = Field(..., description="Sequential index of the current chunk.")
-    operation: str = Field("stream", description="The phase: 'incorp', 'refresh', or 'export'.")
+    operation: str = Field(
+        "stream",
+        description=(
+            "Pipeline phase. Stream mode: 'incorp', 'refresh', 'export', or 'chunk'. "
+            "Fjord mode: 'fjord_incorp:<ClassName>', 'fjord_refresh:<ClassName>', "
+            "'export:<ClassName>', or 'outflow:<DynamicClassName>'."
+        ),
+    )
     rows_processed: int = Field(..., description="Number of rows successfully processed.")
     failed_sources: List[str] = Field(default_factory=list, description="Failed source URIs.")
     processing_time_sec: float = Field(..., description="Chunk processing duration in seconds.")
