@@ -88,7 +88,7 @@ For a paste-ready lookup map of every public callable — signature, 3-7 step ps
 ## Prefer narrative docs?
 
 The rest of `/docs/` covers the **how** and **why** with hands-on
-walkthroughs — start with [Tutorial 1 — First Steps](./1_first_steps.md).
+walkthroughs — start with [Tutorial 1 — First Steps](../examples/01-first-steps/README.md).
 The pdoc reference covers the **what** for every parameter and return
 type.
 

@@ -83,7 +83,7 @@ pip install incorporator[all]
 ---
 
 ## Next Steps
-Now that Incorporator is installed, head over to [**Tutorial 1 — First Steps**](./1_first_steps.md) to map your first API!
+Now that Incorporator is installed, head over to [**Tutorial 1 — First Steps**](../examples/01-first-steps/README.md) to map your first API!
 ```
 
 ### Why this document works:

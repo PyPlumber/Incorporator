@@ -246,7 +246,7 @@ matrix.
 | Goal | Read |
 |---|---|
 | Pick the right polling mode for your pipeline | [Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md) |
-| Snapshot millions of rows into a warehouse without OOM | [Tutorial 2 — Universal Formats](./2_universal_formats.md) |
+| Snapshot millions of rows into a warehouse without OOM | [Tutorial 3 — Universal Formats](../examples/03-universal-formats/README.md) |
 | Tune chunk size against memory + throughput | [Performance Guide](./performance.md) |
 | Land columnar Parquet at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
 | Get structured error logs from a chunked daemon | [Production Debugging](./debugging.md) |
