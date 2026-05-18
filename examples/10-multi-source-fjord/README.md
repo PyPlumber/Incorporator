@@ -1,4 +1,4 @@
-﻿***
+***
 
 # 🌊 Tutorial 10 — Multi-Source Fjord: Live Crypto Spread
 
@@ -7,21 +7,21 @@
 (`stream()`, `Wave`, both polling modes), [Tutorial 9](../09-nascar-fantasy-fjord/README.md)
 (the production-shape fjord preview).
 
-`stream()` watches **one** source. `fjord()` watches **N** sources
-concurrently and lets you fuse them through a small **`outflow(state)`
-join function you define** — one that receives every source's live
-registry and returns the rows to export. The engine handles every
-concurrent refresh, every export wave, the shared lock, the wave
-queue, and the dynamic output class around that one function.
+You're scanning for cross-venue crypto arb. CoinGecko prices USD; Binance prices
+USDT. For every symbol where both venues quote, you want one row carrying both
+prices and the basis-point spread, updated every 60 seconds.
 
-You've already loaded a CoinGecko coin catalogue (T1), kept a
-Binance ticker registry live (T8), and seen the full production fjord
-shape with seven sources (T9). Now you'll learn the formal abstraction —
-**fuse two sources** with `fjord()`: compute a basis-point spread between
-CoinGecko's USD price and Binance's USDT price for every overlapping
-symbol, on a 60-second cadence, with each source refreshing independently
-every 30 seconds. This is the canonical two-venue arbitrage-flavour
-pattern; T11 generalises it to N exchanges in a windowed graph.
+`fjord()` watches both sources concurrently with independent refresh cadences,
+calls your `outflow(state)` join function on each export wave, and emits the
+fused rows to NDJSON. The engine handles every concurrent refresh, every export
+wave, the shared lock, the wave queue, and the dynamic output class around that
+one function. You write the join. Everything else is declared.
+
+You've already loaded a CoinGecko coin catalogue (T1), kept a Binance ticker
+registry live (T8), and seen the full production fjord shape with seven sources
+(T9). Now you'll learn the formal abstraction by fusing two sources end-to-end:
+60-second fused output cadence, 30-second per-source refresh cadence, single
+NDJSON tail. T11 generalises this same shape to N exchanges in a windowed graph.
 
 > **Polling-mode policy.**  `fjord()` is the *multi-source equivalent
 > of `stream(stateful_polling=True)`* — every per-source daemon refreshes
@@ -61,6 +61,15 @@ passes it `state` — a `dict[str, IncorporatorList]` keyed by source class
 name, snapshotted under a lock at the start of the wave. Your function
 reads the current data from each source, joins them, and returns a list
 of dicts for the output class.
+
+> **Don't pre-declare the output class.**  For multi-output
+> `outflow(state) -> dict[ClassName, list[dict]]`, the framework builds
+> one dynamic Pydantic class per dict key.  For single-output, it builds
+> one named after the outflow file's stem (PascalCase).  Declaring a
+> bare `class CryptoSpread(Incorporator): pass` would suppress field
+> inference and silently drop every row column.  T9 walks the
+> multi-output version of this contract; T10's single-output shape works
+> the same way under the hood.
 
 ```python
 # examples/10-multi-source-fjord/crypto_spread.py
@@ -170,14 +179,15 @@ if __name__ == "__main__":
 > Parquet / Feather / ORC / Excel / XML / JSON all reject append mode.
 > Pick NDJSON if unsure.
 
-> **Seed-empty abort:** if *any* source yields zero records on the
-> initial seed, the engine aborts the whole pipeline with a
-> `fjord_incorp:<ClassName>` wave whose `failed_sources` explains
-> why.  No daemons spawn, the `async for` loop exits cleanly with
-> code 0.  Always print `wave.failed_sources` so geo-blocks
-> (`api.binance.com` is blocked in the US — use `api.binance.us`),
-> rate-limit responses, and transient API outages surface visibly
-> instead of looking like a successful run with empty data.
+> **Seed-empty abort — print `wave.failed_sources` on every wave.**
+> If *any* source yields zero records on the initial seed, the engine
+> aborts the whole pipeline with a `fjord_incorp:<ClassName>` wave whose
+> `failed_sources` explains why.  No daemons spawn, the `async for` loop
+> exits cleanly with code 0 — which looks identical to a successful run
+> with empty data unless you log `failed_sources`.  Always print it so
+> geo-blocks (`api.binance.com` is blocked in the US — use
+> `api.binance.us`), rate-limit responses, and transient API outages
+> surface visibly.
 
 > **Refresh is on by default.**  Every fjord source automatically
 > spawns a refresh daemon — you don't need `"refresh_params": {}`

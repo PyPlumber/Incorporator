@@ -1,4 +1,4 @@
-﻿***
+***
 
 # 🔄 Tutorial 7 — Stateful Refresh: Keeping Binance Tickers Live
 
@@ -6,25 +6,37 @@
 [Tutorial 5](../05-parent-child-drilling/README.md) (two-registries mental model),
 [Tutorial 6](../06-spacex-launches/README.md) (the streaming-daemon preview).
 
-`incorp()` builds an object graph.  `refresh()` keeps it **synchronised
-with the source** without you having to re-pass `inc_code`, `inc_url`,
-or any of the other identity-mapping kwargs.
+Your dashboard reads `Pair.inc_dict['BTCUSDT'].lastPrice` every render. You need that
+value to be no more than 30 seconds stale, without rebuilding the whole registry from
+scratch every refresh. That's the `refresh()` verb's job: one call, re-fetches the
+source, replaces the instances in place under the same primary keys.
 
-The contract: `refresh()` re-fetches and rebuilds the registry — the
-same `Class.inc_dict` you read from before now points at fresh
-Pydantic instances under the same primary keys. The canonical view is
-always `Class.inc_dict[<key>]` — read from there after every refresh
-to get the latest values. (Pydantic v2 models are validated at
-construction, so the framework replaces rather than mutates; cached
+Three resolution modes — in-state, re-source, targeted — cover every refresh shape
+you'll need. By the end of this tutorial you'll know which to reach for, plus the
+identity-mapping memory that makes `refresh()` ergonomic and the HTTP-dedup behaviour
+that makes it cheap.
+
+The contract underneath: `refresh()` re-fetches and rebuilds the registry — the
+same `Class.inc_dict` you read from before now points at fresh Pydantic instances
+under the same primary keys. The canonical view is always `Class.inc_dict[<key>]` —
+read from there after every refresh to get the latest values. (Pydantic v2 models are
+validated at construction, so the framework replaces rather than mutates; cached
 local references will read stale data.)
 
-This tutorial uses Binance's public `/api/v3/ticker/24hr` endpoint
-(no auth, ~1,900 pairs in one HTTP call) — a real live-data feed
-where the values move every few seconds. By the end you'll know the
-three resolution modes and the identity-mapping memory that makes
-`refresh()` ergonomic. The closing "Where to Next" section maps
-`refresh()` onto the daemon and multi-source patterns later tutorials
-build on top of it.
+This tutorial uses Binance's public `/api/v3/ticker/24hr` endpoint (no auth, ~1,900
+pairs in one HTTP call) — a real live-data feed where the values move every few
+seconds.
+
+---
+
+> **Runtime contract — bind every `incorp()` return.**
+> `Class.inc_dict` is a `weakref.WeakValueDictionary`. The `IncorporatorList`
+> returned by `incorp()` is the only strong-ref holder for the instances. Always
+> bind it (`pairs = await Pair.incorp(...)`) or the registry empties at the next
+> GC cycle and your refresh has nothing to refresh. Step 1 below follows this
+> pattern; so should every `incorp()` in your code. See the framework docstring
+> on `IncorporatorList.inc_dict` for the deeper treatment of the weak-ref
+> lifecycle.
 
 ---
 

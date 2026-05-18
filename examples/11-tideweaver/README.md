@@ -1,32 +1,34 @@
-﻿***
+***
 
 # 🧵 Tutorial 11 — Tideweaver: Multi-Exchange Arbitrage Scanner Diamond (Capstone)
-
-`stream()` watches one source.  `fjord()` watches N sources concurrently.
-**Tideweaver** orchestrates them — a graph of named currents over a single time window,
-each ticking on its own interval, with dependency edges that gate downstream work until
-upstream produces fresh data.
 
 **Prerequisites:** [Tutorial 7](../07-stateful-refresh/README.md) (`refresh()` mechanics),
 [Tutorial 8](../08-streaming-daemon/README.md) (`stream()`, both polling modes),
 [Tutorial 10](../10-multi-source-fjord/README.md) (`fjord()` + `outflow(state)`).
 
-> **The canonical multi-source orchestration use case for crypto is the
-> multi-exchange arbitrage scanner.**  Real arb bots monitor 5–20+ exchanges
-> concurrently, look for cross-venue spreads, and act when the spread crosses a
-> threshold.  Most are built on [CCXT](https://github.com/ccxt/ccxt) with hand-rolled
-> `asyncio` glue.  Tideweaver lets you **declare** it instead — one Current per
-> exchange, dependency edges, bounded window, clean drain.  No async scheduler to
-> write yourself.
->
-> *If you need 100+ exchange support out of the box, CCXT is the standard library.
-> Incorporator targets the case where you want a typed object graph + declarative
-> orchestration + the same verbs your single-source pipelines already use.*
+Multi-exchange arb scanners monitor 5–20 exchanges concurrently for cross-venue
+spreads. Three exchanges — Binance.us, Coinbase Advanced Trade, Kraken — each
+ticking at its own cadence, converging on one fused "best bid / best ask /
+spread / opportunity flag" tail.
 
-This tutorial builds the data layer for a 3-exchange arb scanner — Binance.us +
-Coinbase Advanced Trade + Kraken, all free, all no-auth — using `Watershed.diamond()`.
-Three exchange currents converge on one composite "best bid / best ask / cross-venue
-spread / arb-opportunity flag" tail.
+**Tideweaver** lets you declare it instead of writing the async scheduler
+yourself: one `Watershed.diamond()`, three exchange currents, one `Fjord`
+current that snapshots them all and writes the consolidated arb signal. No
+hand-rolled `asyncio` glue, no per-current restart logic, no manual snapshot
+locking — the orchestrator runs a graph of named currents over a single time
+window, each ticking on its own interval, with dependency edges that gate
+downstream work until upstream produces fresh data.
+
+> **CCXT comparison.** Real arb bots are usually built on
+> [CCXT](https://github.com/ccxt/ccxt) with hand-rolled `asyncio` glue.  If you
+> need 100+ exchange support out of the box, CCXT is the standard library.
+> Incorporator targets the case where you want a typed object graph +
+> declarative orchestration + the same verbs your single-source pipelines
+> already use.
+
+This tutorial builds the data layer for the 3-exchange scanner above —
+Binance.us + Coinbase Advanced Trade + Kraken, all free, all no-auth — using
+`Watershed.diamond()`.
 
 ---
 
@@ -158,6 +160,16 @@ Three exchange currents — Binance.us, Coinbase Advanced Trade, Kraken — each
 on their own cadence.  One tail `Fjord` current snapshots all three exchange registries,
 finds the best bid and best ask per symbol across venues, computes the cross-venue
 spread, and flags any opportunity where the spread crosses a threshold (basis points).
+
+> **`stateful_polling=True` is rejected inside a Watershed.**
+> Tideweaver does its own per-tick scheduling, so a `Stream` current with
+> `stateful_polling=True` would conflict with the orchestrator's interval
+> clock and is **rejected at construction time** (AGENTS.md GOTCHA #9).
+> Inside a Watershed, every `Stream` current is a chunking-mode `incorp()`
+> call per tick.  If you want stateful behaviour across ticks (live
+> `inc_dict` accumulating between Tides), put a `Fjord` current
+> downstream — its outflow snapshots the upstream registries on each
+> flush.  The diamond below does exactly that.
 
 ```python
 import asyncio
@@ -347,21 +359,6 @@ Each `Current` carries an `on_error` policy:
 For an arb scanner, `"isolate"` is usually right: one exchange going down shouldn't
 crash the whole orchestrator; the tail Fjord just emits a best-market record from
 whichever exchanges are still up.
-
----
-
-## A note on `stateful_polling`
-
-Tideweaver does its own per-tick scheduling, so a `Stream` current with
-`stateful_polling=True` would conflict with the orchestrator's interval clock and is
-**rejected at construction time** (AGENTS.md GOTCHA #9).  Inside a Watershed, every
-`Stream` current is a chunking-mode `incorp()` call per tick.
-
-If you want **stateful behavior across ticks** (live `inc_dict` accumulating between
-Tides), put a `Fjord` current downstream — its outflow snapshots the upstream
-registries on each flush.  The arb-scanner diamond above does exactly this: three
-`Stream` currents (one per exchange, chunking-mode per tick) feed one tail `Fjord`
-that snapshots and emits the consolidated best-market row.
 
 ---
 
