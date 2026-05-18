@@ -128,13 +128,14 @@ def _safe_log_filename(prefix: str, suffix: str) -> str:
 
 
 class JSONFormatter(logging.Formatter):
-    """Emit one JSON-line record per log call so `jq`, log aggregators, and :meth:`LoggingMixin.get_error` can read it back without a regex.
+    """Emit one JSON-line record per log call for grep, aggregators, and DLQ retrieval.
 
-    Wired automatically onto every rotating handler set up by
-    :func:`setup_class_logger` — DXs don't instantiate this directly.
-    Each record is a complete dict with ``level``, ``msg``, ``time``,
-    plus optional ``meta`` / ``wave`` / ``exc_info`` keys depending on
-    what the caller attached as ``extra``.
+    `jq`, log aggregators, and :meth:`LoggingMixin.get_error` all read
+    these records back without a regex.  Wired automatically onto every
+    rotating handler set up by :func:`setup_class_logger` — DXs don't
+    instantiate this directly.  Each record is a complete dict with
+    ``level``, ``msg``, ``time``, plus optional ``meta`` / ``wave`` /
+    ``exc_info`` keys depending on what the caller attached as ``extra``.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -382,8 +383,10 @@ class LoggingMixin:
 
     @classmethod
     def log_cls_error(cls, msg: str, exc_info: bool = False) -> None:
-        """Record a failure from inside a ``@classmethod`` factory where ``self`` isn't available, optionally attaching the active traceback.
+        """Record a failure from inside a ``@classmethod`` factory.
 
+        Use this from any class method where ``self`` isn't available,
+        optionally attaching the active traceback via ``exc_info=True``.
         Class-level counterpart to :meth:`log_error` — use inside a
         factory's ``except`` block to capture failures before an
         instance has been constructed.  Retrievable later via
@@ -410,8 +413,10 @@ class LoggingMixin:
     # --- INSTANCE-LEVEL LOGGING ---
 
     def log_meta(self) -> str:
-        """Stamp a wave or custom log call with this instance's identity from inside an ``outflow(state)`` or other hot-path callback.
+        """Stamp a wave or custom log call with this instance's identity.
 
+        Call from inside an ``outflow(state)`` or other hot-path callback
+        to attach the per-instance metadata to a custom record.
         Returns the flat ``key:"value"`` summary that every
         instance-level ``log_*`` method auto-attaches to its records —
         useful when you want to surface that same metadata on a record
@@ -445,8 +450,9 @@ class LoggingMixin:
         return logging.getLogger(self.__class__.__name__)
 
     def log_debug(self, msg: str) -> None:
-        """Verbose per-instance tracing you keep on during dev and turn off in prod — or a post-mortem trail when something later goes wrong.
+        """Verbose per-instance tracing — keep on in dev, off in prod.
 
+        Doubles as a post-mortem trail when something later goes wrong.
         Reach for ``self.log_debug(...)`` to leave breadcrumbs through
         a parser or a custom ``outflow`` so that, weeks later, a
         production failure can be replayed by tailing
@@ -465,7 +471,9 @@ class LoggingMixin:
             logger.debug(msg, extra={"meta": self.log_meta(), "is_api": False})
 
     def log_info(self, msg: str) -> None:
-        """Mark per-instance lifecycle events worth keeping — fetch started, 100 rows parsed, daemon resumed after a pause.
+        """Mark per-instance lifecycle events worth keeping in the log.
+
+        Examples: fetch started, 100 rows parsed, daemon resumed after a pause.
 
         The default channel for "things happened" messages tied to a
         specific instance.  Pairs with :meth:`log_error` for the failure
@@ -484,8 +492,9 @@ class LoggingMixin:
             logger.info(msg, extra={"meta": self.log_meta(), "is_api": False})
 
     def log_error(self, msg: str, exc_info: bool = False) -> None:
-        """Capture caught exceptions and recoverable failures on an instance so a retry loop can pick them up via :meth:`get_error` later.
+        """Capture caught exceptions and recoverable failures on an instance.
 
+        A retry loop can pick them up via :meth:`get_error` later.
         Reach for ``self.log_error(..., exc_info=True)`` inside
         ``except`` blocks to attach the active traceback to the record.
         Retrievable later via :meth:`get_error`, which returns this and
@@ -529,9 +538,11 @@ class LoggingMixin:
 
 
 class LoggedIncorporator(LoggingMixin, Incorporator):
-    """Swap in for :class:`Incorporator` when an overnight pipeline needs structured JSON-line logs you can grep, ship to an aggregator, or feed into a DLQ-retry loop.
+    """Drop-in for :class:`Incorporator` with structured JSON-line logs.
 
-    Subclass ``LoggedIncorporator`` exactly like ``Incorporator``, then
+    Swap in when an overnight pipeline needs records you can grep, ship to
+    an aggregator, or feed into a DLQ-retry loop.  Subclass
+    ``LoggedIncorporator`` exactly like ``Incorporator``, then
     pass ``enable_logging=True`` on any verb call to wire up rotating
     JSONL files at ``logs/<ClassName>_{api,error,debug}.log``.  Every
     wave, every caught exception, and every ``self.log_*`` call from
@@ -575,7 +586,10 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     async def incorp(
         cls: Type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
     ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
-        """Production-observable variant of :meth:`Incorporator.incorp` — fetch + parse + register, with an ``enable_logging=True`` opt-in for JSON-line logs to disk.
+        """Production-observable variant of :meth:`Incorporator.incorp`.
+
+        Fetch + parse + register, with an ``enable_logging=True`` opt-in for
+        JSON-line logs to disk.
 
         Reach for this wrapper when the very first fetch into a fresh
         subclass already matters for your audit trail — typically the
@@ -625,7 +639,10 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     async def refresh(
         cls: Type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
     ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
-        """Production-observable variant of :meth:`Incorporator.refresh` — re-fetch live data into existing instances, with an ``enable_logging=True`` opt-in for JSON-line logs to disk.
+        """Production-observable variant of :meth:`Incorporator.refresh`.
+
+        Re-fetch live data into existing instances, with an
+        ``enable_logging=True`` opt-in for JSON-line logs to disk.
 
         Reach for this wrapper on a manual one-shot mark-to-market
         re-fetch when you want the refresh leg recorded — useful when
@@ -662,7 +679,11 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
 
     @classmethod
     async def export(cls: Type[TLoggedIncorporator], *, enable_logging: bool = False, **kwargs: Any) -> None:
-        """Production-observable variant of :meth:`Incorporator.export` — serialise the object graph to disk, with an ``enable_logging=True`` opt-in that brackets the run with INFO entries and captures any raised exception.
+        """Production-observable variant of :meth:`Incorporator.export`.
+
+        Serialise the object graph to disk, with an
+        ``enable_logging=True`` opt-in that brackets the run with INFO
+        entries and captures any raised exception.
 
         Reach for this wrapper inside scheduled batch jobs where the
         export is the deliverable and a silent failure would go
@@ -715,7 +736,11 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         outflow: Optional[Any] = None,
         enable_logging: bool = False,
     ) -> AsyncGenerator[Wave, None]:
-        """Production-observable variant of :meth:`Incorporator.stream` — overnight chunked drain with an ``enable_logging=True`` opt-in that mirrors every yielded :class:`Wave` to JSON-line logs on disk.
+        """Production-observable variant of :meth:`Incorporator.stream`.
+
+        Overnight chunked drain with an ``enable_logging=True`` opt-in
+        that mirrors every yielded :class:`Wave` to JSON-line logs on
+        disk.
 
         Reach for this wrapper on the unattended overnight drain you
         intend to grep over the next morning — every successful chunk,
@@ -794,7 +819,11 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         inflow: Optional[Any] = None,
         enable_logging: bool = False,
     ) -> AsyncGenerator[Wave, None]:
-        """Production-observable variant of :meth:`Incorporator.fjord` — live stateful multi-source daemon with an ``enable_logging=True`` opt-in that mirrors every yielded :class:`Wave` to JSON-line logs on disk.
+        """Production-observable variant of :meth:`Incorporator.fjord`.
+
+        Live stateful multi-source daemon with an
+        ``enable_logging=True`` opt-in that mirrors every yielded
+        :class:`Wave` to JSON-line logs on disk.
 
         Reach for this wrapper when the fjord fuses N concurrent
         sources through your ``outflow(state)`` and you need a single

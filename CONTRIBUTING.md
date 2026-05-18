@@ -30,7 +30,7 @@ pytest -m benchmark
 
 Every PR is expected to land with:
 
-- **All 621+ tests green** (`pytest --no-cov -q`).
+- **All 627+ tests green** (`pytest --no-cov -q`).
 - **`mypy --strict` clean** on the source tree (55 files, no errors).
 - **`ruff check` clean** on source + tests.
 - **`black --check` clean** on source + tests (line length 120).

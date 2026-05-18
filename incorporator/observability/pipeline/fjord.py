@@ -52,8 +52,7 @@ def _validate_depends_on(stream_params: List[Dict[str, Any]]) -> None:
         for dep in deps:
             if dep not in peer_names:
                 raise ValueError(
-                    f"depends_on references unknown peer class {dep!r}; "
-                    f"available peers: {sorted(peer_names)}"
+                    f"depends_on references unknown peer class {dep!r}; " f"available peers: {sorted(peer_names)}"
                 )
 
 
@@ -76,16 +75,10 @@ def _tiered_seed_order(
     tiers: List[List[Dict[str, Any]]] = []
 
     while unresolved:
-        ready = [
-            e
-            for e in unresolved
-            if all(d in resolved_names for d in (e.get("depends_on") or []))
-        ]
+        ready = [e for e in unresolved if all(d in resolved_names for d in (e.get("depends_on") or []))]
         if not ready:
             unresolved_names = [e["cls"].__name__ for e in unresolved]
-            raise ValueError(
-                f"depends_on cycle detected among: {unresolved_names}"
-            )
+            raise ValueError(f"depends_on cycle detected among: {unresolved_names}")
         # Preserve declaration order within the tier.
         ready_ids = {id(e) for e in ready}
         ready_in_order = [e for e in stream_params if id(e) in ready_ids]

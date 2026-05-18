@@ -440,9 +440,7 @@ def analyze_error(e: Exception) -> None:
                 "   👉 CSV Parsing Failed: Check the delimiter. Use `format_type=FormatType.TSV` or `PSV` if it's not a comma."  # noqa: E501
             )
         elif "cramjam" in e_str:
-            p(
-                "   👉 Missing Dependency: Rust compression requires Cramjam. Run `pip install incorporator[cramjam]`."
-            )
+            p("   👉 Missing Dependency: Rust compression requires Cramjam. Run `pip install incorporator[cramjam]`.")
         else:
             p("   👉 HTML Firewall/Login Page: If the parser choked, the API likely returned HTML.")
             p("      Open the URL in your browser to check for captchas or login portals.")

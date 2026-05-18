@@ -104,6 +104,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pairs vs ~1,900 on `.com`. Swap back outside those regions for full
   coverage.
 
+### Fixed (diagnostic ergonomics)
+- **Clearer Seed Error wave from `fjord()`.** When `_seed_one_source`
+  raises, the emitted `Wave.failed_sources` entry now names the source
+  class and exception type, and — for the common `KeyError` raised
+  inside `inflow(state)` — points directly at the missing peer with a
+  concrete fix suggestion (`state.get(...)` or `depends_on=[...]`).
+  Previously a bare `KeyError('Track')` stringified to just `'Track'`
+  in the failure message, leaving the user no signal about which
+  source raised or what stage failed.  Helper:
+  `incorporator.observability.pipeline.fjord._format_seed_error`.
+- **Bare-class data-loss warning at outflow flush.** `flush()` prefers
+  a user-pre-declared subclass when the outflow module exposes one
+  with the matching `__name__`.  A "bare" declaration like
+  `class Race(Incorporator): pass` adds no fields beyond the base
+  three; under Pydantic V2's default `extra='ignore'`, every row
+  field is silently dropped on `model_validate` (silent data loss).
+  A one-time WARNING per class identity now surfaces the issue with
+  a fix suggestion (declare the fields explicitly or delete the
+  class so `infer_dynamic_schema` takes over).  Helper:
+  `incorporator.observability.pipeline._outflow._warn_on_bare_user_class`.
+- **`analyze_error()` inspector survives cp1252 stdout.** The error
+  inspector's emoji prefixes (`🚨` / `💡` / `👉`) used to crash mid-
+  diagnosis on Windows cp1252 console with `UnicodeEncodeError`,
+  hiding the actual error message under a secondary traceback.
+  A local `p()` helper in `analyze_error()` now catches the encode
+  error and falls back to ASCII (emojis become `?`) so the
+  diagnosis still lands.  Set `PYTHONIOENCODING=utf-8` for the
+  prettier rendering.
+
 ### Added (defaults change for three specific hosts)
 - **Host-aware rate-limit registry.** The HTTP engine consults an internal
   `_KNOWN_API_RATE_LIMITS` table when the caller does not pass

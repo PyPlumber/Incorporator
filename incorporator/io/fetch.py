@@ -94,7 +94,7 @@ def _resolve_host_safe_rate(source_list: List[Any]) -> Optional[float]:
             continue
         try:
             host = urlparse(src).hostname or ""
-        except Exception:
+        except Exception:  # noqa: S112 — defensive parse guard; logging would spam per malformed URL
             continue
         if host in _KNOWN_API_RATE_LIMITS:
             rates.append(_KNOWN_API_RATE_LIMITS[host])
@@ -632,9 +632,7 @@ async def fetch_concurrent_payloads(
                         # CancelledError / SystemExit / KeyboardInterrupt — propagate.
                         raise res
                     if isinstance(res, Exception):
-                        logger.warning(
-                            f"⚠️ FETCH ERROR on '{src}': {type(res).__name__}: {res}. Skipping."
-                        )
+                        logger.warning(f"⚠️ FETCH ERROR on '{src}': {type(res).__name__}: {res}. Skipping.")
                         failed_sources.append(str(src))
                     elif res:
                         all_parsed_data.extend(res)
@@ -667,9 +665,7 @@ async def fetch_concurrent_payloads(
                     try:
                         res = await _safe_execute(str(src), p)
                     except Exception as exc:
-                        logger.warning(
-                            f"⚠️ FETCH ERROR on '{src}': {type(exc).__name__}: {exc}. Skipping."
-                        )
+                        logger.warning(f"⚠️ FETCH ERROR on '{src}': {type(exc).__name__}: {exc}. Skipping.")
                         failed_sources.append(str(src))
                         continue
                     if res:

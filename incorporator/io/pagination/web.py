@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any, AsyncGenerator, List, Optional, Set, Union
+from typing import Any, AsyncGenerator, List, Optional, Set, Union, cast
 from urllib.parse import urljoin
 
 import httpx
@@ -30,11 +30,12 @@ def _extract_results_array(data: Any, result_key: Optional[str]) -> List[Any]:
     if not isinstance(data, dict):
         return []
     if result_key:
-        return data.get(result_key, []) or []
+        explicit = data.get(result_key, []) or []
+        return cast(List[Any], explicit)
     for key in _RESULT_KEY_CONVENTIONS:
         items = data.get(key)
         if items:
-            return items
+            return cast(List[Any], items)
     return []
 
 

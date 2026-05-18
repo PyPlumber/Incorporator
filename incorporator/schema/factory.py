@@ -291,7 +291,9 @@ def build_instances(
         declared = getattr(ActualClass, "_cached_json_properties", None)
         if declared is None:
             declared = ActualClass.model_json_schema().get("properties", {})
-            ActualClass._cached_json_properties = declared
+            # setattr keeps mypy strict happy — ``_cached_json_properties`` is a
+            # dynamic cache attribute, not a declared class field.
+            setattr(ActualClass, "_cached_json_properties", declared)  # noqa: B010
         for item in transformed_data:
             for k in item:
                 if k not in cls._schema_union:
