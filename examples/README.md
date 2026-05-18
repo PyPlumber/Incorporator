@@ -2,6 +2,28 @@
 
 Every tutorial is its own self-contained directory.  The `README.md` inside is the canonical write-up; the `.py` next to it is the runnable code; sidecars / fixtures / `pipeline.json` / `watershed.json` ship in the same folder.
 
+## 🛣️ Recommended speed-run sequence
+
+If you're going through the curriculum in one sitting, alternate the four appendix detours between the CoinGecko-heavy tutorials.  Each detour is a 2–8 s real-world side-quest (no CoinGecko) that gives CoinGecko's per-minute rate-limit window time to refresh between tutorials.
+
+| # | Step | API | Wall-clock | Real-world thread |
+|---|---|---|---|---|
+| 1 | **T1 — First Steps** | CoinGecko (2) | ~10 s | core: `incorp()` / `test()` / `inc_dict` |
+| 2 | 🛣️ [Data Lake Pivot](./appendix/data-lake-pivot/) | jsonplaceholder (1) | ~2 s | **SaaS roster → BI-ready columnar** |
+| 3 | **T2 — Universal Formats** | CoinGecko (1) | ~5 s | warehouse round-trip |
+| 4 | 🛣️ [XML Post Audit](./appendix/xml-post-audit/) | NHTSA POST (1) | ~3 s | **Used-car fraud audit** vs federal VIN database |
+| 5 | **T3 — Parent-Child Drilling** | CoinGecko (11) | ~55 s | biggest CG hit; backtest data prep |
+| 6 | 🛣️ [SpaceX Launches](./appendix/spacex-launches/) | SpaceX (~7) | ~5 s | **Ops dashboard feed** — upcoming-launches enrichment |
+| 7 | **T4 — Stateful Refresh** | Binance.us (4) | ~10 s | natural non-CG cooldown |
+| 8 | **T5 — Streaming Daemon** | Binance + CoinGecko (3) | ~30 s | live ticker + paginated drain |
+| 9 | 🛣️ [NASCAR Fantasy Fjord](./appendix/nascar-fantasy-fjord/) | NASCAR (6) | ~8 s | **Fantasy sports scoring** — multi-series concurrent extract |
+| 10 | **T6 — Multi-Source Fjord** | CoinGecko + Binance | continuous | terminal CG phase; one cycle |
+| 11 | **T7 — Tideweaver** | local fixtures only | ~5 s | orchestration capstone |
+
+> **Why detour?** CoinGecko's free public tier is 5–15 calls per minute, server-side.  Even with Incorporator's host-aware throttle (12 req/min on `api.coingecko.com` — see [the rate-limit registry](../incorporator/io/fetch.py)), back-to-back tutorial runs can stack calls inside the same 60-s window and trip the limiter.  The detours above are quick non-CG appendices that give CG's window time to refresh **while teaching complementary patterns** — XML + POST ingestion, ops-dashboard fan-out, multi-source sports analytics.
+
+The tables below remain the canonical index of the curriculum and appendices.  Use the speed-run sequence when learning end-to-end; use the tables when you need a specific concept.
+
 ## The seven-tutorial curriculum
 
 | # | Folder | What you learn |

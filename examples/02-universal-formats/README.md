@@ -267,6 +267,8 @@ the chunking-mode pipeline.
 
 ## Where to Go Next
 
+> 🛣️ **Recommended detour before T3 — [XML Post Audit](../appendix/xml-post-audit/README.md).**  Compliance teams audit warehouses like the one T2 just built every day.  Walk through a used-car fraud case: an XML invoice ledger gets enriched against NHTSA's federal VIN database via a single batched POST, then joined on VIN to flag discrepancies between what the dealer claimed and what the government says.  Teaches XML inflow + POST shapes that T3's GET fan-out doesn't cover, and runs in ~3 s — perfect cooldown before T3's 11 CoinGecko drills.
+
 | Goal | Read |
 |---|---|
 | Discover the right kwargs for an unknown source first | [Tutorial 1 — First Steps + DX Inspector](../01-first-steps/README.md) |

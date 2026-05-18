@@ -252,6 +252,8 @@ And the discovery loop you ran *before* that:
 
 ## Where to Go Next
 
+> 🛣️ **Recommended detour before T2 — [Data Lake Pivot](../appendix/data-lake-pivot/README.md).**  T1 loaded a single endpoint.  Real ETL adds one more step: pivot the rows into BI-ready columnar shape before persisting.  Walk through that arc on a SaaS-style `/users` endpoint (jsonplaceholder stands in for Auth0 / Okta / HR-export feeds) — same `incorp → transform → persist` pattern T2 builds on, on a different API shape.  Runs in ~2 s and doesn't compete with CoinGecko's per-minute window.
+
 | Goal | Tutorial |
 |---|---|
 | Snapshot CoinGecko into a Parquet/SQLite/NDJSON warehouse | [Tutorial 2 — Universal Formats](../02-universal-formats/README.md) |

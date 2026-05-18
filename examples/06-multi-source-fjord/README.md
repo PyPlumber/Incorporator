@@ -411,6 +411,8 @@ function, the dynamic output class comes from the filename stem.
 
 ## Where to Go Next
 
+> ℹ️ **No detour before T7.**  T7 runs entirely against local JSON fixtures — no APIs touched, no rate-limit windows to manage.  Proceed directly to the capstone.
+
 | Goal | Read |
 |---|---|
 | Master single-source stateful polling first | [Tutorial 4 — Stateful Refresh](../04-stateful-refresh/README.md) |

@@ -236,6 +236,8 @@ flattening.
 
 ## Where to Go Next
 
+> 🛣️ **Recommended detour before T4 — [SpaceX Launches](../appendix/spacex-launches/README.md).**  The parent-child pattern you just learned on CoinGecko powers operational dashboards too.  Pull SpaceX's upcoming-launches list, drill each launch concurrently for full rocket specs and launchpad coordinates — the exact feed an aerospace ops dashboard or launch-tracker app would consume.  Same `inc_parent` / `inc_child` shape as T3, different vertical, unlimited API.  Lands in ~5 s and gives CoinGecko's window a long-overdue breather after T3's 11-drill burst.
+
 | Goal | Read |
 |---|---|
 | Profile the parent endpoint before drilling | [Tutorial 1 — First Steps + DX Inspector](../01-first-steps/README.md) |

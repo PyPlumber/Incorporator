@@ -273,6 +273,8 @@ healthcheck walkthrough.
 
 ## Where to Go Next
 
+> 🛣️ **Recommended detour before T6 — [NASCAR Fantasy Fjord](../appendix/nascar-fantasy-fjord/README.md).**  T6 is about to introduce `fjord()` for coordinated multi-source refresh.  Try the shape first on a real fantasy-sports scoring problem: pull driver standings concurrently from Cup, Xfinity, and Truck series; join with track + driver master data; produce a weekly fantasy-points table.  The state-aware `inflow()` there even previews T6's `depends_on` graph.  Runs in ~8 s and gives CoinGecko's window time to refresh before T6's continuous polling kicks in.
+
 | Goal | Read |
 |---|---|
 | Pick the right refresh mode before wrapping in a daemon | [Tutorial 4 — Stateful Refresh](../04-stateful-refresh/README.md) |

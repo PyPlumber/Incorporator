@@ -237,6 +237,8 @@ back-to-back with a decision matrix at the close.
 
 ## Where to Go Next
 
+> ℹ️ **No detour needed.**  T4's Binance.us calls don't compete with CoinGecko's per-minute window — proceed directly to T5.  T4 itself functions as a natural cooldown between T3's CoinGecko fan-out and T5's mixed-source streaming.
+
 | Goal | Read |
 |---|---|
 | Discover an unfamiliar endpoint first | [Tutorial 1 — First Steps + DX Inspector](../01-first-steps/README.md) |
