@@ -1,12 +1,8 @@
-﻿***
+***
 
 # 🌱 First Steps with Incorporator: Profile, then `incorp()`
 
-Welcome. This is the smallest meaningful Incorporator program — discovery, then ingestion.
-We'll profile an unknown crypto endpoint with `test()` (the framework's JIT API Inspector),
-then paste its recommendations into a real `incorp()` call. You'll end up with 100 coins
-from CoinGecko as a typed Python object graph, indexed for O(1) lookups, with zero schema
-defined by you.
+You found an unknown crypto endpoint. You don't know its schema, you don't know which field is the primary key, you don't know if any columns are ISO timestamps. Two calls — `test()` then `incorp()` — and you have 100 CoinGecko coins as a typed Python object graph, indexed for O(1) lookups, with zero schema defined by you.
 
 By the end of this tutorial you'll know the canonical call shape, the two kwargs every
 call uses (`inc_url`, `inc_code`), the `inc_dict` registry, and — crucially — the
@@ -167,6 +163,11 @@ async def main():
 
 asyncio.run(main())
 ```
+
+> **Runtime contract — bind the return value.** Always assign `coins = await Coin.incorp(...)`
+> to a local. `Coin.inc_dict` is a `WeakValueDictionary`: drop the strong reference and
+> the instances get garbage-collected out from under you, leaving an empty registry
+> moments later. T7 covers the lifetime model in depth.
 
 Two kwargs that always matter:
 

@@ -1,14 +1,12 @@
-﻿# 🐘 Tutorial 2 — Data Lake Pivot: From SaaS Roster to BI-Ready Columnar
+# 🐘 Tutorial 2 — Data Lake Pivot: From SaaS Roster to BI-Ready Columnar
+
+Your SaaS roster lives in Auth0 or Okta as deeply nested JSON. BI wants it in Avro + SQLite by 7 AM tomorrow. Two calls — `incorp()` then `export()` — and the nested `address` and `company` dicts flatten correctly, types infer to strict Avro (`int` → `long`) and SQLite columns, and the round-trip rehydrates the full Pydantic object graph. No schema, no ORM, no Hadoop serializer.
 
 **Prerequisites:** [Tutorial 1 — First Steps](../01-first-steps/README.md) (`incorp()`, `test()`, `inc_dict`).
 
 **File:** [`data_lake_pivot.py`](./data_lake_pivot.py)
 
-In T1 you loaded a single endpoint into a typed Pydantic registry.  Every real ETL job adds one more step: **pivot** those rows into a shape an analytical warehouse can ingest — flatten nested objects, infer column types, persist to columnar binary.  This is the arc that runs at 1,000 ops teams every morning at 1 a.m.: HR / SaaS user lists land in Auth0 or Okta, get pivoted into Avro + SQLite, and feed the BI layer by 7 a.m.
-
 This tutorial walks that arc on a SaaS-style `/users` endpoint.  `jsonplaceholder.typicode.com/users` stands in for any rostered REST source (Auth0, Okta, Workday, BambooHR, internal LDAP exports).  The endpoint returns heavily nested `address` and `company` dictionaries — the kind of payload that usually requires manual schema definitions, type mapping, and flattening logic.
-
-Incorporator eliminates this completely. This tutorial demonstrates how to pivot deeply nested JSON into SQL and Avro with zero boilerplate, while proving that Incorporator's **O(1) Memory Registry** works universally across all formats.
 
 ## 💡 What this tutorial proves
 1. **Automatic Schema Translation:** Incorporator infers types from the JSON API and natively maps them to strict Avro types (e.g., `int` to `long`) and SQLite columns.
@@ -41,8 +39,8 @@ With a single command, Incorporator creates the `employees` table, infers the co
 ```python
 await User.export(
     instance=users,
-    file_path="users_warehouse.db", 
-    sql_table="employees", 
+    file_path="users_warehouse.db",
+    sql_table="employees",
     if_exists="replace"
 )
 ```
@@ -53,7 +51,7 @@ Avro requires a highly strict schema definition. Incorporator dynamically genera
 ```python
 await User.export(
     instance=users,
-    file_path="users_datalake.avro", 
+    file_path="users_datalake.avro",
     format_type=FormatType.AVRO
 )
 ```

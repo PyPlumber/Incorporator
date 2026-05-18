@@ -1,18 +1,8 @@
-﻿***
+***
 
 # 📦 Tutorial 3 — Universal Formats: Build a Crypto Snapshot Warehouse
 
-The Incorporator promise: **same syntax for every format**.  The `incorp()` call you wrote
-for a JSON API works without modification against a CSV from a stakeholder, a Parquet
-file in your data lake, a SQLite snapshot from your nightly cron, or an Avro stream from
-Kafka.  The framework auto-detects format from the file extension and dispatches to the
-matching handler.
-
-We'll use that uniformity to build the real-world crypto-ETL pattern: **periodically
-snapshot CoinGecko's top-100 markets into a multi-format warehouse**.  Append-friendly
-formats (NDJSON / CSV / SQLite) accumulate a time-series log; columnar formats
-(Parquet / Feather / ORC) get snapshot-and-replaced each tick.  Both shapes share one
-`Coin(Incorporator)` class and one schema inference pass.
+Every hour, snapshot CoinGecko's top-100 markets into a multi-format warehouse — NDJSON / CSV / SQLite for the time-series log, Parquet for the hourly artifact. One `Coin(Incorporator)` class, one schema inference pass, five storage substrates. The framework auto-detects format from the file extension; the `incorp()` and `export()` calls stay identical across all of them.
 
 **Prerequisites:** [Tutorial 1 — First Steps](../01-first-steps/README.md) (`incorp()`, `test()`,
 `inc_dict`, basic schema inference); [Tutorial 2 — Data Lake Pivot](../02-data-lake-pivot/README.md)
