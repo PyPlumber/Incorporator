@@ -30,8 +30,8 @@ pytest -m benchmark
 
 Every PR is expected to land with:
 
-- **All 521+ tests green** (`pytest --no-cov -q`).
-- **`mypy --strict` clean** on the source tree (47 files, no errors).
+- **All 621+ tests green** (`pytest --no-cov -q`).
+- **`mypy --strict` clean** on the source tree (55 files, no errors).
 - **`ruff check` clean** on source + tests.
 - **`black --check` clean** on source + tests (line length 120).
 - **New tests** covering any new public method, handler, or CLI flag.
@@ -108,9 +108,12 @@ design, not the journey to it.
 - **Public docstrings** use Google style and are auto-rendered by `pdoc`
   into `docs/library_reference.md`. Don't write prose duplicates of class /
   method documentation elsewhere — link to the generated reference.
-- **Tutorials** (the numbered `docs/N_*.md` files) cover one feature each
-  and end with a "Run it from the CLI" addendum mapping the Python code
-  to a `pipeline.json`. New tutorials should follow this pattern.
+- **Tutorials** live at `examples/NN-<slug>/README.md` (T1-T11) with the
+  companion `.py` co-located in the same directory. Each tutorial covers
+  one feature and ends with a "Run it from the CLI" addendum mapping the
+  Python code to a `pipeline.json` (or `watershed.json` for T11). New
+  tutorials should follow this pattern. Advanced side-quests sit under
+  `examples/appendix/<slug>/` with the same co-location rule.
 - **README.md** is verb-forward and stays under ~250 lines. Long content
   goes into `docs/`.
 
