@@ -117,13 +117,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~600 listed pairs vs ~1,900 on `.com`.  Swap back if you're outside
   those regions and want the full pair universe.
 
-### Added (defaults change for two specific hosts)
+### Added (defaults change for three specific hosts)
 - **Host-aware rate-limit registry.**  The HTTP engine now consults an
   internal `_KNOWN_API_RATE_LIMITS` table when the caller does not pass
-  `requests_per_second` explicitly.  Two entries today:
+  `requests_per_second` explicitly.  Three entries today:
   - `api.coingecko.com` → 0.2 req/sec (12 req/min, under the 5–15/min
     public free-tier ceiling).
   - `pokeapi.co` → 1.5 req/sec (90 req/min, under the 100/min ceiling).
+  - `vpic.nhtsa.dot.gov` → 1.5 req/sec (90 req/min, under NHTSA's
+    100–200/min ceiling).  Method-agnostic — applies to GET *and*
+    POST calls (the xml-post-audit appendix's ``DecodeVINValuesBatch``
+    POST shares the same per-minute bucket as any GET against
+    vpic.nhtsa.dot.gov).
   Caller-supplied `requests_per_second` always wins.  Unknown hosts
   continue to use the documented 15 req/sec global default.  When the
   registry fires, an INFO-level log line names the applied rate.  This
@@ -131,9 +136,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scripts that fan out concurrent requests against strict free tiers
   without realising the framework's default is 60× too fast for
   per-minute-quota APIs.  **Behavior change** for callers hitting
-  CoinGecko / PokeAPI without explicit throttle: their incorp calls
-  slow from ~700 ms to ~50 s for a 10-source drill, which is what was
-  needed to fit inside the free-tier window in the first place.
+  CoinGecko / PokeAPI / NHTSA vPIC without explicit throttle: their
+  incorp calls slow to fit inside the free-tier window (e.g. CoinGecko
+  10-source drill goes from ~700 ms to ~50 s — which is what was
+  needed in the first place).
 - **`depends_on: List[str]` on fjord source entries** — declare which
   peer classes a source's ``inflow(state)`` reads from.  When at least
   one entry declares ``depends_on``, the seed runs in topological tiers:

@@ -366,6 +366,19 @@ def test_resolve_host_safe_rate_pokeapi() -> None:
     assert _resolve_host_safe_rate(["https://pokeapi.co/api/v2/pokemon/pikachu"]) == 1.5
 
 
+def test_resolve_host_safe_rate_nhtsa_post_endpoint() -> None:
+    """Registry is method-agnostic — POST URL against a registered host still throttles.
+
+    NHTSA vPIC supports both GET and POST against the same hostname; the
+    ``DecodeVINValuesBatch`` POST in the xml-post-audit appendix must hit
+    the same registry entry as a hypothetical GET drill against any other
+    vpic endpoint.
+    """
+    from incorporator.io.fetch import _resolve_host_safe_rate
+
+    assert _resolve_host_safe_rate(["https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/"]) == 1.5
+
+
 def test_resolve_host_safe_rate_most_restrictive_wins() -> None:
     """Mixed-host call uses the smallest registered rate."""
     from incorporator.io.fetch import _resolve_host_safe_rate

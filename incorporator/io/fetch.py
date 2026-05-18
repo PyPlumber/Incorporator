@@ -70,6 +70,12 @@ _KNOWN_API_RATE_LIMITS: Dict[str, float] = {
     # PokeAPI: 100 req/min documented ceiling — 1.5 = 90 req/min.
     # https://pokeapi.co/docs/v2#fairuse
     "pokeapi.co": 1.5,
+    # NHTSA vPIC: 100–200 req/min documented; method-agnostic (GET and
+    # POST share the same bucket).  Used by the xml-post-audit appendix
+    # (a single batched ``DecodeVINValuesBatch`` POST per run, well
+    # under any cap) — registry entry protects fan-out and loop callers.
+    # https://vpic.nhtsa.dot.gov/api/home/index/faq
+    "vpic.nhtsa.dot.gov": 1.5,
 }
 
 
