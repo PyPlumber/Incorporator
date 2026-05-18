@@ -309,11 +309,47 @@ async def fjord(
 3. Derive the dynamic output class name from the `outflow=` file stem (PascalCase), and load the `outflow(state)` callable.
 4. Seed every source concurrently with one `incorp()` call apiece (or sequentially when `inflow(state)` is defined).
 5. Run a refresh daemon per source on its own `refresh_interval`; the registries stay independent until export time.
-6. On every `export_interval`, snapshot all source registries, call `outflow(state)`, build the dynamic output class (or reuse a pre-declared subclass for multi-output dict returns), export the combined rows.
+6. On every `export_interval`, snapshot all source registries, call `outflow(state)`, build the dynamic output class, export the combined rows.
 7. Yield a `Wave` per phase: `"fjord_incorp:<Class>"`, `"fjord_refresh:<Class>"`, `"export:<Class>"`, and `"outflow:<DynamicClass>"`.
 
 **When to reach for it**
 The stateful live-daemon verb — concurrent source refresh + outflow fusion. Live mark-to-market dashboard fusing CoinGecko USD + Binance USDT, fantasy NASCAR Sunday fusing five APIs into one truth file, or a single-source live registry that keeps mutating in place (N=1 fjord is legitimate when you want the daemon shape without writing a custom loop).
+
+**The `inflow(state)` contract**
+
+When the `inflow.py` sidecar defines a top-level `inflow(state)` callable, fjord switches from parallel-gather seeding to sequential dependent seeding so later sources can read from earlier ones. The hook is called **once per source, just before that source is seeded**, and must return per-class kwarg overlays:
+
+1. **Call cadence.** `inflow(state)` fires once per source in `stream_params` order — *before* that source's `incorp()` runs. With N sources, the hook is invoked N times.
+2. **Progressive state.** `state` is a `dict[str, IncorporatorList]` keyed by source class name and is populated incrementally — the first call sees an empty dict; the second sees only the first source's list; the Nth sees N-1 entries.
+3. **Guard for missing keys.** Because earlier calls see a partial `state`, every read must guard: `state.get("Track")` or `if "Track" in state:`. When the keys you need aren't there yet, return `{}` (no overrides for this source).
+4. **Return shape.** `dict[str, dict[str, Any]]` — a per-class kwarg overlay merged into that source's `incorp_params` just before seeding. Outer key = source class name; inner dict = kwargs to overlay (e.g. `inc_url`, `conv_dict`).
+5. **Failure mode.** An unguarded `KeyError` (or any exception) inside `inflow(state)` aborts the pipeline and emits a `fjord_incorp:<source>` wave whose `failed_sources` carries the exception's `str()`. The remaining sources never seed.
+
+**Output classes are always built by the framework — don't pre-declare them in the outflow sidecar.**
+
+* **Single-output** (`outflow(state) -> list[dict]`): one dynamic class is built, named after the **outflow file's stem** in PascalCase. Fields are inferred from the returned rows.
+* **Multi-output** (`outflow(state) -> dict[ClassName, list[dict]]`): one dynamic class per dict key, named exactly that key. Fields inferred per output.
+
+Declaring a bare `class FantasyTeam(Incorporator): pass` in the outflow file *suppresses* field inference — the framework reuses your declared class and Pydantic silently drops every row field that isn't on it. Only pre-declare an output class when you want **full type control** with explicit field declarations; otherwise let the framework build the dynamic class.
+
+**Navigating `state` inside `outflow(state)`:**
+
+```python
+def outflow(state):
+    """state is dict[str, IncorporatorList], keyed by source class name."""
+    rows = []
+    for inv in state["Invoice"]:            # iterate as a list
+        # link_to() in inflow() already resolves inv.Vehicle.VIN to a
+        # live Pydantic instance — no extra lookup needed in outflow.
+        nht = state["NHTSASpec"].inc_dict.get(inv.Vehicle.VIN)
+        rows.append({
+            "vin": inv.Vehicle.VIN,
+            "nht_make": nht.Make if nht else None,
+        })
+    return rows
+```
+
+Three lessons: iterate the registry as a list; look up by `inc_dict[key]`; trust foreign keys that `link_to(state["..."])` resolved during inflow (don't re-look them up).
 
 **Common kwargs**
 - `stream_params` — list of `{"cls": ..., "incorp_params": {...}, "refresh_params": {...}, "refresh_interval": ..., "export_params": {...}}` per source.
@@ -610,7 +646,7 @@ The class-level counterpart to `log_info` / `log_error` — use these inside `@c
 
 ### Shared kwargs glossary
 
-- `inflow=` — sidecar `.py` exposing public symbols for `conv_dict` token resolution; in fjord, may also define `inflow(state)` for sequential dependent seeding.
+- `inflow=` — sidecar `.py` exposing public symbols for `conv_dict` token resolution; in fjord, may also define `inflow(state)` for sequential dependent seeding (see [the `inflow(state)` contract](#fjord) under the fjord entry for call cadence, guard requirements, and return shape).
 - `outflow=` — sidecar `.py` whose stem becomes the dynamic output class name; must define `outflow(state) -> list[dict]` (or `dict[ClassName, list[dict]]` for multi-output fjord).
 - `inc_page=` — `AsyncPaginator` subclass (`PageNumberPaginator`, `CursorPaginator`, `OffsetPaginator`, `NextUrlPaginator`, `LinkHeaderPaginator`) that drives chunking-mode `stream()` or paginated `incorp()`.
 - `format_type=` — `FormatType` enum forcing a writer when the file extension is ambiguous; otherwise auto-detected from extension.
