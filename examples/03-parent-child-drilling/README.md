@@ -22,11 +22,22 @@ calls.
 [Tutorial 2](../02-universal-formats/README.md) (knows what `export()` looks like; you'll often
 land child-drilled detail in a warehouse).
 
-> **CoinGecko rate-limit note.** The free public API allows roughly 5–15 calls per
-> minute.  This tutorial uses `per_page=10` parents → 10 child drills (11 requests
-> total) so a single end-to-end run stays well under the limit.  Production
-> backfills against CoinGecko Demo / Pro tiers can fan out to hundreds of children;
-> the same pattern scales — just throttle and chunk per the tier's quota.
+> **CoinGecko rate-limit note.** The free public API allows roughly 5–15 calls
+> per *minute* (not per second).  Incorporator's default rate limiter is
+> 15 req/*sec* — 60× too fast.  Two safeguards are in play:
+>
+> 1. **Host-aware default.** When you don't pass `requests_per_second`, the
+>    framework looks up the source's host in an internal registry; calls to
+>    `api.coingecko.com` get capped at 0.2 req/sec (12 req/min) automatically.
+> 2. **Explicit throttle in this tutorial.** The script passes
+>    `requests_per_second=0.2` so the kwarg is visible to readers.  Crank it up
+>    if you have an API key (see below).  Total wall-clock without a key: ~50 s.
+>
+> **Bumping the rate with a free Demo key.**  CoinGecko's [Demo plan](https://www.coingecko.com/en/developers/dashboard)
+> gives 30 req/min stable (requires email signup, no card).  Set
+> `COINGECKO_DEMO_API_KEY=your_key` in your environment; the tutorial reads it
+> via `os.environ.get(...)`, passes it as `headers={"x-cg-demo-api-key": ...}`,
+> and bumps the throttle to 0.5 req/sec (30 req/min).  Wall-clock drops to ~20 s.
 
 ---
 

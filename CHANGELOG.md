@@ -117,7 +117,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~600 listed pairs vs ~1,900 on `.com`.  Swap back if you're outside
   those regions and want the full pair universe.
 
-### Added (opt-in)
+### Added (defaults change for two specific hosts)
+- **Host-aware rate-limit registry.**  The HTTP engine now consults an
+  internal `_KNOWN_API_RATE_LIMITS` table when the caller does not pass
+  `requests_per_second` explicitly.  Two entries today:
+  - `api.coingecko.com` → 0.2 req/sec (12 req/min, under the 5–15/min
+    public free-tier ceiling).
+  - `pokeapi.co` → 1.5 req/sec (90 req/min, under the 100/min ceiling).
+  Caller-supplied `requests_per_second` always wins.  Unknown hosts
+  continue to use the documented 15 req/sec global default.  When the
+  registry fires, an INFO-level log line names the applied rate.  This
+  fixes a class of confusing 429 cascades in tutorials and downstream
+  scripts that fan out concurrent requests against strict free tiers
+  without realising the framework's default is 60× too fast for
+  per-minute-quota APIs.  **Behavior change** for callers hitting
+  CoinGecko / PokeAPI without explicit throttle: their incorp calls
+  slow from ~700 ms to ~50 s for a 10-source drill, which is what was
+  needed to fit inside the free-tier window in the first place.
 - **`depends_on: List[str]` on fjord source entries** — declare which
   peer classes a source's ``inflow(state)`` reads from.  When at least
   one entry declares ``depends_on``, the seed runs in topological tiers:

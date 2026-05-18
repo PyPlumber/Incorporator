@@ -347,3 +347,142 @@ async def test_fetch_concurrent_path_a_batched_no_cancel_cascade(
 
     assert {row["src"] for row in parsed} == {"https://good-a.test/", "https://good-b.test/"}
     assert "https://bad.test/" in failed
+
+
+# ----------------------------------------------------------------------
+# Host-aware rate-limit registry (_KNOWN_API_RATE_LIMITS / _resolve_host_safe_rate)
+# ----------------------------------------------------------------------
+
+
+def test_resolve_host_safe_rate_coingecko() -> None:
+    from incorporator.io.fetch import _resolve_host_safe_rate
+
+    assert _resolve_host_safe_rate(["https://api.coingecko.com/api/v3/coins/markets"]) == 0.2
+
+
+def test_resolve_host_safe_rate_pokeapi() -> None:
+    from incorporator.io.fetch import _resolve_host_safe_rate
+
+    assert _resolve_host_safe_rate(["https://pokeapi.co/api/v2/pokemon/pikachu"]) == 1.5
+
+
+def test_resolve_host_safe_rate_most_restrictive_wins() -> None:
+    """Mixed-host call uses the smallest registered rate."""
+    from incorporator.io.fetch import _resolve_host_safe_rate
+
+    mixed = [
+        "https://api.coingecko.com/api/v3/coins/bitcoin",  # 0.2
+        "https://pokeapi.co/api/v2/pokemon/pikachu",       # 1.5
+    ]
+    assert _resolve_host_safe_rate(mixed) == 0.2
+
+
+def test_resolve_host_safe_rate_unknown_host_returns_none() -> None:
+    from incorporator.io.fetch import _resolve_host_safe_rate
+
+    assert _resolve_host_safe_rate(["https://api.binance.us/api/v3/ticker/price"]) is None
+    assert _resolve_host_safe_rate(["https://example.com/foo"]) is None
+
+
+def test_resolve_host_safe_rate_non_string_entries_skipped() -> None:
+    """Non-string entries (None, Path, etc.) don't blow up the resolver."""
+    from incorporator.io.fetch import _resolve_host_safe_rate
+
+    assert _resolve_host_safe_rate([None, 42, "https://api.coingecko.com/x"]) == 0.2  # type: ignore[list-item]
+
+
+@pytest.mark.asyncio
+async def test_host_aware_default_applied_for_coingecko(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No explicit requests_per_second + CoinGecko URL → RateLimiter pinned at 0.2."""
+    from incorporator.io import fetch
+
+    captured: dict = {}
+
+    real_init = fetch.RateLimiter.__init__
+
+    def capture_init(self: Any, rps: float) -> None:
+        captured["rps"] = rps
+        real_init(self, rps)
+
+    monkeypatch.setattr(fetch.RateLimiter, "__init__", capture_init)
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        return [{"src": src}]
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.coingecko.com/api/v3/coins/bitcoin"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+    )
+
+    assert captured["rps"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_explicit_requests_per_second_overrides_host_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller-supplied requests_per_second wins even on a registered host."""
+    from incorporator.io import fetch
+
+    captured: dict = {}
+
+    real_init = fetch.RateLimiter.__init__
+
+    def capture_init(self: Any, rps: float) -> None:
+        captured["rps"] = rps
+        real_init(self, rps)
+
+    monkeypatch.setattr(fetch.RateLimiter, "__init__", capture_init)
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        return [{"src": src}]
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.coingecko.com/api/v3/coins/bitcoin"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+        requests_per_second=5.0,
+    )
+
+    assert captured["rps"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_unknown_host_keeps_documented_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown host → RateLimiter falls back to the 15.0 documented default."""
+    from incorporator.io import fetch
+
+    captured: dict = {}
+
+    real_init = fetch.RateLimiter.__init__
+
+    def capture_init(self: Any, rps: float) -> None:
+        captured["rps"] = rps
+        real_init(self, rps)
+
+    monkeypatch.setattr(fetch.RateLimiter, "__init__", capture_init)
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        return [{"src": src}]
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.binance.us/api/v3/ticker/price"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+    )
+
+    assert captured["rps"] == 15.0

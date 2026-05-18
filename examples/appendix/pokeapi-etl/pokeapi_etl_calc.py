@@ -50,6 +50,10 @@ async def main() -> None:
     # 1. PHASE 1: SHALLOW DISCOVERY
     # ==========================================
     print("⏳ Running Phase 1: Shallow Discovery (Fetching 150 records)...")
+    # PokeAPI's free tier documents a 100 req/min ceiling.  The 3-page parent
+    # discovery is well under that; the host-aware registry in fetch.py would
+    # auto-throttle anyway (1.5 req/sec = 90/min).  The explicit kwarg here
+    # documents the throttle so readers can see the knob.
     pokemon_nav = await Nav.incorp(
         inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
         rec_path="results",
@@ -57,6 +61,7 @@ async def main() -> None:
         inc_child="url",
         inc_page=NextUrlPaginator("next"),
         call_lim=3,  # 3 pages * 50 = 150 Pokemon
+        requests_per_second=1.5,  # 90 req/min — under PokeAPI's 100/min ceiling
     )
 
     print(f"✅ Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
@@ -67,6 +72,10 @@ async def main() -> None:
     # Showcasing the State Carrier: `incorp` automatically reads the `inc_child_path`
     # ("url") directly off the `pokemon_nav` list wrapper and concurrently fetches
     # all 150 URLs seamlessly without throwing the Deprecation Warning!
+    #
+    # ``requests_per_second=1.5`` paces the 150 child drills so they all land
+    # inside PokeAPI's per-minute budget — without it the burst would 429
+    # most of the later requests.  Total wall-clock: ~100 s.
     enriched_pokemon = await Pokemon.incorp(
         inc_parent=pokemon_nav,
         inc_code="id",
@@ -77,6 +86,7 @@ async def main() -> None:
             "types": calc(format_typing, "types", default="Unknown", target_type=str),
         },
         name_chg=[("stats", "base_stat_total")],
+        requests_per_second=1.5,
     )
 
     print(f"✅ Enrichment Complete. Loaded {len(enriched_pokemon)} Pokémon into memory.")

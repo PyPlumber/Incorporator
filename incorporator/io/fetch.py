@@ -53,6 +53,48 @@ class RateLimiter:
             self.last_call = asyncio.get_running_loop().time()
 
 
+# Host-aware safe-rate registry for known-strict free-tier APIs.  When a
+# caller does NOT pass ``requests_per_second`` explicitly, the engine looks
+# up each source's hostname here and uses the most restrictive matching
+# rate, falling back to the global 15.0 req/sec default for unknown hosts.
+# Numbers are conservative — comfortably under each provider's documented
+# free-tier ceiling so a single concurrent burst can't trip the limiter.
+#
+# Maintenance note: providers change their published limits frequently.
+# When updating, link the source in a one-line comment so future readers
+# can re-verify.
+_KNOWN_API_RATE_LIMITS: Dict[str, float] = {
+    # CoinGecko public (anon): 5–15 req/min — 0.2 = 12 req/min, headroom.
+    # https://support.coingecko.com/hc/en-us/articles/4538771776153
+    "api.coingecko.com": 0.2,
+    # PokeAPI: 100 req/min documented ceiling — 1.5 = 90 req/min.
+    # https://pokeapi.co/docs/v2#fairuse
+    "pokeapi.co": 1.5,
+}
+
+
+def _resolve_host_safe_rate(source_list: List[Any]) -> Optional[float]:
+    """Return the most restrictive known-API rate matching any source host.
+
+    Returns ``None`` when no source URL matches a registered host — caller
+    falls back to the documented default (15.0 req/sec).  When multiple
+    hosts in the same call match the registry, the smallest (most
+    restrictive) rate wins — protecting the strictest API in a multi-source
+    incorp where one global RateLimiter governs every request.
+    """
+    rates: List[float] = []
+    for src in source_list:
+        if not isinstance(src, str):
+            continue
+        try:
+            host = urlparse(src).hostname or ""
+        except Exception:
+            continue
+        if host in _KNOWN_API_RATE_LIMITS:
+            rates.append(_KNOWN_API_RATE_LIMITS[host])
+    return min(rates) if rates else None
+
+
 # ==========================================
 # 2. HTTPX CONFIGURATION & FACTORY
 # ==========================================
@@ -500,7 +542,20 @@ async def fetch_concurrent_payloads(
     _ignore_ssl = kwargs.pop("ignore_ssl", False)
     _timeout = kwargs.pop("timeout", 15.0)
     _headers = kwargs.pop("headers", None)
+    # Detect whether the caller passed an explicit rate — explicit always
+    # wins over the host-aware registry default below.
+    _user_provided_rps = "requests_per_second" in kwargs
     _requests_per_second = kwargs.pop("requests_per_second", 15.0)
+    if not _user_provided_rps and not is_file_mode:
+        host_safe = _resolve_host_safe_rate(source_list)
+        if host_safe is not None and host_safe < _requests_per_second:
+            logger.info(
+                "Host-aware rate limit applied: %.2f req/sec "
+                "(one or more sources match the known-strict-API registry). "
+                "Pass requests_per_second=N to override.",
+                host_safe,
+            )
+            _requests_per_second = host_safe
     # SSRF defence: opt-in.  When True, redirects whose Location header
     # resolves to a private / loopback / link-local / metadata IP are
     # rejected before httpx follows them.  Pipelines that legitimately
@@ -528,7 +583,8 @@ async def fetch_concurrent_payloads(
             if e.response.status_code == 429:
                 logger.warning(
                     f"🚦 RATE LIMITED (HTTP 429) on '{src}'. Skipping. "
-                    f"Tip: Try lowering `concurrency_limit` or adding `delay_between_batches`."
+                    f"Tip: Lower `requests_per_second` (e.g. 0.2 for ~12 req/min); "
+                    f"check the host's free-tier docs for the correct ceiling."
                 )
                 failed_sources.append(src)
                 return []

@@ -9,16 +9,23 @@ ID in O(1).  The framework dedups parent IDs, fans out the children
 concurrently through one shared HTTP/2 client, retries on transient
 failure, and surfaces any DLQ entries on `failed_sources`.
 
-CoinGecko's free public tier allows ~5-15 requests/minute.  We pull
-top-10 coins as parents (1 call) and drill `/coins/{id}` for each
-(10 calls) for an 11-request total — well within quota for a single
-demo run.
+**Rate-limit note.**  CoinGecko's free public tier is 5–15 requests
+per *minute* (not per second).  Incorporator's host-aware registry
+auto-paces calls against `api.coingecko.com` at 0.2 req/sec (12/min) —
+the explicit ``requests_per_second`` kwarg below documents the throttle
+so readers see the knob and can crank it up with an API key.
+
+Set ``COINGECKO_DEMO_API_KEY`` in your environment to use CoinGecko's
+free Demo plan (30 req/min stable, requires email signup at
+https://www.coingecko.com/en/developers/dashboard).  The script reads
+the env var and bumps the throttle automatically when present.
 
 Run with:
     python examples/03-parent-child-drilling/parent_child_drilling.py
 """
 
 import asyncio
+import os
 
 from incorporator import Incorporator
 
@@ -33,6 +40,19 @@ class CoinDetail(Incorporator):
 
 async def main() -> None:
     # ------------------------------------------------------------------
+    # API-key opt-in: free Demo plan = 30 req/min stable.
+    # ------------------------------------------------------------------
+    demo_key = os.environ.get("COINGECKO_DEMO_API_KEY")
+    headers = {"x-cg-demo-api-key": demo_key} if demo_key else None
+    # 30/min with the key, 12/min without — both safely under CoinGecko's
+    # respective ceilings.  Reader can override either way.
+    rps = 0.5 if demo_key else 0.2
+    if demo_key:
+        print("🔑 Using CoinGecko Demo API key (30 req/min).")
+    else:
+        print("ℹ️  No COINGECKO_DEMO_API_KEY set — running anonymous (12 req/min).")
+
+    # ------------------------------------------------------------------
     # PHASE 1 — Load the parent list (top 10 by market cap).
     # ------------------------------------------------------------------
     coins = await Coin.incorp(
@@ -41,6 +61,8 @@ async def main() -> None:
         inc_code="id",
         inc_name="name",
         excl_lst=["image"],
+        headers=headers,
+        requests_per_second=rps,
     )
     print(f"✅ Loaded {len(coins)} parent market rows.")
 
@@ -51,12 +73,18 @@ async def main() -> None:
     # requests), substitutes into the `{}` slot, and fans out through
     # the shared HTTP/2 client.  Heavy fields excluded to keep the
     # response footprint tight.
+    #
+    # ``requests_per_second`` paces the 10 child drills so they all
+    # land inside CoinGecko's per-minute budget — without it the burst
+    # would 429 the last few requests.
     details = await CoinDetail.incorp(
         inc_url="https://api.coingecko.com/api/v3/coins/{}",
         inc_parent=coins,
         inc_child="id",
         inc_code="id",
         excl_lst=["image", "tickers", "community_data", "developer_data"],
+        headers=headers,
+        requests_per_second=rps,
     )
     print(f"✅ Drilled {len(details)} per-coin detail records.\n")
 

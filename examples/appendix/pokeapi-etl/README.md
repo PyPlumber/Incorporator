@@ -27,6 +27,16 @@ We are going to build a "Gen 1 Power Ranking" table. To do this, we need to:
 2. **Deep enrichment:** Concurrently fire 150 HTTP requests to those URLs to fetch their deep specs.
 3. **Declarative ETL:** Use `calc()` to intercept the massive `stats` and `types` JSON arrays, sum them up, format them, and drop the raw JSON to save memory.
 
+> **Rate-limit note.** PokéAPI [documents a 100 req/min ceiling](https://pokeapi.co/docs/v2#fairuse).
+> The default Incorporator rate (15 req/sec = 900 req/min) is 9× too fast and
+> would 429 most of the 150 child drills.  Two safeguards are in play:
+>
+> 1. **Host-aware default.** When you don't pass `requests_per_second`, the
+>    framework auto-throttles calls to `pokeapi.co` to 1.5 req/sec (90/min).
+> 2. **Explicit throttle in the script.** The example passes
+>    `requests_per_second=1.5` on both `incorp()` calls so the kwarg is
+>    visible to readers.  Total wall-clock: ~100 s for 150 drills.
+
 ---
 
 ## 💻 The Complete Code
