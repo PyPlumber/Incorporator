@@ -114,20 +114,26 @@ The seed call's network context (`params`, `headers`, `rec_path`, `conv_dict`, .
 
 `await Launch.export(instance=launches, file_path="launches.parquet")` — JSON, NDJSON, CSV, XML, SQLite, Parquet, Feather, ORC, Avro, XLSX. → [Formats & compression](./docs/formats_and_compression.md)
 
-### `stream()` — a long-running data pipeline
+### `stream()` — paginated bulk export, O(1) memory
 
-Periodic fetch + optional refresh + optional periodic export as a daemon. A `Wave` per chunk is the built-in observability stream.
+For paginated APIs or local files too big for RAM, `stream()` fetches one page at a time, exports it, releases the page, and moves on — peak memory stays at roughly one chunk regardless of dataset size. A `Wave` per chunk is the built-in observability stream.
 
 ```python
+from incorporator.io.pagination import PageNumberPaginator
+
 async for wave in Launch.stream(
-    incorp_params={"inc_url": "https://ll.thespacedevs.com/2.2.0/launch/upcoming/"},
-    refresh_interval=60,
+    incorp_params={
+        "inc_url": "https://api.example.com/launches",
+        "inc_page": PageNumberPaginator(page_param="page"),
+    },
     export_params={"file_path": "launches.parquet"},
-    export_interval=300,
 ):
     if wave.failed_sources: print(wave)
 ```
-→ [Streaming & pagination](./docs/streaming_and_pagination.md)
+
+For live dashboards keeping a registry hot across many sources, reach for `fjord()` instead.
+
+→ [Streaming & pagination](./docs/streaming_and_pagination.md) · [Tutorial 8](./examples/08-streaming-daemon/README.md)
 
 ### `fjord()` — a multi-source data pipeline
 
@@ -168,6 +174,14 @@ async for tide in Tideweaver(watershed).run():
 Four shape helpers (`parallel`, `chain`, `fanout`, `diamond`) plus `custom` with explicit `edges`. Declarative `watershed.json` config + `incorporator tideweaver run / validate` CLI mirror the `stream` / `fjord` workflow.
 
 → [Tutorial 11 — Tideweaver](./examples/11-tideweaver/README.md)
+
+### When to reach for which long-running verb
+
+| Verb | Sources | Shape | Reach for it when… |
+|---|---|---|---|
+| `stream()` | one | paginated chunks, O(1) memory | bulk drain a paginated API or massive local file into a warehouse / archive |
+| `fjord()` | many | stateful in-memory registry, live refresh | keep a hot multi-source object graph synchronised and snapshot it on a cadence |
+| `Tideweaver` | many | windowed graph of streams + fjords with dependency edges | run several feeds at independent intervals inside a single time window, with downstream work gated on fresh upstream data |
 
 ### `display()` — REPL debug print: `launches[0].display()`
 
