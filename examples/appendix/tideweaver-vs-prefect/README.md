@@ -1,25 +1,22 @@
-﻿***
+***
 
-> 📎 **Appendix — Picking the right orchestrator.**  Tideweaver is
-> an in-process, window-bounded scheduler.  Prefect (and Dagster,
+> 📎 **Appendix — Picking the right orchestrator.** Tideweaver is
+> an in-process, window-bounded scheduler. Prefect (and Dagster,
 > Airflow, Argo) is an out-of-process, cluster-aware scheduler.
 > They solve adjacent problems and compose well; this appendix
 > walks through when to reach for each — and how to run them
-> together.  Read [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md)
+> together. Read [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md)
 > first.
 
 ***
 
 # 🧵 Tideweaver vs. Prefect (or Dagster, Airflow, Argo)
 
-Tideweaver is a **graph of named currents** running on independent
-intervals **inside one Python process**, for the duration of one
-bounded time window.  Prefect / Dagster / Airflow / Argo are
-**DAGs of tasks** running on a fleet of workers, scheduled by a
-control plane, for the lifetime of your data platform.
+Both tools schedule work over time. Tideweaver runs in-process with one event loop; Prefect runs as a cluster with a server, workers, and a UI. Reach for Tideweaver when your orchestration fits inside one Python process and your window is bounded. Reach for Prefect when you need cross-machine scheduling, persistent state across restarts, or a team UI for monitoring.
 
-The two are not competitors.  Tideweaver fits inside a single
-Prefect task.  Prefect fits around a single Tideweaver window.
+In other words: Tideweaver is a **graph of named currents** running on independent intervals **inside one Python process**, for the duration of one bounded time window. Prefect / Dagster / Airflow / Argo are **DAGs of tasks** running on a fleet of workers, scheduled by a control plane, for the lifetime of your data platform.
+
+The two are not competitors. Tideweaver fits inside a single Prefect task. Prefect fits around a single Tideweaver window.
 
 ---
 
@@ -36,8 +33,7 @@ Prefect task.  Prefect fits around a single Tideweaver window.
 | UI / audit log / observability dashboard         | ❌ (log records only) | ✅ native                    |
 | Multi-team coordination across services          | ❌                   | ✅ native                    |
 
-A useful summary: **Tideweaver is what runs during a window.
-Prefect is what decides which window to run next.**
+A useful summary: **Tideweaver is what runs during a window. Prefect is what decides which window to run next.**
 
 ---
 
@@ -45,28 +41,22 @@ Prefect is what decides which window to run next.**
 
 Pick standalone Prefect when:
 
-* The workload is *task-level concurrent* but not *source-level
-  recurring* — e.g. "transform 50 files, then load the results".
+* The workload is *task-level concurrent* but not *source-level recurring* — e.g. "transform 50 files, then load the results".
 * Sources tick on hour / day boundaries, not seconds / minutes.
-* You need durable scheduling across machine reboots, fleet
-  scaling, or per-task retries with backoff visible in a UI.
+* You need durable scheduling across machine reboots, fleet scaling, or per-task retries with backoff visible in a UI.
 
-Wrap your `incorp()` calls inside `@task`-decorated functions and
-let Prefect's executor drive concurrency.  No Tideweaver involved.
+Wrap your `incorp()` calls inside `@task`-decorated functions and let Prefect's executor drive concurrency. No Tideweaver involved.
 
 ## Only Tideweaver
 
 Pick standalone Tideweaver when:
 
-* The workload is *bounded*: a race weekend, a market session, a
-  measurement campaign.
+* The workload is *bounded*: a race weekend, a market session, a measurement campaign.
 * Sources tick on sub-minute cadences.
-* In-process registries matter — downstream currents read live
-  upstream `cls.inc_dict` snapshots rather than disk artifacts.
+* In-process registries matter — downstream currents read live upstream `cls.inc_dict` snapshots rather than disk artifacts.
 * You don't want to operate a control-plane server.
 
-Run `incorporator tideweaver run watershed.json` from cron, systemd,
-or a Docker `CMD`; let the process exit at window close.
+Run `incorporator tideweaver run watershed.json` from cron, systemd, or a Docker `CMD`; let the process exit at window close.
 
 ## Both — recommended for production
 
@@ -107,16 +97,10 @@ if __name__ == "__main__":
     asyncio.run(race_day_flow())
 ```
 
-* **Prefect** handles the calendar (cron deployment), infra-level
-  retries (whole-task restarts after worker failure), the UI, the
-  audit log, and the multi-flow dependency graph.
-* **Tideweaver** handles everything inside the four-hour window:
-  sub-minute scheduling, per-source `on_error` policy, dependency
-  gating between currents, graceful drain at window close.
+* **Prefect** handles the calendar (cron deployment), infra-level retries (whole-task restarts after worker failure), the UI, the audit log, and the multi-flow dependency graph.
+* **Tideweaver** handles everything inside the four-hour window: sub-minute scheduling, per-source `on_error` policy, dependency gating between currents, graceful drain at window close.
 
-The seam between them is the `@task` boundary.  Tideweaver returns
-when the window closes; Prefect logs the result and schedules the
-next deployment.
+The seam between them is the `@task` boundary. Tideweaver returns when the window closes; Prefect logs the result and schedules the next deployment.
 
 ---
 

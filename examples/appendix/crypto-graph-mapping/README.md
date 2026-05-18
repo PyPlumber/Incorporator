@@ -1,7 +1,7 @@
-﻿***
+***
 
-> 📎 **Appendix — Static graph join.**  `link_to`-based one-shot
-> in-memory join across CoinGecko + Binance.  See
+> 📎 **Appendix — Static graph join.** `link_to`-based one-shot
+> in-memory join across CoinGecko + Binance. See
 > [Tutorial 10 — Multi-Source Fjord](../../10-multi-source-fjord/README.md) for
 > the same fusion as a live daemon; reach for this appendix when
 > you want the static pattern without the daemon scaffolding.
@@ -10,19 +10,20 @@
 
 # 🕸️ Multi-Graph Mapping: The Unified Trading Dashboard
 
-In the real world, no single API has all the data you need. 
-* **CoinGecko** is fantastic for global market caps and circulating supply, but it lacks deep, real-time exchange liquidity metrics. 
+You don't need a daemon. You want T10's cross-venue join done **once**, the results printed (or exported), then the process exits. `link_to(...)` builds the in-memory join across two CoinGecko + Binance endpoints in one async-for-free call — the same `link_to` you'd use inside a fjord's `outflow(state)`, but consumed at the call site instead of by the engine.
+
+In the real world, no single API has all the data you need:
+
+* **CoinGecko** is fantastic for global market caps and circulating supply, but lacks deep, real-time exchange liquidity metrics.
 * **Binance** has lightning-fast order book bids and asks, but their API is fragmented across hundreds of individual trading pairs (USDT, USDC, etc.).
 
-If you try to merge these APIs using standard Python `for` loops, you will hit **429 Too Many Requests** rate-limit bans instantly. 
-
-**Incorporator’s Graph Mapping** solves this. In this tutorial, we will pull data from **three different endpoints**, merge them into a single Python object graph, and map 100 assets to 400 exchange markets using exactly **3 API calls**.
+Try to merge these with standard Python `for` loops and you'll hit **429 Too Many Requests** instantly. This appendix pulls data from **three different endpoints**, merges them into a single Python object graph, and maps 100 assets to 400 exchange markets using exactly **3 API calls**.
 
 ---
 
 ## 🎯 The Goal
-We are going to build a Unified Stablecoin Liquidity Dashboard. 
-For the top 100 cryptocurrencies, we want to see their Global Price, their Binance **USDT** volume/bids, and their Binance **USDC** volume/bids side-by-side.
+
+Build a Unified Stablecoin Liquidity Dashboard. For the top 100 cryptocurrencies, see their Global Price, their Binance **USDT** volume/bids, and their Binance **USDC** volume/bids side-by-side.
 
 ## 💻 The Complete Code
 
@@ -111,42 +112,41 @@ if __name__ == "__main__":
 ## 🧠 Architecture Deep Dive: How it Works
 
 ### 1. Zero-Network Graph Mapping (Immunity to 429 Errors)
-If you wrote this using standard `httpx` loops, mapping 100 CoinGecko assets to 4 different Binance endpoints would require **400 API requests**. The exchange would IP-ban you within 3 seconds.
+A naïve `httpx` port — 100 CoinGecko assets × 4 Binance endpoints — needs **400 API requests** and earns an IP ban in seconds.
 
-Look closely at the execution order. **Incorporator only makes 3 API calls:**
-1. It downloads the entire global Binance Stats registry (1 call).
-2. It downloads the entire global Binance Order Book registry (1 call).
-3. It downloads the 100 CoinGecko assets (1 call).
+Look at the execution order. **Incorporator makes 3 API calls total:**
+1. The entire global Binance Stats registry (1 call).
+2. The entire global Binance Order Book registry (1 call).
+3. The 100 CoinGecko assets (1 call).
 
-When it hits the `link_to` configuration, **it disconnects from the network.** It synthesizes the target string (e.g., `"BTCUSDT"`) and searches Incorporator's internal lightning-fast RAM registry (`inc_dict`). 
-It executes all 400 data mappings locally in `O(1)` memory lookup time, completely bypassing server rate limits.
+When it hits the `link_to` configuration, **it disconnects from the network.** It synthesizes the target string (e.g., `"BTCUSDT"`) and searches Incorporator's internal RAM registry (`inc_dict`). All 400 mappings execute as `O(1)` memory lookups, completely bypassing server rate limits.
+
+> **Strong-ref note.** `inc_dict` is a `WeakValueDictionary`. As long as `binance_stats` and `binance_books` are held in `main()`'s local scope (they are — by the `await` returns), every record stays resident and `link_to` resolves cleanly. Drop those references and the registries can be garbage-collected mid-traversal.
 
 ### 2. The Factory Closure Pattern
-Instead of writing 4 separate `lambda` functions, we wrote a single Factory function:
+Instead of four separate `lambda`s, one Factory function:
 ```python
 def make_linker(quote_currency: str):
 ```
-Because the CoinGecko API gives us `"btc"`, but Binance expects `"BTCUSDT"`, the factory dynamically generates a pure Python closure that uppercases the string and appends the specific stablecoin suffix. This keeps the `conv_dict` perfectly declarative and highly readable.
+CoinGecko gives us `"btc"`; Binance expects `"BTCUSDT"`. The factory generates a closure that uppercases and appends the specific stablecoin suffix. The `conv_dict` stays perfectly declarative.
 
 ### 3. Native Null-Safety (Sparse Data Handling)
-In the cryptocurrency market, highly liquid coins (like Bitcoin) trade against everything. But newer tokens might only trade against `USDT` and have no `USDC` order book yet.
+In crypto, highly liquid coins trade against everything — but newer tokens might only have a `USDT` book and no `USDC` book yet.
 
-Because `link_to` is natively null-safe, if it searches the memory registry for `NEWCOINUSDC` and fails to find it, it gracefully attaches `None` to `asset.stats_usdc`. 
-
-It will **never** throw an `AttributeError` or crash your pipeline. You simply use `getattr(..., None)` in your print loop to safely display `"N/A"`.
+`link_to` is natively null-safe: if it searches the registry for `NEWCOINUSDC` and fails, it attaches `None` to `asset.stats_usdc`. It **never** raises `AttributeError`. You use `getattr(..., None)` in your print loop and display `"N/A"`.
 
 ### 4. Database-Like Querying (`.sort()`)
-Because Incorporator transforms raw JSON into strict, flat Python objects *during* ingestion, your final `assets` array behaves exactly like a clean database result. 
+Because Incorporator transforms raw JSON into strict, flat Python objects *during* ingestion, the final `assets` list behaves like a clean database result:
 ```python
 assets.sort(key=lambda a: getattr(a, "current_price", 0), reverse=True)
 ```
-Instead of writing nightmare dictionary lookups (`x.get("current_price", 0)`), you can run standard Python `.sort()`, `filter()`, or list comprehensions across your dynamically mapped graph using beautiful dot-notation (`a.current_price`).
+No nightmare dict lookups — standard Python `.sort()`, `filter()`, and comprehensions across your dynamically mapped graph using dot-notation.
 
 ---
 
 ## 🐳 Run it from the CLI
 
-Multi-source fusion is the canonical fjord shape. Each source is its own entry under `stream_params`; the `outflow()` function in the `outflow.py` file performs the `link_to` join and returns the unified rows:
+To run the join as a **live daemon** instead of a one-shot, lift it into a fjord: each source becomes its own `stream_params` entry, and `outflow.py` performs the `link_to` join:
 
 ```json
 {
@@ -181,6 +181,8 @@ incorporator validate pipeline.json
 incorporator fjord pipeline.json
 ```
 
+`outflow.py` defines `BinanceBook(Incorporator)`, `CryptoAsset(Incorporator)`, and the `outflow(state)` function that runs the `link_to` lookups across the two in-memory registries. With the intervals above, every 60 s the sources refresh, and every 120 s the fused dataset is flushed. See [`examples/cli-templates/outflow_example.py`](../../cli-templates/outflow_example.py) for the pattern and [the CLI guide](../../../docs/cli_and_configuration.md) for the full schema.
+
 ---
 
 ## Where to Go Next
@@ -198,5 +200,3 @@ incorporator fjord pipeline.json
 [Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/examples/appendix/crypto-graph-mapping/README.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)
-
-The `outflow.py` defines `BinanceBook(Incorporator)`, `CryptoAsset(Incorporator)`, and the `outflow(state)` function that runs the `link_to` lookups across the two in-memory registries. With the intervals above, every 60 s the sources refresh, and every 120 s the fused dataset is flushed to disk. See [`examples/cli-templates/outflow_example.py`](../../cli-templates/outflow_example.py) for the pattern and [the CLI guide](../../../docs/cli_and_configuration.md) for the full schema.

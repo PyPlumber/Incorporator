@@ -1,8 +1,8 @@
-﻿***
+***
 
 > 📎 **Appendix — `calc()` reductions over a HATEOAS drill.**
-> Sums and aggregations across a parent-child fan-out (PokéAPI).
-> If you're new to parent-child, start with
+> Sums and aggregations across a paginated parent-child fan-out
+> (PokéAPI). If you're new to parent-child, start with
 > [Tutorial 5 — Parent-Child Drilling](../../05-parent-child-drilling/README.md)
 > (CoinGecko top-N → `/coins/{id}` drill); reach for this appendix
 > for the `calc()` reduction patterns layered on top.
@@ -11,31 +11,30 @@
 
 # 🧬 Advanced ETL: HATEOAS & Declarative Reductions with `calc`
 
-REST APIs are notorious for returning deeply nested, bloated arrays. 
+PokéAPI's `/pokemon/?offset=` paginates 1,025 records 20 at a time, and each Pokémon's `/pokemon/{id}` response carries `stats: [{base_stat, stat: {name}}, ...]` as a six-element array you need to reduce to a single "base_total" integer. T5's parent-child pattern handles the drill; `calc()` + `sum_attributes()` handle the array-reduction. This appendix walks both end-to-end.
 
-For example, if you want a Pokémon's **Primary Types** (e.g., Grass / Poison) and its **Base Stat Total** (the sum of its HP, Attack, Defense, etc.), the PokéAPI returns massive dictionaries nested inside lists. 
+Traditional Pydantic setups force you to define strict sub-models for `Stat`, `StatDetail`, and `TypeInfo` — just so you can write a `@property` later to calculate the sum. **Incorporator eliminates that overhead.** Using `calc()` and explicit `inc_parent` / `inc_child` routing, you concurrently fetch deep URLs, intercept raw JSON arrays, and reduce them into clean Python properties *before* the objects are even fully instantiated.
 
-Normally, traditional Pydantic setups force you to define strict Sub-Models for `Stat`, `StatDetail`, and `TypeInfo`, just so you can write a `@property` later to calculate the sum. 
-
-**Incorporator eliminates this memory overhead.** Using `calc()` and our explicit `inc_parent` / `inc_child` routing, you can concurrently fetch deep URLs, intercept raw JSON arrays, and reduce them into clean, flattened Python properties *before* the objects are even fully instantiated.
+Verified: 150 Pokémon discovered + drilled, leaderboard rendered, ~3-minute wall-clock.
 
 ---
 
 ## 🎯 The Scenario
-We are going to build a "Gen 1 Power Ranking" table. To do this, we need to:
-1. **Shallow discovery:** Fetch a paginated list of 150 Pokémon, which only gives us their names and a HATEOAS URL to their deep details.
-2. **Deep enrichment:** Concurrently fire 150 HTTP requests to those URLs to fetch their deep specs.
-3. **Declarative ETL:** Use `calc()` to intercept the massive `stats` and `types` JSON arrays, sum them up, format them, and drop the raw JSON to save memory.
+
+Build a "Gen 1 Power Ranking" table:
+1. **Shallow discovery:** fetch a paginated list of 150 Pokémon, which only gives names and a HATEOAS URL to their deep details.
+2. **Deep enrichment:** concurrently fire 150 HTTP requests to those URLs to fetch their deep specs.
+3. **Declarative ETL:** use `calc()` to intercept the massive `stats` and `types` JSON arrays, sum them up, format them, and drop the raw JSON to save memory.
 
 > **Rate-limit note.** PokéAPI [documents a 100 req/min ceiling](https://pokeapi.co/docs/v2#fairuse).
 > The default Incorporator rate (15 req/sec = 900 req/min) is 9× too fast and
-> would 429 most of the 150 child drills.  Two safeguards are in play:
+> would 429 most of the 150 child drills. Two safeguards are in play:
 >
 > 1. **Host-aware default.** When you don't pass `requests_per_second`, the
 >    framework auto-throttles calls to `pokeapi.co` to 1.5 req/sec (90/min).
 > 2. **Explicit throttle in the script.** The example passes
 >    `requests_per_second=1.5` on both `incorp()` calls so the kwarg is
->    visible to readers.  Total wall-clock: ~100 s for 150 drills.
+>    visible to readers. Total wall-clock: ~100 s for 150 drills.
 
 ---
 
@@ -111,16 +110,16 @@ if __name__ == "__main__":
 ## 🧠 Architecture Deep Dive: How it Works
 
 ### 1. The Explicit Routing Engine & State Carrier (`inc_child`)
-REST APIs often use HATEOAS (Hypermedia as the Engine of Application State), meaning they return a shallow list of items, each containing a `"url"` to get more data.
+REST APIs often use HATEOAS — a shallow list of items, each carrying a `"url"` to get more data.
 
-In older frameworks, you had to rely on implicit "magic" attributes to make this jump. Incorporator completely eliminates this via the **State Carrier** pattern:
+Older frameworks rely on implicit "magic" to make this jump. Incorporator uses an explicit **State Carrier** pattern:
 
 1. The discovery call passes `inc_child="url"` to tell the engine where child URLs live.
-2. The returned `pokemon_nav` list object carries that path as state.
-3. Passing `inc_parent=pokemon_nav` to the enrichment call reads the cached state, drills into all 150 objects, extracts the URLs, and provisions a rate-limited concurrency pool to download the detail payloads simultaneously. Zero boilerplate loops required!
+2. The returned `pokemon_nav` list carries that path as state.
+3. Passing `inc_parent=pokemon_nav` to the enrichment call reads the cached state, drills into all 150 objects, extracts the URLs, and provisions a rate-limited concurrency pool to download the detail payloads. Zero boilerplate loops.
 
 ### 2. The Power of `calc()`
-This is where Incorporator's ETL engine shines. Look at the raw JSON the API returns for "stats":
+Look at the raw JSON for "stats":
 
 ```json
 "stats":[
@@ -129,50 +128,47 @@ This is where Incorporator's ETL engine shines. Look at the raw JSON the API ret
     // ... 4 more dictionaries
 ]
 ```
-If Incorporator mapped this automatically, it would generate 6 new Python sub-classes per Pokémon (900 extra objects in memory!). We don't want the objects; we just want the sum (`45 + 49 + ...`).
+Auto-mapped, this becomes 6 sub-class instances per Pokémon — 900 extra objects in memory. We don't want the objects; we just want the sum.
 
-We intercept this using `calc`:
+We intercept with `calc`:
 ```python
 "stats": calc(calculate_bst, "stats", default=0, target_type=int)
 ```
 
-**How `calc` works under the hood:**
-* **The Interception:** Incorporator sees the `"stats"` key. Instead of auto-nesting it into objects, it pauses.
-* **The Extraction (`*input_keys`):** By passing `"stats"` as the second argument, Incorporator extracts the raw JSON list and passes it directly into your `calculate_bst` function.
-* **The Reduction:** Your pure Python function iterates over the list, sums the integers, and returns a single integer (e.g., `318`).
-* **The Type Guarantee:** Because we passed `target_type=int`, Incorporator strictly validates the output. 
+**Under the hood:**
+* **Interception** — Incorporator sees the `"stats"` key and pauses auto-nesting.
+* **Extraction (`*input_keys`)** — by passing `"stats"` as the second argument, Incorporator extracts the raw JSON list and passes it into `calculate_bst`.
+* **Reduction** — your pure Python function iterates, sums, and returns a single integer (e.g. `318`).
+* **Type guarantee** — `target_type=int` strictly validates the output.
 
-*Memory Benefit:* The massive raw JSON array is immediately garbage-collected. Your final Python object only stores a single highly-efficient `int` footprint.
+*Memory benefit:* the raw JSON array is immediately garbage-collected. The final object stores one `int`.
 
 ### 3. Cleaning the Graph with `name_chg`
-After `calc()` successfully reduces the massive `stats` array into a single integer, the attribute on your Python object is still technically named `.stats`. 
-
-While functionally correct, `pokemon.stats` implies it might be a list or object. To make our object-oriented API perfectly clean, we rename it dynamically during instantiation:
+After `calc()` reduces `stats` to an integer, the attribute is still technically named `.stats`. While correct, `pokemon.stats` implies a list. Rename it during instantiation:
 
 ```python
 name_chg=[("stats", "base_stat_total")]
 ```
-Now, the attribute is securely attached as `pokemon.base_stat_total`, giving you beautiful, highly readable dot-notation.
+Now the attribute is `pokemon.base_stat_total` — readable dot-notation.
 
 ### 4. Dropping Heavy Payloads (`excl_lst`)
-Before Incorporator even looks at `calc` or auto-nesting, it processes `excl_lst`. 
+Before `calc` or auto-nesting fires, `excl_lst` runs:
 ```python
 excl_lst=["sprites", "moves", "game_indices", "held_items"]
 ```
-The PokéAPI returns massive base64 strings and thousand-item lists for `moves`. By excluding them, the JSON keys are deleted from the payload the millisecond they are received. This prevents `pydantic` from wasting CPU cycles validating data you never intend to use.
+PokéAPI returns massive base64 strings and thousand-item lists for `moves`. Excluding them deletes the keys the millisecond they're received, sparing pydantic any wasted CPU on data you'll never touch.
 
 ---
 
 ## 🌟 Summary
-With **Incorporator**, you aren't just ingesting APIs—you are sculpting them. 
 
-Using the explicit `inc_child` state carrier and declarative `calc` tokens, you can take 150 deeply nested, fractured JSON payloads and compress them into a highly optimized, flat list of native Python objects in just a fraction of a second.
+You aren't just ingesting APIs — you are sculpting them. The explicit `inc_child` state carrier plus declarative `calc` tokens compress 150 deeply nested, fractured JSON payloads into a flat list of native Python objects in a fraction of a second.
 
 ---
 
 ## 🐳 Run it from the CLI
 
-The CLI handles user-defined reducers via an **`inflow.py` sidecar** — a single Python file containing the helper functions your pipeline.json references. No fjord wrapper, no outflow function, no second class. Just a vanilla stream pipeline that uses your reducer.
+The CLI handles user-defined reducers via an **`inflow.py` sidecar** — a single Python file containing the helper functions your pipeline.json references. No fjord wrapper, no outflow function, no second class. Just a vanilla `stream()` pipeline that uses your reducer.
 
 ### `inflow.py` — the helpers
 
@@ -207,7 +203,7 @@ incorporator validate pipeline.json
 incorporator stream pipeline.json
 ```
 
-The token resolver imports `inflow.py` at config-load time, sees `calculate_bst` in its public symbols, and resolves the `calc(...)` string to a real Python callable before the engine runs. The reducer runs **before** format dispatch, so this exact pipeline.json works for any export format — switch the extension to `.csv`, `.parquet`, `.avro`, etc., and the integer still lands in the cell.
+The token resolver imports `inflow.py` at config-load time, sees `calculate_bst` in its public symbols, and resolves the `calc(...)` string to a real Python callable before the engine runs. The reducer runs **before** format dispatch, so this same pipeline.json works for any export format — switch the extension to `.csv`, `.parquet`, `.avro`, etc., and the integer still lands in the cell.
 
 > **Tip:** for paginators and pre-built converter instances, use the cleaner `@name` syntax. Define `next_page = NextUrlPaginator("next")` in `inflow.py`, then reference it as `"inc_page": "@next_page"` in pipeline.json — zero JSON escape characters. See [the CLI guide](../../../docs/cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full pattern.
 
@@ -218,7 +214,7 @@ The token resolver imports `inflow.py` at config-load time, sees `calculate_bst`
 | Goal | Read |
 |---|---|
 | See the canonical parent-child intro (no calc layer) | [Tutorial 5 — Parent-Child Drilling](../../05-parent-child-drilling/README.md) |
-| Apply `calc()` reductions in a fjord outflow | [Appendix — NASCAR Fantasy Fjord](../nascar-fantasy-fjord/README.md) |
+| Apply `calc()` reductions in a fjord outflow | [Tutorial 9 — NASCAR Fantasy Fjord](../../09-nascar-fantasy-fjord/README.md) |
 | Stream paginated APIs with custom paginators | [Streaming & Pagination Deep Dive](../../../docs/streaming_and_pagination.md) |
 | Land the reduced output in a warehouse | [Tutorial 3 — Universal Formats](../../03-universal-formats/README.md) |
 

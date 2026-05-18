@@ -1,31 +1,41 @@
-﻿***
+***
 
-> 📎 **Appendix — Same diamond, different domain.**  The crypto-spine
-> Tutorial 11 builds a multi-exchange arbitrage scanner via
-> `Watershed.diamond()`.  This appendix re-runs the same shape against
-> a completely different domain — NASCAR race telemetry — so the
-> reader can confirm the orchestrator is domain-agnostic.  No new
-> framework concepts here; read [Tutorial 11](../../11-tideweaver/README.md) first.
+> 📎 **Appendix — Same diamond, different domain.** Tutorial 11
+> builds a crypto-spine multi-exchange arb scanner via
+> `Watershed.diamond()`. This appendix re-runs the same shape against
+> NASCAR race telemetry so the reader can confirm the orchestrator
+> is domain-agnostic. No new framework concepts here; read
+> [Tutorial 11](../../11-tideweaver/README.md) first.
 
 ***
 
 # 🏁 NASCAR Tideweaver: Diamond Across a Different Domain
 
-Race telemetry is a natural fit for `Watershed.diamond()`:
+Race-day telemetry has three concurrent feeds — lap-by-lap times, pit stops, and yellow / green / red flag transitions — that converge on one fused "driver state" view updated every few seconds. T11's `Watershed.diamond()` is the right shape; this appendix runs the same orchestration mechanics against the NASCAR race-control feeds.
+
+The cadence map:
 
 * **Laps** update every few seconds (per-driver position, lap number, speed).
-* **Pit reports** update every 30 seconds or so (per-driver stop count, duration).
+* **Pit reports** update every ~30 seconds (per-driver stop count, duration).
 * **Flag events** fire on no fixed cadence (green / yellow / red / white).
-* **Driver state** — the fused output — wants to combine all three on a steady
-  interval so a downstream dashboard sees a coherent per-driver snapshot.
+* **Driver state** — the fused output — wants all three combined on a steady interval so a downstream dashboard sees a coherent per-driver snapshot.
 
-Three Stream currents feed one Fjord tail.  Same shape as the crypto arb scanner
-in [Tutorial 11](../../11-tideweaver/README.md); different sources, different outflow logic, same
-five-name vocabulary.
+Three Stream currents feed one Fjord tail. Same shape as the crypto arb scanner; different sources, different outflow logic, same five-name vocabulary. Verified: a 15-second window emits ~15 Tides and writes 100 driver-state rows to NDJSON.
+
+> **Two entry points in this directory.** `nascar_tideweaver.py` is the
+> standalone Python runner — defines `Lap` / `Pit` / `Flag` source
+> classes plus an inline `outflow(state)` that reads
+> `state.get("Lap")` / `state.get("Pit")` / `state.get("Flag")`.
+> `race_outflow.py` is the CLI sidecar referenced from
+> `watershed.json` and uses different class names — `LapData` /
+> `PitStops` / `FlagEvents` — to keep the CLI-side declarations
+> distinct from the Python script's. The walkthrough below tracks
+> the Python runner (the simpler entry). The CLI form at the end
+> uses the sidecar.
 
 ---
 
-## The diamond
+## The diamond (Python form)
 
 ```python
 import asyncio
@@ -47,11 +57,12 @@ class Flag(Incorporator):
     """One row of race-flag events."""
 
 
-class DriverState(Incorporator):
-    """Derived per-driver state — built dynamically by the fjord flush."""
+HERE = Path(__file__).resolve().parent
+OUT = HERE / "out"
 
 
 async def main() -> None:
+    OUT.mkdir(exist_ok=True)
     now = datetime.now(timezone.utc)
     window = (now, now + timedelta(seconds=15))
 
@@ -61,7 +72,7 @@ async def main() -> None:
             name="laps",
             cls=Lap,
             interval=3.0,
-            incorp_params={"inc_file": "examples/appendix/nascar-tideweaver/fixtures/laps.json",
+            incorp_params={"inc_file": str(HERE / "fixtures/laps.json"),
                            "inc_code": "driver"},
         ),
         middle=[
@@ -69,28 +80,27 @@ async def main() -> None:
                 name="pits",
                 cls=Pit,
                 interval=3.0,
-                incorp_params={"inc_file": "examples/appendix/nascar-tideweaver/fixtures/pits.json",
+                incorp_params={"inc_file": str(HERE / "fixtures/pits.json"),
                                "inc_code": "driver"},
             ),
             Stream(
                 name="flags",
                 cls=Flag,
                 interval=3.0,
-                incorp_params={"inc_file": "examples/appendix/nascar-tideweaver/fixtures/flags.json",
+                incorp_params={"inc_file": str(HERE / "fixtures/flags.json"),
                                "inc_code": "color"},
             ),
         ],
         tail=Fjord(
             name="state",
-            cls=DriverState,
             interval=3.0,
             export_params={
-                "file_path": "data/driver_state.ndjson",
+                "file_path": str(OUT / "driver_state.ndjson"),
                 "format": "ndjson",
                 "if_exists": "append",
             },
         ),
-        outflow="examples/appendix/nascar-tideweaver/race_outflow.py",
+        outflow=str(HERE / "_inline_outflow.py"),    # see below
         drain_timeout=10.0,
     )
 
@@ -105,22 +115,21 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-A runnable version with local-file fixtures, an inlined outflow, and a tempdir output
-target lives at [`examples/appendix/nascar-tideweaver/nascar_tideweaver.py`](../../examples/appendix/nascar-tideweaver/nascar_tideweaver.py).
+The runnable version at [`examples/appendix/nascar-tideweaver/nascar_tideweaver.py`](./nascar_tideweaver.py) inlines the outflow into the same file via a tempdir trick rather than a sibling `.py`; the code above splits them for narrative clarity.
+
+> **Don't pre-declare `DriverState` records.** The tail Fjord current's output class is built dynamically by the engine from the `outflow(state)` return rows. Never instantiate the output class yourself; let the Fjord build it.
 
 ---
 
 ## The outflow function
 
-The `DriverState` Fjord current's `outflow(state)` joins laps + pits + flags into one
-row per driver:
+The tail Fjord current's `outflow(state)` joins laps + pits + flags into one row per driver. The keys of `state` are the upstream **class names** (`"Lap"`, `"Pit"`, `"Flag"`):
 
 ```python
-# examples/appendix/nascar-tideweaver/race_outflow.py
 def outflow(state):
-    laps  = state.get("LapData", [])
-    pits  = state.get("PitStops", [])
-    flags = state.get("FlagEvents", [])
+    laps  = state.get("Lap", [])
+    pits  = state.get("Pit", [])
+    flags = state.get("Flag", [])
 
     by_driver = {}
     for lap in laps:
@@ -145,14 +154,15 @@ def outflow(state):
     return list(by_driver.values())
 ```
 
-Same structure as Tutorial 11's `arb_outflow.outflow()` — snapshot upstream registries,
-build a per-key composite, return as a list of dicts.
+> **Guard against missing keys.** `outflow(state)` is called every Fjord tick — the first tick may fire before pits or flags have populated. Every `state.get(...)` defaults to `[]`, and every per-record read uses `getattr(..., None)` with an explicit fallback. Reading `state["Pit"]` directly would `KeyError` on the first tide.
+
+Same structure as Tutorial 11's `arb_outflow.outflow()` — snapshot upstream registries, build a per-key composite, return as a list of dicts.
 
 ---
 
 ## CLI form
 
-`examples/appendix/nascar-tideweaver/watershed.json` ships alongside the example:
+The CLI version uses a SEPARATE sidecar — [`race_outflow.py`](./race_outflow.py) — with different class names (`LapData` / `PitStops` / `FlagEvents`) referenced from `watershed.json`. The two forms are intentionally independent; pick whichever fits your deployment shape:
 
 ```bash
 incorporator validate examples/appendix/nascar-tideweaver/watershed.json
@@ -165,13 +175,9 @@ Run from the repo root so the relative `inc_file` / `outflow` paths resolve.
 
 ## Why this domain works well for Tideweaver
 
-* **Bounded race window** — the orchestrator runs for the race duration and exits
-  clean.  No daemon to babysit between sessions.
-* **Mixed cadences** — laps are fast, pits are medium, flags are bursty.  Per-current
-  intervals match the source's actual update rhythm.
-* **One coherent fused output** — the dashboard wants one driver-state record per N
-  seconds carrying the latest from all three sources.  The Fjord tail does exactly
-  that via `outflow(state)`.
+* **Bounded race window** — the orchestrator runs for the race duration and exits clean. No daemon to babysit between sessions.
+* **Mixed cadences** — laps are fast, pits are medium, flags are bursty. Per-current intervals match the source's actual update rhythm.
+* **One coherent fused output** — the dashboard wants one driver-state record per N seconds carrying the latest from all three sources. The Fjord tail does exactly that via `outflow(state)`.
 
 ---
 
@@ -180,7 +186,7 @@ Run from the repo root so the relative `inc_file` / `outflow` paths resolve.
 | Goal | Read |
 |---|---|
 | See the crypto-spine version of the same diamond | [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md) |
-| Run the non-Tideweaver fjord variant against NASCAR data | [Appendix — NASCAR Fantasy Fjord](../nascar-fantasy-fjord/README.md) |
+| Run the non-Tideweaver fjord variant against NASCAR data | [Tutorial 9 — NASCAR Fantasy Fjord](../../09-nascar-fantasy-fjord/README.md) |
 | Land columnar artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../tideweaver-parquet-snapshots/README.md) |
 | Pick between in-process Tideweaver and cloud schedulers | [Appendix — Tideweaver vs. Prefect](../tideweaver-vs-prefect/README.md) |
 | Configure this watershed for the CLI | [CLI & Configuration §9](../../../docs/cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration) |

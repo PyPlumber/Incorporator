@@ -1,40 +1,26 @@
-﻿***
+***
 
 > 📎 **Appendix — Parquet snapshots inside a Tideweaver window.**
 > NDJSON / CSV / SQLite are append-friendly per tick; columnar
-> formats (Parquet, Feather, ORC) are not.  This appendix shows two
-> safe patterns for landing Parquet from a `Tideweaver` run.  Read
+> formats (Parquet, Feather, ORC) are not. This appendix shows two
+> safe patterns for landing Parquet from a `Tideweaver` run. Read
 > [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md) first.
 
 ***
 
 # 🧵 Parquet Snapshots in a Tideweaver Window
 
-`stream()` and the `Fjord` current's flush both export **once per
-tick**.  That's fine for NDJSON (one line per record, append the
-file), CSV (header once, append rows), or SQLite (transactional
-`INSERT OR REPLACE`).  It is **not fine** for Parquet, Feather, or
-ORC: those formats write a column-statistics footer at the **end**
-of the file, recomputed from the full row set.  Appending a second
-chunk requires reading every existing row group back, merging,
-re-encoding, and rewriting the whole file — a Parquet "append" is
-really a rebuild.
+Your Tideweaver run accumulates 4 hours of arb signals into NDJSON, but downstream (Athena, DuckDB, Spark) wants columnar Parquet. Add a tail `Export` current that fires once at window close, reads the accumulated registry, and writes the Parquet artifact — one file per window, atomic via `os.replace()`.
 
-The framework refuses to silently rebuild because the bigger the
-file gets, the longer each tick blocks the event loop.  Two
-patterns get you a clean Parquet artifact without per-tick
-rewrites.
+The reason you can't just set `export_params={"file_path": "...parquet"}` on a regular `Stream` or `Fjord`: those currents flush **once per tick**. That's fine for NDJSON (one line per record, append the file), CSV (header once, append rows), or SQLite (transactional `INSERT OR REPLACE`). It is **not fine** for Parquet, Feather, or ORC: those formats write a column-statistics footer at the **end** of the file, recomputed from the full row set. Appending a second chunk requires reading every existing row group back, merging, re-encoding, and rewriting the whole file — a Parquet "append" is really a rebuild.
+
+The framework refuses to silently rebuild because the bigger the file gets, the longer each tick blocks the event loop. Two patterns get you a clean Parquet artifact without per-tick rewrites.
 
 ---
 
 ## Pattern 1: `Export` current at window close
 
-Inside a `Watershed`, add an `Export` current after the head stream
-with a much longer `interval` than the head — typically the full
-window length.  `Export` calls `cls.export()` against the live
-registry once per tick; with `interval=window_duration` and
-`dependency_mode="hard"`, it fires exactly once, right before
-window close.
+Inside a `Watershed`, add an `Export` current after the head stream with a much longer `interval` than the head — typically the full window length. `Export` calls `cls.export()` against the live registry once per tick; with `interval=window_duration` and `dependency_mode="hard"`, it fires exactly once, right before window close.
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -75,17 +61,13 @@ async for tide in Tideweaver(watershed).run():
     print(tide.tide_number, tide.fired, tide.skipped)
 ```
 
-Pyarrow writes the file via the same atomic `os.replace()` path
-`incorp().export()` uses, so a crash mid-write leaves the previous
-snapshot (or nothing) — never a half-written Parquet.
+Pyarrow writes the file via the same atomic `os.replace()` path `incorp().export()` uses, so a crash mid-write leaves the previous snapshot (or nothing) — never a half-written Parquet.
 
 ---
 
 ## Pattern 2: Post-run export
 
-`Tideweaver.run()` drains all in-flight currents before returning.
-After the loop exits, the source class registries are quiescent
-and you can call `export()` against them directly:
+`Tideweaver.run()` drains all in-flight currents before returning. After the loop exits, the source class registries are quiescent and you can call `export()` against them directly:
 
 ```python
 async for tide in Tideweaver(watershed).run():
@@ -93,9 +75,7 @@ async for tide in Tideweaver(watershed).run():
 await Lap.export(file_path="laps_final.parquet")            # one-shot, no Tideweaver
 ```
 
-This is the right shape when you want exactly one artifact at the
-end and don't need an `Export` node in the graph for ordering or
-dependency reasons.
+This is the right shape when you want exactly one artifact at the end and don't need an `Export` node in the graph for ordering or dependency reasons.
 
 ---
 
@@ -111,9 +91,7 @@ dependency reasons.
 | `.orc`       | ❌ rebuilds full file | same as Parquet |
 | `.xlsx`      | ❌ rebuilds full file | same as Parquet (avoid in streaming pipelines) |
 
-Pick NDJSON or CSV when the analytics tier downstream is happy with
-row-shaped storage; pick Parquet at window close when the
-downstream is Athena / DuckDB / Spark and you want column statistics.
+Pick NDJSON or CSV when the analytics tier downstream is happy with row-shaped storage; pick Parquet at window close when the downstream is Athena / DuckDB / Spark and you want column statistics.
 
 ---
 
@@ -123,7 +101,7 @@ downstream is Athena / DuckDB / Spark and you want column statistics.
 |---|---|
 | Master the Tideweaver orchestrator patterns | [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md) |
 | Pick append-friendly vs columnar formats | [Formats & Compression](../../../docs/formats_and_compression.md) |
-| See the data-lake round-trip patterns this builds on | [Appendix — Data Lake Pivot](../data-lake-pivot/README.md) |
+| See the data-lake round-trip patterns this builds on | [Tutorial 2 — Data Lake Pivot](../../02-data-lake-pivot/README.md) |
 | Run the same Tideweaver against a different domain | [Appendix — NASCAR Tideweaver](../nascar-tideweaver/README.md) |
 
 ---
