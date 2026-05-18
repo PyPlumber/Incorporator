@@ -226,6 +226,7 @@ The eleven-tutorial curriculum.  Each slot introduces one new verb or technique,
 ## 📑 Reference
 
 * [📖 **Library Reference**](./docs/library_reference.md) — every public class, rendered from source docstrings.
+* [📑 **API Atlas**](./docs/api_atlas.md) — paste-ready map of every public callable: signature, pseudocode, "when to reach for it", common kwargs, tutorial cross-links.
 * [🩺 **Production Debugging with `get_error()`**](./docs/debugging.md) — `LoggedIncorporator` + structured error logs + DLQ retry.
 * [📦 **Formats & Compression**](./docs/formats_and_compression.md) + [🌊 **Streaming & Pagination**](./docs/streaming_and_pagination.md) — every format kwarg, compression rules, and the paginator family for endpoints / files too big for RAM.
 * [🐳 **CLI & Configuration**](./docs/cli_and_configuration.md) — running pipelines from `pipeline.json` / `watershed.json`.

@@ -41,6 +41,8 @@ Every public class, method, function, and converter is documented with
 its full signature, parameter table, return value, raised exceptions,
 and worked examples. The library surface, by verb:
 
+For a paste-ready lookup map of every public callable — signature, 3-7 step pseudocode, "when to reach for it" narrative, and tutorial cross-links — see the [API Atlas](./api_atlas.md).
+
 ### Core verbs on `Incorporator`
 - `incorp()` — fetch + parse + build the object graph. Accepts an
   optional `inflow=` sidecar (path to a `.py` with user-defined helper
