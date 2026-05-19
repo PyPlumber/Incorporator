@@ -10,7 +10,9 @@ This page answers two questions:
    [opt-in extras](#opt-in-extras).
 
 Numbers below are measured locally on Windows 10, Python 3.13, 500k-row
-synthetic datasets. Every line is reproducible via
+synthetic datasets — captured on the v1.1.3 release run
+([`docs/benchmark_results_v1.1.3.md`](./benchmark_results_v1.1.3.md)
+has the full per-test trace).  Every line is reproducible via
 [`pytest -m benchmark`](#reproducing-the-numbers) and enforced by
 conservative CI floors so regressions are caught on every PR.
 
@@ -20,19 +22,19 @@ conservative CI floors so regressions are caught on every PR.
 
 | Format | Streaming write | Parse | Notes |
 |---|---|---|---|
-| **JSON** | 397k rows/sec | **1,660k rows/sec** | orjson dominates parse — ~4× the write rate. |
-| **NDJSON** | 406k rows/sec | 555k rows/sec | Line-by-line in both directions; ideal for append + tail workloads. |
-| **CSV** | 121k rows/sec | 174k rows/sec | `csv.DictReader` / `csv.DictWriter`; stdlib only. |
-| **TSV** | 120k rows/sec | 172k rows/sec | Same engine as CSV. |
-| **PSV** | 120k rows/sec | 170k rows/sec | Same engine as CSV. |
-| **Parquet** | 263k rows/sec | 242k rows/sec | Streaming row-group writes; vectorised string scans on parse. |
-| **Feather** | 313k rows/sec | 194k rows/sec | Memory-mapped reads; fastest columnar write. |
-| **ORC** | 307k rows/sec | 239k rows/sec | Same Arrow pipeline as Parquet. |
-| **SQLite** | 167k rows/sec | 212k rows/sec | `executemany()` bulk insert; full cursor fetch. |
-| **XML** | 56k rows/sec | 39k rows/sec | Element-tree serialisation; 2–3× faster with `[speedups]` lxml. |
-| **Avro** | 69k rows/sec | 139k rows/sec | fastavro generator-based, schema-on-write. |
-| **HTML** | n/a | 17k rows/sec | Parse-only; closes the `pandas.read_html` gap. |
-| **XLSX** | 11k rows/sec | n/a | openpyxl cell-by-cell; meant for human-scale spreadsheets, not analytics. |
+| **JSON** | 377k rows/sec | **1,678k rows/sec** | orjson dominates parse — ~4× the write rate. |
+| **NDJSON** | 434k rows/sec | 543k rows/sec | Line-by-line in both directions; ideal for append + tail workloads. |
+| **CSV** | 119k rows/sec | 173k rows/sec | `csv.DictReader` / `csv.DictWriter`; stdlib only. |
+| **TSV** | 119k rows/sec | 172k rows/sec | Same engine as CSV. |
+| **PSV** | 119k rows/sec | 171k rows/sec | Same engine as CSV. |
+| **Parquet** | 278k rows/sec | 237k rows/sec | Streaming row-group writes; vectorised string scans on parse. |
+| **Feather** | 242k rows/sec | 236k rows/sec | Memory-mapped reads; fastest columnar write. |
+| **ORC** | 333k rows/sec | 239k rows/sec | Same Arrow pipeline as Parquet. |
+| **SQLite** | 174k rows/sec | 218k rows/sec | `executemany()` bulk insert; full cursor fetch. |
+| **XML** | 58k rows/sec | 40k rows/sec | Element-tree serialisation; 2–3× faster with `[speedups]` lxml. |
+| **Avro** | 61k rows/sec | 155k rows/sec | fastavro generator-based, schema-on-write. |
+| **HTML** | n/a | 19k rows/sec | Parse-only; closes the `pandas.read_html` gap. |
+| **XLSX** | 13k rows/sec | n/a | openpyxl cell-by-cell; meant for human-scale spreadsheets, not analytics. |
 
 A surprise worth calling out: **on dict-shaped output, JSON / NDJSON
 parse beat the columnar formats**. The reason is that Incorporator
@@ -243,7 +245,7 @@ Honest about the limits:
   QUIC yet; the framework follows upstream. HTTP/2 multiplexing
   closes most of the practical gap for paginated APIs.
 - **XLSX is human-scale.** openpyxl's cell-by-cell write is
-  fundamentally row-bound; 11k rows/sec is close to the library
+  fundamentally row-bound; ~13k rows/sec is close to the library
   ceiling on commodity hardware. For analytics, pick Parquet, Feather,
   or ORC instead.
 
