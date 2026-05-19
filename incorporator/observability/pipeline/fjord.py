@@ -52,7 +52,7 @@ def _validate_depends_on(stream_params: List[Dict[str, Any]]) -> None:
         for dep in deps:
             if dep not in peer_names:
                 raise ValueError(
-                    f"depends_on references unknown peer class {dep!r}; " f"available peers: {sorted(peer_names)}"
+                    f"depends_on references unknown peer class {dep!r}; available peers: {sorted(peer_names)}"
                 )
 
 
