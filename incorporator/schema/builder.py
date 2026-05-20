@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple, Type, 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..exceptions import IncorporatorSchemaError
+from .converters import CalcAllOp, CalcOp
 
 logger = logging.getLogger(__name__)
 
@@ -128,35 +129,48 @@ def apply_etl_transformations(
                 d.pop(key, None)
 
     if conv_dict:
+        # Pre-classify each entry once and hoist the per-key state out of
+        # the row loop.  The plan walks ``conv_dict`` in INSERTION ORDER
+        # — callers that rely on calc A → calc B sequencing (where B
+        # reads A's output) keep working unchanged.  The outer iteration
+        # stays column-major (key outside, rows inside) so ``CalcAllOp``
+        # can still do whole-column work in one ``func(*col_args)`` call;
+        # the only thing that changed is that per-row attribute reads on
+        # the operation object (``operation.func``, ``operation.default``,
+        # etc.) are now resolved once per key as locals.
         for key, operation in conv_dict.items():
-            op_type = type(operation).__name__
-
-            if "Calc" in op_type and "All" not in op_type:  # calc sentinel
+            if isinstance(operation, CalcOp):
+                func = operation.func
+                default = operation.default
+                target_type = operation.target_type if callable(operation.target_type) else None
                 inputs = operation.input_list if operation.input_list else [key]
                 for d in dict_items:
                     args = [d.get(dep) for dep in inputs]
                     try:
-                        val = operation.func(*args)
+                        val = func(*args)
                     except Exception as e:
                         logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
-                        val = operation.default
+                        val = default
 
-                    if callable(operation.target_type):
+                    if target_type is not None:
                         try:
-                            val = operation.target_type(val)
+                            val = target_type(val)
                         except Exception as e:
                             logger.warning("calc type coercion failed for key '%s' value %r: %s", key, val, e)
-                            val = operation.default
+                            val = default
                     d[key] = val
 
-            elif "CalcAll" in op_type:  # calc_all sentinel
+            elif isinstance(operation, CalcAllOp):
+                func = operation.func
+                default = operation.default
+                target_type = operation.target_type if callable(operation.target_type) else None
                 inputs = operation.input_list if operation.input_list else [key]
                 col_args = [[d.get(dep) for d in dict_items] for dep in inputs]
                 try:
-                    results = operation.func(*col_args)
+                    results = func(*col_args)
                 except Exception as e:
                     logger.warning("calc_all failed for key '%s': %s", key, e)
-                    results = [operation.default] * len(dict_items)
+                    results = [default] * len(dict_items)
 
                 for idx, d in enumerate(dict_items):
                     try:
@@ -167,14 +181,14 @@ def apply_etl_transformations(
                             key,
                             idx,
                         )
-                        val = operation.default
+                        val = default
 
-                    if callable(operation.target_type):
+                    if target_type is not None:
                         try:
-                            val = operation.target_type(val)
+                            val = target_type(val)
                         except Exception as e:
                             logger.warning("calc_all type coercion failed for key '%s' value %r: %s", key, val, e)
-                            val = operation.default
+                            val = default
                     d[key] = val
 
             else:  # standard converter: inc, link_to, pluck, etc.
