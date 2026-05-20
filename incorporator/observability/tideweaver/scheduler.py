@@ -307,6 +307,14 @@ class Tideweaver:
         flush can read them.  We park a strong-ref snapshot on the class as
         ``_tideweaver_snapshot`` so the registry stays alive between ticks;
         the Fjord flush reads through to that attribute when present.
+
+        The snapshot must be accumulated WHILE the chunked engine is still
+        iterating, not after.  The chunked engine ``del``s its per-chunk
+        ``dataset`` local right after each yield, so by the time the ``async
+        for`` exits the only strong refs to the just-streamed instances are
+        gone and ``inc_dict.values()`` is empty.  Pinning instances into the
+        ``accumulated`` dict at each wave boundary keeps them alive into the
+        next chunk and across the final yield.
         """
         kwargs: Dict[str, Any] = {
             "incorp_params": current.incorp_params,
@@ -320,13 +328,14 @@ class Tideweaver:
         inflow = current.inflow or self.watershed.inflow
         if inflow is not None:
             kwargs["inflow"] = inflow
+        accumulated: Dict[Any, Any] = {}
         async for _wave in current.cls.stream(**kwargs):
-            pass
+            accumulated.update(current.cls.inc_dict)
         # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
         # Runtime-only escape-hatch attribute (no field on Incorporator itself).
         # cast(Any) mirrors the same trick _outflow.py uses for _fjord_snapshot.
         cls_any = cast(Any, current.cls)
-        cls_any._tideweaver_snapshot = list(current.cls.inc_dict.values())
+        cls_any._tideweaver_snapshot = list(accumulated.values())
 
     async def _tick_fjord(self, current: Fjord) -> None:
         """One fjord flush: snapshot upstream → outflow(state) → build → export.
@@ -382,8 +391,26 @@ class Tideweaver:
                 )
 
     async def _tick_export(self, current: Export) -> None:
-        """One ``cls.export(...)`` call."""
-        await current.cls.export(**current.export_params)
+        """One ``cls.export(...)`` call against the upstream class's registry.
+
+        :meth:`Incorporator.export` requires ``instance`` as a keyword-only
+        argument with no default. The Export current's intent (per its
+        docstring) is to snapshot ``cls.inc_dict`` to disk, so this tick
+        body resolves ``instance`` itself: prefer the strong-ref snapshot
+        parked by an upstream :class:`Stream` (``_tideweaver_snapshot``);
+        otherwise fall back to ``cls.inc_dict.values()`` for sources that
+        naturally hold strong refs.
+        """
+        snapshot = getattr(current.cls, "_tideweaver_snapshot", None)
+        if snapshot is not None:
+            instance = list(snapshot)
+        else:
+            instance = list(current.cls.inc_dict.values())
+        if not instance:
+            return
+        params = dict(current.export_params)
+        params.setdefault("instance", instance)
+        await current.cls.export(**params)
 
     # ------------------------------------------------------------------
     # Graph utilities

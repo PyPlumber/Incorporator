@@ -39,13 +39,12 @@ from incorporator.io import fetch
 
 @pytest.fixture(autouse=True)
 def _clear_incorporator_registry() -> Any:
-    """Clear the shared inc_dict between tests.
+    """Belt-and-braces clear of the base Incorporator registry between tests.
 
-    Incorporator's ``inc_dict`` is currently a single ``WeakValueDictionary``
-    shared across every subclass (see ``base.py:165``).  That makes
-    tests bleed inc_code keys from one class into the next.  Clearing
-    pre- and post-test isolates each scenario without changing framework
-    behaviour.
+    Per-subclass isolation is the production contract (see
+    ``Incorporator.__init_subclass__``), so this fixture is normally a
+    no-op — instances live in their own subclass ``inc_dict``.  The clear
+    stays in case any test ever pokes ``Incorporator.inc_dict`` directly.
     """
     Incorporator.inc_dict.clear()
     yield

@@ -176,6 +176,39 @@ async def test_schema_union_concurrent_gather_safety(tmp_path: Path) -> None:
     assert "unique_field_beta" in ConcurrentModel._schema_union  # type: ignore[attr-defined]
 
 
+def test_inc_dict_sibling_class_isolation() -> None:
+    """Sibling user subclasses must each own an isolated ``inc_dict``.
+
+    Regression guard for the shared-registry bug: before ``__init_subclass__``
+    forked the WeakValueDictionary per subclass, every user class shared the
+    one defined on Incorporator, so instances of one class leaked into every
+    other class's lookups.  Plain construction (no incorp pipeline) is enough
+    to exercise the registration path in ``model_post_init``.
+    """
+
+    class SiblingRegistryA(Incorporator):
+        pass
+
+    class SiblingRegistryB(Incorporator):
+        pass
+
+    assert SiblingRegistryA.inc_dict is not SiblingRegistryB.inc_dict
+    assert SiblingRegistryA.inc_dict is not Incorporator.inc_dict
+    assert SiblingRegistryB.inc_dict is not Incorporator.inc_dict
+
+    a = SiblingRegistryA(inc_code="a-row")
+    b = SiblingRegistryB(inc_code="b-row")
+
+    assert list(SiblingRegistryA.inc_dict.keys()) == ["a-row"]
+    assert list(SiblingRegistryB.inc_dict.keys()) == ["b-row"]
+    # The bubble-up registration stops short of Incorporator itself — the
+    # global registry must stay empty so cross-class drilling can't see it.
+    assert "a-row" not in Incorporator.inc_dict
+    assert "b-row" not in Incorporator.inc_dict
+    # Keep the instances alive until the assertions complete.
+    assert a.inc_code == "a-row" and b.inc_code == "b-row"
+
+
 @pytest.mark.asyncio
 async def test_schema_union_sibling_class_isolation(tmp_path: Path) -> None:
     """Sibling subclasses must not share _schema_union state."""
@@ -220,11 +253,6 @@ async def test_per_subclass_isolation_walks_mro(tmp_path: Path) -> None:
     Alpha or Beta must still get its OWN container instances — getattr
     walks the MRO and finds Incorporator's seed; vars(base_class) would
     silently miss it and leak shared state across siblings.
-
-    Covers _schema_union isolation only (the framework explicitly assigns
-    cls._schema_union = {} on first incorp via factory.py:284-285).
-    inc_dict isolation on user classes is a separate concern — instances
-    register on DynamicModel.inc_dict, which is isolated by the refactor.
     """
     json_a = tmp_path / "a.json"
     json_b = tmp_path / "b.json"

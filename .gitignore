@@ -48,7 +48,7 @@ dist/
 *.egg-info/
 incorporator.egg-info/
 AGENTS.md
-/.claude/
+.claude/
 site/
 
 # 7. OS & Database Files

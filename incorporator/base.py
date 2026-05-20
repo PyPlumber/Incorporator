@@ -173,6 +173,18 @@ class Incorporator(BaseModel):
     #: still win on key conflict.
     _incorp_kwargs: ClassVar[Dict[str, Any]] = {}
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        # Each subclass gets its OWN registry + schema-union + replay-kwargs
+        # mapping. Without this, every subclass would share the single
+        # WeakValueDictionary defined on Incorporator above, so sibling
+        # classes contaminate each other's lookups. The schema builder's
+        # _PER_SUBCLASS_CONTAINERS re-installs fresh instances on dynamic
+        # subclasses; this hook covers the user-defined classes above them.
+        super().__init_subclass__(**kwargs)
+        cls.inc_dict = weakref.WeakValueDictionary()
+        cls._schema_union = {}
+        cls._incorp_kwargs = {}
+
     # ------------------------------------------------------------------
     # Universal instance attributes — present on every Incorporator object.
     # ------------------------------------------------------------------

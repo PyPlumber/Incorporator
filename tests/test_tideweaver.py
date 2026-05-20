@@ -465,6 +465,57 @@ async def test_fjord_flush_outflow(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert "lap_id" in payload and "count" in payload
 
 
+@pytest.mark.asyncio
+async def test_export_current_snapshots_upstream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An Export current downstream of a Stream writes the upstream's rows to disk.
+
+    Regression for the missing ``instance`` kwarg in ``_tick_export``: prior
+    to the fix every Export tick raised ``TypeError`` and no file was ever
+    written.  The fix resolves ``instance`` from the upstream's parked
+    ``_tideweaver_snapshot`` (or ``inc_dict`` as a fallback) before forwarding
+    the user's ``export_params``.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class Tick(Incorporator):
+        """Per-tick source row used by the Export regression test."""
+
+    out_file = tmp_path / "ticks.ndjson"
+    tick_strong_refs: List[Tick] = []
+
+    async def fake_upstream(current: Current) -> None:
+        """Populate Tick.inc_dict + park a snapshot, mimicking _tick_stream."""
+        if current.name == "ticks":
+            inst = Tick()
+            tick_strong_refs.append(inst)
+            Tick.inc_dict[f"t-{len(tick_strong_refs)}"] = inst
+            Tick._tideweaver_snapshot = list(tick_strong_refs)  # type: ignore[attr-defined]
+
+    src = Stream(name="ticks", cls=Tick, interval=0.1, incorp_params={}, on_error="fail_watershed")
+    dump = Export(
+        name="dump",
+        cls=Tick,
+        interval=0.1,
+        export_params={"file_path": str(out_file), "format": "ndjson", "if_exists": "append"},
+        on_error="fail_watershed",
+    )
+    ws = Watershed.chain(window=_short_window(0.7), currents=[src, dump])
+    tw = Tideweaver(ws, pass_interval=0.05)
+
+    async def selective(current: Current) -> None:
+        if isinstance(current, Export):
+            await tw._tick_export(current)
+        else:
+            await fake_upstream(current)
+
+    monkeypatch.setattr(tw, "_invoke_tick", selective)
+    await _collect_tides(tw)
+
+    assert out_file.exists(), "Export tick must write the export file"
+    lines = [ln for ln in out_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert lines, "Export tick must have written at least one row"
+
+
 # ---------------------------------------------------------------------------
 # JSON config loader
 # ---------------------------------------------------------------------------
@@ -970,3 +1021,141 @@ def test_init_tideweaver_scaffold_validates(tmp_path: Path) -> None:
     assert autodetect_type(expanded) == "tideweaver"
     errors = validate_watershed_config(expanded, tmp_path)
     assert errors == [], f"scaffold watershed.json should validate cleanly; got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Real ``_tick_stream`` snapshot — no ``tick_factory`` override.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tick_stream_parks_snapshot_through_real_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_tick_stream`` parks a non-empty ``_tideweaver_snapshot`` via the production path.
+
+    Regression for the WeakValueDictionary timing race: the chunked engine
+    ``del``s its per-chunk ``dataset`` local after each yield, so a snapshot
+    line that ran AFTER ``cls.stream()`` exited saw an empty ``inc_dict``.
+    Driving the real ``_tick_stream`` (no ``tick_factory`` stub) against a
+    mocked HTTP layer is the only way to catch a regression of that race.
+    """
+    import httpx
+    from pydantic import ConfigDict
+
+    from incorporator.io import fetch
+
+    class StreamedPost(Incorporator):
+        """Source class for the snapshot regression test."""
+
+        model_config = ConfigDict(extra="allow")
+
+    Incorporator.inc_dict.clear()
+    if "_tideweaver_snapshot" in StreamedPost.__dict__:
+        delattr(StreamedPost, "_tideweaver_snapshot")
+
+    async def _mock(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        payload = [
+            {"id": 1, "title": "first", "userId": 1},
+            {"id": 2, "title": "second", "userId": 1},
+        ]
+        return httpx.Response(200, text=json.dumps(payload), request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch, "execute_request", _mock)
+
+    posts = Stream(
+        name="posts",
+        cls=StreamedPost,
+        interval=0.2,
+        on_error="isolate",
+        incorp_params={"inc_url": "https://x/posts", "inc_code": "id"},
+    )
+    ws = Watershed.parallel(window=_short_window(0.6), currents=[posts])
+    tw = Tideweaver(ws, pass_interval=0.05)
+    await _collect_tides(tw)
+
+    snapshot: List[Any] = list(getattr(StreamedPost, "_tideweaver_snapshot", []))
+    assert snapshot, "real _tick_stream must park a non-empty snapshot — empty means the WeakValueDict race regressed"
+    ids = {getattr(p, "id", None) for p in snapshot}
+    assert ids == {1, 2}, f"snapshot must contain both mocked rows by id, got {ids}"
+
+
+@pytest.mark.asyncio
+async def test_real_stream_to_fjord_chain_sees_upstream_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real ``Stream → Fjord`` chain: outflow(state) sees rows from the parked snapshot.
+
+    Companion to ``test_fjord_flush_outflow`` but DRIVES the production
+    ``_tick_stream`` rather than bypassing it with a hand-built tick factory.
+    If the snapshot-timing race regresses, the outflow's ``state['ChainedPost']``
+    is empty and the exported NDJSON contains zero rows.
+    """
+    import httpx
+    from pydantic import ConfigDict
+
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    class ChainedPost(Incorporator):
+        """Upstream Stream source for the real chain test."""
+
+        model_config = ConfigDict(extra="allow")
+
+    class ChainedState(Incorporator):
+        """Downstream Fjord output class."""
+
+    Incorporator.inc_dict.clear()
+    for klass in (ChainedPost, ChainedState):
+        if "_tideweaver_snapshot" in klass.__dict__:
+            delattr(klass, "_tideweaver_snapshot")
+
+    async def _mock(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        payload = [
+            {"id": 11, "title": "alpha", "userId": 1},
+            {"id": 12, "title": "beta", "userId": 1},
+            {"id": 13, "title": "gamma", "userId": 2},
+        ]
+        return httpx.Response(200, text=json.dumps(payload), request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch, "execute_request", _mock)
+
+    outflow_py = tmp_path / "outflow.py"
+    outflow_py.write_text(
+        "def outflow(state):\n"
+        "    posts = state.get('ChainedPost', [])\n"
+        "    return [{'post_id': getattr(p, 'id', None), 'seen': len(posts)} for p in posts]\n",
+        encoding="utf-8",
+    )
+    out_file = tmp_path / "chained_state.ndjson"
+
+    # Stream's live HTTP/AsyncClient/pydantic stack adds noticeable per-tick
+    # overhead.  Pick a Stream interval >> tick duration so a real gap opens
+    # between Stream ticks; the Fjord's short interval + generous
+    # skip_threshold ensures it fires inside that gap.
+    posts = Stream(
+        name="posts",
+        cls=ChainedPost,
+        interval=3.0,
+        on_error="fail_watershed",
+        incorp_params={"inc_url": "https://x/posts", "inc_code": "id"},
+    )
+    fjord = Fjord(
+        name="state",
+        cls=ChainedState,
+        interval=0.2,
+        skip_threshold=50.0,
+        export_params={"file_path": str(out_file), "format": "ndjson", "if_exists": "append"},
+        outflow=outflow_py,
+        on_error="fail_watershed",
+    )
+    ws = Watershed.chain(window=_short_window(5.0), currents=[posts, fjord])
+    tw = Tideweaver(ws, pass_interval=0.05)
+    await _collect_tides(tw)
+
+    assert out_file.exists(), "Fjord flush should have written an export file driven by the real Stream snapshot"
+    rows = [json.loads(ln) for ln in out_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert rows, "Fjord outflow saw zero upstream rows — the snapshot race regressed"
+    seen_ids = {r["post_id"] for r in rows}
+    assert seen_ids >= {11, 12, 13}, f"outflow must observe every mocked post id, got {sorted(seen_ids)}"
