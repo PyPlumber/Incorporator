@@ -22,6 +22,12 @@ from . import handlers as format_parsers
 from .compression import decompress_data, infer_compression
 from .formats import FormatType, infer_format
 from .pagination.base import AsyncPaginator
+from .throttle import (
+    FixedIntervalThrottle,
+    ThrottleStrategy,
+    known_host_rates,
+    resolve_throttle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,66 +35,35 @@ logger = logging.getLogger(__name__)
 # ==========================================
 # 1. THROTTLING & RESILIENCE
 # ==========================================
-class RateLimiter:
-    """Standard token-bucket lock for requests-per-second throttling to prevent 429 bans."""
 
-    def __init__(self, requests_per_second: float) -> None:
-        self.rate = requests_per_second
-        self.interval = 1.0 / requests_per_second if requests_per_second > 0 else 0.0
-        self.lock = asyncio.Lock()
-        self.last_call = 0.0
-
-    async def wait(self) -> None:
-        """Yields execution only for the exact delta needed to maintain the rate limit."""
-        if self.rate <= 0:
-            return
-
-        async with self.lock:
-            now = asyncio.get_running_loop().time()
-            elapsed = now - self.last_call
-
-            if elapsed < self.interval:
-                await asyncio.sleep(self.interval - elapsed)
-
-            self.last_call = asyncio.get_running_loop().time()
+# Backward-compat alias — the original :class:`RateLimiter` is the
+# fixed-interval token bucket, now lives in
+# :mod:`incorporator.io.throttle` as :class:`FixedIntervalThrottle`.
+# Existing callers and tests that monkey-patch ``RateLimiter.__init__``
+# keep working because the alias and the new class are the same object.
+RateLimiter = FixedIntervalThrottle
 
 
-# Host-aware safe-rate registry for known-strict free-tier APIs.  When a
-# caller does NOT pass ``requests_per_second`` explicitly, the engine looks
-# up each source's hostname here and uses the most restrictive matching
-# rate, falling back to the global 15.0 req/sec default for unknown hosts.
-# Numbers are conservative — comfortably under each provider's documented
-# free-tier ceiling so a single concurrent burst can't trip the limiter.
-#
-# Maintenance note: providers change their published limits frequently.
-# When updating, link the source in a one-line comment so future readers
-# can re-verify.
-_KNOWN_API_RATE_LIMITS: Dict[str, float] = {
-    # CoinGecko public (anon): 5–15 req/min — 0.2 = 12 req/min, headroom.
-    # https://support.coingecko.com/hc/en-us/articles/4538771776153
-    "api.coingecko.com": 0.2,
-    # PokeAPI: 100 req/min documented ceiling — 1.5 = 90 req/min.
-    # https://pokeapi.co/docs/v2#fairuse
-    "pokeapi.co": 1.5,
-    # NHTSA vPIC: 100–200 req/min documented; method-agnostic (GET and
-    # POST share the same bucket).  Used by the xml-post-audit appendix
-    # (a single batched ``DecodeVINValuesBatch`` POST per run, well
-    # under any cap) — registry entry protects fan-out and loop callers.
-    # https://vpic.nhtsa.dot.gov/api/home/index/faq
-    "vpic.nhtsa.dot.gov": 1.5,
-}
+# Backward-compat diagnostic dict — derived from
+# :data:`incorporator.io.throttle._HOST_FACTORIES` at import time so the
+# legacy ``host → float`` view stays available for logs, CLI tooling,
+# and the AGENTS.md / CHANGELOG references.  Mutating this dict does NOT
+# update the live registry; call
+# :func:`incorporator.io.throttle.register_host_throttle` for that.
+_KNOWN_API_RATE_LIMITS: Dict[str, float] = known_host_rates()
 
 
 def _resolve_host_safe_rate(source_list: List[Any]) -> Optional[float]:
-    """Return the most restrictive known-API rate matching any source host.
+    """Return the most restrictive known-host rate matching any source, or ``None``.
 
-    Returns ``None`` when no source URL matches a registered host — caller
-    falls back to the documented default (15.0 req/sec).  When multiple
-    hosts in the same call match the registry, the smallest (most
-    restrictive) rate wins — protecting the strictest API in a multi-source
-    incorp where one global RateLimiter governs every request.
+    Backward-compat shim over the per-host data in
+    :mod:`incorporator.io.throttle`.  The min-rate-wins semantics are
+    preserved for callers (and tests) that read the resolver directly.
+    For per-source throttle picking the orchestrator now calls
+    :func:`incorporator.io.throttle.resolve_throttle` instead.
     """
     rates: List[float] = []
+    host_rates = known_host_rates()
     for src in source_list:
         if not isinstance(src, str):
             continue
@@ -96,8 +71,8 @@ def _resolve_host_safe_rate(source_list: List[Any]) -> Optional[float]:
             host = urlparse(src).hostname or ""
         except Exception:  # noqa: S112 — defensive parse guard; logging would spam per malformed URL
             continue
-        if host in _KNOWN_API_RATE_LIMITS:
-            rates.append(_KNOWN_API_RATE_LIMITS[host])
+        if host in host_rates:
+            rates.append(host_rates[host])
     return min(rates) if rates else None
 
 
@@ -289,12 +264,12 @@ async def execute_request(
     params: Optional[Dict[str, Any]] = None,
     json_payload: Optional[Dict[str, Any]] = None,
     form_payload: Optional[Dict[str, Any]] = None,
-    rate_limiter: Optional[RateLimiter] = None,
+    rate_limiter: Optional[ThrottleStrategy] = None,
 ) -> httpx.Response:
     """Executes a resilient, jittered HTTP request supporting GET/POST and query strings."""
     _validate_url(url)
-    if rate_limiter:
-        await rate_limiter.wait()
+    if rate_limiter is not None:
+        await rate_limiter.acquire()
 
     req_kwargs: Dict[str, Any] = {}
     if params:
@@ -377,7 +352,7 @@ async def _process_single_source(
     source_val: str,
     is_file_mode: bool,
     client: Optional[httpx.AsyncClient],
-    rate_limiter: Optional[RateLimiter],
+    rate_limiter: Optional[ThrottleStrategy],
     dynamic_payload: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> List[Any]:
@@ -549,25 +524,56 @@ async def fetch_concurrent_payloads(
     _timeout = kwargs.pop("timeout", 15.0)
     _headers = kwargs.pop("headers", None)
     # Detect whether the caller passed an explicit rate — explicit always
-    # wins over the host-aware registry default below.
+    # wins over the per-host registry default below.
     _user_provided_rps = "requests_per_second" in kwargs
-    _requests_per_second = kwargs.pop("requests_per_second", 15.0)
-    if not _user_provided_rps and not is_file_mode:
-        host_safe = _resolve_host_safe_rate(source_list)
-        if host_safe is not None and host_safe < _requests_per_second:
-            logger.info(
-                "Host-aware rate limit applied: %.2f req/sec "
-                "(one or more sources match the known-strict-API registry). "
-                "Pass requests_per_second=N to override.",
-                host_safe,
-            )
-            _requests_per_second = host_safe
+    _requests_per_second: Optional[float] = kwargs.pop("requests_per_second", None)
+    _user_burst: Optional[int] = kwargs.pop("burst", None)
     # SSRF defence: opt-in.  When True, redirects whose Location header
     # resolves to a private / loopback / link-local / metadata IP are
     # rejected before httpx follows them.  Pipelines that legitimately
     # call internal services keep the default False.
     _block_internal_redirects = kwargs.pop("block_internal_redirects", False)
     should_close = False
+
+    # ------------------------------------------------------------------
+    # Per-source throttle resolution.
+    #
+    # Caller-supplied ``requests_per_second`` is treated as a GLOBAL
+    # limit — one throttle shared by every source — to preserve the
+    # legacy "one rate per call" contract.  Without a caller rate the
+    # orchestrator picks one strategy per HOST: two URLs against the
+    # same host share a throttle (sequential within host) but two
+    # URLs against different hosts each run at their own rate
+    # (parallel across hosts).  This lifts the legacy ceiling where a
+    # CoinGecko + PokeAPI fan-out was collapsed to CoinGecko's 0.2
+    # rps for every request.
+    # ------------------------------------------------------------------
+    throttle_for_source: Dict[str, ThrottleStrategy] = {}
+    if _rate_limiter is not None:
+        # Explicit caller injection (test hook / advanced usage) — honour it.
+        for src in source_list:
+            throttle_for_source[src] = _rate_limiter
+    elif _user_provided_rps:
+        # Legacy semantics: caller rate is a global cap.  Build one
+        # throttle and reuse it across every source.
+        shared = resolve_throttle("", requests_per_second=_requests_per_second, burst=_user_burst)
+        for src in source_list:
+            throttle_for_source[src] = shared
+    else:
+        # Per-host resolution: one strategy per distinct host.
+        by_host: Dict[str, ThrottleStrategy] = {}
+        for src in source_list:
+            host = urlparse(src).hostname or "" if isinstance(src, str) else ""
+            if host not in by_host:
+                by_host[host] = resolve_throttle(src)
+            throttle_for_source[src] = by_host[host]
+        if not is_file_mode and by_host:
+            applied = {h: getattr(t, "rate", "n/a") for h, t in by_host.items() if h}
+            if applied:
+                logger.info(
+                    "Per-host throttles applied: %s.  Pass requests_per_second=N for a global cap.",
+                    ", ".join(f"{h}={r}" for h, r in applied.items()),
+                )
 
     if not is_file_mode and _client is None:
         _client = HTTPClientBuilder.build_client(
@@ -577,13 +583,12 @@ async def fetch_concurrent_payloads(
             headers=_headers,
             block_internal_redirects=_block_internal_redirects,
         )
-        _rate_limiter = RateLimiter(_requests_per_second)
         should_close = True
 
     async def _safe_execute(src: str, payload: Any) -> List[Any]:
         try:
             return await _process_single_source(
-                src, is_file_mode, _client, _rate_limiter, dynamic_payload=payload, **dict(kwargs)
+                src, is_file_mode, _client, throttle_for_source[src], dynamic_payload=payload, **dict(kwargs)
             )
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:

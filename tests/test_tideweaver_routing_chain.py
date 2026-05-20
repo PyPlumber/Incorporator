@@ -136,6 +136,7 @@ async def test_chain_three_streams_apply_conv_dict_in_order(
     gating fits in the test window.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_jsonplaceholder_chain)
     _reset_registries(ChainUser, ChainPost, ChainComment)
 
@@ -260,6 +261,7 @@ async def test_chain_streams_into_fjord_tail_reads_both_upstream_snapshots(
     empty snapshot, blanking out the upstream state the Fjord reads.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_rick_and_morty)
     _reset_registries(RMChar, RMEpisode, RMJoined)
 

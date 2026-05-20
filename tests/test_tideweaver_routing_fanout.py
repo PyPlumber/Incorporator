@@ -187,6 +187,7 @@ async def test_fanout_one_stream_to_three_heterogeneous_fjords(
     the fanout and is visible to every downstream Fjord.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_rick_and_morty_chars)
     _reset_registries(FanRMChar, RMAliveCount, RMSpeciesGroup, RMAppearance)
     strong_refs_by_cls: Dict[type, List[Any]] = {}
@@ -332,6 +333,7 @@ async def test_fanout_two_fjords_plus_one_export_share_upstream(
     once but visible to all three sinks.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_albums)
     _reset_registries(FanAlbum, AlbumPerUser, AlbumTotal)
     strong_refs_by_cls: Dict[type, List[Any]] = {}
@@ -464,6 +466,7 @@ async def test_fanout_thesportsdb_epl_top_lists(
     defenders by position).
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_thesportsdb)
     _reset_registries(EPLPlayer, TopScorer, TopAssist, TopDefender)
     strong_refs_by_cls: Dict[type, List[Any]] = {}

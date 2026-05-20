@@ -175,6 +175,7 @@ async def test_custom_mlb_leaderboard_three_hop_fjord_cascade(
     Python sort + slice; the summary step aggregates).
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_mlb_players)
     _reset_registries(MLBPlayerLB, NormalizedPlayer, RankedPlayer, LeagueSummary)
     strong_refs_by_cls: Dict[type, List[Any]] = {}
@@ -332,6 +333,7 @@ async def test_custom_mixed_modes_with_drain_timeout(
     without gating on ``S_a``.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_httpbin)
     _reset_registries(EchoA, EchoB, EchoTail)
     strong_refs_by_cls: Dict[type, List[Any]] = {}

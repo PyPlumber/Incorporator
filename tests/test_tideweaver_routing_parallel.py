@@ -141,6 +141,7 @@ async def test_parallel_four_independent_streams_apply_conv_dict(
     watershed.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_jsonplaceholder)
     _reset_registries(Post, Comment, Album, Photo)
 
@@ -263,6 +264,7 @@ async def test_parallel_isolate_on_error_keeps_siblings_firing(
     produces no rows in its ``inc_dict`` while siblings populate normally.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_jsonplaceholder_with_one_500)
     _reset_registries(Post, Album, User)
 

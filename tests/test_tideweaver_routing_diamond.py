@@ -196,6 +196,7 @@ async def test_diamond_mlb_teams_plus_players_fjord_join(
     to a real ``0.281`` float before the join.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_mlb)
     _reset_registries(Trigger, MLBTeam, MLBPlayer, TeamRoster)
     strong_refs_by_cls: Dict[type, List[Any]] = {}
@@ -337,6 +338,7 @@ async def test_diamond_open_library_two_middle_fjords_to_catalog_tail(
     middle Fjords run.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
     monkeypatch.setattr(fetch, "execute_request", _mock_open_library)
     _reset_registries(OLBook, AuthorIndex, SubjectIndex, BookCatalog)
     strong_refs_by_cls: Dict[type, List[Any]] = {}
