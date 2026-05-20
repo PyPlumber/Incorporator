@@ -328,6 +328,7 @@ def _get_cached_adapter(actual_type: Any) -> Optional[TypeAdapter[Any]]:
         return None
 
 
+@functools.lru_cache(maxsize=128)
 def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
     """Type-coercion workhorse for ``conv_dict`` — turn messy API values into clean Python types.
 
@@ -358,6 +359,11 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
             whatever shape the API hands back).
         default: Value returned when the source is missing, empty, or a
             known garbage value; also returned when coercion raises.
+            **Must be hashable** — the factory is cached on
+            ``(target_type, default)`` via :func:`functools.lru_cache`
+            so passing a list or dict raises ``TypeError`` at call time.
+            All idiomatic defaults (``None``, ``0``, ``0.0``, ``False``,
+            and strings) are hashable, so this is rarely binding.
 
     Returns:
         A converter closure suitable for placing in ``conv_dict``.
@@ -368,6 +374,13 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
     ``int`` / ``float``, truthy-string normalisation for ``bool``).
     Only when every rank raises does the warning fire and ``default``
     return.
+
+    Repeated calls with the same ``(target_type, default)`` return the
+    same closure instance (via :func:`functools.lru_cache`); the
+    closure is stateless so sharing is safe.  This layers on top of the
+    existing per-type :func:`_get_cached_adapter` cache and saves the
+    ``TypeAdapter`` rebuild cost in long-running pipelines that
+    re-construct ``conv_dict`` per tick.
     """
     # 1. The 'new' mapping: If 'new', accept ANY valid Python type.
     actual_type = Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type

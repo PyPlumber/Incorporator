@@ -302,6 +302,14 @@ class Tideweaver:
         self._started_at[current.name] = now_mono
         # Capture upstream consumption BEFORE the tick runs so a fast upstream
         # finishing concurrently doesn't double-count its wave.
+        #
+        # ``consumed_snapshot`` is threaded as a positional arg deliberately —
+        # a :class:`contextvars.ContextVar` alternative was evaluated and
+        # rejected: the dict construction is microsecond-class, and a
+        # ContextVar would silently leak if a future retry mechanism stops
+        # preserving task context (the current ``tenacity.AsyncRetrying``
+        # does preserve it, but that's an implementation detail of the
+        # ``on_error="restart"`` policy in ``_tick_wrapper`` below).
         consumed_snapshot = {
             up_name: self._last_wave_at[up_name]
             for up_name, _mode in self._upstream[current.name]

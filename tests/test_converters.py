@@ -83,6 +83,37 @@ def test_inc_new_sentinel() -> None:
     assert inc_any(None) is None
 
 
+def test_inc_caches_closures_per_type_and_default() -> None:
+    """``inc(target_type, default)`` returns the same closure on repeated calls.
+
+    The factory is wrapped in ``functools.lru_cache``, so two callers
+    constructing ``inc(int)`` independently share one closure instance.
+    Different ``(target_type, default)`` pairs produce different
+    closures; ``cache_info()`` exposes hits/misses for diagnostics.
+    """
+    inc.cache_clear()  # type: ignore[attr-defined]
+
+    c1 = inc(int)
+    c2 = inc(int)
+    c3 = inc(int, default=0)
+    c4 = inc(float)
+
+    # Same (type, default) → cache hit returns the SAME closure object.
+    assert c1 is c2, "Repeated inc(int) calls must return the same closure"
+    # Different default → distinct closure.
+    assert c1 is not c3, "Different default must yield a different closure"
+    # Different type → distinct closure.
+    assert c1 is not c4, "Different target_type must yield a different closure"
+
+    info = inc.cache_info()  # type: ignore[attr-defined]
+    assert info.hits >= 1, "Repeated inc(int) call should register at least one hit"
+    assert info.misses >= 3, "Three distinct cache keys should register at least three misses"
+
+    # Behavioural sanity — the shared closure still works after cache hits.
+    assert c1("42") == 42
+    assert c3("garbage") == 0
+
+
 def test_calc_and_calc_all_markers() -> None:
     """Asserts that calc and calc_all correctly generate Columnar Op markers."""
 
