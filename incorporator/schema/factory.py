@@ -280,9 +280,9 @@ def build_instances(
 
     if isinstance(transformed_data, list):
         # Populate the superset schema from raw dicts before Pydantic absorbs extra keys.
-        # Guard: create a per-class dict so subclasses don't share the base-class instance.
-        if "_schema_union" not in cls.__dict__:
-            cls._schema_union = {}
+        # Fork a per-class dict on first write so subclasses don't share the base
+        # Incorporator's empty default (see ``test_schema_union_sibling_class_isolation``).
+        cls._ensure_schema_union()
         # Writes only on first-seen keys — O(1) miss per key, zero writes after stabilization.
         # ``ActualClass.model_json_schema()`` is stable for the lifetime of the
         # SCHEMA_REGISTRY-cached dynamic class; cache its ``properties`` dict

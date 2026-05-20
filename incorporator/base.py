@@ -174,16 +174,39 @@ class Incorporator(BaseModel):
     _incorp_kwargs: ClassVar[Dict[str, Any]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        # Each subclass gets its OWN registry + schema-union + replay-kwargs
-        # mapping. Without this, every subclass would share the single
-        # WeakValueDictionary defined on Incorporator above, so sibling
-        # classes contaminate each other's lookups. The schema builder's
-        # _PER_SUBCLASS_CONTAINERS re-installs fresh instances on dynamic
-        # subclasses; this hook covers the user-defined classes above them.
+        # Per-class isolation of inc_dict / _schema_union / _incorp_kwargs
+        # is required so sibling subclasses don't share the base
+        # Incorporator's containers (see the regression test in
+        # ``tests/test_validation.py::test_inc_dict_sibling_class_isolation``).
+        # The fork is deferred to the first write via ``_ensure_X()``
+        # so a subclass that's only ever READ from (or never used at all)
+        # doesn't pay the allocation cost.  The base's empty defaults
+        # cover the read path.
         super().__init_subclass__(**kwargs)
-        cls.inc_dict = weakref.WeakValueDictionary()
-        cls._schema_union = {}
-        cls._incorp_kwargs = {}
+
+    @classmethod
+    def _ensure_inc_dict(cls) -> None:
+        """Fork a per-class ``inc_dict`` on first write — preserves sibling isolation.
+
+        Cheap (one dict-membership check) on every call after the first;
+        the first call allocates a fresh ``WeakValueDictionary`` directly
+        on ``cls.__dict__`` so ``cls.inc_dict`` stops shadowing the
+        inherited base default and becomes per-class authoritative.
+        """
+        if "inc_dict" not in cls.__dict__:
+            cls.inc_dict = weakref.WeakValueDictionary()
+
+    @classmethod
+    def _ensure_schema_union(cls) -> None:
+        """Fork a per-class ``_schema_union`` on first write."""
+        if "_schema_union" not in cls.__dict__:
+            cls._schema_union = {}
+
+    @classmethod
+    def _ensure_incorp_kwargs(cls) -> None:
+        """Fork a per-class ``_incorp_kwargs`` on first write."""
+        if "_incorp_kwargs" not in cls.__dict__:
+            cls._incorp_kwargs = {}
 
     # ------------------------------------------------------------------
     # Universal instance attributes — present on every Incorporator object.
@@ -251,6 +274,7 @@ class Incorporator(BaseModel):
                 self.inc_code = cls._auto_counter
                 cls._auto_counter += 1
 
+        cls._ensure_inc_dict()
         cls.inc_dict[self.inc_code] = self
 
         # DSA OPTIMIZATION: Fast-path C-tuple evaluation.
@@ -258,6 +282,7 @@ class Incorporator(BaseModel):
         if cls.__bases__ and cls.__bases__[0] is not Incorporator:
             for base in cls.__bases__:
                 if issubclass(base, Incorporator) and base is not Incorporator:
+                    base._ensure_inc_dict()
                     base.inc_dict[self.inc_code] = self
 
     @classmethod

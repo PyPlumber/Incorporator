@@ -177,13 +177,19 @@ async def test_schema_union_concurrent_gather_safety(tmp_path: Path) -> None:
 
 
 def test_inc_dict_sibling_class_isolation() -> None:
-    """Sibling user subclasses must each own an isolated ``inc_dict``.
+    """Sibling user subclasses each own an isolated ``inc_dict`` after first write.
 
-    Regression guard for the shared-registry bug: before ``__init_subclass__``
-    forked the WeakValueDictionary per subclass, every user class shared the
-    one defined on Incorporator, so instances of one class leaked into every
-    other class's lookups.  Plain construction (no incorp pipeline) is enough
-    to exercise the registration path in ``model_post_init``.
+    Regression guard for the shared-registry bug: before
+    ``Incorporator._ensure_inc_dict()`` forked the WeakValueDictionary
+    per subclass, every user class shared the one defined on
+    Incorporator, so instances of one class leaked into every other
+    class's lookups.
+
+    Allocation is now deferred to first write (``model_post_init`` calls
+    ``cls._ensure_inc_dict()`` before registering), so the per-class
+    fork happens as soon as either class is instantiated.  Plain
+    construction (no incorp pipeline) is enough to exercise the
+    registration path.
     """
 
     class SiblingRegistryA(Incorporator):
@@ -192,12 +198,14 @@ def test_inc_dict_sibling_class_isolation() -> None:
     class SiblingRegistryB(Incorporator):
         pass
 
+    a = SiblingRegistryA(inc_code="a-row")
+    b = SiblingRegistryB(inc_code="b-row")
+
+    # After first write, each class owns a distinct dict — neither shares
+    # with the other and neither shares with the base Incorporator.
     assert SiblingRegistryA.inc_dict is not SiblingRegistryB.inc_dict
     assert SiblingRegistryA.inc_dict is not Incorporator.inc_dict
     assert SiblingRegistryB.inc_dict is not Incorporator.inc_dict
-
-    a = SiblingRegistryA(inc_code="a-row")
-    b = SiblingRegistryB(inc_code="b-row")
 
     assert list(SiblingRegistryA.inc_dict.keys()) == ["a-row"]
     assert list(SiblingRegistryB.inc_dict.keys()) == ["b-row"]

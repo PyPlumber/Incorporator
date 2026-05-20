@@ -241,6 +241,7 @@ async def flush(
             if isinstance(rows, IncorporatorList) and getattr(rows, "_model_class", None) is derived_cls:
                 instances = list(rows)
             else:
+                derived_cls._ensure_inc_dict()
                 derived_cls.inc_dict.clear()
                 # model_validate skips the ``**kwargs`` unpack per row and lets
                 # Pydantic's Rust core amortise field-offset lookups across the
