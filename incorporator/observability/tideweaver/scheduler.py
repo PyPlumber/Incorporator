@@ -25,6 +25,7 @@ logs, ``"fail_watershed"`` re-raises.
 from __future__ import annotations
 
 import asyncio
+import heapq
 import logging
 import time
 from datetime import datetime, timezone
@@ -113,6 +114,18 @@ class Tideweaver:
         # ``_transitive_upstreams``.
         self._transitive_cache: Dict[str, List[str]] = {}
 
+        # Adaptive-wakeup state.  The loop sleeps until the earliest of:
+        # (a) the heap's next due-time, (b) ``_wake_event`` (set by any
+        # ``_tick_wrapper.finally`` so downstream hard-edge dependents
+        # re-evaluate immediately after an upstream wave lands), or
+        # (c) shutdown.  Heap entries are ``(due_at_monotonic, counter,
+        # name)`` triples — the counter is a tiebreaker so heapq never
+        # tries to compare ``Current`` names lexicographically when two
+        # entries share the same due time.
+        self._wake_event: asyncio.Event = asyncio.Event()
+        self._due_heap: List[Tuple[float, int, str]] = []
+        self._heap_counter: int = 0
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -135,10 +148,7 @@ class Tideweaver:
                 yield tide
                 if shutdown_event.is_set():
                     break
-                try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=self.pass_interval)
-                except asyncio.TimeoutError:
-                    pass
+                await self._wait_for_next_event(shutdown_event)
         finally:
             await self._drain()
             stopper.cancel()
@@ -148,6 +158,53 @@ class Tideweaver:
                 pass
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Tideweaver: shutdown stopper exited unexpectedly: %s", exc)
+
+    async def _wait_for_next_event(self, shutdown_event: asyncio.Event) -> None:
+        """Adaptive sleep until the next interesting moment.
+
+        Wakes on the earliest of:
+          * The heap's next-due-time (timer event from a previous tick).
+          * ``self._wake_event`` (set by any ``_tick_wrapper.finally`` —
+            so downstream hard-edge dependents re-evaluate as soon as an
+            upstream wave lands, without polling).
+          * ``shutdown_event`` (window close).
+
+        When the heap is empty we fall back to ``self.pass_interval`` as a
+        safety-net cap so any bug that orphans a current still gets a
+        re-check within bounded time.  This preserves the
+        one-Tide-per-pass contract — every wake produces exactly one
+        :meth:`_run_pass` iteration.
+        """
+        next_due = self._due_heap[0][0] if self._due_heap else None
+        now = time.monotonic()
+        if next_due is None:
+            timeout: float = self.pass_interval
+        else:
+            timeout = max(0.0, next_due - now)
+        if timeout <= 0.0:
+            # Heap already expired — re-pass immediately.  Still clear the
+            # wake event so a stale set() from earlier doesn't no-op the
+            # next sleep.
+            self._wake_event.clear()
+            return
+        shutdown_waiter = asyncio.create_task(shutdown_event.wait())
+        wake_waiter = asyncio.create_task(self._wake_event.wait())
+        try:
+            await asyncio.wait(
+                [shutdown_waiter, wake_waiter],
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            self._wake_event.clear()
+            for t in (shutdown_waiter, wake_waiter):
+                if not t.done():
+                    t.cancel()
+
+    def _push_due(self, name: str, due_at: float) -> None:
+        """Push a ``(due_at, counter, name)`` heap entry for an adaptive wake."""
+        self._heap_counter += 1
+        heapq.heappush(self._due_heap, (due_at, self._heap_counter, name))
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -186,6 +243,13 @@ class Tideweaver:
         fired: List[str] = []
         skipped: List[Tuple[str, str]] = []
 
+        # Housekeeping: drop heap entries whose due-time has already
+        # passed.  The pass that runs at the due moment is the
+        # authoritative re-check; subsequent stale entries for the same
+        # name are harmless but discarding them keeps the heap small.
+        while self._due_heap and self._due_heap[0][0] <= started:
+            heapq.heappop(self._due_heap)
+
         for name in self._topo:
             if shutdown_event.is_set():
                 break
@@ -200,6 +264,12 @@ class Tideweaver:
                 continue
             self._spawn_tick(current)
             fired.append(name)
+            # Schedule the adaptive wake for this current's next interval.
+            # Data-gated skips don't need an entry — ``_wake_event`` fires
+            # when their upstream tick completes — but firing here covers
+            # the steady-state where each current re-fires on its own
+            # cadence.
+            self._push_due(name, time.monotonic() + current.interval)
 
         duration = time.monotonic() - started
         return Tide(tide_number=self._tide_number, fired=fired, skipped=skipped, duration_sec=duration)
@@ -278,6 +348,10 @@ class Tideweaver:
                 if latest is not None:
                     self._last_consumed[(current.name, up_name)] = latest
             self._started_at.pop(current.name, None)
+            # Wake the run loop so downstream hard-edge dependents see the
+            # new wave on the very next pass instead of waiting out the
+            # full ``pass_interval`` safety-net cap.
+            self._wake_event.set()
 
     async def _invoke_tick(self, current: Current) -> None:
         if self.tick_factory is not None:
