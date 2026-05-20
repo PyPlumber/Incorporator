@@ -31,6 +31,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, cast
 
+from pydantic import BaseModel, ConfigDict
 from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_exponential
 
 from ..pipeline._outflow import flush
@@ -41,6 +42,43 @@ from .watershed import Watershed
 logger = logging.getLogger(__name__)
 
 TickFactory = Callable[[Current], Awaitable[None]]
+
+
+class _CurrentState(BaseModel):
+    """Per-current scheduler bookkeeping.
+
+    Instances are pre-allocated for every current at :class:`Tideweaver`
+    construction time and looked up by ``current.name`` in
+    :attr:`Tideweaver._state`.  Replaces four parallel dicts
+    (``_last_tick_started`` / ``_last_wave_at`` / ``_started_at`` /
+    ``_inflight``) keyed by the same name with one struct per current.
+    ``_last_consumed`` stays separate on :class:`Tideweaver` because its
+    key is the *edge* tuple ``(dependent, upstream)``, not the current
+    name.
+
+    ``arbitrary_types_allowed=True`` is required so :attr:`in_flight`
+    can hold an :class:`asyncio.Task` — Pydantic V2 doesn't have a
+    native validator for it but accepts it as an opaque type when
+    allowed.  The model is mutable (Pydantic default) so the scheduler's
+    tick wrapper can update fields in place.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    last_tick_started: Optional[float] = None
+    """Monotonic time the current's most recent tick was spawned, or None."""
+
+    last_wave_at: Optional[datetime] = None
+    """UTC time the current's most recent tick finished, or None."""
+
+    started_at: Optional[float] = None
+    """Monotonic time of the CURRENTLY in-flight tick.  Cleared when the
+    tick completes — distinguishes "running now" from "ran before"."""
+
+    in_flight: Optional[asyncio.Task[None]] = None
+    """The asyncio Task for the most recent tick.  Persists after the
+    task completes (``.done()`` returns True) so the scheduler can
+    still inspect the finished task — matches today's semantics."""
 
 
 class Tideweaver:
@@ -97,12 +135,14 @@ class Tideweaver:
             min(1.0, min(c.interval for c in watershed.currents) / 2.0),
         )
 
-        # Scheduler bookkeeping — keyed by current name.
-        self._last_tick_started: Dict[str, float] = {}
-        self._last_wave_at: Dict[str, datetime] = {}
+        # Per-current scheduler bookkeeping bundled into one struct per
+        # current (see :class:`_CurrentState`).  Pre-allocated for every
+        # current so reads in the gate / spawn / wrapper hot paths never
+        # need ``dict.get(name, default)`` defensives — the entry always
+        # exists.  ``_last_consumed`` stays a standalone dict because
+        # its key is the edge tuple, not the current name.
+        self._state: Dict[str, _CurrentState] = {c.name: _CurrentState() for c in watershed.currents}
         self._last_consumed: Dict[Tuple[str, str], datetime] = {}
-        self._inflight: Dict[str, asyncio.Task[None]] = {}
-        self._started_at: Dict[str, float] = {}
         self._tide_number = 0
         self._currents_by_name: Dict[str, Current] = {c.name: c for c in watershed.currents}
         self._topo: List[str] = watershed.toposort()
@@ -220,7 +260,7 @@ class Tideweaver:
         shutdown_event.set()
 
     async def _drain(self) -> None:
-        pending = [t for t in self._inflight.values() if not t.done()]
+        pending = [s.in_flight for s in self._state.values() if s.in_flight is not None and not s.in_flight.done()]
         if not pending:
             return
         try:
@@ -254,7 +294,7 @@ class Tideweaver:
             if shutdown_event.is_set():
                 break
             current = self._currents_by_name[name]
-            existing = self._inflight.get(name)
+            existing = self._state[name].in_flight
             if existing is not None and not existing.done():
                 skipped.append((name, "still_running"))
                 continue
@@ -276,19 +316,21 @@ class Tideweaver:
 
     def _gate_reason(self, current: Current, now: float) -> Optional[str]:
         """Return ``None`` if ``current`` may fire; else a short skip reason."""
-        last = self._last_tick_started.get(current.name)
+        last = self._state[current.name].last_tick_started
         if last is not None and (now - last) < current.interval:
             return "not_due"
         for up_name, mode in self._upstream[current.name]:
-            in_flight = self._inflight.get(up_name)
+            up_state = self._state[up_name]
+            in_flight = up_state.in_flight
             if in_flight is not None and not in_flight.done():
-                elapsed = now - self._started_at.get(up_name, now)
+                started = up_state.started_at
+                elapsed = now - (started if started is not None else now)
                 if elapsed > current.skip_threshold * current.interval:
                     return "skip_ahead"
                 if mode == "hard":
                     return "awaiting_upstream"
             if mode == "hard":
-                upstream_wave = self._last_wave_at.get(up_name)
+                upstream_wave = up_state.last_wave_at
                 if upstream_wave is None:
                     return "awaiting_upstream"
                 consumed = self._last_consumed.get((current.name, up_name))
@@ -298,8 +340,9 @@ class Tideweaver:
 
     def _spawn_tick(self, current: Current) -> None:
         now_mono = time.monotonic()
-        self._last_tick_started[current.name] = now_mono
-        self._started_at[current.name] = now_mono
+        state = self._state[current.name]
+        state.last_tick_started = now_mono
+        state.started_at = now_mono
         # Capture upstream consumption BEFORE the tick runs so a fast upstream
         # finishing concurrently doesn't double-count its wave.
         #
@@ -310,13 +353,13 @@ class Tideweaver:
         # preserving task context (the current ``tenacity.AsyncRetrying``
         # does preserve it, but that's an implementation detail of the
         # ``on_error="restart"`` policy in ``_tick_wrapper`` below).
-        consumed_snapshot = {
-            up_name: self._last_wave_at[up_name]
-            for up_name, _mode in self._upstream[current.name]
-            if up_name in self._last_wave_at
-        }
+        consumed_snapshot: Dict[str, datetime] = {}
+        for up_name, _mode in self._upstream[current.name]:
+            up_wave = self._state[up_name].last_wave_at
+            if up_wave is not None:
+                consumed_snapshot[up_name] = up_wave
         task = asyncio.create_task(self._tick_wrapper(current, consumed_snapshot))
-        self._inflight[current.name] = task
+        state.in_flight = task
 
     async def _tick_wrapper(
         self,
@@ -347,15 +390,16 @@ class Tideweaver:
         finally:
             # Record the wave timestamp + bump consumed for hard upstreams.
             wave_at = datetime.now(timezone.utc)
-            self._last_wave_at[current.name] = wave_at
+            state = self._state[current.name]
+            state.last_wave_at = wave_at
             for up_name, value in consumed_snapshot.items():
                 self._last_consumed[(current.name, up_name)] = value
             # Also bump consumed for any upstream that produced a wave during this tick.
             for up_name, _mode in self._upstream[current.name]:
-                latest = self._last_wave_at.get(up_name)
+                latest = self._state[up_name].last_wave_at
                 if latest is not None:
                     self._last_consumed[(current.name, up_name)] = latest
-            self._started_at.pop(current.name, None)
+            state.started_at = None
             # Wake the run loop so downstream hard-edge dependents see the
             # new wave on the very next pass instead of waiting out the
             # full ``pass_interval`` safety-net cap.
