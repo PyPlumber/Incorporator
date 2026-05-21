@@ -5,6 +5,136 @@ All notable changes to Incorporator are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — Canal toolkit (per-edge `FlowControl` primitives)
+
+Five orthogonal flow-control primitives composable per edge via
+`FlowControl`.  Each is a Pydantic strategy hierarchy and serialises
+into `watershed.json` via discriminated unions.
+
+- **`Gate` hierarchy** — `HardLock` (default), `SoftPass`, `Weir`.
+  Pass/hold decision per upstream edge.  `Watershed.chain/diamond/fanout(gate_mode=...)`
+  shorthand maps `"hard"`/`"soft"`/`"weir"` to the right `Gate`; `Edge(gate_mode=)`
+  same on the explicit-edge path.  Mutually exclusive with the `flow=`
+  full-dict form.  `Weir` is the new third mode: gates on wave freshness
+  without blocking on in-flight upstream and without triggering skip-ahead.
+- **`SurgeBarrier`** — conditional override when an upstream is running
+  long.  Three actions: `"skip"` (skip reason `skip_ahead`), `"halt"`
+  (skip reason `surge_halted`), `"bypass"` (fire ignoring this edge's
+  gate **and** penstock).  Houses `threshold_multiple` (was
+  `skip_threshold` — see **Breaking** below).
+- **`Penstock` hierarchy** — edge-level rate limiting.  Five strategies:
+  `SustainedPenstock` (fixed rate), `BurstPenstock` (token bucket),
+  `WindowPenstock` (sliding-window cap), `BackpressurePenstock` (rate
+  interpolates with reservoir fullness — `max_rate` when empty →
+  `min_rate` when full), `SignalPenstock` (user callable
+  `rate_fn(scheduler, edge_state, now) -> float`).  Limited consumers
+  surface skip reason `penstock_limited`.
+- **`Reservoir(depth=N)`** — per-edge FIFO buffer of recent waves.
+  Default `depth=1` keeps only the most recent.  Read by
+  `BackpressurePenstock` for fullness and exposed to user code for
+  N-deep history.
+- **`Spillway` hierarchy** — overflow handler when the reservoir is
+  full.  Three: `DropOldest` (default, silent), `RaiseOverflow` (one
+  WARNING log per displacement), `ExportToArchive(archive_cls=...)`
+  (each displaced wave's instances append to
+  `archive_cls._spillway_backlog`).
+
+### Added — Other
+
+- **`Current.phase_offset_sec`** — green-wave coordination.  Skips the
+  first N seconds of a run with skip reason `phase_offset`.  Stages
+  offsets across parallel currents to spread work without changing
+  their intervals.
+- **`watershed.json` loader** for the full canal toolkit —
+  discriminated unions for `gate` / `penstock` / `reservoir` /
+  `spillway` / `surge_barrier`; `gate_mode` shorthand on the JSON
+  `Edge` form too; string-reference resolution for
+  `SignalPenstock.rate_fn` and `ExportToArchive.archive_cls` via
+  `module:attr` syntax.
+- **14 new public names** exported from
+  `incorporator.observability.tideweaver`: `FlowControl`, `Gate`,
+  `HardLock`, `SoftPass`, `Weir`, `SurgeBarrier`, `Penstock`,
+  `SustainedPenstock`, `BurstPenstock`, `WindowPenstock`,
+  `BackpressurePenstock`, `SignalPenstock`, `Reservoir`, `Spillway`,
+  `DropOldest`, `RaiseOverflow`, `ExportToArchive`.
+
+### Changed
+
+- **One `httpx.AsyncClient` pooled per HTTP-config signature across
+  drains.**  Previously each drain (and each chunk within a drain in
+  `chunked.py`) built its own client.  The pool keys by `(timeout,
+  verify, http2, follow_redirects, max_connections,
+  max_keepalive_connections, read_timeout)` — significant
+  connection-reuse improvement for multi-stream Tideweaver pipelines
+  hitting the same backend.  `chunked.py` also skips client
+  construction entirely for file-mode + pooled drains.
+- **`_outflow.flush()` snapshot attribute renamed** from
+  `_fjord_snapshot` to `_tideweaver_snapshot` on output classes.  The
+  snapshot serves both the legacy fjord daemon and the new Tideweaver
+  `Fjord` flush — the old name was misleading.
+- **Routing tests** (`tests/test_tideweaver_routing_*.py`) converted
+  to use the new `Weir` gate where they previously workarounded the
+  old `dependency_mode="soft"` via `interval` tweaks or
+  file-rereads.
+
+### Fixed
+
+- **`SurgeBarrier(action="bypass")` no longer charges the Penstock.**
+  The scheduler's `_tick_wrapper.finally` block previously debited the
+  `BurstPenstock` bucket and appended to the `WindowPenstock`
+  `window_log` for every upstream edge unconditionally — including
+  bypassed ones, violating the documented "bypass ignores gate AND
+  penstock" contract.  `_gate_reason` now returns the set of bypassed
+  upstreams and threads it through to the wrapper, which skips
+  penstock post-consumption for those edges.
+- **`BackpressurePenstock(min_rate=10, max_rate=2)` now raises
+  `ValidationError` at construction.**  Previously each field was
+  validated `gt=0` individually but no cross-field validator enforced
+  the ordering, so swapped values silently inverted the curve (a full
+  reservoir got a *higher* effective rate than an empty one).  Equal
+  values are also rejected as degenerate (no backpressure curve).
+- **`Fjord` output classes now carry `_tideweaver_snapshot` properly**
+  (was: snapshot parking missed the Fjord case, causing downstream
+  reservoir pushes to read from the live `inc_dict` instead of the
+  parked strong-ref list).
+
+### Breaking
+
+- **`skip_threshold` moved from `Current` to per-edge `SurgeBarrier`.**
+  Previously `Stream/Fjord/Export(..., skip_threshold=N)` (and the
+  matching `watershed.json` per-current key) configured the surge
+  threshold multiplier.  It is now `SurgeBarrier.threshold_multiple`,
+  composed into `FlowControl.surge_barrier`, scoped per edge (one
+  dependent can declare different surge tolerances per upstream).
+  The JSON loader raises an explicit `ValueError` with migration
+  instructions when the old key is present at the current level.
+  Python migration: replace
+  ```python
+  Stream(name="b", cls=B, interval=0.1, skip_threshold=2.0)
+  ```
+  with the edge-scoped form
+  ```python
+  Edge(
+      from_name="a",
+      to_name="b",
+      flow=FlowControl(
+          surge_barrier=SurgeBarrier(threshold_multiple=2.0, action="skip"),
+      ),
+  )
+  ```
+
+### Internal
+
+- **CI now triggers on the `workflow` branch** (was: `main` + dead
+  `refactor-ai` only).  The 14 commits of canal-toolkit work landed
+  on `workflow` and slipped past CI during development.
+- **`CONTRIBUTING.md`** drops `tests/` from the ruff + black quickstart
+  commands.  Running ruff against `tests/` overrides
+  `[tool.ruff].exclude` and produces a ~1000-line `S101` (assert)
+  false-positive storm.
+
 ## [1.1.3] - 2026-05-16
 
 ### Added
