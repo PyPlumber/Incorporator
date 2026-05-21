@@ -38,8 +38,8 @@ from .io import handlers as format_parsers
 from .io.formats import FormatType, infer_format
 from .io.pagination.base import AsyncPaginator
 from .list import IncorporatorList, _deduplicate_extracted
+from .schema import JsonSchemaProperty, router
 from .schema import factory as _factory
-from .schema import router
 from .usercode import apply_code_transform, apply_inflow_resolution, load_outflow_module, pascal_case_from_stem
 
 if TYPE_CHECKING:
@@ -145,8 +145,11 @@ class Incorporator(BaseModel):
     #: :meth:`export` to generate the destination schema for Avro
     #: (``pydantic_schema``) and to seed ``all_field_names`` for CSV/SQLite.
     #: Concurrent writes are guarded by a per-class ``threading.Lock`` held
-    #: in :mod:`incorporator.schema.factory`.
-    _schema_union: ClassVar[Dict[str, Any]] = {}
+    #: in :mod:`incorporator.schema.factory`.  See
+    #: :class:`incorporator.schema.JsonSchemaProperty` for the value shape
+    #: — a TypedDict mirroring Pydantic V2's
+    #: ``model_json_schema()["properties"]`` entries with all keys optional.
+    _schema_union: ClassVar[Dict[str, JsonSchemaProperty]] = {}
 
     #: Origin tracking — the URL the subclass was first populated from.
     #: Populated on the first :meth:`incorp` call; :meth:`refresh` falls back
