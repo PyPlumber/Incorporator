@@ -147,7 +147,7 @@ async def test_chain_three_streams_apply_conv_dict_in_order(
         incorp_params={
             "inc_url": "https://jsonplaceholder.typicode.com/users",
             "inc_code": "id",
-            "conv_dict": {"name_lower": calc(lambda n: n.lower() if n else "", "name", default="")},
+            "conv_dict": {"name_lower": calc(str.lower, "name", default="")},
         },
     )
     posts = Stream(
@@ -158,7 +158,7 @@ async def test_chain_three_streams_apply_conv_dict_in_order(
         incorp_params={
             "inc_url": "https://jsonplaceholder.typicode.com/posts",
             "inc_code": "id",
-            "conv_dict": {"title_words": calc(lambda t: len(t.split()) if t else 0, "title", default=0, target_type=int)},
+            "conv_dict": {"title_words": calc(lambda t: len(t.split()), "title", default=0, target_type=int)},
         },
     )
     comments = Stream(
@@ -169,7 +169,7 @@ async def test_chain_three_streams_apply_conv_dict_in_order(
         incorp_params={
             "inc_url": "https://jsonplaceholder.typicode.com/comments",
             "inc_code": "id",
-            "conv_dict": {"body_length": calc(lambda b: len(b) if b else 0, "body", default=0, target_type=int)},
+            "conv_dict": {"body_length": calc(len, "body", default=0, target_type=int)},
         },
     )
 
@@ -296,7 +296,7 @@ async def test_chain_streams_into_fjord_tail_reads_both_upstream_snapshots(
             "inc_code": "id",
             "rec_path": "results",
             "inc_page": NextUrlPaginator("info", "next"),
-            "conv_dict": {"episode_count": calc(lambda eps: len(eps) if eps else 0, "episode", default=0, target_type=int)},
+            "conv_dict": {"episode_count": calc(len, "episode", default=0, target_type=int)},
         },
     )
     eps = Stream(

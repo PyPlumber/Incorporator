@@ -230,7 +230,7 @@ async def test_diamond_mlb_teams_plus_players_fjord_join(
             "inc_url": "https://statsapi.mlb.com/api/v1/teams?sportId=1",
             "inc_code": "id",
             "conv_dict": {
-                "abbr_lower": calc(lambda a: a.lower() if a else "", "abbreviation", default="", target_type=str),
+                "abbr_lower": calc(str.lower, "abbreviation", default="", target_type=str),
             },
         },
     )
@@ -383,7 +383,7 @@ async def test_diamond_open_library_two_middle_fjords_to_catalog_tail(
             "inc_code": "key",
             "rec_path": "docs",
             "conv_dict": {
-                "title_clean": calc(lambda t: t.strip() if t else "", "title", default="", target_type=str),
+                "title_clean": calc(str.strip, "title", default="", target_type=str),
             },
         },
     )

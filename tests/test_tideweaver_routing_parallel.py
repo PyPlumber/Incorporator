@@ -154,7 +154,7 @@ async def test_parallel_four_independent_streams_apply_conv_dict(
             "inc_url": "https://jsonplaceholder.typicode.com/posts",
             "inc_code": "id",
             "conv_dict": {
-                "title_length": calc(lambda t: len(t) if t else 0, "title", default=0, target_type=int),
+                "title_length": calc(len, "title", default=0, target_type=int),
             },
         },
     )
@@ -167,7 +167,7 @@ async def test_parallel_four_independent_streams_apply_conv_dict(
             "inc_url": "https://jsonplaceholder.typicode.com/comments",
             "inc_code": "id",
             "conv_dict": {
-                "body_length": calc(lambda b: len(b) if b else 0, "body", default=0, target_type=int),
+                "body_length": calc(len, "body", default=0, target_type=int),
             },
         },
     )
@@ -180,7 +180,7 @@ async def test_parallel_four_independent_streams_apply_conv_dict(
             "inc_url": "https://jsonplaceholder.typicode.com/albums",
             "inc_code": "id",
             "conv_dict": {
-                "title_upper": calc(lambda t: t.upper() if t else "", "title", default="", target_type=str),
+                "title_upper": calc(str.upper, "title", default="", target_type=str),
             },
         },
     )
@@ -276,7 +276,7 @@ async def test_parallel_isolate_on_error_keeps_siblings_firing(
         incorp_params={
             "inc_url": "https://jsonplaceholder.typicode.com/posts",
             "inc_code": "id",
-            "conv_dict": {"title_length": calc(lambda t: len(t) if t else 0, "title", default=0, target_type=int)},
+            "conv_dict": {"title_length": calc(len, "title", default=0, target_type=int)},
         },
     )
     albums = Stream(
@@ -287,7 +287,7 @@ async def test_parallel_isolate_on_error_keeps_siblings_firing(
         incorp_params={
             "inc_url": "https://jsonplaceholder.typicode.com/albums",
             "inc_code": "id",
-            "conv_dict": {"title_upper": calc(lambda t: t.upper() if t else "", "title", default="", target_type=str)},
+            "conv_dict": {"title_upper": calc(str.upper, "title", default="", target_type=str)},
         },
     )
     users = Stream(
@@ -298,7 +298,7 @@ async def test_parallel_isolate_on_error_keeps_siblings_firing(
         incorp_params={
             "inc_url": "https://jsonplaceholder.typicode.com/users",
             "inc_code": "id",
-            "conv_dict": {"name_lower": calc(lambda n: n.lower() if n else "", "name", default="")},
+            "conv_dict": {"name_lower": calc(str.lower, "name", default="")},
         },
     )
 

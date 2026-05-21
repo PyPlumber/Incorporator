@@ -236,7 +236,7 @@ async def test_fanout_one_stream_to_three_heterogeneous_fjords(
             "rec_path": "results",
             "inc_page": NextUrlPaginator("info", "next"),
             "call_lim": 1,
-            "conv_dict": {"is_alive": calc(lambda s: s == "Alive", "status", default=False, target_type=bool)},
+            "conv_dict": {"is_alive": calc("Alive".__eq__, "status", default=False, target_type=bool)},
         },
     )
     alive_count = Fjord(
@@ -365,7 +365,7 @@ async def test_fanout_two_fjords_plus_one_export_share_upstream(
         incorp_params={
             "inc_url": "https://jsonplaceholder.typicode.com/albums",
             "inc_code": "id",
-            "conv_dict": {"title_upper": calc(lambda t: t.upper() if t else "", "title", default="", target_type=str)},
+            "conv_dict": {"title_upper": calc(str.upper, "title", default="", target_type=str)},
         },
     )
     per_user = Fjord(

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from incorporator import FormatType, Incorporator
+from incorporator import FormatType, Incorporator, inc
 
 
 @pytest.mark.asyncio
@@ -23,9 +23,10 @@ async def test_csv_etl_type_conversions(csv_users_payload: str, tmp_path: Path) 
         inc_name="username",
         excl_lst=["account_balance"],  # Drop financial data
         conv_dict={
-            # CSV readers return strings by default. conv_dict handles the type casting.
-            "id": lambda x: int(x),
-            "is_active": lambda x: str(x).lower() == "true",
+            # CSV readers return strings by default. inc() handles the type
+            # coercion with null-safe defaults — no defensive lambda needed.
+            "id": inc(int),
+            "is_active": inc(bool),
         },
     )
 
@@ -57,7 +58,7 @@ async def test_xml_etl_rpath_and_renaming(xml_catalog_payload: str, tmp_path: Pa
         inc_name="title",
         name_chg=[("title", "book_title"), ("price", "cost_usd")],  # Rename XML tags
         conv_dict={
-            "price": lambda x: float(x)  # Convert XML text to float
+            "price": inc(float),  # Convert XML text to float (null-safe)
         },
     )
 

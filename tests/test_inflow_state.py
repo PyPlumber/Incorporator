@@ -136,7 +136,7 @@ async def inflow(state):
 
 WINS_INFLOW = '''
 def inflow(state):
-    return {"Person": {"conv_dict": {"name": lambda v: v.upper()}}}
+    return {"Person": {"conv_dict": {"name": str.upper}}}
 '''
 
 OUTFLOW_SOURCE = '''
@@ -387,7 +387,7 @@ async def test_inflow_conv_dict_overrides_stream_params(
                     # Static conv_dict.name = lowercase
                     "incorp_params": {
                         "inc_url": PEOPLE_URL, "rec_path": "results", "inc_code": "id", "inc_name": "name",
-                        "conv_dict": {"name": lambda v: v.lower()},
+                        "conv_dict": {"name": str.lower},
                     },
                     "refresh_params": None,
                 },
