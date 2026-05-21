@@ -32,8 +32,9 @@ import asyncio
 import heapq
 import logging
 import time
+from collections import deque
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, cast
+from typing import Any, AsyncIterator, Awaitable, Callable, Deque, Dict, FrozenSet, List, Optional, Set, Tuple, cast
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -56,8 +57,15 @@ class _EdgeState(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    waves: List[List[Any]] = Field(default_factory=list)
-    """FIFO history of wave snapshots; each entry is one tick's instance list."""
+    waves: Deque[List[Any]] = Field(default_factory=deque)
+    """FIFO history of wave snapshots; each entry is one tick's instance list.
+
+    ``collections.deque`` (not ``list``) — appends are O(1) and the trim
+    loop's eviction uses ``popleft()`` instead of ``list.pop(0)``, which
+    is O(n).  The reservoir's ``depth`` cap is enforced by the scheduler
+    around the append site rather than via ``maxlen`` because the spillway
+    needs the displaced wave passed to ``overflow()`` before it's gone.
+    """
 
     last_consumed_at: Optional[float] = None
     """Monotonic time of the dependent's most recent consumption from this edge.
@@ -477,7 +485,7 @@ class Tideweaver:
                     edge_state = self._edge_state[(current.name, downstream_name)]
                     edge_state.waves.append(wave_snapshot)
                     while len(edge_state.waves) > edge_flow.reservoir.depth:
-                        displaced = edge_state.waves.pop(0)
+                        displaced = edge_state.waves.popleft()
                         edge_state.overflow_count += 1
                         edge_flow.spillway.overflow(self, (current.name, downstream_name), displaced)
             # Wake the run loop so downstream hard-edge dependents see the
