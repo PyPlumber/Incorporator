@@ -324,7 +324,7 @@ class SignalPenstock(Penstock):
 
 
 # ---------------------------------------------------------------------------
-# Reservoir — FIFO ring buffer of recent waves (active in Phase 2)
+# Reservoir — FIFO ring buffer of recent waves
 # ---------------------------------------------------------------------------
 
 
@@ -342,7 +342,7 @@ class Reservoir(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Spillway — overflow handler (DropOldest active in P1; others in P4)
+# Spillway — overflow handler for reservoir displacement
 # ---------------------------------------------------------------------------
 
 

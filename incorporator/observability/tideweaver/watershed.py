@@ -65,7 +65,16 @@ class Edge(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _gate_mode_shorthand(cls, data: Any) -> Any:
-        """Translate ``gate_mode="weir"`` into ``flow=flow_from_mode("weir")``.  Mutex with ``flow=``."""
+        """Translate ``gate_mode=<mode>`` into ``flow=flow_from_mode(<mode>)``.  Mutex with ``flow=``.
+
+        Note the asymmetry: bare ``Edge()`` (no kwargs) yields a default
+        :class:`FlowControl` with ``surge_barrier=None``, while
+        ``Edge(gate_mode="hard")`` invokes :func:`flow_from_mode` which
+        attaches a default :class:`SurgeBarrier` (threshold ``2.0``,
+        action ``"skip"``).  ``"soft"`` and ``"weir"`` do not add a
+        SurgeBarrier.  Pass ``flow=`` explicitly to opt out of the
+        implicit barrier on ``"hard"``.
+        """
         if isinstance(data, dict) and "gate_mode" in data:
             mode = data.pop("gate_mode")
             if data.get("flow") is not None:

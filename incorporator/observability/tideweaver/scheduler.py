@@ -102,7 +102,7 @@ class _CurrentState(BaseModel):
     in_flight: Optional[asyncio.Task[None]] = None
     """The asyncio Task for the most recent tick.  Persists after the
     task completes (``.done()`` returns True) so the scheduler can
-    still inspect the finished task — matches today's semantics."""
+    still inspect the finished task for restart / error-isolation logic."""
 
 
 class Tideweaver:

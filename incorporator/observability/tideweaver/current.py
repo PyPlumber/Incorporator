@@ -49,8 +49,8 @@ class Current(BaseModel):
             seconds after the run starts.  Green-wave coordination: by
             offsetting downstream's first tick to land just after upstream's
             expected wave, fewer ``"awaiting_upstream"`` gating skips fire
-            on the warm-up pass.  Default ``0.0`` matches today (first tick
-            fires on pass 1 with no delay).
+            on the warm-up pass.  Default ``0.0`` — first tick fires on
+            pass 1 with no delay.
         inflow: Optional sidecar ``.py`` path (per-current override of the
             watershed-level default).
         outflow: Optional sidecar ``.py`` path (per-current override of the
