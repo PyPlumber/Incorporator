@@ -235,21 +235,47 @@ def _build_current(
     )
 
 
+def _lookup_sidecar_symbol(
+    name: str,
+    modules: Tuple[Optional[ModuleType], ...],
+    predicate: Callable[[Any], bool],
+    not_found_message: str,
+) -> Any:
+    """Walk the sidecar modules in order; return the first symbol matching ``predicate``.
+
+    Single helper behind :func:`_resolve_class` / :func:`_resolve_archive_class`
+    / :func:`_resolve_callable`.  Modules with value ``None`` are skipped
+    (the caller may have loaded neither inflow nor outflow).  Raises
+    ``ValueError(not_found_message)`` when no module yields a match — the
+    caller supplies the human-readable wording so each resolver can keep
+    its specific guidance.
+    """
+    for module in modules:
+        if module is None:
+            continue
+        target = getattr(module, name, None)
+        if predicate(target):
+            return target
+    raise ValueError(not_found_message)
+
+
 def _resolve_class(
     class_name: str,
     outflow_module: Optional[ModuleType],
     inflow_module: Optional[ModuleType],
 ) -> type:
-    for module in (outflow_module, inflow_module):
-        if module is None:
-            continue
-        target = getattr(module, class_name, None)
-        if isinstance(target, type) and issubclass(target, Incorporator):
-            return target
-    raise ValueError(
-        f"watershed.json references class {class_name!r}, but no such Incorporator subclass "
-        "was found in the outflow or inflow sidecar modules.  Define the class in your "
-        "outflow.py (or inflow.py)."
+    return cast(
+        type,
+        _lookup_sidecar_symbol(
+            class_name,
+            (outflow_module, inflow_module),
+            lambda target: isinstance(target, type) and issubclass(target, Incorporator),
+            not_found_message=(
+                f"watershed.json references class {class_name!r}, but no such Incorporator subclass "
+                "was found in the outflow or inflow sidecar modules.  Define the class in your "
+                "outflow.py (or inflow.py)."
+            ),
+        ),
     )
 
 
@@ -259,17 +285,19 @@ def _resolve_archive_class(
     inflow_module: Optional[ModuleType],
 ) -> type:
     """Look up an archive class by name on the sidecar modules.  Need not be an Incorporator subclass."""
-    for module in (outflow_module, inflow_module):
-        if module is None:
-            continue
-        target = getattr(module, class_name, None)
-        if isinstance(target, type):
-            return target
-    raise ValueError(
-        f"watershed.json references archive_cls={class_name!r}, but no such class was found "
-        "in the outflow or inflow sidecar modules.  Define the class in your outflow.py "
-        "(or inflow.py) — typically an :class:`Incorporator` subclass that an out-of-band "
-        "drain will consume from."
+    return cast(
+        type,
+        _lookup_sidecar_symbol(
+            class_name,
+            (outflow_module, inflow_module),
+            lambda target: isinstance(target, type),
+            not_found_message=(
+                f"watershed.json references archive_cls={class_name!r}, but no such class was found "
+                "in the outflow or inflow sidecar modules.  Define the class in your outflow.py "
+                "(or inflow.py) — typically an :class:`Incorporator` subclass that an out-of-band "
+                "drain will consume from."
+            ),
+        ),
     )
 
 
@@ -285,6 +313,11 @@ def _resolve_callable(
     * ``"fn_name"`` — looked up on the outflow / inflow sidecar modules.
     * ``"package.module:fn_name"`` — imports ``package.module`` then
       ``getattr(module, fn_name)``.
+
+    The bare-name form delegates to :func:`_lookup_sidecar_symbol`; the
+    ``module:name`` form is callable-specific (Python classes registered
+    in user sidecars are the typical class case; module-path imports are
+    the typical callable case).
     """
     if ":" in ref:
         # Module:function path.
@@ -308,15 +341,18 @@ def _resolve_callable(
             )
         return cast(Callable[..., Any], target)
 
-    # Bare name — look up on the sidecar modules.
-    for module in (m for m in (outflow_module, inflow_module) if m is not None):
-        target = getattr(module, ref, None)
-        if callable(target):
-            return cast(Callable[..., Any], target)
-    raise ValueError(
-        f"watershed.json references callable {ref!r}, but no such name was found "
-        "in the outflow or inflow sidecar modules.  Define the function in your "
-        "outflow.py (or inflow.py), or use the ``module.path:fn_name`` form."
+    return cast(
+        Callable[..., Any],
+        _lookup_sidecar_symbol(
+            ref,
+            (outflow_module, inflow_module),
+            callable,
+            not_found_message=(
+                f"watershed.json references callable {ref!r}, but no such name was found "
+                "in the outflow or inflow sidecar modules.  Define the function in your "
+                "outflow.py (or inflow.py), or use the ``module.path:fn_name`` form."
+            ),
+        ),
     )
 
 
