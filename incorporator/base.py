@@ -175,6 +175,23 @@ class Incorporator(BaseModel):
     #: still win on key conflict.
     _incorp_kwargs: ClassVar[Dict[str, Any]] = {}
 
+    #: Cross-engine strong-ref snapshot used by the Tideweaver scheduler.
+    #: A :class:`~incorporator.observability.tideweaver.scheduler.Scheduler`
+    #: parks ``list(cls.inc_dict.values())`` here at the end of a
+    #: :class:`~incorporator.observability.tideweaver.current.Stream` tick
+    #: (and at the end of a :class:`~incorporator.observability.tideweaver.current.Fjord`
+    #: flush, via ``_outflow.flush``) so that downstream currents can read
+    #: a stable upstream view between ticks without the
+    #: :class:`weakref.WeakValueDictionary` reclaiming entries mid-flight.
+    #: Downstream code reads it uniformly via
+    #: ``getattr(dep.cls, "_tideweaver_snapshot", None)``.  Documenting it
+    #: here as a typed ``ClassVar`` declares the cross-engine contract for
+    #: mypy and IDEs; the assignment still happens at runtime on each
+    #: subclass.  ``None`` means "no Tideweaver run has touched this class
+    #: yet" — distinct from the empty-list case ("upstream ran, produced
+    #: zero rows").
+    _tideweaver_snapshot: ClassVar[Optional[List[Any]]] = None
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # Per-class isolation of inc_dict / _schema_union / _incorp_kwargs
         # is required so sibling subclasses don't share the base
