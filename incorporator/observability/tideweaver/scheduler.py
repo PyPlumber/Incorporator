@@ -43,7 +43,7 @@ from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_
 from ...io.fetch import HTTPClientBuilder
 from ..pipeline._outflow import flush
 from .current import Current, CustomCurrent, Export, Fjord, Stream
-from .flow import BurstPenstock, FlowControl, WindowPenstock
+from .flow import FlowControl, GateContext, SurgeContext
 from .tide import Tide
 from .watershed import Watershed
 
@@ -369,18 +369,35 @@ class Tideweaver:
         bypassed: Set[str] = set()
         for up_name, flow in self._upstream[current.name]:
             edge = (up_name, current.name)
+            up_state = self._state[up_name]
+            up_in_flight = up_state.in_flight is not None and not up_state.in_flight.done()
+
             surge = flow.surge_barrier
-            if surge is not None and surge.is_tripped(self, current, up_name, now):
-                if surge.action == "skip":
-                    flow.observer.on_skip(self, edge, "skip_ahead")
-                    return "skip_ahead", frozenset()
-                if surge.action == "halt":
-                    flow.observer.on_skip(self, edge, "surge_halted")
-                    return "surge_halted", frozenset()
-                # action == "bypass" — fire ignoring this edge's gate AND penstock.
-                bypassed.add(up_name)
-                continue
-            gate_reason = flow.gate.gate_reason(self, current, up_name, now)
+            if surge is not None:
+                surge_ctx = SurgeContext(
+                    up_in_flight=up_in_flight,
+                    up_started_at=up_state.started_at,
+                    dependent_interval=current.interval,
+                    now=now,
+                )
+                if surge.is_tripped(surge_ctx):
+                    if surge.action == "skip":
+                        flow.observer.on_skip(self, edge, "skip_ahead")
+                        return "skip_ahead", frozenset()
+                    if surge.action == "halt":
+                        flow.observer.on_skip(self, edge, "surge_halted")
+                        return "surge_halted", frozenset()
+                    # action == "bypass" — fire ignoring this edge's gate AND penstock.
+                    bypassed.add(up_name)
+                    continue
+
+            gate_ctx = GateContext(
+                up_in_flight=up_in_flight,
+                up_last_wave_at=up_state.last_wave_at,
+                last_consumed=self._last_consumed.get(edge),
+                now=now,
+            )
+            gate_reason = flow.gate.gate_reason(gate_ctx)
             if gate_reason is not None:
                 flow.observer.on_skip(self, edge, gate_reason)
                 return gate_reason, frozenset()
@@ -392,7 +409,7 @@ class Tideweaver:
             if flow.penstock is not None:
                 edge_state = self._edge_state.get(edge)
                 if edge_state is not None:
-                    penstock_reason = flow.penstock.consume_reason(self, edge_state, flow, now)
+                    penstock_reason = flow.penstock.consume_reason(edge_state, flow, now)
                     if penstock_reason is not None:
                         flow.observer.on_skip(self, edge, penstock_reason)
                         return penstock_reason, frozenset()
@@ -453,30 +470,38 @@ class Tideweaver:
             wave_at = datetime.now(timezone.utc)
             state = self._state[current.name]
             state.last_wave_at = wave_at
-            for up_name, value in consumed_snapshot.items():
-                self._last_consumed[(current.name, up_name)] = value
-            # Also bump consumed for any upstream that produced a wave during this tick.
             now_mono = time.monotonic()
+
+            # Single pass over upstream edges — does four jobs that all key
+            # on the same (current.name, up_name) tuple:
+            #
+            # 1. Bump ``_last_consumed`` to the pre-tick snapshot value (so
+            #    the next gate cycle knows this edge's consumption watermark)
+            #    AND to the post-tick ``last_wave_at`` if upstream emitted
+            #    during this tick.  The post-tick read wins on overlap.
+            # 2. Update ``edge_state.last_consumed_at`` (monotonic watermark
+            #    read by SustainedPenstock / BackpressurePenstock).
+            # 3. Fire ``Penstock.post_consume`` so BurstPenstock debits its
+            #    token and WindowPenstock appends to its log — skipped on
+            #    bypassed edges per the bypass contract.
+            # 4. Fire ``FlowObserver.on_fire`` for every non-bypassed edge
+            #    that contributed to this tick.
             for up_name, edge_flow in self._upstream[current.name]:
+                edge_key = (current.name, up_name)
+                snapshot_value = consumed_snapshot.get(up_name)
+                if snapshot_value is not None:
+                    self._last_consumed[edge_key] = snapshot_value
                 latest = self._state[up_name].last_wave_at
                 if latest is not None:
-                    self._last_consumed[(current.name, up_name)] = latest
-                # Edge-level consumption timestamp + Penstock-strategy
-                # post-consumption updates.  Each strategy reads its own
-                # ``_EdgeState`` slice on the next gate cycle.
+                    self._last_consumed[edge_key] = latest
+
                 edge_state = self._edge_state.get((up_name, current.name))
+                bypassed = up_name in bypassed_upstreams
                 if edge_state is not None:
                     edge_state.last_consumed_at = now_mono
-                    pen = edge_flow.penstock
-                    if pen is not None and up_name not in bypassed_upstreams:
-                        if isinstance(pen, BurstPenstock) and edge_state.bucket_tokens is not None:
-                            edge_state.bucket_tokens = max(0.0, edge_state.bucket_tokens - 1.0)
-                        elif isinstance(pen, WindowPenstock):
-                            edge_state.window_log.append(now_mono)
-                # Observer hook — fires for every non-bypassed upstream edge
-                # whose gate cleared this tick.  Bypassed edges already had
-                # their skip reason reported via on_skip in _gate_reason.
-                if up_name not in bypassed_upstreams:
+                    if edge_flow.penstock is not None and not bypassed:
+                        edge_flow.penstock.post_consume(edge_state, now_mono)
+                if not bypassed:
                     edge_flow.observer.on_fire(self, (up_name, current.name), self._tide_number)
             state.started_at = None
             # Push this tick's wave content into every outgoing edge's
@@ -498,7 +523,7 @@ class Tideweaver:
                     while len(edge_state.waves) > edge_flow.reservoir.depth:
                         displaced = edge_state.waves.popleft()
                         edge_state.overflow_count += 1
-                        edge_flow.spillway.overflow(self, edge_key, displaced)
+                        edge_flow.spillway.overflow(edge_key, displaced, edge_state.overflow_count)
                         # Observer hook — one call per displaced wave so a
                         # MetricsObserver subclass can count spillway events
                         # without monkey-patching the spillway itself.

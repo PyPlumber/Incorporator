@@ -68,6 +68,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The valid values (``"hard"`` / ``"soft"`` / ``"weir"``) are unchanged.
 
+- **Narrowed `Gate` / `SurgeBarrier` / `Penstock` / `Spillway` method
+  signatures.**  Strategies no longer accept the full ``Tideweaver``
+  scheduler as their first argument — they read narrow ``GateContext``
+  /  ``SurgeContext`` value types instead.  Tightens the FlowControl ↔
+  scheduler boundary so subclasses can be unit-tested without a real
+  scheduler.  Affected:
+
+  - ``Gate.gate_reason(scheduler, dependent, up_name, now)`` →
+    ``Gate.gate_reason(ctx: GateContext)``
+  - ``SurgeBarrier.is_tripped(scheduler, dependent, up_name, now)`` →
+    ``SurgeBarrier.is_tripped(ctx: SurgeContext)``
+  - ``Penstock.consume_reason(scheduler, edge_state, flow, now)`` →
+    ``Penstock.consume_reason(edge_state, flow, now)``
+  - ``Spillway.overflow(scheduler, edge, displaced_wave)`` →
+    ``Spillway.overflow(edge, displaced_wave, overflow_count)``
+  - ``SignalPenstock.rate_fn(scheduler, edge_state, now) -> float`` →
+    ``rate_fn(edge_state, now) -> float``
+
+  Most users never override these; the change is invisible.  Users
+  with custom Gate/Penstock/Spillway subclasses or ``rate_fn``
+  callables update their signatures (drop the first scheduler arg).
+
 ### Added
 
 - **`register_host_throttle` promoted to package top-level.**

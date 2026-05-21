@@ -979,10 +979,10 @@ async def test_burst_penstock_refills_capped_at_burst() -> None:
 
     es = _MockEdge()
     # Initial — bucket fills to burst=3.
-    assert pen.consume_reason(None, es, FlowControl(penstock=pen), 0.0) is None  # type: ignore[arg-type]
+    assert pen.consume_reason(es, FlowControl(penstock=pen), 0.0) is None  # type: ignore[arg-type]
     assert es.bucket_tokens == 3.0
     # Idle for 100 seconds — at rate=2/s that's +200 tokens, capped at 3.
-    assert pen.consume_reason(None, es, FlowControl(penstock=pen), 100.0) is None  # type: ignore[arg-type]
+    assert pen.consume_reason(es, FlowControl(penstock=pen), 100.0) is None  # type: ignore[arg-type]
     assert es.bucket_tokens == 3.0, f"Bucket must cap at burst=3; got {es.bucket_tokens}"
 
 
@@ -1086,17 +1086,17 @@ async def test_backpressure_penstock_slows_under_full_reservoir() -> None:
     # Empty reservoir (0/5 fullness=0): effective_rate = 10 (max).  min_gap = 0.1s.
     # last_consumed_at None → no rate-limit yet (initial call).
     es_empty = _Es(0)
-    assert pen.consume_reason(None, es_empty, flow, 1.0) is None  # type: ignore[arg-type]
+    assert pen.consume_reason(es_empty, flow, 1.0) is None  # type: ignore[arg-type]
     # Same edge, simulate consumption 0.05s ago: rate 10/s, gap < 0.1 → limited.
     es_empty.last_consumed_at = 0.95
-    assert pen.consume_reason(None, es_empty, flow, 1.0) == "penstock_limited"  # type: ignore[arg-type]
+    assert pen.consume_reason(es_empty, flow, 1.0) == "penstock_limited"  # type: ignore[arg-type]
     # Full reservoir (5/5 fullness=1.0): effective_rate = 1.  min_gap = 1.0s.
     es_full = _Es(5)
     es_full.last_consumed_at = 0.5  # 0.5s ago, rate=1 → min_gap=1.0 → limited.
-    assert pen.consume_reason(None, es_full, flow, 1.0) == "penstock_limited"  # type: ignore[arg-type]
+    assert pen.consume_reason(es_full, flow, 1.0) == "penstock_limited"  # type: ignore[arg-type]
     # After 1.0s+ idle on full reservoir, allowed again.
     es_full.last_consumed_at = -0.1
-    assert pen.consume_reason(None, es_full, flow, 1.0) is None  # type: ignore[arg-type]
+    assert pen.consume_reason(es_full, flow, 1.0) is None  # type: ignore[arg-type]
 
 
 def test_backpressure_penstock_rejects_inverted_rates() -> None:
@@ -1130,7 +1130,7 @@ async def test_signal_penstock_callable_drives_rate() -> None:
 
     invocations: List[float] = []
 
-    def rate_fn(scheduler: Any, edge_state: Any, now: float) -> float:
+    def rate_fn(edge_state: Any, now: float) -> float:
         invocations.append(now)
         # Block until now > 1.0; then allow at 100/s (effectively uncapped).
         return 0.0 if now < 1.0 else 100.0
@@ -1147,9 +1147,9 @@ async def test_signal_penstock_callable_drives_rate() -> None:
 
     es = _Es()
     # rate_fn returns 0 → must block.
-    assert pen.consume_reason(None, es, flow, 0.5) == "penstock_limited"  # type: ignore[arg-type]
+    assert pen.consume_reason(es, flow, 0.5) == "penstock_limited"  # type: ignore[arg-type]
     # rate_fn returns 100 → allowed at clear rate; last_consumed_at None, so no gap to check.
-    assert pen.consume_reason(None, es, flow, 1.5) is None  # type: ignore[arg-type]
+    assert pen.consume_reason(es, flow, 1.5) is None  # type: ignore[arg-type]
     assert len(invocations) == 2, f"rate_fn must be called once per consume_reason; got {len(invocations)}"
 
 
@@ -2295,7 +2295,7 @@ def test_json_signal_penstock_resolves_sidecar_callable(tmp_path: Path) -> None:
         "from incorporator import Incorporator\n"
         "class LapData(Incorporator):\n    pass\n"
         "class PitStops(Incorporator):\n    pass\n"
-        "def peak_rate(scheduler, edge_state, now):\n    return 5.0\n"
+        "def peak_rate(edge_state, now):\n    return 5.0\n"
         "def outflow(state):\n    return []\n",
     )
     body = _watershed_json_body("custom", with_mode=False)
@@ -2319,7 +2319,7 @@ def test_json_signal_penstock_resolves_sidecar_callable(tmp_path: Path) -> None:
     [edge] = ws.edges
     assert isinstance(edge.flow.penstock, SignalPenstock)
     # Callable resolved + invocable.
-    assert edge.flow.penstock.rate_fn(None, None, 0.0) == 5.0
+    assert edge.flow.penstock.rate_fn(None, 0.0) == 5.0
 
 
 def test_json_signal_penstock_resolves_module_path(tmp_path: Path) -> None:

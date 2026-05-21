@@ -11,6 +11,8 @@ requests per host, Penstocks here cap wave consumption per edge.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -18,8 +20,39 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from .current import Current
     from .scheduler import Tideweaver
+
+
+# ---------------------------------------------------------------------------
+# Narrow context value types passed to per-edge strategies.  Drop the
+# scheduler-as-arg pattern so strategies can be unit-tested without one
+# and the scheduler-to-strategy boundary stops leaking in both directions.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GateContext:
+    """Four facts a :class:`Gate` reads to decide pass/hold on one upstream edge.
+
+    Built by the scheduler from ``_state`` + ``_last_consumed``; passed
+    to :meth:`Gate.gate_reason`.  Gates do not see (or need) the
+    scheduler itself.
+    """
+
+    up_in_flight: bool
+    up_last_wave_at: Optional[datetime]
+    last_consumed: Optional[datetime]
+    now: float
+
+
+@dataclass(frozen=True)
+class SurgeContext:
+    """Facts :class:`SurgeBarrier` reads to decide whether to override the gate."""
+
+    up_in_flight: bool
+    up_started_at: Optional[float]
+    dependent_interval: float
+    now: float
 
 
 # ---------------------------------------------------------------------------
@@ -32,13 +65,7 @@ class Gate(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    def gate_reason(
-        self,
-        scheduler: "Tideweaver",
-        dependent: "Current",
-        up_name: str,
-        now: float,
-    ) -> Optional[str]:
+    def gate_reason(self, ctx: GateContext) -> Optional[str]:
         """Return a skip reason, or ``None`` to allow firing."""
         raise NotImplementedError
 
@@ -48,21 +75,12 @@ class HardLock(Gate):
 
     type: Literal["hard"] = "hard"
 
-    def gate_reason(
-        self,
-        scheduler: "Tideweaver",
-        dependent: "Current",
-        up_name: str,
-        now: float,
-    ) -> Optional[str]:
-        up_state = scheduler._state[up_name]
-        if up_state.in_flight is not None and not up_state.in_flight.done():
+    def gate_reason(self, ctx: GateContext) -> Optional[str]:
+        if ctx.up_in_flight:
             return "awaiting_upstream"
-        last_wave = up_state.last_wave_at
-        if last_wave is None:
+        if ctx.up_last_wave_at is None:
             return "awaiting_upstream"
-        consumed = scheduler._last_consumed.get((dependent.name, up_name))
-        if consumed is not None and consumed >= last_wave:
+        if ctx.last_consumed is not None and ctx.last_consumed >= ctx.up_last_wave_at:
             return "awaiting_upstream"
         return None
 
@@ -72,13 +90,7 @@ class SoftPass(Gate):
 
     type: Literal["soft"] = "soft"
 
-    def gate_reason(
-        self,
-        scheduler: "Tideweaver",
-        dependent: "Current",
-        up_name: str,
-        now: float,
-    ) -> Optional[str]:
+    def gate_reason(self, ctx: GateContext) -> Optional[str]:
         return None
 
 
@@ -87,18 +99,10 @@ class Weir(Gate):
 
     type: Literal["weir"] = "weir"
 
-    def gate_reason(
-        self,
-        scheduler: "Tideweaver",
-        dependent: "Current",
-        up_name: str,
-        now: float,
-    ) -> Optional[str]:
-        last_wave = scheduler._state[up_name].last_wave_at
-        if last_wave is None:
+    def gate_reason(self, ctx: GateContext) -> Optional[str]:
+        if ctx.up_last_wave_at is None:
             return "awaiting_upstream"
-        consumed = scheduler._last_consumed.get((dependent.name, up_name))
-        if consumed is not None and consumed >= last_wave:
+        if ctx.last_consumed is not None and ctx.last_consumed >= ctx.up_last_wave_at:
             return "awaiting_upstream"
         return None
 
@@ -130,20 +134,11 @@ class SurgeBarrier(BaseModel):
     )
     action: SurgeAction = "skip"
 
-    def is_tripped(
-        self,
-        scheduler: "Tideweaver",
-        dependent: "Current",
-        up_name: str,
-        now: float,
-    ) -> bool:
+    def is_tripped(self, ctx: SurgeContext) -> bool:
         """Return True iff upstream has been in-flight longer than threshold * interval."""
-        up_state = scheduler._state[up_name]
-        if up_state.in_flight is None or up_state.in_flight.done():
+        if not ctx.up_in_flight or ctx.up_started_at is None:
             return False
-        if up_state.started_at is None:
-            return False
-        return (now - up_state.started_at) > self.threshold_multiple * dependent.interval
+        return (ctx.now - ctx.up_started_at) > self.threshold_multiple * ctx.dependent_interval
 
 
 # ---------------------------------------------------------------------------
@@ -152,19 +147,27 @@ class SurgeBarrier(BaseModel):
 
 
 class Penstock(BaseModel):
-    """Edge-layer flow-rate strategy: caps wave consumption per edge."""
+    """Edge-layer flow-rate strategy: caps wave consumption per edge.
+
+    Subclasses implement :meth:`consume_reason` (the pre-consume gate check)
+    and optionally override :meth:`post_consume` (called on every
+    successful consumption to update the strategy's accumulated state).
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    def consume_reason(
-        self,
-        scheduler: "Tideweaver",
-        edge_state: Any,
-        flow: "FlowControl",
-        now: float,
-    ) -> Optional[str]:
+    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
         """Return a skip reason, or ``None`` to allow consumption.  May mutate ``edge_state``."""
         raise NotImplementedError
+
+    def post_consume(self, edge_state: Any, now: float) -> None:
+        """Hook fired after a successful consumption.  Default: no-op.
+
+        Subclasses that accumulate per-consumption state (token-bucket
+        debit, sliding-window log append) override this instead of the
+        scheduler reaching in via ``isinstance`` branches.
+        """
+        return None
 
 
 class SustainedPenstock(Penstock):
@@ -173,13 +176,7 @@ class SustainedPenstock(Penstock):
     type: Literal["sustained"] = "sustained"
     rate_per_sec: float = Field(gt=0.0, description="Max sustained wave consumptions per second.")
 
-    def consume_reason(
-        self,
-        scheduler: "Tideweaver",
-        edge_state: Any,
-        flow: "FlowControl",
-        now: float,
-    ) -> Optional[str]:
+    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
         if edge_state.last_consumed_at is None:
             return None
         min_gap = 1.0 / self.rate_per_sec
@@ -195,13 +192,7 @@ class BurstPenstock(Penstock):
     rate_per_sec: float = Field(gt=0.0, description="Refill rate (tokens / second).")
     burst: int = Field(ge=1, description="Bucket capacity — max tokens held.")
 
-    def consume_reason(
-        self,
-        scheduler: "Tideweaver",
-        edge_state: Any,
-        flow: "FlowControl",
-        now: float,
-    ) -> Optional[str]:
+    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
         # First-touch initialization: bucket starts full.
         if edge_state.bucket_tokens is None:
             edge_state.bucket_tokens = float(self.burst)
@@ -217,6 +208,11 @@ class BurstPenstock(Penstock):
             return "penstock_limited"
         return None
 
+    def post_consume(self, edge_state: Any, now: float) -> None:
+        """Debit one token after a consumption fired."""
+        if edge_state.bucket_tokens is not None:
+            edge_state.bucket_tokens = max(0.0, edge_state.bucket_tokens - 1.0)
+
 
 class WindowPenstock(Penstock):
     """Rolling-window quota: at most ``cap`` consumptions per ``window_sec``."""
@@ -225,13 +221,7 @@ class WindowPenstock(Penstock):
     window_sec: float = Field(gt=0.0, description="Rolling lookback window in seconds.")
     cap: int = Field(ge=1, description="Max consumptions within the window.")
 
-    def consume_reason(
-        self,
-        scheduler: "Tideweaver",
-        edge_state: Any,
-        flow: "FlowControl",
-        now: float,
-    ) -> Optional[str]:
+    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
         cutoff = now - self.window_sec
         # Evict entries older than the window.  Mutation here is the
         # natural place — keeps the log bounded as the window slides.
@@ -239,6 +229,10 @@ class WindowPenstock(Penstock):
         if len(edge_state.window_log) >= self.cap:
             return "penstock_limited"
         return None
+
+    def post_consume(self, edge_state: Any, now: float) -> None:
+        """Append the consumption timestamp to the sliding window log."""
+        edge_state.window_log.append(now)
 
 
 class BackpressurePenstock(Penstock):
@@ -271,13 +265,7 @@ class BackpressurePenstock(Penstock):
             )
         return self
 
-    def consume_reason(
-        self,
-        scheduler: "Tideweaver",
-        edge_state: Any,
-        flow: "FlowControl",
-        now: float,
-    ) -> Optional[str]:
+    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
         depth = max(1, flow.reservoir.depth)
         fullness = min(1.0, len(edge_state.waves) / depth)
         effective_rate = self.max_rate - (self.max_rate - self.min_rate) * fullness
@@ -294,25 +282,24 @@ class BackpressurePenstock(Penstock):
 class SignalPenstock(Penstock):
     """User callable returns the current rate.
 
-    ``rate_fn(scheduler, edge_state, now) -> float`` runs in the gate
-    cycle; a return ``<= 0`` blocks the edge entirely.
+    ``rate_fn(edge_state, now) -> float`` runs in the gate cycle; a
+    return ``<= 0`` blocks the edge entirely.
+
+    Note: ``rate_fn`` signature changed in v1.3.0 — the legacy
+    ``rate_fn(scheduler, edge_state, now)`` shape no longer receives
+    the scheduler; the strategy hierarchy doesn't read scheduler
+    privates anymore.  Migration: drop the first ``scheduler`` arg.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     type: Literal["signal"] = "signal"
-    rate_fn: Callable[[Any, Any, float], float] = Field(
+    rate_fn: Callable[[Any, float], float] = Field(
         description="Callable returning the current allowed rate in waves/sec.",
     )
 
-    def consume_reason(
-        self,
-        scheduler: "Tideweaver",
-        edge_state: Any,
-        flow: "FlowControl",
-        now: float,
-    ) -> Optional[str]:
-        rate = self.rate_fn(scheduler, edge_state, now)
+    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
+        rate = self.rate_fn(edge_state, now)
         if rate <= 0.0:
             return "penstock_limited"
         if edge_state.last_consumed_at is None:
@@ -353,9 +340,9 @@ class Spillway(BaseModel):
 
     def overflow(
         self,
-        scheduler: "Tideweaver",
         edge: Tuple[str, str],
         displaced_wave: object,
+        overflow_count: int,
     ) -> None:
         """Handle one displaced wave.  Default subclass is a no-op."""
         return None
@@ -368,9 +355,9 @@ class DropOldest(Spillway):
 
     def overflow(
         self,
-        scheduler: "Tideweaver",
         edge: Tuple[str, str],
         displaced_wave: object,
+        overflow_count: int,
     ) -> None:
         return None
 
@@ -382,17 +369,15 @@ class RaiseOverflow(Spillway):
 
     def overflow(
         self,
-        scheduler: "Tideweaver",
         edge: Tuple[str, str],
         displaced_wave: object,
+        overflow_count: int,
     ) -> None:
-        state = scheduler._edge_state.get(edge)
-        count = state.overflow_count if state is not None else "?"
         logger.warning(
-            "Tideweaver: spillway overflow on edge %s → %s (count=%s)",
+            "Tideweaver: spillway overflow on edge %s → %s (count=%d)",
             edge[0],
             edge[1],
-            count,
+            overflow_count,
         )
 
 
@@ -408,9 +393,9 @@ class ExportToArchive(Spillway):
 
     def overflow(
         self,
-        scheduler: "Tideweaver",
         edge: Tuple[str, str],
         displaced_wave: object,
+        overflow_count: int,
     ) -> None:
         if not isinstance(displaced_wave, list):
             return None
