@@ -11,7 +11,7 @@ failure, and surfaces any DLQ entries on `failed_sources`.
 
 **Rate-limit note.**  CoinGecko's free public tier is 5–15 requests
 per *minute* (not per second).  The framework ships no implicit
-per-host throttling; this script calls ``register_host_throttle`` at
+per-host throttling; this script calls ``register_host_penstock`` at
 startup to pace ``api.coingecko.com`` at 0.2 req/sec (12/min).  The
 explicit ``requests_per_second`` kwarg further down documents the same
 knob for per-call override scenarios.

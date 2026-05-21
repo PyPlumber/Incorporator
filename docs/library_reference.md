@@ -53,18 +53,18 @@ For a paste-ready lookup map of every public callable — signature, 3-7 step ps
   URLs / files in parallel and emits a paste-ready
   [Tideweaver](./api_atlas.md#orchestration) scaffold (pretty report,
   Python module, or `watershed.json`).  Honours
-  `incorporator.io.throttle.known_host_rates()` for per-edge Penstock
+  `incorporator.io.penstock.known_host_rates()` for per-edge Penstock
   recommendations on any host you've registered via
-  `register_host_throttle`.
+  `register_host_penstock`.
 
 ### Top-level helpers
 
-- `register_host_throttle(host, factory)` — opt-in per-host rate
-  limiting (e.g. `register_host_throttle("api.coingecko.com",
-  lambda: FixedIntervalThrottle(0.2))`).  The framework ships
-  throttle-agnostic; this is the one-line registration users add at
+- `register_host_penstock(host, penstock)` — opt-in per-host rate
+  limiting (e.g. `register_host_penstock("api.coingecko.com",
+  SustainedPenstock(rate_per_sec=0.2))`).  The framework ships
+  penstock-agnostic; this is the one-line registration users add at
   startup if they want a host respected across every `incorp()` call.
-  See the [API Atlas entry](./api_atlas.md#register_host_throttle).
+  See the [API Atlas entry](./api_atlas.md#register_host_penstock).
 - `refresh()` — stateful update of an existing object graph. Same
   `inflow=` semantics as `incorp()`.
 - `export()` — serialise to CSV, JSON, NDJSON, XML, SQLite, Parquet,

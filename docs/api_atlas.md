@@ -208,46 +208,47 @@ Returns a single `TIncorporator` for one-record sources, otherwise an `Incorpora
 
 ---
 
-### register_host_throttle
+### register_host_penstock
 
 **Signature**
 ```python
-def register_host_throttle(host: str, factory: Callable[[], ThrottleStrategy]) -> None:
+def register_host_penstock(host: str, penstock: Penstock | Callable[[], Penstock]) -> None:
 ```
 
 **What it does (pseudocode)**
-1. Registers a per-host throttle factory keyed by lowercase hostname.
-2. The factory is called once per `resolve_throttle()` invocation so each fan-out leg gets independent state.
-3. Re-registering the same host replaces the previous factory.
+1. Registers a per-host `Penstock` keyed by lowercase hostname.  Accepts either a `Penstock` instance (canonical) or a zero-arg factory callable (legacy back-compat).
+2. Each `resolve_penstock()` invocation builds a fresh `BoundPenstock` (sharing the registered config, with its own `FlowState` + `asyncio.Lock`) so fan-out legs run independently.
+3. Re-registering the same host replaces the previous penstock.
 
 **When to reach for it**
-The framework ships with **no implicit per-host throttling**.  Use this to attach a throttle for an in-house API or any public host that imposes a documented rate ceiling.  The alternative — `incorp(..., requests_per_second=X)` per call — is fine for one-shot scripts; the registry is the right tool when you have many call sites against the same host and want one source of truth.
+The framework ships with **no implicit per-host throttling**.  Use this to attach a penstock for an in-house API or any public host that imposes a documented rate ceiling.  The alternative — `incorp(..., requests_per_second=X)` per call — is fine for one-shot scripts; the registry is the right tool when you have many call sites against the same host and want one source of truth.
 
 **Worked example**
 ```python
-from incorporator import register_host_throttle
-from incorporator.io.throttle import FixedIntervalThrottle, BurstThrottle
+from incorporator import register_host_penstock
+from incorporator.io.penstock import SustainedPenstock, BurstPenstock
 
 # Conservative rate for CoinGecko's anon tier (5-15 req/min documented).
-register_host_throttle("api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
+register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
 
 # Bursty in-house API: 50 req/s sustained, 200-burst tolerance.
-register_host_throttle(
+register_host_penstock(
     "api.internal.acme.com",
-    lambda: BurstThrottle(requests_per_second=50.0, burst=200),
+    BurstPenstock(rate_per_sec=50.0, burst=200),
 )
 ```
 
 **Common kwargs**
 - `host` — lowercase hostname; `urllib.parse` extracts this from URLs at resolve time.
-- `factory` — zero-arg callable returning a fresh `ThrottleStrategy`.  Strategies are stateful (token-bucket counters, last-fire timestamps); the per-call factory keeps fan-out legs independent.
+- `penstock` — a `Penstock` instance (preferred) or a zero-arg callable returning one.  The `Penstock` config is frozen Pydantic; the per-call binding owns the mutable state + lock.
 
 **Yields / returns**
-`None`.  Side-effect-only: mutates the module-level `_HOST_FACTORIES` dict.
+`None`.  Side-effect-only: mutates the module-level `_HOST_PENSTOCKS` dict.
 
 **Related**
-- `incorporator.io.throttle.resolve_throttle(source, requests_per_second=, burst=)` — the resolver every `incorp()` call routes through.  Five-tier precedence: env-var bypass > `rps<=0` > caller rps > registered host > `DEFAULT_RPS=15` fallback.
-- `incorporator.io.throttle.known_host_rates()` — diagnostic view of `host → float` rates currently registered.
+- `incorporator.io.penstock.resolve_penstock(source, requests_per_second=, burst=)` — the resolver every `incorp()` call routes through.  Five-tier precedence: env-var bypass > `rps<=0` > caller rps > registered host > `DEFAULT_RPS=15` fallback.
+- `incorporator.io.penstock.known_host_rates()` — diagnostic view of `host → float` rates currently registered.
+- `incorporator.io.penstock.Penstock` — the unified rate-control primitive shared by both the HTTP host registry and the Tideweaver edge layer.  Subclasses: `NullPenstock`, `SustainedPenstock`, `BurstPenstock`, `WindowPenstock`, `SignalPenstock` (and `BackpressurePenstock` at the edge layer only).
 
 **See also**
 [Tutorial 1](../examples/01-first-steps/README.md) — CoinGecko example with explicit registration ·
