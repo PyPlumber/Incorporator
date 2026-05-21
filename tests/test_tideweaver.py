@@ -1176,6 +1176,71 @@ async def test_spillway_export_to_archive_routes_displaced_waves() -> None:
         delattr(_Archive, "_spillway_backlog")
 
 
+@pytest.mark.asyncio
+async def test_spillway_fires_when_penstock_and_reservoir_both_active() -> None:
+    """Penstock + Reservoir + Spillway all engage in one composed edge.
+
+    Scenario: fast upstream (interval=0.05s) feeds a small Reservoir(depth=3)
+    on an edge throttled by a slow ``SustainedPenstock(rate_per_sec=2.0)``
+    (min_gap 0.5s).  Downstream wants to fire on every pass but the penstock
+    blocks most of them; meanwhile the upstream keeps pushing waves into the
+    reservoir.  When the reservoir hits depth, the ``DropOldest`` spillway
+    displaces the oldest wave for every new one.
+
+    This is the only test exercising all three primitives in a single graph;
+    individual tests cover each in isolation but composition was a gap.
+    """
+    from incorporator.observability.tideweaver import (
+        DropOldest,
+        HardLock,
+        Reservoir,
+        SustainedPenstock,
+    )
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=0.05)
+    composed = FlowControl(
+        gate=HardLock(),
+        penstock=SustainedPenstock(rate_per_sec=2.0),  # min_gap 0.5s
+        reservoir=Reservoir(depth=3),
+        spillway=DropOldest(),
+    )
+    ws = Watershed(
+        window=_short_window(0.6),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=composed)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    tides = await _collect_tides(tw)
+
+    reasons = [reason for tide in tides for _name, reason in tide.skipped]
+    assert "penstock_limited" in reasons, (
+        f"SustainedPenstock(rate=2/s) must surface 'penstock_limited' against "
+        f"a 0.05s-interval downstream; got reasons={set(reasons)}"
+    )
+
+    edge_state = tw._edge_state[("a", "b")]
+    assert edge_state.overflow_count > 0, (
+        f"Reservoir(depth=3) with a fast upstream and a throttled downstream "
+        f"must overflow; got overflow_count={edge_state.overflow_count}"
+    )
+    assert len(edge_state.waves) == 3, (
+        f"Reservoir bounded at depth=3 post-overflow; got "
+        f"len(waves)={len(edge_state.waves)}"
+    )
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
 # ---------------------------------------------------------------------------
 # Phase 5: phase_offset_sec on Current (green-wave coordination)
 # ---------------------------------------------------------------------------
