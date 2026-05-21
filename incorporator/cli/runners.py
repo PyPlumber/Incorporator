@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover — orchestrate extra is optional
     _typer = None  # type: ignore[assignment]
 
 from .. import Incorporator, LoggedIncorporator
+from ._pipeline_config import parse_pipeline_config
 from .envexpand import EnvExpansionError, expand_env
 from .tokens import TokenResolutionError, resolve_tokens
 from .validate import validate_config
@@ -192,6 +193,12 @@ async def _run_stream(
     json_output: bool,
     heartbeat_file: Optional[Path],
 ) -> None:
+    # Gate: enforce the Pydantic schema before the async pipeline boots.
+    # Errors surface here instead of mid-pipeline.  D2a-only — the legacy
+    # validator in ``validate.py`` still runs at the CLI validate
+    # entrypoint; D2b will collapse the duplication.
+    parse_pipeline_config(config, kind="stream")
+
     incorp_params = config.get("incorp_params", {})
     refresh_params = config.get("refresh_params")
     export_params = config.get("export_params")
@@ -277,6 +284,10 @@ async def _run_fjord(
     The output class is built dynamically from the outflow file's filename
     (snake_case → PascalCase); there is no ``output_class`` JSON key.
     """
+    # Gate: enforce the Pydantic schema before sidecar import / class
+    # resolution.  Matching D2a-only comment on ``_run_stream``.
+    parse_pipeline_config(config, kind="fjord")
+
     outflow_raw = config.get("outflow")
     if outflow_raw is None:
         _err("Error: pipeline.json must declare 'outflow' (path to outflow.py).", fg=_red())
