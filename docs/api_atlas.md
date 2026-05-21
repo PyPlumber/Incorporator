@@ -83,6 +83,71 @@ An `IncorporatorList` of at most 3 records on success, an empty `IncorporatorLis
 
 ---
 
+### architect
+
+**Signature**
+```python
+@classmethod
+async def architect(
+    cls: Type[TIncorporator],
+    sources: Mapping[str, Union[str, Path, Mapping[str, Any]]],
+    *,
+    output: Literal["report", "python", "json"] = "report",
+    shared_kwargs: Optional[Mapping[str, Any]] = None,
+) -> Optional[str]:
+```
+
+**What it does (pseudocode)**
+1. Resolve every `sources` value: URL string → `inc_url=`, Path-like or existing file → `inc_file=`, dict → spread verbatim as `incorp()` kwargs.  `shared_kwargs` propagates to every probe; per-source kwargs win on conflict.
+2. For each source, create a throwaway subclass `type(f"_ArchitectProbe_{name}", (cls,), {})` and call its `test(**probe_kwargs, __capture_into=[...])`.  The throwaway shields the user's class from probe-driven mutation (`cls.inc_url` / `cls.inc_file` / `cls._incorp_kwargs` / `cls.inc_dict`); the `__capture_into` sidechannel suppresses the per-source print and routes the inspector's structured `SourceProfile` into a list.
+3. Run cross-source analysis on the captured profiles: detect `fanout` (one source's PK appears as a non-PK field in all others), `diamond` (multiple sources share a PK field name — needs a tail Fjord), `parallel` (disjoint field sets), or `custom` (some overlap but no clear pattern).
+4. For each downstream edge, pick a `Penstock` via a three-tier confidence ladder: known-strict host registry → 429 observed during probe → no penstock.
+5. Dispatch on `output=`: `"report"` prints inspector output + cross-source hints; `"python"` emits a paste-ready Python module (class defs + `Stream(...)` constructors + `Watershed.<shape>(...)` + a `Tideweaver` runner); `"json"` emits a paste-ready `watershed.json` that round-trips through `load_watershed()`.
+
+**When to reach for it**
+The multi-source counterpart of `test()`.  Reach for it when you have several unknown endpoints / fixtures and you want a Tideweaver scaffold rather than per-call `incorp()` advice.  Especially useful for: cross-exchange arb diamonds, NASCAR race-day fusion graphs, anywhere you'd otherwise sketch the topology on a napkin first.
+
+**Common kwargs**
+- `sources` — mapping of `name` → URL string, file path / `Path`, or dict of `incorp()` kwargs.  Pass `{"verb": "fjord", ...}` in the dict form to nominate a tail Fjord on diamond shapes.
+- `output` — `"report"` (default, prints only), `"python"` (returns + prints a module), `"json"` (returns + prints `watershed.json`).
+- `shared_kwargs` — common `timeout` / `headers` / `requests_per_second` applied to every probe.
+
+**Yields / returns**
+- `output="report"` → `None` (prints only).
+- `output="python"` / `"json"` → the rendered string (also printed to stdout for human eyeballs).
+
+**Worked example**
+```python
+class Coin(Incorporator):
+    pass
+
+await Coin.architect(
+    sources={
+        "binance":  "examples/11-tideweaver/fixtures/binance_book.json",
+        "coinbase": "examples/11-tideweaver/fixtures/coinbase_ticker.json",
+        "kraken":   "examples/11-tideweaver/fixtures/kraken_ticker.json",
+    },
+    output="json",
+)
+# → prints + returns a watershed.json that loads cleanly:
+#   incorporator tideweaver run watershed.json
+```
+
+**Confidence honesty** — what `architect()` will NOT decide for you (left as `_TODO_` placeholders or commented suggestions in the scaffold):
+- `interval` — a freshness SLO call.
+- `gate_mode` — defaults to `"hard"`; alternatives noted.
+- `Reservoir.depth` — defaults to `1`; scaling rule noted.
+- `Spillway` — defaults to `DropOldest`.
+- `phase_offset_sec` — needs full-graph timing.
+- `Fjord` tail placement + `outflow.py` sidecar — user wires fan-in if desired.
+
+**See also**
+[Canal toolkit primitives](#canal-toolkit-primitives) ·
+[Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) ·
+[`docs/cli_and_configuration.md §9`](./cli_and_configuration.md)
+
+---
+
 ### incorp
 
 **Signature**
