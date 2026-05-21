@@ -436,3 +436,23 @@ def test_run_end_to_end_local_fixtures(tmp_path: Path) -> None:
 def test_run_invalid_output_raises() -> None:
     with pytest.raises(ValueError, match="output must be one of"):
         asyncio.run(run(Incorporator, sources={"x": "https://x.example/"}, output="yaml"))
+
+
+def test_cls_architect_classmethod_shim(tmp_path: Path) -> None:
+    """``cls.architect(...)`` is the user-facing entry point — delegates to ``architect.run()``.
+
+    Smokes the shim itself (base.py) rather than the architect module.
+    """
+    a = tmp_path / "users.json"
+    a.write_text(json.dumps([{"user_id": "u1", "name": "Ada"}]), encoding="utf-8")
+    b = tmp_path / "orders.json"
+    b.write_text(json.dumps([{"order_id": "o1", "user_id": "u1"}]), encoding="utf-8")
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rendered = asyncio.run(
+            Incorporator.architect(sources={"users": a, "orders": b}, output="json"),
+        )
+    assert rendered is not None
+    body = json.loads(rendered)
+    assert body["shape"] == "fanout"

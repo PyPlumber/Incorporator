@@ -21,6 +21,8 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Literal,
+    Mapping,
     Optional,
     Tuple,
     Type,
@@ -1605,3 +1607,63 @@ class Incorporator(BaseModel):
             return result[:_INSPECTION_LIMIT]
 
         return result
+
+    @classmethod
+    async def architect(
+        cls: Type[TIncorporator],
+        sources: Mapping[str, Union[str, Path, Mapping[str, Any]]],
+        *,
+        output: Literal["report", "python", "json"] = "report",
+        shared_kwargs: Optional[Mapping[str, Any]] = None,
+    ) -> Optional[str]:
+        """Probe N sources, recommend a Watershed architecture (paste-ready).
+
+        The multi-source counterpart of :meth:`test`.  Where ``test()`` profiles
+        one unknown endpoint and prints the recommended ``incorp()`` kwargs,
+        ``architect()`` profiles many and emits a full Tideweaver scaffold:
+        which :class:`~incorporator.observability.tideweaver.Watershed` shape
+        to pick, per-source verb (Stream / Fjord / Export), and per-edge
+        :class:`~incorporator.observability.tideweaver.FlowControl` with a
+        host-aware Penstock when the rate registry recognises the source.
+
+        Example::
+
+            class Coin(Incorporator):
+                pass
+
+            await Coin.architect(
+                sources={
+                    "binance":  "examples/11-tideweaver/fixtures/binance_book.json",
+                    "coinbase": "examples/11-tideweaver/fixtures/coinbase_ticker.json",
+                    "kraken":   "examples/11-tideweaver/fixtures/kraken_ticker.json",
+                },
+                output="json",
+            )
+            # → prints + returns a complete watershed.json that loads via
+            #   `incorporator tideweaver run watershed.json`.
+
+        Args:
+            sources: Mapping of ``name -> URL | Path | dict``.
+
+                * URL string (``http://`` / ``https://``) → fetched as ``inc_url=``.
+                * Path / file string → loaded as ``inc_file=``.
+                * Dict → spread verbatim as ``incorp()`` kwargs.  Use this
+                  form to nominate a tail Fjord (``{"verb": "fjord", ...}``).
+            output: ``"report"`` prints inspector output + cross-source hints;
+                ``"python"`` emits a paste-ready Python module; ``"json"``
+                emits a paste-ready ``watershed.json`` body.  Default: ``"report"``.
+            shared_kwargs: Common ``incorp()`` kwargs applied to every probe
+                (``timeout``, ``headers``, ...).  Per-source kwargs win on
+                conflict.
+
+        Returns:
+            ``None`` for ``output="report"`` (prints only).  The rendered
+            scaffold string for ``"python"`` and ``"json"`` (also printed).
+
+        See :mod:`incorporator.observability.tideweaver.architect` for the
+        full implementation — this classmethod is a thin shim that delegates
+        to ``architect.run()``.
+        """
+        from .observability.tideweaver.architect import run
+
+        return await run(cls, sources, output=output, shared_kwargs=shared_kwargs)
