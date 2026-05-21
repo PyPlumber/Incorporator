@@ -36,7 +36,7 @@ package docstring for the canal-metaphor mapping.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -84,6 +84,8 @@ class HardLock(Gate):
     architecturally) rather than on the dependent Current.
     """
 
+    type: Literal["hard"] = "hard"
+
     def gate_reason(
         self,
         scheduler: "Tideweaver",
@@ -105,6 +107,8 @@ class HardLock(Gate):
 
 class SoftPass(Gate):
     """Open channel: no gating; downstream fires on its own cadence."""
+
+    type: Literal["soft"] = "soft"
 
     def gate_reason(
         self,
@@ -129,6 +133,8 @@ class Weir(Gate):
     Fjord/Export tails (0.2-0.5s) keep their data dependency without
     starving on the in-flight gate.
     """
+
+    type: Literal["weir"] = "weir"
 
     def gate_reason(
         self,
@@ -251,6 +257,7 @@ class SustainedPenstock(Penstock):
     cross-section.  Use when downstream just needs a smooth steady cap.
     """
 
+    type: Literal["sustained"] = "sustained"
     rate_per_sec: float = Field(gt=0.0, description="Max sustained wave consumptions per second.")
 
     def consume_reason(
@@ -278,6 +285,7 @@ class BurstPenstock(Penstock):
     ``_tick_wrapper.finally``); ``consume_reason`` only refills + reads.
     """
 
+    type: Literal["burst"] = "burst"
     rate_per_sec: float = Field(gt=0.0, description="Refill rate (tokens / second).")
     burst: int = Field(ge=1, description="Bucket capacity — max tokens held.")
 
@@ -316,6 +324,7 @@ class WindowPenstock(Penstock):
     forgotten.
     """
 
+    type: Literal["window"] = "window"
     window_sec: float = Field(gt=0.0, description="Rolling lookback window in seconds.")
     cap: int = Field(ge=1, description="Max consumptions within the window.")
 
@@ -352,6 +361,7 @@ class BackpressurePenstock(Penstock):
     only possible because both primitives live in the same architecture.
     """
 
+    type: Literal["backpressure"] = "backpressure"
     min_rate: float = Field(gt=0.0, description="Effective rate when reservoir is full.")
     max_rate: float = Field(gt=0.0, description="Effective rate when reservoir is empty.")
 
@@ -390,6 +400,7 @@ class SignalPenstock(Penstock):
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
+    type: Literal["signal"] = "signal"
     rate_fn: Callable[[Any, Any, float], float] = Field(
         description="Callable returning the current allowed rate in waves/sec.",
     )
@@ -465,6 +476,8 @@ class DropOldest(Spillway):
     today's silent-drop semantics.
     """
 
+    type: Literal["drop_oldest"] = "drop_oldest"
+
     def overflow(
         self,
         scheduler: "Tideweaver",
@@ -476,6 +489,8 @@ class DropOldest(Spillway):
 
 class RaiseOverflow(Spillway):
     """Log + count overflows.  Never raises during a tick — diagnostic only."""
+
+    type: Literal["raise_overflow"] = "raise_overflow"
 
     def overflow(
         self,
@@ -511,6 +526,7 @@ class ExportToArchive(Spillway):
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
+    type: Literal["export_to_archive"] = "export_to_archive"
     archive_cls: Type[Any] = Field(
         description="Incorporator subclass (or any class) that receives displaced wave instances.",
     )
@@ -535,6 +551,20 @@ class ExportToArchive(Spillway):
 # ---------------------------------------------------------------------------
 
 
+_GateUnion = Annotated[
+    Union[HardLock, SoftPass, Weir],
+    Field(discriminator="type"),
+]
+_PenstockUnion = Annotated[
+    Union[SustainedPenstock, BurstPenstock, WindowPenstock, BackpressurePenstock, SignalPenstock],
+    Field(discriminator="type"),
+]
+_SpillwayUnion = Annotated[
+    Union[DropOldest, RaiseOverflow, ExportToArchive],
+    Field(discriminator="type"),
+]
+
+
 class FlowControl(BaseModel):
     """Per-edge flow control composed from the canal primitives.
 
@@ -552,14 +582,22 @@ class FlowControl(BaseModel):
     ``FlowControl(gate=HardLock(), surge_barrier=SurgeBarrier())``.
     Weir and soft modes default to ``surge_barrier=None`` — they don't
     pre-block on in-flight upstream, so the barrier is moot for them.
+
+    JSON-friendly: the ``gate``, ``penstock``, and ``spillway`` fields
+    are :class:`pydantic`-discriminated unions keyed on the strategy's
+    ``type`` Literal.  ``FlowControl.model_validate({"gate": {"type":
+    "weir"}, "penstock": {"type": "burst", "rate_per_sec": 2, "burst":
+    5}, ...})`` deserializes from a config dict without any custom
+    dispatch layer — see the package docstring for the eventual JSON
+    CLI format.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    gate: Gate = Field(default_factory=HardLock)
-    penstock: Optional[Penstock] = None
+    gate: _GateUnion = Field(default_factory=HardLock)
+    penstock: Optional[_PenstockUnion] = None
     reservoir: Reservoir = Field(default_factory=Reservoir)
-    spillway: Spillway = Field(default_factory=DropOldest)
+    spillway: _SpillwayUnion = Field(default_factory=DropOldest)
     surge_barrier: Optional[SurgeBarrier] = None
 
 
@@ -585,13 +623,17 @@ def flow_from_mode(mode: GateMode) -> FlowControl:
     action="skip") so it matches today's behavior end-to-end.  Weir and
     soft modes don't include a SurgeBarrier — they're already permissive
     about in-flight upstream.
+
+    Explicit branches (instead of a dict lookup) so mypy can narrow each
+    return path to one of the discriminated-union gate subclasses.
     """
-    gate_cls = _GATE_BY_MODE.get(mode)
-    if gate_cls is None:
-        raise ValueError(f"unknown GateMode: {mode!r} (expected one of {sorted(_GATE_BY_MODE)})")
     if mode == "hard":
         return FlowControl(gate=HardLock(), surge_barrier=SurgeBarrier())
-    return FlowControl(gate=gate_cls())
+    if mode == "soft":
+        return FlowControl(gate=SoftPass())
+    if mode == "weir":
+        return FlowControl(gate=Weir())
+    raise ValueError(f"unknown GateMode: {mode!r} (expected one of {sorted(_GATE_BY_MODE)})")
 
 
 __all__ = [

@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from .current import Current
 from .flow import FlowControl, GateMode, flow_from_mode
@@ -40,8 +40,8 @@ class Edge(BaseModel):
         # Default — hard gating, single-wave snapshot.
         Edge(from_name="binance", to_name="arb_fjord")
 
-        # Shorthand via mode string.
-        Edge(from_name="binance", to_name="arb_fjord", flow=flow_from_mode("weir"))
+        # Shorthand via mode string (mutually exclusive with flow=).
+        Edge(from_name="binance", to_name="arb_fjord", gate_mode="weir")
 
         # Full control.
         Edge(
@@ -54,17 +54,39 @@ class Edge(BaseModel):
             ),
         )
 
+    JSON-friendly: ``from_name`` / ``to_name`` accept the shorter
+    aliases ``"from"`` / ``"to"`` when constructing from a dict, so a
+    config file reads ``{"from": "binance", "to": "arb_fjord", ...}``
+    naturally.  Python users keep ``from_name=`` / ``to_name=`` (since
+    ``from`` is a Python keyword).
+
     Attributes:
         from_name: The upstream current name.
         to_name: The dependent current name.
         flow: The :class:`FlowControl` governing this edge.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, populate_by_name=True)
 
-    from_name: str
-    to_name: str
+    from_name: str = Field(validation_alias=AliasChoices("from_name", "from"))
+    to_name: str = Field(validation_alias=AliasChoices("to_name", "to"))
     flow: FlowControl = Field(default_factory=FlowControl)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _gate_mode_shorthand(cls, data: Any) -> Any:
+        """Translate ``gate_mode="weir"`` shorthand into ``flow=flow_from_mode("weir")``.
+
+        Mutually exclusive with ``flow=``; raises ``ValueError`` if
+        both are passed.  Mirrors the same shorthand on
+        :meth:`Watershed.chain` / ``.diamond`` / ``.fanout``.
+        """
+        if isinstance(data, dict) and "gate_mode" in data:
+            mode = data.pop("gate_mode")
+            if data.get("flow") is not None:
+                raise ValueError("Edge: pass gate_mode= (shorthand) or flow= (full FlowControl), not both.")
+            data["flow"] = flow_from_mode(mode)
+        return data
 
 
 def _toposort(currents: Sequence[Current], edges: Sequence[Edge]) -> List[str]:

@@ -496,6 +496,98 @@ async def test_surge_barrier_halt_circuit_breaks_until_upstream_completes() -> N
 
 
 # ---------------------------------------------------------------------------
+# QOL: JSON-ready discriminators + Edge gate_mode shorthand
+# ---------------------------------------------------------------------------
+
+
+def test_flowcontrol_round_trip_through_json_dict() -> None:
+    """``FlowControl.model_validate({"gate": {"type": "weir"}, ...})`` deserializes via discriminated unions.
+
+    This is the entry point the future JSON CLI loader will use.  No
+    custom dispatch layer needed — Pydantic picks the strategy
+    subclass off the ``type`` Literal on each child dict.
+    """
+    from incorporator.observability.tideweaver import (
+        BackpressurePenstock,
+        BurstPenstock,
+        ExportToArchive,
+        FlowControl,
+        HardLock,
+        RaiseOverflow,
+        SoftPass,
+        SustainedPenstock,
+        Weir,
+        WindowPenstock,
+    )
+
+    payloads_and_expected = [
+        ({"gate": {"type": "hard"}}, HardLock),
+        ({"gate": {"type": "soft"}}, SoftPass),
+        ({"gate": {"type": "weir"}}, Weir),
+    ]
+    for payload, expected_cls in payloads_and_expected:
+        fc = FlowControl.model_validate(payload)
+        assert isinstance(fc.gate, expected_cls), f"gate dispatch failed: {payload}"
+
+    penstock_cases = [
+        ({"type": "sustained", "rate_per_sec": 5.0}, SustainedPenstock),
+        ({"type": "burst", "rate_per_sec": 2.0, "burst": 5}, BurstPenstock),
+        ({"type": "window", "window_sec": 60.0, "cap": 10}, WindowPenstock),
+        ({"type": "backpressure", "min_rate": 1.0, "max_rate": 10.0}, BackpressurePenstock),
+    ]
+    for penstock_payload, expected_cls in penstock_cases:
+        fc = FlowControl.model_validate({"gate": {"type": "weir"}, "penstock": penstock_payload})
+        assert isinstance(fc.penstock, expected_cls), f"penstock dispatch failed: {penstock_payload}"
+
+    # Spillways including ExportToArchive (which carries a class reference —
+    # not normally JSON-friendly, but the discriminator still works when
+    # constructed from a dict at the Python layer with the class already
+    # resolved).
+    class _Archive(Incorporator):
+        """Archive class for the JSON round-trip test."""
+
+    fc = FlowControl.model_validate({"spillway": {"type": "raise_overflow"}})
+    assert isinstance(fc.spillway, RaiseOverflow)
+    fc = FlowControl.model_validate({"spillway": {"type": "export_to_archive", "archive_cls": _Archive}})
+    assert isinstance(fc.spillway, ExportToArchive)
+
+
+def test_edge_gate_mode_shorthand_matches_flow_from_mode() -> None:
+    """``Edge(..., gate_mode="weir")`` produces the same flow as ``Edge(..., flow=flow_from_mode("weir"))``."""
+    from incorporator.observability.tideweaver import Edge, flow_from_mode
+
+    a = Edge(from_name="x", to_name="y", gate_mode="weir")
+    b = Edge(from_name="x", to_name="y", flow=flow_from_mode("weir"))
+    assert _gate_name(a) == _gate_name(b) == "weir"
+    # Both flows have the same shape — gate, penstock, reservoir, spillway, surge_barrier.
+    assert a.flow.gate.type == b.flow.gate.type
+    assert a.flow.reservoir.depth == b.flow.reservoir.depth
+    assert a.flow.surge_barrier == b.flow.surge_barrier
+
+
+def test_edge_rejects_both_gate_mode_and_flow() -> None:
+    """``Edge(gate_mode=..., flow=...)`` raises — shorthand and full are mutually exclusive."""
+    from incorporator.observability.tideweaver import Edge, FlowControl, Weir
+
+    with pytest.raises(ValueError, match="not both"):
+        Edge(from_name="x", to_name="y", gate_mode="weir", flow=FlowControl(gate=Weir()))
+
+
+def test_edge_json_aliases_from_to() -> None:
+    """``Edge.model_validate({"from": "a", "to": "b"})`` works — JSON-style aliases."""
+    from incorporator.observability.tideweaver import Edge
+
+    e = Edge.model_validate({"from": "a", "to": "b", "gate_mode": "soft"})
+    assert e.from_name == "a"
+    assert e.to_name == "b"
+    assert _gate_name(e) == "soft"
+    # Python kwargs (canonical field names) still work too.
+    e2 = Edge(from_name="a", to_name="b", gate_mode="hard")
+    assert e2.from_name == "a"
+    assert _gate_name(e2) == "hard"
+
+
+# ---------------------------------------------------------------------------
 # Phase 2: Reservoir (per-edge wave buffer)
 # ---------------------------------------------------------------------------
 
