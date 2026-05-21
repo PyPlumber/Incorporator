@@ -149,7 +149,7 @@ TIDEWEAVER_TEMPLATE_JSON = """{
   "shape": "diamond",
   "outflow": "outflow.py",
   "drain_timeout": 30,
-  "dependency_mode": "hard",
+  "gate_mode": "hard",
 
   "_comment_head_": "The head ticks first; its waves gate the middle currents.",
   "head": {

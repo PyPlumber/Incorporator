@@ -37,6 +37,7 @@ from incorporator.observability.tideweaver import (
     Stream,
     Tideweaver,
     Watershed,
+    flow_from_mode,
 )
 
 
@@ -254,9 +255,9 @@ async def test_custom_mlb_leaderboard_three_hop_fjord_cascade(
         window=_short_window(6.0),
         currents=[players, normalize, rank, summary],
         edges=[
-            Edge(from_name="players", to_name="normalize", mode="hard"),
-            Edge(from_name="normalize", to_name="rank", mode="hard"),
-            Edge(from_name="rank", to_name="summary", mode="hard"),
+            Edge(from_name="players", to_name="normalize", flow=flow_from_mode("hard")),
+            Edge(from_name="normalize", to_name="rank", flow=flow_from_mode("hard")),
+            Edge(from_name="rank", to_name="summary", flow=flow_from_mode("hard")),
         ],
     )
     tw = Tideweaver(ws, pass_interval=0.05)
@@ -380,8 +381,8 @@ async def test_custom_mixed_modes_with_drain_timeout(
         window=_short_window(5.0),
         currents=[s_a, s_b, tail],
         edges=[
-            Edge(from_name="s_a", to_name="tail", mode="hard"),
-            Edge(from_name="s_b", to_name="tail", mode="soft"),
+            Edge(from_name="s_a", to_name="tail", flow=flow_from_mode("hard")),
+            Edge(from_name="s_b", to_name="tail", flow=flow_from_mode("soft")),
         ],
         drain_timeout=0.3,
     )

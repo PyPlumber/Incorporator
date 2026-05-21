@@ -45,13 +45,16 @@ class Current(BaseModel):
         on_error: ``"restart"`` retries the tick (tenacity-backed exp backoff,
             5 attempts), ``"isolate"`` logs and continues siblings,
             ``"fail_watershed"`` re-raises and cancels the whole graph.
-        skip_threshold: Multiplier on ``interval``.  If an upstream has been
-            running longer than ``skip_threshold * interval`` for this tick,
-            the current skips with reason ``"skip_ahead"``.
         inflow: Optional sidecar ``.py`` path (per-current override of the
             watershed-level default).
         outflow: Optional sidecar ``.py`` path (per-current override of the
             watershed-level default).
+
+    Note: the old ``skip_threshold`` field moved to per-edge
+    :class:`~.flow.SurgeBarrier`.  Edge-level placement matches the
+    architectural reality (one dependent can declare different surge
+    tolerances per upstream); the canonical default (``2.0``, action
+    ``"skip"``) lives on :class:`~.flow.SurgeBarrier` itself.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -61,7 +64,6 @@ class Current(BaseModel):
     interval: float = Field(..., gt=0.0, description="Seconds between ticks; must be positive.")
     depends_on: List[str] = Field(default_factory=list)
     on_error: OnErrorPolicy = "restart"
-    skip_threshold: float = Field(2.0, gt=0.0)
     inflow: Optional[Path] = None
     outflow: Optional[Path] = None
 

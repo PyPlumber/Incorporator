@@ -1,11 +1,15 @@
 """The :class:`Tideweaver` orchestrator — async run-loop, dep gating, drain.
 
 The scheduler walks the :class:`Watershed`'s topological order on every pass.
-Each :class:`Current` ticks on its own interval; hard edges gate the dependent
-until the upstream has emitted a new wave since the dependent last consumed.
-Soft edges only sequence the in-pass order — no data wait.  Skip-ahead
-short-circuits a dependent when its upstream's in-flight tick has been running
-longer than ``skip_threshold * dependent.interval``.
+Each :class:`Current` ticks on its own interval; each inbound edge's
+:class:`~.flow.FlowControl` decides whether the dependent fires this pass.
+``HardLock`` blocks until the upstream has emitted a new wave since the
+dependent last consumed; ``SoftPass`` is fire-and-forget; ``Weir`` is the
+middle ground — gates on freshness but doesn't block on in-flight upstream.
+``SurgeBarrier`` (when configured on an edge) overrides the gate when
+upstream has been in-flight longer than ``threshold_multiple * dependent.interval``,
+producing ``"skip_ahead"`` (action ``"skip"``), ``"surge_halted"``
+(action ``"halt"``), or letting the dependent fire (action ``"bypass"``).
 
 Per-tick bodies live in this module too:
 
@@ -38,6 +42,7 @@ from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_
 from ...io.fetch import HTTPClientBuilder
 from ..pipeline._outflow import flush
 from .current import Current, Export, Fjord, Stream
+from .flow import FlowControl
 from .tide import Tide
 from .watershed import Watershed
 
@@ -115,12 +120,10 @@ class Tideweaver:
 
     Internally the scheduler walks the watershed's topological order
     each pass, tracking per-current last-tick times, in-flight tasks,
-    and per-edge consumption watermarks.  Hard edges gate the
-    dependent until the upstream emits a new wave since the dependent
-    last consumed; soft edges only sequence the in-pass order.  A
-    skip-ahead short-circuit drops a dependent when the upstream's
-    in-flight tick has run longer than
-    ``skip_threshold * dependent.interval``.
+    and per-edge consumption watermarks.  Each inbound edge's
+    :class:`~.flow.FlowControl` decides the pass/hold question; a
+    per-edge :class:`~.flow.SurgeBarrier` can override the gate when
+    upstream is in-flight beyond the configured threshold.
     """
 
     def __init__(
@@ -148,9 +151,13 @@ class Tideweaver:
         self._tide_number = 0
         self._currents_by_name: Dict[str, Current] = {c.name: c for c in watershed.currents}
         self._topo: List[str] = watershed.toposort()
-        self._upstream: Dict[str, List[Tuple[str, str]]] = {c.name: [] for c in watershed.currents}
+        # _upstream maps a dependent's name to the list of (upstream_name,
+        # FlowControl) tuples governing its inbound edges.  FlowControl is
+        # the per-edge bundle of gate + surge_barrier + penstock + reservoir
+        # + spillway; the scheduler reaches into it for gating decisions.
+        self._upstream: Dict[str, List[Tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
         for e in watershed.edges:
-            self._upstream[e.to_name].append((e.from_name, e.mode))
+            self._upstream[e.to_name].append((e.from_name, e.flow))
         # Watershed topology is immutable for the run, so cache the
         # transitive-closure result per dependent.  Populated lazily by
         # ``_transitive_upstreams``.
@@ -330,27 +337,33 @@ class Tideweaver:
         return Tide(tide_number=self._tide_number, fired=fired, skipped=skipped, duration_sec=duration)
 
     def _gate_reason(self, current: Current, now: float) -> Optional[str]:
-        """Return ``None`` if ``current`` may fire; else a short skip reason."""
+        """Return ``None`` if ``current`` may fire; else a short skip reason.
+
+        Walks each inbound edge's :class:`FlowControl`:
+
+        1. :class:`SurgeBarrier` (if configured) gets first look.  When
+           tripped under ``action="skip"`` it shortcuts to
+           ``"skip_ahead"``; under ``"bypass"`` it lets the dependent
+           fire ignoring this edge's gate; under ``"halt"`` it returns
+           ``"surge_halted"``.
+        2. :class:`Gate` (HardLock / SoftPass / Weir) handles the normal
+           pass/hold decision.
+        """
         last = self._state[current.name].last_tick_started
         if last is not None and (now - last) < current.interval:
             return "not_due"
-        for up_name, mode in self._upstream[current.name]:
-            up_state = self._state[up_name]
-            in_flight = up_state.in_flight
-            if in_flight is not None and not in_flight.done():
-                started = up_state.started_at
-                elapsed = now - (started if started is not None else now)
-                if elapsed > current.skip_threshold * current.interval:
+        for up_name, flow in self._upstream[current.name]:
+            surge = flow.surge_barrier
+            if surge is not None and surge.is_tripped(self, current, up_name, now):
+                if surge.action == "skip":
                     return "skip_ahead"
-                if mode == "hard":
-                    return "awaiting_upstream"
-            if mode == "hard":
-                upstream_wave = up_state.last_wave_at
-                if upstream_wave is None:
-                    return "awaiting_upstream"
-                consumed = self._last_consumed.get((current.name, up_name))
-                if consumed is not None and upstream_wave <= consumed:
-                    return "awaiting_upstream"
+                if surge.action == "halt":
+                    return "surge_halted"
+                # action == "bypass" — fire ignoring this edge's gate.
+                continue
+            gate_reason = flow.gate.gate_reason(self, current, up_name, now)
+            if gate_reason is not None:
+                return gate_reason
         return None
 
     def _spawn_tick(self, current: Current) -> None:
@@ -369,7 +382,7 @@ class Tideweaver:
         # does preserve it, but that's an implementation detail of the
         # ``on_error="restart"`` policy in ``_tick_wrapper`` below).
         consumed_snapshot: Dict[str, datetime] = {}
-        for up_name, _mode in self._upstream[current.name]:
+        for up_name, _flow in self._upstream[current.name]:
             up_wave = self._state[up_name].last_wave_at
             if up_wave is not None:
                 consumed_snapshot[up_name] = up_wave
@@ -410,7 +423,7 @@ class Tideweaver:
             for up_name, value in consumed_snapshot.items():
                 self._last_consumed[(current.name, up_name)] = value
             # Also bump consumed for any upstream that produced a wave during this tick.
-            for up_name, _mode in self._upstream[current.name]:
+            for up_name, _flow in self._upstream[current.name]:
                 latest = self._state[up_name].last_wave_at
                 if latest is not None:
                     self._last_consumed[(current.name, up_name)] = latest

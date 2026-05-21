@@ -179,7 +179,7 @@ async def test_chain_three_streams_apply_conv_dict_in_order(
     # cadence within a tight test window. Test 2 below exercises hard-chain
     # ordering with three currents (chars → eps → joined Fjord).
     ws = Watershed.chain(
-        window=_short_window(8.0), currents=[users, posts, comments], dependency_mode="soft"
+        window=_short_window(8.0), currents=[users, posts, comments], gate_mode="soft"
     )
     tw = Tideweaver(ws, pass_interval=0.05)
     tides = [tide async for tide in tw.run()]
@@ -317,13 +317,14 @@ async def test_chain_streams_into_fjord_tail_reads_both_upstream_snapshots(
         name="joined",
         cls=RMJoined,
         interval=0.2,
-        skip_threshold=50.0,
         on_error="isolate",
         outflow=outflow_py,
         export_params={"file_path": str(out_file), "format": "ndjson", "if_exists": "append"},
     )
 
-    ws = Watershed.chain(window=_short_window(8.0), currents=[chars, eps, tail])
+    # gate_mode="weir" lets the fast Fjord fire on its own cadence while the
+    # paginated Streams are in-flight — replaces the old skip_threshold=50.0 hack.
+    ws = Watershed.chain(window=_short_window(8.0), currents=[chars, eps, tail], gate_mode="weir")
     tw = Tideweaver(ws, pass_interval=0.05)
     tides = [tide async for tide in tw.run()]
 

@@ -5,6 +5,11 @@ window opens and closes, which :class:`Current` nodes are in the graph, and
 which edges connect them.  Four shape constructors cover the common topologies
 (``chain`` / ``diamond`` / ``fanout`` / ``parallel``); the bare ``Watershed(...)``
 constructor stays available for custom shapes with mixed-mode edges.
+
+Each edge carries a :class:`~.flow.FlowControl` — the per-edge composition of
+gate / surge barrier / penstock / reservoir / spillway that the scheduler
+honours.  The simpler ``gate_mode=`` shorthand on the shape constructors maps
+to ``FlowControl`` via :func:`~.flow.flow_from_mode`.
 """
 
 from __future__ import annotations
@@ -12,39 +17,54 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, List, Literal, Optional, Sequence, Tuple
+from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .current import Current
-
-DependencyMode = Literal["hard", "soft"]
+from .flow import FlowControl, GateMode, flow_from_mode
 
 
 class Edge(BaseModel):
-    """The dependency-edge contract: link one current to another with a gating mode.
+    """The dependency-edge contract: link one current to another with a :class:`FlowControl`.
 
-    ``"hard"`` blocks the downstream until the upstream emits a new
-    wave since the downstream last consumed; ``"soft"`` is
-    fire-and-forget, only sequencing the in-pass order:
+    Each edge carries a :class:`~.flow.FlowControl` describing how waves
+    pass through it — gate (pass/hold), optional surge barrier, optional
+    penstock (rate limit), reservoir (buffer depth), spillway (overflow
+    handler).  Defaults match today's behavior: ``FlowControl()`` is
+    ``HardLock + no penstock + Reservoir(depth=1) + DropOldest + no
+    surge barrier``.
 
     .. code-block:: python
 
-        Edge(from_name="binance", to_name="arb_fjord", mode="hard")
+        # Default — hard gating, single-wave snapshot.
+        Edge(from_name="binance", to_name="arb_fjord")
+
+        # Shorthand via mode string.
+        Edge(from_name="binance", to_name="arb_fjord", flow=flow_from_mode("weir"))
+
+        # Full control.
+        Edge(
+            from_name="binance",
+            to_name="arb_fjord",
+            flow=FlowControl(
+                gate=Weir(),
+                reservoir=Reservoir(depth=5),
+                surge_barrier=SurgeBarrier(threshold_multiple=10.0, action="bypass"),
+            ),
+        )
 
     Attributes:
         from_name: The upstream current name.
         to_name: The dependent current name.
-        mode: ``"hard"`` gates the dependent until the upstream emits a
-            new wave; ``"soft"`` only sequences the in-tick order
-            without a data wait.
+        flow: The :class:`FlowControl` governing this edge.
     """
 
     model_config = ConfigDict(frozen=True)
 
     from_name: str
     to_name: str
-    mode: DependencyMode = "hard"
+    flow: FlowControl = Field(default_factory=FlowControl)
 
 
 def _toposort(currents: Sequence[Current], edges: Sequence[Edge]) -> List[str]:
@@ -71,6 +91,23 @@ def _toposort(currents: Sequence[Current], edges: Sequence[Edge]) -> List[str]:
             "Tideweaver requires a directed acyclic graph of currents."
         )
     return order
+
+
+def _resolve_flow(
+    gate_mode: Optional[GateMode],
+    flow: Optional[FlowControl],
+    default_mode: GateMode = "hard",
+) -> FlowControl:
+    """Resolve a (gate_mode, flow) pair into a single :class:`FlowControl`.
+
+    Mutually exclusive: passing both raises ``ValueError``.  Passing neither
+    returns the canonical default for ``default_mode``.
+    """
+    if gate_mode is not None and flow is not None:
+        raise ValueError("Pass either gate_mode= (shorthand) or flow= (full FlowControl), not both.")
+    if flow is not None:
+        return flow
+    return flow_from_mode(gate_mode or default_mode)
 
 
 class Watershed(BaseModel):
@@ -102,7 +139,7 @@ class Watershed(BaseModel):
             be unique.
         edges: Directed :class:`Edge` list; any
             ``Current.depends_on`` declarations are folded in as
-            ``"hard"`` edges at validation time.
+            default-FlowControl ``"hard"`` edges at validation time.
         inflow: Graph-level default sidecar path; per-current
             ``inflow`` overrides.
         outflow: Graph-level default outflow path; per-current
@@ -129,8 +166,8 @@ class Watershed(BaseModel):
         """Enforce: unique names, window order, edge endpoints exist, no cycles.
 
         Also folds any ``Current.depends_on`` declarations into ``edges``
-        with mode ``"hard"`` so users can specify dependencies the short
-        way without losing the explicit-mode option.
+        with default ``FlowControl`` (hard gating) so users can specify
+        dependencies the short way without losing the explicit-flow option.
         """
         names = [c.name for c in self.currents]
         counts = Counter(names)
@@ -144,13 +181,13 @@ class Watershed(BaseModel):
 
         name_set = set(names)
 
-        # Fold depends_on into edges (mode='hard') unless an explicit edge
-        # already covers that pair.
+        # Fold depends_on into edges (default FlowControl = hard) unless an
+        # explicit edge already covers that pair.
         existing = {(e.from_name, e.to_name) for e in self.edges}
         for c in self.currents:
             for dep in c.depends_on:
                 if (dep, c.name) not in existing:
-                    self.edges.append(Edge(from_name=dep, to_name=c.name, mode="hard"))
+                    self.edges.append(Edge(from_name=dep, to_name=c.name))
                     existing.add((dep, c.name))
 
         for e in self.edges:
@@ -177,7 +214,8 @@ class Watershed(BaseModel):
         *,
         window: Tuple[datetime, datetime],
         currents: Sequence[Current],
-        dependency_mode: DependencyMode = "hard",
+        gate_mode: Optional[GateMode] = None,
+        flow: Optional[FlowControl] = None,
         **kwargs: Any,
     ) -> "Watershed":
         """Sequential pipeline where each current waits for its upstream's data.
@@ -191,17 +229,17 @@ class Watershed(BaseModel):
             watershed = Watershed.chain(
                 window=(start, end),
                 currents=[load, enrich, validate, export],
+                gate_mode="weir",
             )
 
         Builds ``currents[0] → currents[1] → ... → currents[-1]`` with
-        all edges in ``dependency_mode`` (default ``"hard"``).  Contrast
-        with :meth:`parallel`, which produces the same currents list
-        but with no edges at all.
+        every edge sharing one :class:`FlowControl`.  Pass ``gate_mode=``
+        for the simple case (``"hard"`` / ``"soft"`` / ``"weir"``) or
+        ``flow=`` for full per-edge control; passing both raises.
         """
+        resolved = _resolve_flow(gate_mode, flow)
         currents = list(currents)
-        edges = [
-            Edge(from_name=a.name, to_name=b.name, mode=dependency_mode) for a, b in zip(currents[:-1], currents[1:])
-        ]
+        edges = [Edge(from_name=a.name, to_name=b.name, flow=resolved) for a, b in zip(currents[:-1], currents[1:])]
         return cls(window=window, currents=currents, edges=edges, **kwargs)
 
     @classmethod
@@ -212,7 +250,8 @@ class Watershed(BaseModel):
         head: Current,
         middle: Sequence[Current],
         tail: Current,
-        dependency_mode: DependencyMode = "hard",
+        gate_mode: Optional[GateMode] = None,
+        flow: Optional[FlowControl] = None,
         **kwargs: Any,
     ) -> "Watershed":
         """The canonical multi-source fusion shape — one head feeds N middle stages that all converge into one tail.
@@ -231,19 +270,21 @@ class Watershed(BaseModel):
                 head=binance_stream,
                 middle=[coinbase_stream, kraken_stream],
                 tail=arb_fjord,
+                gate_mode="weir",
             )
 
-        Builds ``head → each middle → tail`` with every edge in
-        ``dependency_mode`` (default ``"hard"``).
+        Builds ``head → each middle → tail`` with every edge sharing
+        one :class:`FlowControl`.
         """
+        resolved = _resolve_flow(gate_mode, flow)
         middle = list(middle)
         if not middle:
             raise ValueError("Watershed.diamond requires at least one middle current.")
         currents: List[Current] = [head, *middle, tail]
         edges: List[Edge] = []
         for m in middle:
-            edges.append(Edge(from_name=head.name, to_name=m.name, mode=dependency_mode))
-            edges.append(Edge(from_name=m.name, to_name=tail.name, mode=dependency_mode))
+            edges.append(Edge(from_name=head.name, to_name=m.name, flow=resolved))
+            edges.append(Edge(from_name=m.name, to_name=tail.name, flow=resolved))
         return cls(window=window, currents=currents, edges=edges, **kwargs)
 
     @classmethod
@@ -253,7 +294,8 @@ class Watershed(BaseModel):
         window: Tuple[datetime, datetime],
         source: Current,
         sinks: Sequence[Current],
-        dependency_mode: DependencyMode = "hard",
+        gate_mode: Optional[GateMode] = None,
+        flow: Optional[FlowControl] = None,
         **kwargs: Any,
     ) -> "Watershed":
         """Broadcast a single source to multiple downstream consumers, each on its own interval.
@@ -271,16 +313,15 @@ class Watershed(BaseModel):
                 sinks=[ndjson_export, parquet_export, sqlite_export],
             )
 
-        Builds ``source → each sink`` with edges in
-        ``dependency_mode`` (default ``"hard"``).  Contrast with
-        :meth:`diamond`, which adds a tail that fuses all middle
-        currents back together.
+        Builds ``source → each sink`` with every edge sharing one
+        :class:`FlowControl`.
         """
+        resolved = _resolve_flow(gate_mode, flow)
         sinks = list(sinks)
         if not sinks:
             raise ValueError("Watershed.fanout requires at least one sink current.")
         currents: List[Current] = [source, *sinks]
-        edges = [Edge(from_name=source.name, to_name=s.name, mode=dependency_mode) for s in sinks]
+        edges = [Edge(from_name=source.name, to_name=s.name, flow=resolved) for s in sinks]
         return cls(window=window, currents=currents, edges=edges, **kwargs)
 
     @classmethod
@@ -305,13 +346,14 @@ class Watershed(BaseModel):
                 currents=[binance_stream, coingecko_stream, nhtsa_stream],
             )
 
-        Rejects any ``dependency_mode`` kwarg — parallel has no edges
-        to mode.
+        Rejects any ``gate_mode`` or ``flow`` kwarg — parallel has no
+        edges to govern.
         """
-        if "dependency_mode" in kwargs:
-            raise TypeError(
-                "Watershed.parallel does not accept a dependency_mode — "
-                "there are no edges to apply a mode to.  Use chain/diamond/fanout, "
-                "or pass an explicit edges= list to the Watershed(...) constructor."
-            )
+        for blocked in ("gate_mode", "flow"):
+            if blocked in kwargs:
+                raise TypeError(
+                    f"Watershed.parallel does not accept a {blocked} — "
+                    "there are no edges to govern.  Use chain/diamond/fanout, "
+                    "or pass an explicit edges= list to the Watershed(...) constructor."
+                )
         return cls(window=window, currents=list(currents), edges=[], **kwargs)

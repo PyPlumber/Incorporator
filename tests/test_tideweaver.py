@@ -28,11 +28,23 @@ from incorporator.observability.tideweaver import (
     Edge,
     Export,
     Fjord,
+    FlowControl,
+    HardLock,
+    SoftPass,
     Stream,
+    SurgeBarrier,
     Tide,
     Tideweaver,
     Watershed,
+    Weir,
+    flow_from_mode,
 )
+
+
+def _gate_name(edge: Edge) -> str:
+    """Return the short canal-mode name for an edge's gate ('hard', 'soft', 'weir')."""
+    cls = type(edge.flow.gate).__name__
+    return {"HardLock": "hard", "SoftPass": "soft", "Weir": "weir"}[cls]
 
 
 # ---------------------------------------------------------------------------
@@ -79,10 +91,10 @@ def _stream(name: str, interval: float = 5.0, depends_on: List[str] | None = Non
 
 
 def test_chain_edges() -> None:
-    """``Watershed.chain([A, B, C])`` produces edges A→B, B→C with mode=hard."""
+    """``Watershed.chain([A, B, C])`` produces edges A→B, B→C with HardLock gates."""
     a, b, c = _stream("a"), _stream("b"), _stream("c")
     ws = Watershed.chain(window=_window(), currents=[a, b, c])
-    assert [(e.from_name, e.to_name, e.mode) for e in ws.edges] == [
+    assert [(e.from_name, e.to_name, _gate_name(e)) for e in ws.edges] == [
         ("a", "b", "hard"),
         ("b", "c", "hard"),
     ]
@@ -90,12 +102,12 @@ def test_chain_edges() -> None:
 
 
 def test_diamond_edges() -> None:
-    """``Watershed.diamond(head, [M1, M2], tail)`` produces 4 hard edges."""
+    """``Watershed.diamond(head, [M1, M2], tail)`` produces 4 hard-gated edges."""
     head, m1, m2, tail = _stream("a"), _stream("b"), _stream("c"), _stream("d")
     ws = Watershed.diamond(window=_window(), head=head, middle=[m1, m2], tail=tail)
     edges = {(e.from_name, e.to_name) for e in ws.edges}
     assert edges == {("a", "b"), ("a", "c"), ("b", "d"), ("c", "d")}
-    assert all(e.mode == "hard" for e in ws.edges)
+    assert all(_gate_name(e) == "hard" for e in ws.edges)
 
 
 def test_fanout_edges() -> None:
@@ -112,32 +124,32 @@ def test_parallel_no_edges() -> None:
     assert ws.edges == []
 
 
-def test_parallel_rejects_dependency_mode() -> None:
-    """``Watershed.parallel(dependency_mode=...)`` raises TypeError — no edges to mode."""
+def test_parallel_rejects_gate_mode() -> None:
+    """``Watershed.parallel(gate_mode=...)`` raises TypeError — no edges to govern."""
     a, b = _stream("a"), _stream("b")
-    with pytest.raises(TypeError, match="dependency_mode"):
-        Watershed.parallel(window=_window(), currents=[a, b], dependency_mode="hard")  # type: ignore[call-arg]
+    with pytest.raises(TypeError, match="gate_mode"):
+        Watershed.parallel(window=_window(), currents=[a, b], gate_mode="hard")  # type: ignore[call-arg]
 
 
 def test_soft_mode_edges() -> None:
-    """``chain(..., dependency_mode='soft')`` produces edges with mode='soft'."""
+    """``chain(..., gate_mode='soft')`` produces edges with SoftPass gates."""
     a, b, c = _stream("a"), _stream("b"), _stream("c")
-    ws = Watershed.chain(window=_window(), currents=[a, b, c], dependency_mode="soft")
-    assert all(e.mode == "soft" for e in ws.edges)
+    ws = Watershed.chain(window=_window(), currents=[a, b, c], gate_mode="soft")
+    assert all(_gate_name(e) == "soft" for e in ws.edges)
 
 
 def test_custom_mixed_mode_edges() -> None:
-    """The bare ``Watershed(...)`` constructor accepts edges with mixed modes."""
+    """The bare ``Watershed(...)`` constructor accepts edges with mixed gates."""
     a, b, c = _stream("a"), _stream("b"), _stream("c")
     ws = Watershed(
         window=_window(),
         currents=[a, b, c],
         edges=[
-            Edge(from_name="a", to_name="b", mode="hard"),
-            Edge(from_name="b", to_name="c", mode="soft"),
+            Edge(from_name="a", to_name="b", flow=flow_from_mode("hard")),
+            Edge(from_name="b", to_name="c", flow=flow_from_mode("soft")),
         ],
     )
-    modes = {(e.from_name, e.to_name): e.mode for e in ws.edges}
+    modes = {(e.from_name, e.to_name): _gate_name(e) for e in ws.edges}
     assert modes == {("a", "b"): "hard", ("b", "c"): "soft"}
 
 
@@ -198,11 +210,11 @@ def test_stream_rejects_stateful_polling_kwarg() -> None:
 
 
 def test_current_depends_on_folded_into_edges() -> None:
-    """A Current.depends_on value materialises as a hard edge on the watershed."""
+    """A Current.depends_on value materialises as a hard-gated edge on the watershed."""
     a = _stream("a")
     b = Stream(name="b", cls=_B, interval=5.0, incorp_params={}, depends_on=["a"])
     ws = Watershed(window=_window(), currents=[a, b])
-    assert {(e.from_name, e.to_name, e.mode) for e in ws.edges} == {("a", "b", "hard")}
+    assert {(e.from_name, e.to_name, _gate_name(e)) for e in ws.edges} == {("a", "b", "hard")}
 
 
 def test_subclass_variants_construct() -> None:
@@ -288,7 +300,7 @@ async def test_soft_mode_no_gate() -> None:
 
     a = _stream("a", interval=0.1)
     b = _stream("b", interval=0.1)
-    ws = Watershed.chain(window=_short_window(0.5), currents=[a, b], dependency_mode="soft")
+    ws = Watershed.chain(window=_short_window(0.5), currents=[a, b], gate_mode="soft")
     tw = Tideweaver(ws, tick_factory=fake_tick, pass_interval=0.05)
     await _collect_tides(tw)
     # Soft mode: B fires regardless of A's wave history.  Counts should be close.
@@ -297,7 +309,12 @@ async def test_soft_mode_no_gate() -> None:
 
 @pytest.mark.asyncio
 async def test_skip_ahead() -> None:
-    """B skips with 'skip_ahead' when upstream A is still running > threshold * B.interval."""
+    """B skips with 'skip_ahead' when upstream A is still running > SurgeBarrier threshold.
+
+    Default ``gate_mode="hard"`` attaches a default ``SurgeBarrier``
+    (threshold_multiple=2.0, action='skip') — same effect as the old
+    ``Current.skip_threshold`` field, now at the edge layer.
+    """
 
     async def slow_a(current: Current) -> None:
         if current.name == "a":
@@ -310,6 +327,172 @@ async def test_skip_ahead() -> None:
     tides = await _collect_tides(tw)
     skip_reasons = [reason for tide in tides for _name, reason in tide.skipped]
     assert "skip_ahead" in skip_reasons
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: Weir gating + SurgeBarrier + FlowControl construction
+# ---------------------------------------------------------------------------
+
+
+def test_flow_from_mode_builds_hard_soft_weir_with_correct_defaults() -> None:
+    """Mode shorthand: hard adds SurgeBarrier; soft/weir omit it."""
+    hard = flow_from_mode("hard")
+    soft = flow_from_mode("soft")
+    weir = flow_from_mode("weir")
+    assert isinstance(hard.gate, HardLock)
+    assert isinstance(soft.gate, SoftPass)
+    assert isinstance(weir.gate, Weir)
+    assert isinstance(hard.surge_barrier, SurgeBarrier)
+    assert hard.surge_barrier.threshold_multiple == 2.0
+    assert hard.surge_barrier.action == "skip"
+    assert soft.surge_barrier is None
+    assert weir.surge_barrier is None
+
+
+def test_watershed_rejects_both_gate_mode_and_flow() -> None:
+    """chain/.diamond/.fanout raise ValueError when both gate_mode and flow are passed."""
+    a, b = _stream("a"), _stream("b")
+    with pytest.raises(ValueError, match="not both"):
+        Watershed.chain(
+            window=_window(),
+            currents=[a, b],
+            gate_mode="hard",
+            flow=FlowControl(gate=Weir()),
+        )
+
+
+def test_edge_default_flow_is_hard_lock_plus_default_reservoir() -> None:
+    """Edge() with no flow= kwarg builds a HardLock + DropOldest + Reservoir(depth=1)."""
+    e = Edge(from_name="a", to_name="b")
+    assert isinstance(e.flow.gate, HardLock)
+    assert e.flow.surge_barrier is None  # bare Edge() doesn't inherit hard's SurgeBarrier
+    assert e.flow.reservoir.depth == 1
+    assert e.flow.penstock is None
+
+
+@pytest.mark.asyncio
+async def test_weir_fires_on_own_interval_after_first_upstream_wave() -> None:
+    """In a weir chain A→B, B fires on its own cadence once A has emitted at least once.
+
+    Distinguishes weir from hard: weir doesn't block on in-flight upstream;
+    once A has emitted a wave the dependent hasn't consumed, B fires.
+    """
+    fires: List[str] = []
+
+    async def fake_tick(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.3)  # slow upstream
+        fires.append(current.name)
+
+    a = _stream("a", interval=0.8)  # rare
+    b = _stream("b", interval=0.1)  # fast
+    ws = Watershed.chain(window=_short_window(1.5), currents=[a, b], gate_mode="weir")
+    tw = Tideweaver(ws, tick_factory=fake_tick, pass_interval=0.05)
+    await _collect_tides(tw)
+    # B should fire multiple times in the window (its own cadence) once A has emitted.
+    assert fires.count("a") >= 1, "A must fire at least once to unlock B's gate"
+    assert fires.count("b") >= 2, f"B must fire multiple times after A's first wave; got {fires.count('b')}"
+
+
+@pytest.mark.asyncio
+async def test_weir_waits_for_initial_upstream_emission() -> None:
+    """Weir B does NOT fire BEFORE A's first wave — distinguishes weir from soft.
+
+    A spawns on pass 1 (and is in ``tide.fired``) but takes 0.3s to
+    complete.  During those 0.3s, B's interval (0.1s) elapses
+    repeatedly — Weir requires a fresh upstream wave, so B must skip
+    with ``awaiting_upstream`` until A's first wave lands.
+    """
+    fires: List[str] = []
+
+    async def fake_tick(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.3)
+        fires.append(current.name)
+
+    a = _stream("a", interval=0.8)
+    b = _stream("b", interval=0.1)
+    ws = Watershed.chain(window=_short_window(1.5), currents=[a, b], gate_mode="weir")
+    tw = Tideweaver(ws, tick_factory=fake_tick, pass_interval=0.05)
+    tides = await _collect_tides(tw)
+    awaiting_skips = [
+        reason for tide in tides for name, reason in tide.skipped if name == "b" and reason == "awaiting_upstream"
+    ]
+    assert awaiting_skips, "Weir B must skip with 'awaiting_upstream' while waiting for A's first wave"
+
+
+@pytest.mark.asyncio
+async def test_weir_no_skip_ahead_on_long_upstream() -> None:
+    """In weir mode, slow upstream does NOT trigger skip-ahead — SurgeBarrier not auto-attached.
+
+    Hard mode (test_skip_ahead above) emits 'skip_ahead' here.  Weir doesn't.
+    """
+
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.6)  # >> 2.0 * 0.1 — would trip default SurgeBarrier if attached
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.1)
+    ws = Watershed.chain(window=_short_window(0.7), currents=[a, b], gate_mode="weir")
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
+    tides = await _collect_tides(tw)
+    skip_reasons = [reason for tide in tides for _name, reason in tide.skipped]
+    assert "skip_ahead" not in skip_reasons, (
+        "Weir mode must NOT attach a default SurgeBarrier; skip_ahead leaked through"
+    )
+
+
+@pytest.mark.asyncio
+async def test_surge_barrier_bypass_forces_pass_under_extreme_upstream() -> None:
+    """SurgeBarrier(action='bypass') makes B fire even while A is in-flight beyond threshold."""
+    fires: List[str] = []
+
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.6)
+        fires.append(current.name)
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.1)
+    bypass_flow = FlowControl(
+        gate=HardLock(),
+        surge_barrier=SurgeBarrier(threshold_multiple=2.0, action="bypass"),
+    )
+    ws = Watershed(
+        window=_short_window(0.7),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=bypass_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
+    await _collect_tides(tw)
+    # Under bypass, B fires multiple times during A's long in-flight.
+    assert fires.count("b") >= 2, f"bypass must let B fire during A's slow tick; got {fires.count('b')}"
+
+
+@pytest.mark.asyncio
+async def test_surge_barrier_halt_circuit_breaks_until_upstream_completes() -> None:
+    """SurgeBarrier(action='halt') yields skip reason 'surge_halted' while A is overrun."""
+
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.6)
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.1)
+    halt_flow = FlowControl(
+        gate=HardLock(),
+        surge_barrier=SurgeBarrier(threshold_multiple=2.0, action="halt"),
+    )
+    ws = Watershed(
+        window=_short_window(0.7),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=halt_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
+    tides = await _collect_tides(tw)
+    skip_reasons = [reason for tide in tides for _name, reason in tide.skipped]
+    assert "surge_halted" in skip_reasons, f"halt must surface 'surge_halted'; got {skip_reasons}"
 
 
 @pytest.mark.asyncio
@@ -547,7 +730,7 @@ def _watershed_json_body(shape: str, *, with_mode: bool = True) -> Dict[str, Any
         "drain_timeout": 5,
     }
     if with_mode and shape != "parallel":
-        body["dependency_mode"] = "hard"
+        body["gate_mode"] = "hard"
     return body
 
 
@@ -643,7 +826,7 @@ def test_json_custom_shape(tmp_path: Path) -> None:
     cfg = tmp_path / "ws.json"
     cfg.write_text(json.dumps(body), encoding="utf-8")
     ws = load_watershed(cfg)
-    modes = {(e.from_name, e.to_name): e.mode for e in ws.edges}
+    modes = {(e.from_name, e.to_name): _gate_name(e) for e in ws.edges}
     assert modes == {("a", "b"): "hard", ("b", "c"): "soft"}
 
 
@@ -878,8 +1061,8 @@ def test_validate_rejects_bad_outflow_arity(tmp_path: Path) -> None:
     assert any("outflow()" in e and "1 parameter" in e for e in errs)
 
 
-def test_validate_rejects_parallel_with_dependency_mode(tmp_path: Path) -> None:
-    """parallel shape refuses 'dependency_mode' — there are no edges to mode."""
+def test_validate_rejects_parallel_with_gate_mode(tmp_path: Path) -> None:
+    """parallel shape refuses 'gate_mode' — there are no edges to govern."""
     from incorporator.cli.validate import validate_watershed_config
 
     _write_outflow_with_classes(tmp_path)
@@ -887,11 +1070,11 @@ def test_validate_rejects_parallel_with_dependency_mode(tmp_path: Path) -> None:
         "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
         "shape": "parallel",
         "outflow": "outflow.py",
-        "dependency_mode": "hard",
+        "gate_mode": "hard",
         "currents": [{"name": "a", "class": "LapData", "verb": "stream", "interval": 30}],
     }
     errs = validate_watershed_config(body, tmp_path)
-    assert any("dependency_mode" in e and "parallel" in e for e in errs)
+    assert any("gate_mode" in e and "parallel" in e for e in errs)
 
 
 def test_validate_rejects_custom_cycle(tmp_path: Path) -> None:
@@ -1132,8 +1315,8 @@ async def test_real_stream_to_fjord_chain_sees_upstream_snapshot(
 
     # Stream's live HTTP/AsyncClient/pydantic stack adds noticeable per-tick
     # overhead.  Pick a Stream interval >> tick duration so a real gap opens
-    # between Stream ticks; the Fjord's short interval + generous
-    # skip_threshold ensures it fires inside that gap.
+    # between Stream ticks; the edge's loose SurgeBarrier ensures the Fjord
+    # keeps firing inside that gap.
     posts = Stream(
         name="posts",
         cls=ChainedPost,
@@ -1145,12 +1328,13 @@ async def test_real_stream_to_fjord_chain_sees_upstream_snapshot(
         name="state",
         cls=ChainedState,
         interval=0.2,
-        skip_threshold=50.0,
         export_params={"file_path": str(out_file), "format": "ndjson", "if_exists": "append"},
         outflow=outflow_py,
         on_error="fail_watershed",
     )
-    ws = Watershed.chain(window=_short_window(5.0), currents=[posts, fjord])
+    # gate_mode="weir" lets the fast Fjord fire on its own cadence while the
+    # slow Stream is in-flight — replaces the old skip_threshold=50.0 hack.
+    ws = Watershed.chain(window=_short_window(5.0), currents=[posts, fjord], gate_mode="weir")
     tw = Tideweaver(ws, pass_interval=0.05)
     await _collect_tides(tw)
 
@@ -1239,12 +1423,13 @@ async def test_fjord_flush_parks_tideweaver_snapshot_on_output_class(
         name="state",
         cls=DerivedState,
         interval=0.2,
-        skip_threshold=50.0,
         export_params={"file_path": str(out_file), "format": "ndjson", "if_exists": "replace"},
         outflow=outflow_py,
         on_error="fail_watershed",
     )
-    ws = Watershed.chain(window=_short_window(2.0), currents=[posts, fjord])
+    # gate_mode="weir" lets the Fjord fire on its own cadence while the
+    # slow Stream is in-flight.
+    ws = Watershed.chain(window=_short_window(2.0), currents=[posts, fjord], gate_mode="weir")
     tw = Tideweaver(ws, pass_interval=0.05)
     await _collect_tides(tw)
 

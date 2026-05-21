@@ -33,7 +33,7 @@ ConfigType = Literal["stream", "fjord", "tideweaver"]
 _TIDEWEAVER_SHAPES = {"chain", "diamond", "fanout", "parallel", "custom"}
 _TIDEWEAVER_VERBS = {"stream", "fjord", "export"}
 _TIDEWEAVER_ON_ERROR = {"restart", "isolate", "fail_watershed"}
-_TIDEWEAVER_EDGE_MODES = {"hard", "soft"}
+_TIDEWEAVER_EDGE_MODES = {"hard", "soft", "weir"}
 
 # Source keys recognised by incorp() — at least one must be present in
 # `incorp_params` for a stream config to be valid.
@@ -235,15 +235,16 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
         errors.append(f"'shape' must be one of {sorted(_TIDEWEAVER_SHAPES)}; got {shape!r}.")
         return errors  # downstream checks all assume a known shape
 
-    # --- drain_timeout / dependency_mode -------------------------------
+    # --- drain_timeout / gate_mode -------------------------------------
     if "drain_timeout" in config:
         dt = config["drain_timeout"]
         if not isinstance(dt, (int, float)) or dt < 0:
             errors.append("'drain_timeout', if present, must be a non-negative number (seconds).")
-    if shape == "parallel" and "dependency_mode" in config:
-        errors.append("'dependency_mode' is not valid with shape='parallel' (no edges to mode).")
-    if "dependency_mode" in config and config.get("dependency_mode") not in _TIDEWEAVER_EDGE_MODES:
-        errors.append(f"'dependency_mode' must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}.")
+    mode_key = "gate_mode" if "gate_mode" in config else "dependency_mode"
+    if shape == "parallel" and mode_key in config:
+        errors.append(f"{mode_key!r} is not valid with shape='parallel' (no edges to govern).")
+    if mode_key in config and config.get(mode_key) not in _TIDEWEAVER_EDGE_MODES:
+        errors.append(f"{mode_key!r} must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}.")
 
     # --- sidecars (import-check) ---------------------------------------
     _, inflow_module = _validate_sidecar_file(config, "inflow", config_dir, errors, capture_module=True)
@@ -397,9 +398,9 @@ def _validate_current_entry(
     if "on_error" in entry and entry["on_error"] not in _TIDEWEAVER_ON_ERROR:
         errors.append(f"{label}.on_error must be one of {sorted(_TIDEWEAVER_ON_ERROR)}.")
     if "skip_threshold" in entry:
-        st = entry["skip_threshold"]
-        if not isinstance(st, (int, float)) or st <= 0:
-            errors.append(f"{label}.skip_threshold must be a positive number.")
+        errors.append(
+            f"{label}.skip_threshold moved to per-edge SurgeBarrier(threshold_multiple=..., action=...) on FlowControl."
+        )
 
     # class string must resolve against inflow/outflow modules.
     cls_name = entry.get("class")

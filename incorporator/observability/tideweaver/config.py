@@ -22,7 +22,8 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from ...base import Incorporator
 from ...usercode import load_user_module
 from .current import Current, Export, Fjord, Stream
-from .watershed import DependencyMode, Edge, Watershed
+from .flow import GateMode, flow_from_mode
+from .watershed import Edge, Watershed
 
 
 def load_watershed(path: Path) -> Watershed:
@@ -77,33 +78,45 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
         "drain_timeout": drain_timeout,
     }
 
+    # JSON accepts ``gate_mode`` (canonical name); supports legacy
+    # ``dependency_mode`` as an alias for one release while the docs catch up.
+    def _gate_mode_for(raw_obj: Dict[str, Any]) -> GateMode:
+        key = "gate_mode" if "gate_mode" in raw_obj else "dependency_mode"
+        return cast(GateMode, raw_obj.get(key, "hard"))
+
     if shape == "chain":
         currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
-        mode = cast(DependencyMode, raw.get("dependency_mode", "hard"))
-        return Watershed.chain(currents=currents, dependency_mode=mode, **common)
+        return Watershed.chain(currents=currents, gate_mode=_gate_mode_for(raw), **common)
 
     if shape == "diamond":
         head = _build_current(raw["head"], outflow_module, inflow_module)
         middle = _build_currents(raw.get("middle", []), outflow_module, inflow_module)
         tail = _build_current(raw["tail"], outflow_module, inflow_module)
-        mode = cast(DependencyMode, raw.get("dependency_mode", "hard"))
-        return Watershed.diamond(head=head, middle=middle, tail=tail, dependency_mode=mode, **common)
+        return Watershed.diamond(head=head, middle=middle, tail=tail, gate_mode=_gate_mode_for(raw), **common)
 
     if shape == "fanout":
         source = _build_current(raw["source"], outflow_module, inflow_module)
         sinks = _build_currents(raw.get("sinks", []), outflow_module, inflow_module)
-        mode = cast(DependencyMode, raw.get("dependency_mode", "hard"))
-        return Watershed.fanout(source=source, sinks=sinks, dependency_mode=mode, **common)
+        return Watershed.fanout(source=source, sinks=sinks, gate_mode=_gate_mode_for(raw), **common)
 
     if shape == "parallel":
-        if "dependency_mode" in raw:
-            raise ValueError("shape='parallel' does not accept dependency_mode — there are no edges.")
+        if "gate_mode" in raw or "dependency_mode" in raw:
+            raise ValueError("shape='parallel' does not accept gate_mode — there are no edges.")
         currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
         return Watershed.parallel(currents=currents, **common)
 
     if shape == "custom":
         currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
-        edges = [Edge(from_name=e["from"], to_name=e["to"], mode=e.get("mode", "hard")) for e in raw.get("edges", [])]
+        edges = []
+        for e in raw.get("edges", []):
+            edge_mode_raw = e.get("mode") or e.get("gate_mode") or "hard"
+            edges.append(
+                Edge(
+                    from_name=e["from"],
+                    to_name=e["to"],
+                    flow=flow_from_mode(cast(GateMode, edge_mode_raw)),
+                )
+            )
         return Watershed(currents=currents, edges=edges, **common)
 
     raise ValueError(f"Unknown shape: {shape!r}. Expected one of: 'chain', 'diamond', 'fanout', 'parallel', 'custom'.")
@@ -151,9 +164,15 @@ def _build_current(
         "cls": cls,
         "interval": float(entry["interval"]),
     }
-    for key in ("depends_on", "on_error", "skip_threshold", "inflow", "outflow"):
+    for key in ("depends_on", "on_error", "inflow", "outflow"):
         if key in entry:
             common[key] = entry[key]
+    if "skip_threshold" in entry:
+        raise ValueError(
+            f"Current {entry.get('name', '?')!r}: 'skip_threshold' moved to per-edge "
+            "SurgeBarrier(threshold_multiple=..., action=...) on FlowControl. "
+            "See incorporator.observability.tideweaver.flow.SurgeBarrier."
+        )
 
     if verb == "stream":
         return Stream(
