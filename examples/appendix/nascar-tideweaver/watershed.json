@@ -1,9 +1,10 @@
 {
   "_comment_1_": "Sample watershed.json for the NASCAR diamond pattern.",
-  "_comment_2_": "Run from the repo root so the relative inc_file / outflow paths resolve:",
-  "_comment_3_": "  incorporator validate examples/appendix/nascar-tideweaver/watershed.json",
-  "_comment_4_": "  incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json --json-output",
-  "_comment_5_": "Override the default window with env vars: RACE_START / RACE_END (ISO 8601, UTC).",
+  "_comment_2_": "Relative inc_file / outflow paths are resolved against this JSON's parent directory,",
+  "_comment_3_": "so the example runs from any working directory:",
+  "_comment_4_": "  incorporator validate examples/appendix/nascar-tideweaver/watershed.json",
+  "_comment_5_": "  incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json --json-output",
+  "_comment_6_": "Override the default window with env vars: RACE_START / RACE_END (ISO 8601, UTC).",
 
   "window": {
     "start": "${RACE_START:-2026-05-16T00:00:00+00:00}",
@@ -11,7 +12,7 @@
   },
 
   "shape": "diamond",
-  "outflow": "examples/appendix/nascar-tideweaver/race_outflow.py",
+  "outflow": "race_outflow.py",
   "drain_timeout": 30,
 
   "_flow_note_": "Full FlowControl literal on every diamond edge — same runtime semantics as the gate_mode='hard' shorthand, but adds a LoggingObserver so per-edge fire / skip / spillway events emit through Python logging.  Switch any field's `type` value to swap strategies (see docs/api_atlas.md#canal-toolkit-primitives).",
@@ -29,7 +30,7 @@
     "verb": "stream",
     "interval": 30,
     "incorp_params": {
-      "inc_file": "examples/appendix/nascar-tideweaver/fixtures/laps.json",
+      "inc_file": "fixtures/laps.json",
       "inc_code": "driver"
     }
   },
@@ -41,7 +42,7 @@
       "verb": "stream",
       "interval": 30,
       "incorp_params": {
-        "inc_file": "examples/appendix/nascar-tideweaver/fixtures/pits.json",
+        "inc_file": "fixtures/pits.json",
         "inc_code": "driver"
       }
     },
@@ -51,7 +52,7 @@
       "verb": "stream",
       "interval": 30,
       "incorp_params": {
-        "inc_file": "examples/appendix/nascar-tideweaver/fixtures/flags.json",
+        "inc_file": "fixtures/flags.json",
         "inc_code": "color"
       }
     }

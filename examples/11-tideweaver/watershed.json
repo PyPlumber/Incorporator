@@ -1,13 +1,14 @@
 {
   "_comment_1_": "Sample watershed.json for the multi-exchange arb-scanner diamond pattern.",
-  "_comment_2_": "Run from the repo root so the relative inc_file / outflow paths resolve:",
-  "_comment_3_": "  incorporator validate examples/11-tideweaver/watershed.json",
-  "_comment_4_": "  incorporator tideweaver run examples/11-tideweaver/watershed.json --json-output",
-  "_comment_5_": "Local JSON snapshots keep the CLI smoke-test runnable without network.",
-  "_comment_6_": "Swap inc_file for inc_url against live exchange endpoints in production:",
-  "_comment_7_": "  binance:  https://api.binance.us/api/v3/ticker/bookTicker",
-  "_comment_8_": "  coinbase: https://api.exchange.coinbase.com/products/BTC-USD/ticker",
-  "_comment_9_": "  kraken:   https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD (with rec_path: result)",
+  "_comment_2_": "Relative inc_file / outflow paths are resolved against this JSON's parent directory,",
+  "_comment_3_": "so the example runs from any working directory:",
+  "_comment_4_": "  incorporator validate examples/11-tideweaver/watershed.json",
+  "_comment_5_": "  incorporator tideweaver run examples/11-tideweaver/watershed.json --json-output",
+  "_comment_6_": "Local JSON snapshots keep the CLI smoke-test runnable without network.",
+  "_comment_7_": "Swap inc_file for inc_url against live exchange endpoints in production:",
+  "_comment_8_": "  binance:  https://api.binance.us/api/v3/ticker/bookTicker",
+  "_comment_9_": "  coinbase: https://api.exchange.coinbase.com/products/BTC-USD/ticker",
+  "_comment_10_": "  kraken:   https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD (with rec_path: result)",
 
   "window": {
     "start": "${WINDOW_START:-2026-05-16T00:00:00+00:00}",
@@ -15,7 +16,7 @@
   },
 
   "shape": "diamond",
-  "outflow": "examples/11-tideweaver/arb_outflow.py",
+  "outflow": "arb_outflow.py",
   "drain_timeout": 30,
   "gate_mode": "hard",
 
@@ -25,7 +26,7 @@
     "verb": "stream",
     "interval": 15,
     "incorp_params": {
-      "inc_file": "examples/11-tideweaver/fixtures/binance_book.json",
+      "inc_file": "fixtures/binance_book.json",
       "inc_code": "symbol"
     }
   },
@@ -37,7 +38,7 @@
       "verb": "stream",
       "interval": 30,
       "incorp_params": {
-        "inc_file": "examples/11-tideweaver/fixtures/coinbase_ticker.json",
+        "inc_file": "fixtures/coinbase_ticker.json",
         "inc_code": "trade_id"
       }
     },
@@ -47,7 +48,7 @@
       "verb": "stream",
       "interval": 30,
       "incorp_params": {
-        "inc_file": "examples/11-tideweaver/fixtures/kraken_ticker.json",
+        "inc_file": "fixtures/kraken_ticker.json",
         "inc_code": "_key"
       }
     }
