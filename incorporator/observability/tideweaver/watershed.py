@@ -232,6 +232,9 @@ class Watershed(BaseModel):
         currents: Sequence[Current],
         gate_mode: Optional[GateMode] = None,
         flow: Optional[FlowControl] = None,
+        inflow: Optional[Path] = None,
+        outflow: Optional[Path] = None,
+        drain_timeout: float = 30.0,
         **kwargs: Any,
     ) -> "Watershed":
         """Sequential pipeline where each current waits for its upstream's data.
@@ -256,7 +259,15 @@ class Watershed(BaseModel):
         resolved = _resolve_flow(gate_mode, flow)
         currents = list(currents)
         edges = [Edge(from_name=a.name, to_name=b.name, flow=resolved) for a, b in zip(currents[:-1], currents[1:])]
-        return cls(window=window, currents=currents, edges=edges, **kwargs)
+        return cls(
+            window=window,
+            currents=currents,
+            edges=edges,
+            inflow=inflow,
+            outflow=outflow,
+            drain_timeout=drain_timeout,
+            **kwargs,
+        )
 
     @classmethod
     def diamond(
@@ -268,6 +279,9 @@ class Watershed(BaseModel):
         tail: Current,
         gate_mode: Optional[GateMode] = None,
         flow: Optional[FlowControl] = None,
+        inflow: Optional[Path] = None,
+        outflow: Optional[Path] = None,
+        drain_timeout: float = 30.0,
         **kwargs: Any,
     ) -> "Watershed":
         """The canonical multi-source fusion shape — one head feeds N middle stages that all converge into one tail.
@@ -301,7 +315,15 @@ class Watershed(BaseModel):
         for m in middle:
             edges.append(Edge(from_name=head.name, to_name=m.name, flow=resolved))
             edges.append(Edge(from_name=m.name, to_name=tail.name, flow=resolved))
-        return cls(window=window, currents=currents, edges=edges, **kwargs)
+        return cls(
+            window=window,
+            currents=currents,
+            edges=edges,
+            inflow=inflow,
+            outflow=outflow,
+            drain_timeout=drain_timeout,
+            **kwargs,
+        )
 
     @classmethod
     def fanout(
@@ -312,6 +334,9 @@ class Watershed(BaseModel):
         sinks: Sequence[Current],
         gate_mode: Optional[GateMode] = None,
         flow: Optional[FlowControl] = None,
+        inflow: Optional[Path] = None,
+        outflow: Optional[Path] = None,
+        drain_timeout: float = 30.0,
         **kwargs: Any,
     ) -> "Watershed":
         """Broadcast a single source to multiple downstream consumers, each on its own interval.
@@ -338,7 +363,15 @@ class Watershed(BaseModel):
             raise ValueError("Watershed.fanout requires at least one sink current.")
         currents: List[Current] = [source, *sinks]
         edges = [Edge(from_name=source.name, to_name=s.name, flow=resolved) for s in sinks]
-        return cls(window=window, currents=currents, edges=edges, **kwargs)
+        return cls(
+            window=window,
+            currents=currents,
+            edges=edges,
+            inflow=inflow,
+            outflow=outflow,
+            drain_timeout=drain_timeout,
+            **kwargs,
+        )
 
     @classmethod
     def parallel(
@@ -346,6 +379,9 @@ class Watershed(BaseModel):
         *,
         window: Tuple[datetime, datetime],
         currents: Iterable[Current],
+        inflow: Optional[Path] = None,
+        outflow: Optional[Path] = None,
+        drain_timeout: float = 30.0,
         **kwargs: Any,
     ) -> "Watershed":
         """Run N independent pipelines concurrently in the same orchestration window, with no edges between them.
@@ -372,4 +408,12 @@ class Watershed(BaseModel):
                     "there are no edges to govern.  Use chain/diamond/fanout, "
                     "or pass an explicit edges= list to the Watershed(...) constructor."
                 )
-        return cls(window=window, currents=list(currents), edges=[], **kwargs)
+        return cls(
+            window=window,
+            currents=list(currents),
+            edges=[],
+            inflow=inflow,
+            outflow=outflow,
+            drain_timeout=drain_timeout,
+            **kwargs,
+        )

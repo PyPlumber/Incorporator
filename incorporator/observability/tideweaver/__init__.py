@@ -30,7 +30,7 @@ per-interval ticking).  Stream source ingestion is owned by the upstream
 :class:`Stream` currents in the graph.
 """
 
-from .current import Current, Export, Fjord, Stream
+from .current import Current, CustomCurrent, Export, Fjord, Stream
 from .flow import (
     BackpressurePenstock,
     BurstPenstock,
@@ -65,6 +65,7 @@ __all__ = [
     "BackpressurePenstock",
     "BurstPenstock",
     "Current",
+    "CustomCurrent",
     "DropOldest",
     "Edge",
     "Export",

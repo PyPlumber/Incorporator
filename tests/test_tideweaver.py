@@ -131,6 +131,63 @@ def test_parallel_rejects_gate_mode() -> None:
         Watershed.parallel(window=_window(), currents=[a, b], gate_mode="hard")  # type: ignore[call-arg]
 
 
+def test_shape_constructors_accept_inflow_outflow_drain_kwargs(tmp_path: Path) -> None:
+    """All four shape constructors hoist inflow/outflow/drain_timeout as explicit kwargs.
+
+    Pre-v1.3.0 these worked via the trailing ``**kwargs`` forward —
+    they functioned, but didn't surface in IDE autocompletion.  Per the
+    senior-level audit's Improvement S3, they're now part of the
+    declared signature.
+    """
+    a, b, c = _stream("a"), _stream("b"), _stream("c")
+    inflow_path = tmp_path / "inflow.py"
+    outflow_path = tmp_path / "outflow.py"
+    inflow_path.write_text("", encoding="utf-8")
+    outflow_path.write_text("def outflow(state):\n    return []\n", encoding="utf-8")
+
+    chain_ws = Watershed.chain(
+        window=_window(),
+        currents=[a, b, c],
+        inflow=inflow_path,
+        outflow=outflow_path,
+        drain_timeout=15.5,
+    )
+    assert chain_ws.inflow == inflow_path
+    assert chain_ws.outflow == outflow_path
+    assert chain_ws.drain_timeout == 15.5
+
+    diamond_ws = Watershed.diamond(
+        window=_window(),
+        head=a,
+        middle=[b],
+        tail=c,
+        inflow=inflow_path,
+        outflow=outflow_path,
+        drain_timeout=20.0,
+    )
+    assert diamond_ws.inflow == inflow_path
+    assert diamond_ws.drain_timeout == 20.0
+
+    fanout_ws = Watershed.fanout(
+        window=_window(),
+        source=a,
+        sinks=[b, c],
+        outflow=outflow_path,
+        drain_timeout=5.0,
+    )
+    assert fanout_ws.outflow == outflow_path
+    assert fanout_ws.drain_timeout == 5.0
+
+    parallel_ws = Watershed.parallel(
+        window=_window(),
+        currents=[a, b],
+        inflow=inflow_path,
+        drain_timeout=45.0,
+    )
+    assert parallel_ws.inflow == inflow_path
+    assert parallel_ws.drain_timeout == 45.0
+
+
 def test_soft_mode_edges() -> None:
     """``chain(..., gate_mode='soft')`` produces edges with SoftPass gates."""
     a, b, c = _stream("a"), _stream("b"), _stream("c")
@@ -1705,6 +1762,44 @@ async def test_phase_offset_with_hard_gated_upstream() -> None:
         f"b's first fire must be at or after phase_offset_sec=0.2 (allowing "
         f"~0.05s slop); got {first_b:.3f}s"
     )
+
+
+# ---------------------------------------------------------------------------
+# CustomCurrent — escape-hatch subclass for non-verb-typed tick bodies.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_custom_current_dispatches_to_user_tick() -> None:
+    """The scheduler calls ``await custom.tick(scheduler)`` for CustomCurrent subclasses.
+
+    Replaces the ``tick_factory=...`` pattern as the documented public
+    path; ``tick_factory`` stays as the test-only override.
+    """
+    from incorporator.observability.tideweaver import CustomCurrent
+
+    fires: List[str] = []
+
+    class Healthcheck(CustomCurrent):
+        async def tick(self, scheduler: Any) -> None:
+            fires.append(self.name)
+
+    a = Healthcheck(name="health", cls=_A, interval=0.05)
+    ws = Watershed.parallel(window=_short_window(0.15), currents=[a])
+    tw = Tideweaver(ws, pass_interval=0.02)
+    await _collect_tides(tw)
+    assert fires, "CustomCurrent.tick must be called by the scheduler"
+    assert all(name == "health" for name in fires)
+
+
+@pytest.mark.asyncio
+async def test_base_custom_current_raises_when_tick_not_overridden() -> None:
+    """The base ``CustomCurrent.tick`` raises NotImplementedError with a guiding message."""
+    from incorporator.observability.tideweaver import CustomCurrent
+
+    bare = CustomCurrent(name="bare", cls=_A, interval=0.05)
+    with pytest.raises(NotImplementedError, match="must override async tick"):
+        await bare.tick(None)
 
 
 @pytest.mark.asyncio

@@ -42,7 +42,7 @@ from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_
 
 from ...io.fetch import HTTPClientBuilder
 from ..pipeline._outflow import flush
-from .current import Current, Export, Fjord, Stream
+from .current import Current, CustomCurrent, Export, Fjord, Stream
 from .flow import BurstPenstock, FlowControl, WindowPenstock
 from .tide import Tide
 from .watershed import Watershed
@@ -527,10 +527,13 @@ class Tideweaver:
             await self._tick_fjord(current)
         elif isinstance(current, Export):
             await self._tick_export(current)
+        elif isinstance(current, CustomCurrent):
+            await current.tick(self)
         else:
             raise NotImplementedError(
                 f"Tideweaver has no default tick body for bare Current; "
-                f"subclass Stream/Fjord/Export or pass a tick_factory.  Got: {type(current).__name__}"
+                f"subclass Stream / Fjord / Export / CustomCurrent or pass a tick_factory.  "
+                f"Got: {type(current).__name__}"
             )
 
     # ------------------------------------------------------------------

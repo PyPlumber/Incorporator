@@ -239,3 +239,46 @@ class Export(Current):
     """
 
     export_params: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CustomCurrent(Current):
+    """Escape-hatch Current for users with a non-verb-typed tick body.
+
+    Subclass and implement ``async tick(self, scheduler)`` to run your
+    own per-tick logic.  The scheduler calls ``current.tick(scheduler)``
+    directly, bypassing the :class:`Stream` / :class:`Fjord` /
+    :class:`Export` dispatch.
+
+    Example — periodic health-check ping that doesn't fit the
+    standard verbs::
+
+        class HealthcheckPing(CustomCurrent):
+            async def tick(self, scheduler):
+                response = await httpx.get("https://internal.acme/health")
+                if response.status_code != 200:
+                    raise RuntimeError(f"health check failed: {response.status_code}")
+
+        watershed = Watershed.parallel(
+            window=(start, end),
+            currents=[
+                HealthcheckPing(name="health", cls=PingResult, interval=30),
+            ],
+        )
+
+    Before :class:`CustomCurrent`, users wanting custom tick bodies
+    reached for ``Tideweaver(..., tick_factory=...)`` — that hook is
+    still available but lives outside the per-current type, making the
+    plan less self-describing.  ``tick_factory`` is now the test-only
+    override.
+
+    Subclasses MUST override :meth:`tick`; the base raises
+    ``NotImplementedError`` at call time.
+    """
+
+    async def tick(self, scheduler: Any) -> None:
+        """Per-tick body.  Subclasses MUST override this method."""
+        raise NotImplementedError(
+            f"{type(self).__name__} must override async tick(self, scheduler). "
+            f"Subclass CustomCurrent and implement the tick coroutine, "
+            f"or use Stream/Fjord/Export for the standard verb tick bodies."
+        )
