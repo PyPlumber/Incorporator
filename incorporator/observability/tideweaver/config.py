@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import warnings
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -82,21 +81,18 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
 
     # Resolve the top-level flow shorthand:
     #   ``gate_mode`` (string) or ``flow`` (full dict) — mutually exclusive.
-    # ``dependency_mode`` is a deprecated legacy alias for ``gate_mode``; it
-    # emits a DeprecationWarning and is slated for removal in the next minor
-    # release.  New configs should use ``gate_mode``.
+    # The v1.2.0 ``dependency_mode`` alias is removed as of v1.3.0; passing it
+    # raises a ValueError with migration guidance so users see the break
+    # immediately instead of silently dropping their intended config.
     def _top_level_flow(raw_obj: Dict[str, Any]) -> Tuple[Optional[GateMode], Optional[FlowControl]]:
+        if "dependency_mode" in raw_obj:
+            raise ValueError(
+                "watershed.json: 'dependency_mode' was removed in v1.3.0.  "
+                "Rename the key to 'gate_mode' (same accepted values: "
+                '"hard" / "soft" / "weir").'
+            )
         raw_flow = raw_obj.get("flow")
         raw_mode = raw_obj.get("gate_mode")
-        if raw_mode is None and "dependency_mode" in raw_obj:
-            warnings.warn(
-                "watershed.json: 'dependency_mode' is a deprecated alias for 'gate_mode' and "
-                "will be removed in the next minor release.  Replace 'dependency_mode' with "
-                "'gate_mode' in your config.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            raw_mode = raw_obj["dependency_mode"]
         if raw_flow is not None and raw_mode is not None:
             raise ValueError(
                 "watershed.json: pass top-level 'flow' (full dict) or 'gate_mode' (string shorthand), not both."
@@ -132,7 +128,12 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
         return Watershed.fanout(source=source, sinks=sinks, gate_mode=gate_mode or "hard", **common)
 
     if shape == "parallel":
-        if "gate_mode" in raw or "dependency_mode" in raw or "flow" in raw:
+        if "dependency_mode" in raw:
+            raise ValueError(
+                "watershed.json: 'dependency_mode' was removed in v1.3.0.  "
+                "shape='parallel' has no edges to govern; drop the key entirely."
+            )
+        if "gate_mode" in raw or "flow" in raw:
             raise ValueError("shape='parallel' does not accept gate_mode/flow — there are no edges to govern.")
         currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
         return Watershed.parallel(currents=currents, **common)
@@ -141,19 +142,14 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
         currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
         edges = []
         for e in raw.get("edges", []):
+            if "mode" in e:
+                raise ValueError(
+                    f"watershed.json edge {e.get('from', '?')}->{e.get('to', '?')}: "
+                    "'mode' was removed in v1.3.0.  Rename the key to 'gate_mode' "
+                    'in the edge entry (same accepted values: "hard" / "soft" / "weir").'
+                )
             raw_flow = e.get("flow")
             raw_mode = e.get("gate_mode")
-            if raw_mode is None and "mode" in e:
-                # ``mode`` is a deprecated per-edge alias for ``gate_mode``.
-                # Slated for removal in the next minor release.
-                warnings.warn(
-                    f"watershed.json edge {e.get('from', '?')}->{e.get('to', '?')}: "
-                    "'mode' is a deprecated alias for 'gate_mode' and will be removed in the "
-                    "next minor release.  Replace 'mode' with 'gate_mode' in your edge entry.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                raw_mode = e["mode"]
             if raw_flow is not None and raw_mode is not None:
                 raise ValueError(
                     f"edge {e.get('from', '?')}→{e.get('to', '?')}: "

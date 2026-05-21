@@ -2227,14 +2227,14 @@ def test_json_chain_top_level_flow(tmp_path: Path) -> None:
     assert all(e.flow.reservoir.depth == 5 for e in ws.edges)
 
 
-def test_json_dependency_mode_alias_parses_as_gate_mode(tmp_path: Path) -> None:
-    """Legacy top-level ``dependency_mode`` parses as ``gate_mode`` and emits DeprecationWarning.
+def test_json_dependency_mode_alias_raises_after_v1_3_0(tmp_path: Path) -> None:
+    """Top-level legacy ``dependency_mode`` raises ValueError with migration guidance.
 
-    The alias is documented in the JSON loader as a one-release transition;
-    this test pins both the behavioural parity AND the deprecation signal
-    until the alias is removed in the next minor release.
+    The alias was DeprecationWarning-flagged in v1.2.0 and removed in
+    v1.3.0.  Passing it now produces a clear error pointing at
+    ``gate_mode`` so users see the break immediately rather than
+    silently dropping their intended config.
     """
-    from incorporator.observability.tideweaver import Weir
     from incorporator.observability.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
@@ -2246,15 +2246,12 @@ def test_json_dependency_mode_alias_parses_as_gate_mode(tmp_path: Path) -> None:
     ]
     cfg = tmp_path / "ws.json"
     cfg.write_text(json.dumps(body), encoding="utf-8")
-    with pytest.warns(DeprecationWarning, match="'dependency_mode' is a deprecated alias"):
-        ws = load_watershed(cfg)
-    assert all(isinstance(e.flow.gate, Weir) for e in ws.edges), (
-        "dependency_mode='weir' must produce Weir-gated edges (same as gate_mode='weir')"
-    )
+    with pytest.raises(ValueError, match="'dependency_mode' was removed in v1.3.0"):
+        load_watershed(cfg)
 
 
-def test_json_edge_mode_alias_emits_deprecation_warning(tmp_path: Path) -> None:
-    """Per-edge legacy ``"mode"`` key emits ``DeprecationWarning`` and parses as ``gate_mode``."""
+def test_json_edge_mode_alias_raises_after_v1_3_0(tmp_path: Path) -> None:
+    """Per-edge legacy ``"mode"`` key raises ValueError with migration guidance."""
     from incorporator.observability.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
@@ -2266,11 +2263,8 @@ def test_json_edge_mode_alias_emits_deprecation_warning(tmp_path: Path) -> None:
     body["edges"] = [{"from": "a", "to": "b", "mode": "weir"}]
     cfg = tmp_path / "ws.json"
     cfg.write_text(json.dumps(body), encoding="utf-8")
-    with pytest.warns(DeprecationWarning, match="'mode' is a deprecated alias"):
-        ws = load_watershed(cfg)
-    assert _gate_name(ws.edges[0]) == "weir", (
-        "edge 'mode' alias must parse to the same gate as 'gate_mode'"
-    )
+    with pytest.raises(ValueError, match="'mode' was removed in v1.3.0"):
+        load_watershed(cfg)
 
 
 def test_json_top_level_rejects_both_flow_and_gate_mode(tmp_path: Path) -> None:

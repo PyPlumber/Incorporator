@@ -22,7 +22,6 @@ the developer can override with ``--type stream|fjord|tideweaver``.
 from __future__ import annotations
 
 import importlib.util
-import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple
@@ -246,23 +245,19 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
         dt = config["drain_timeout"]
         if not isinstance(dt, (int, float)) or dt < 0:
             errors.append("'drain_timeout', if present, must be a non-negative number (seconds).")
-    mode_key = "gate_mode" if "gate_mode" in config else "dependency_mode"
-    has_mode = mode_key in config
-    if has_mode and mode_key == "dependency_mode":
-        warnings.warn(
-            "watershed.json: 'dependency_mode' is a deprecated alias for 'gate_mode' and "
-            "will be removed in the next minor release.  Replace 'dependency_mode' with "
-            "'gate_mode' in your config.",
-            DeprecationWarning,
-            stacklevel=2,
+    if "dependency_mode" in config:
+        errors.append(
+            "watershed.json: 'dependency_mode' was removed in v1.3.0.  "
+            'Rename the key to \'gate_mode\' (same accepted values: "hard" / "soft" / "weir").'
         )
+    has_mode = "gate_mode" in config
     has_flow = "flow" in config
     if has_mode and has_flow:
-        errors.append(f"Pass {mode_key!r} (shorthand) or 'flow' (full dict), not both.")
+        errors.append("Pass 'gate_mode' (shorthand) or 'flow' (full dict), not both.")
     if shape == "parallel" and (has_mode or has_flow):
-        errors.append(f"{mode_key!r}/'flow' is not valid with shape='parallel' (no edges to govern).")
-    if has_mode and config.get(mode_key) not in _TIDEWEAVER_EDGE_MODES:
-        errors.append(f"{mode_key!r} must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}.")
+        errors.append("'gate_mode'/'flow' is not valid with shape='parallel' (no edges to govern).")
+    if has_mode and config.get("gate_mode") not in _TIDEWEAVER_EDGE_MODES:
+        errors.append(f"'gate_mode' must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}.")
     if has_flow and not isinstance(config.get("flow"), dict):
         errors.append("'flow', if present, must be a JSON object (FlowControl dict).")
 
@@ -340,19 +335,15 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
                 f = edge.get("from")
                 t = edge.get("to")
                 # Per-edge flow control: ``gate_mode`` string OR ``flow`` dict —
-                # mutually exclusive.  ``mode`` is a deprecated alias for
-                # ``gate_mode`` (emits DeprecationWarning; slated for removal
-                # in the next minor release).  Default = hard.
-                edge_mode = edge.get("gate_mode")
-                if edge_mode is None and "mode" in edge:
-                    warnings.warn(
-                        f"watershed.json edges[{i}] ({edge.get('from', '?')}->{edge.get('to', '?')}): "
-                        "'mode' is a deprecated alias for 'gate_mode' and will be removed in the "
-                        "next minor release.  Replace 'mode' with 'gate_mode'.",
-                        DeprecationWarning,
-                        stacklevel=2,
+                # mutually exclusive.  The v1.2.0 ``mode`` alias is removed
+                # as of v1.3.0; flag it as an error with migration guidance.
+                if "mode" in edge:
+                    errors.append(
+                        f"edges[{i}] ({edge.get('from', '?')}->{edge.get('to', '?')}): "
+                        "'mode' was removed in v1.3.0.  Rename the key to 'gate_mode' "
+                        '(same accepted values: "hard" / "soft" / "weir").'
                     )
-                    edge_mode = edge.get("mode")
+                edge_mode = edge.get("gate_mode")
                 edge_flow = edge.get("flow")
                 if not isinstance(f, str) or not isinstance(t, str):
                     errors.append(f"edges[{i}] must have string 'from' and 'to' fields.")

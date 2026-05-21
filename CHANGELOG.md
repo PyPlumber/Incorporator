@@ -46,6 +46,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remaining callers.  Use `incorporator.io.throttle.known_host_rates()`
   for the live registry view.
 
+- **Removed `watershed.json` legacy aliases** — the v1.2.0
+  `dependency_mode` (top-level) and `"mode"` (per-edge) aliases for
+  `gate_mode` are gone.  Passing them now raises ``ValueError`` with
+  inline migration guidance instead of silently warning.
+
+  Migration:
+
+  ```json
+  // Before v1.3.0:
+  {"shape": "chain", "dependency_mode": "hard", "currents": [...]}
+
+  // After v1.3.0:
+  {"shape": "chain", "gate_mode": "hard", "currents": [...]}
+
+  // Per-edge:
+  {"shape": "custom", "edges": [{"from": "a", "to": "b", "mode": "hard"}]}
+  // becomes:
+  {"shape": "custom", "edges": [{"from": "a", "to": "b", "gate_mode": "hard"}]}
+  ```
+
+  The valid values (``"hard"`` / ``"soft"`` / ``"weir"``) are unchanged.
+
 ### Added
 
 - **`register_host_throttle` promoted to package top-level.**
