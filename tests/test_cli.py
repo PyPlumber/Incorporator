@@ -83,7 +83,8 @@ def test_cli_missing_incorp_params(tmp_path: Path) -> None:
     result = runner.invoke(app, ["stream", str(config_file)])
 
     assert result.exit_code == 1
-    assert "'incorp_params' (dict) is required" in result.stdout
+    # D2b: schema errors come from Pydantic now — substring match preserved.
+    assert "incorp_params" in result.stdout
 
 
 def test_cli_stream_reports_failed_sources(tmp_path: Path) -> None:
