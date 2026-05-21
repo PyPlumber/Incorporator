@@ -31,9 +31,11 @@ import time
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, cast
 
+import httpx
 from pydantic import BaseModel, ConfigDict
 from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_exponential
 
+from ...io.fetch import HTTPClientBuilder
 from ..pipeline._outflow import flush
 from .current import Current, Export, Fjord, Stream
 from .tide import Tide
@@ -180,6 +182,13 @@ class Tideweaver:
         reached the loop drains in-flight ticks (bounded by
         ``watershed.drain_timeout``) and then exits cleanly.
         """
+        # Across-drain HTTP client pool — keyed by the HTTP-config tuple
+        # so two currents with identical config share one client while
+        # currents with distinct configs each get their own.  Initialised
+        # here (not in ``__init__``) so the Tideweaver instance is safely
+        # reusable; each ``run()`` invocation gets a fresh pool that the
+        # ``finally`` block below ``aclose()``s.
+        self._client_pool: Dict[Tuple[Any, ...], httpx.AsyncClient] = {}
         shutdown_event = asyncio.Event()
         stopper = asyncio.create_task(self._shutdown_at_window_end(shutdown_event))
         try:
@@ -198,6 +207,12 @@ class Tideweaver:
                 pass
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Tideweaver: shutdown stopper exited unexpectedly: %s", exc)
+            # Close pooled HTTP clients AFTER ``_drain()`` has settled
+            # any in-flight ticks — so no tick is mid-request on a
+            # client we're about to close.
+            for client in self._client_pool.values():
+                await client.aclose()
+            self._client_pool.clear()
 
     async def _wait_for_next_event(self, shutdown_event: asyncio.Event) -> None:
         """Adaptive sleep until the next interesting moment.
@@ -422,6 +437,43 @@ class Tideweaver:
             )
 
     # ------------------------------------------------------------------
+    # HTTP client pool helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _client_pool_key(incorp_params: Dict[str, Any]) -> Tuple[Any, ...]:
+        """Build the hashable key for one HTTP-client config bundle.
+
+        Mirrors the five kwargs ``HTTPClientBuilder.build_client`` consumes
+        (also used by ``fetch.py:579-585``).  Headers is converted to a
+        ``frozenset`` because dicts are unhashable.
+        """
+        headers = incorp_params.get("headers")
+        headers_frozen = frozenset(headers.items()) if headers else frozenset()
+        return (
+            incorp_params.get("timeout", 15.0),
+            incorp_params.get("ignore_ssl", False),
+            incorp_params.get("concurrency_limit", 50),
+            incorp_params.get("block_internal_redirects", False),
+            headers_frozen,
+        )
+
+    def _get_or_create_client(self, incorp_params: Dict[str, Any]) -> httpx.AsyncClient:
+        """Look up — or lazily build — the pooled client for this config bundle."""
+        key = self._client_pool_key(incorp_params)
+        client = self._client_pool.get(key)
+        if client is None:
+            client = HTTPClientBuilder.build_client(
+                concurrency_limit=incorp_params.get("concurrency_limit", 50),
+                ignore_ssl=incorp_params.get("ignore_ssl", False),
+                timeout=incorp_params.get("timeout", 15.0),
+                headers=incorp_params.get("headers"),
+                block_internal_redirects=incorp_params.get("block_internal_redirects", False),
+            )
+            self._client_pool[key] = client
+        return client
+
+    # ------------------------------------------------------------------
     # Per-current tick bodies
     # ------------------------------------------------------------------
 
@@ -442,8 +494,21 @@ class Tideweaver:
         ``accumulated`` dict at each wave boundary keeps them alive into the
         next chunk and across the final yield.
         """
+        incorp_params = current.incorp_params
+        # File-mode incorps don't touch HTTP — skip client injection.
+        # HTTP-mode currents get a pooled client keyed by their HTTP
+        # config (timeout / ignore_ssl / concurrency_limit / headers /
+        # block_internal_redirects).  Two currents with identical config
+        # share one client; distinct configs each get their own — matches
+        # the per-current flexibility requirement.  Shallow-copy avoids
+        # mutating the user's ``Current.incorp_params``.
+        if bool(incorp_params.get("inc_file")):
+            params_with_client = incorp_params
+        else:
+            pooled = self._get_or_create_client(incorp_params)
+            params_with_client = {**incorp_params, "_client": pooled}
         kwargs: Dict[str, Any] = {
-            "incorp_params": current.incorp_params,
+            "incorp_params": params_with_client,
             "poll_interval": None,
             "stateful_polling": False,
         }
