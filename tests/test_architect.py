@@ -160,7 +160,16 @@ def test_resolve_sources_per_source_overrides_shared() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_penstock_for_known_host_high_confidence() -> None:
+def test_penstock_for_registered_host_high_confidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier-1 fires for hosts the user has registered.
+
+    The framework ships no implicit per-host throttling; this test
+    explicitly registers ``api.coingecko.com`` first, then asserts
+    architect picks the registered rate.
+    """
+    from incorporator.io.throttle import FixedIntervalThrottle, _HOST_FACTORIES
+
+    monkeypatch.setitem(_HOST_FACTORIES, "api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
     profile = _profile({"id"}, pk="id", host="api.coingecko.com")
     spec = _penstock_for(profile)
     assert spec is not None
@@ -168,6 +177,27 @@ def test_penstock_for_known_host_high_confidence() -> None:
     assert spec.confidence == "high"
     assert spec.rate_per_sec == 0.2
     assert "coingecko" in spec.rationale
+
+
+def test_penstock_for_unregistered_host_no_tier_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier-1 returns None for hosts that aren't in the registry.
+
+    Pins the v1.3.0 contract: the framework no longer auto-throttles
+    coingecko / pokeapi / nhtsa.  Architect's high-confidence recommendation
+    is now opt-in — fires only after explicit registration.
+    """
+    from incorporator.io.throttle import _HOST_FACTORIES
+
+    # Ensure registry is clean for these three historical hosts.
+    monkeypatch.setattr(
+        "incorporator.observability.tideweaver.architect.known_host_rates",
+        lambda: {},
+    )
+    profile = _profile({"id"}, pk="id", host="api.coingecko.com")
+    spec = _penstock_for(profile)
+    assert spec is None
+    # Sanity: monkeypatch didn't leak into the real registry.
+    assert "api.coingecko.com" not in _HOST_FACTORIES
 
 
 def test_penstock_for_429_observed_medium_confidence() -> None:
@@ -240,7 +270,15 @@ def test_analyze_topology_custom_when_overlap_but_no_clear_pattern() -> None:
     assert any("shared_meta" in note for note in plan.notes)
 
 
-def test_analyze_topology_carries_penstock_recommendations_on_edges() -> None:
+def test_analyze_topology_carries_penstock_recommendations_on_edges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the user has registered hosts, architect threads the recommendation onto each edge."""
+    from incorporator.io.throttle import FixedIntervalThrottle, _HOST_FACTORIES
+
+    monkeypatch.setitem(_HOST_FACTORIES, "api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
+    monkeypatch.setitem(_HOST_FACTORIES, "pokeapi.co", lambda: FixedIntervalThrottle(1.5))
+
     profiles = [
         ("users", _profile({"user_id"}, pk="user_id", host="api.coingecko.com")),
         ("orders", _profile({"order_id", "user_id"}, pk="order_id", host="pokeapi.co")),

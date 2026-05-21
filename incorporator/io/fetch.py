@@ -25,7 +25,6 @@ from .pagination.base import AsyncPaginator
 from .throttle import (
     FixedIntervalThrottle,
     ThrottleStrategy,
-    known_host_rates,
     resolve_throttle,
 )
 
@@ -42,38 +41,6 @@ logger = logging.getLogger(__name__)
 # Existing callers and tests that monkey-patch ``RateLimiter.__init__``
 # keep working because the alias and the new class are the same object.
 RateLimiter = FixedIntervalThrottle
-
-
-# Backward-compat diagnostic dict — derived from
-# :data:`incorporator.io.throttle._HOST_FACTORIES` at import time so the
-# legacy ``host → float`` view stays available for logs, CLI tooling,
-# and the AGENTS.md / CHANGELOG references.  Mutating this dict does NOT
-# update the live registry; call
-# :func:`incorporator.io.throttle.register_host_throttle` for that.
-_KNOWN_API_RATE_LIMITS: Dict[str, float] = known_host_rates()
-
-
-def _resolve_host_safe_rate(source_list: List[Any]) -> Optional[float]:
-    """Return the most restrictive known-host rate matching any source, or ``None``.
-
-    Backward-compat shim over the per-host data in
-    :mod:`incorporator.io.throttle`.  The min-rate-wins semantics are
-    preserved for callers (and tests) that read the resolver directly.
-    For per-source throttle picking the orchestrator now calls
-    :func:`incorporator.io.throttle.resolve_throttle` instead.
-    """
-    rates: List[float] = []
-    host_rates = known_host_rates()
-    for src in source_list:
-        if not isinstance(src, str):
-            continue
-        try:
-            host = urlparse(src).hostname or ""
-        except Exception:  # noqa: S112 — defensive parse guard; logging would spam per malformed URL
-            continue
-        if host in host_rates:
-            rates.append(host_rates[host])
-    return min(rates) if rates else None
 
 
 # ==========================================

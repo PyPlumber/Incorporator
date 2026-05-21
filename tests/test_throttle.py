@@ -99,17 +99,19 @@ def test_all_strategies_satisfy_protocol() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_throttle_caller_rps_wins() -> None:
-    """Caller-supplied requests_per_second overrides the per-host registry."""
-    # CoinGecko's registered rate is 0.2; explicit 5.0 should win.
-    strategy = resolve_throttle("https://api.coingecko.com/x", requests_per_second=5.0)
+def test_resolve_throttle_caller_rps_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Caller-supplied requests_per_second overrides any registered per-host rate."""
+    # Register a slow rate for the host, then assert explicit 5.0 still wins.
+    monkeypatch.setitem(_HOST_FACTORIES, "api.example.com", lambda: FixedIntervalThrottle(0.2))
+    strategy = resolve_throttle("https://api.example.com/x", requests_per_second=5.0)
     assert isinstance(strategy, FixedIntervalThrottle)
     assert strategy.rate == 5.0
 
 
-def test_resolve_throttle_zero_rps_returns_null() -> None:
+def test_resolve_throttle_zero_rps_returns_null(monkeypatch: pytest.MonkeyPatch) -> None:
     """requests_per_second=0 means 'no throttle' — even on a registered host."""
-    strategy = resolve_throttle("https://api.coingecko.com/x", requests_per_second=0)
+    monkeypatch.setitem(_HOST_FACTORIES, "api.example.com", lambda: FixedIntervalThrottle(0.2))
+    strategy = resolve_throttle("https://api.example.com/x", requests_per_second=0)
     assert isinstance(strategy, NullThrottle)
 
 
@@ -127,8 +129,11 @@ def test_resolve_throttle_caller_rps_with_burst_returns_burst_throttle() -> None
     assert strategy.capacity == 3.0
 
 
-def test_resolve_throttle_known_host_returns_host_strategy() -> None:
-    """A registered host (CoinGecko) resolves to its FixedIntervalThrottle at 0.2 rps."""
+def test_resolve_throttle_known_host_returns_host_strategy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A registered host resolves to its registered FixedIntervalThrottle rate."""
+    monkeypatch.setitem(
+        _HOST_FACTORIES, "api.coingecko.com", lambda: FixedIntervalThrottle(0.2)
+    )
     strategy = resolve_throttle("https://api.coingecko.com/api/v3/coins/markets")
     assert isinstance(strategy, FixedIntervalThrottle)
     assert strategy.rate == 0.2
@@ -150,18 +155,21 @@ def test_resolve_throttle_non_string_source_falls_back_to_default() -> None:
 
 def test_resolve_throttle_env_var_bypass_returns_null(monkeypatch: pytest.MonkeyPatch) -> None:
     """INCORPORATOR_RATE_LIMIT_BYPASS=1 forces NullThrottle everywhere."""
+    # Register a host so we exercise the bypass-beats-registry path too.
+    monkeypatch.setitem(_HOST_FACTORIES, "api.example.com", lambda: FixedIntervalThrottle(0.2))
     monkeypatch.setenv(_BYPASS_ENV_VAR, "1")
     # Even on a registered host with an explicit caller rate, the env var wins.
-    assert isinstance(resolve_throttle("https://api.coingecko.com/x"), NullThrottle)
-    assert isinstance(resolve_throttle("https://api.coingecko.com/x", requests_per_second=5.0), NullThrottle)
+    assert isinstance(resolve_throttle("https://api.example.com/x"), NullThrottle)
+    assert isinstance(resolve_throttle("https://api.example.com/x", requests_per_second=5.0), NullThrottle)
     assert isinstance(resolve_throttle("https://api.binance.us/x"), NullThrottle)
 
 
 def test_resolve_throttle_env_var_other_values_dont_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
     """Only the exact string ``"1"`` triggers the bypass — guards against typos."""
+    monkeypatch.setitem(_HOST_FACTORIES, "api.example.com", lambda: FixedIntervalThrottle(0.2))
     for value in ("0", "true", "yes", ""):
         monkeypatch.setenv(_BYPASS_ENV_VAR, value)
-        assert not isinstance(resolve_throttle("https://api.coingecko.com/x"), NullThrottle), (
+        assert not isinstance(resolve_throttle("https://api.example.com/x"), NullThrottle), (
             f"env value {value!r} should not bypass"
         )
 
@@ -182,28 +190,54 @@ def test_register_host_throttle_adds_custom_strategy(monkeypatch: pytest.MonkeyP
     assert strategy.rate == sentinel_rate
 
 
-def test_register_host_throttle_overrides_built_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    """register_host_throttle can shadow a built-in registry entry."""
+def test_register_host_throttle_re_registration_replaces(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Re-registering an already-registered host replaces the previous factory."""
     monkeypatch.setitem(
-        _HOST_FACTORIES, "api.coingecko.com", lambda: FixedIntervalThrottle(99.0)
+        _HOST_FACTORIES, "api.example.com", lambda: FixedIntervalThrottle(0.5)
     )
-    strategy = resolve_throttle("https://api.coingecko.com/x")
+    monkeypatch.setitem(
+        _HOST_FACTORIES, "api.example.com", lambda: FixedIntervalThrottle(99.0)
+    )
+    strategy = resolve_throttle("https://api.example.com/x")
     assert isinstance(strategy, FixedIntervalThrottle)
     assert strategy.rate == 99.0
 
 
-def test_known_host_rates_returns_current_registry() -> None:
-    """``known_host_rates()`` exposes the registry for diagnostics."""
+def test_default_registry_is_empty() -> None:
+    """Fresh import: framework ships no implicit per-host throttling.
+
+    Prior to v1.3.0 ``_HOST_FACTORIES`` shipped pre-registered with
+    ``api.coingecko.com`` / ``pokeapi.co`` / ``vpic.nhtsa.dot.gov``.
+    The framework now ships throttle-agnostic; callers register hosts
+    they care about explicitly.
+    """
+    # Default state may have been mutated by other tests in this module
+    # via monkeypatch (which auto-rolls back).  We're asserting the
+    # baseline import-time emptiness rather than the live runtime view.
+    from incorporator.io.throttle import _HOST_FACTORIES
+
+    # Sanity: the well-known historical hosts are NOT pre-registered.
+    assert "api.coingecko.com" not in _HOST_FACTORIES
+    assert "pokeapi.co" not in _HOST_FACTORIES
+    assert "vpic.nhtsa.dot.gov" not in _HOST_FACTORIES
+
+
+def test_known_host_rates_returns_current_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``known_host_rates()`` exposes whatever is currently registered."""
+    monkeypatch.setitem(_HOST_FACTORIES, "api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
+    monkeypatch.setitem(_HOST_FACTORIES, "pokeapi.co", lambda: FixedIntervalThrottle(1.5))
+    monkeypatch.setitem(_HOST_FACTORIES, "vpic.nhtsa.dot.gov", lambda: FixedIntervalThrottle(1.5))
     rates = known_host_rates()
     assert rates["api.coingecko.com"] == 0.2
     assert rates["pokeapi.co"] == 1.5
     assert rates["vpic.nhtsa.dot.gov"] == 1.5
 
 
-def test_resolver_returns_fresh_strategy_per_call() -> None:
+def test_resolver_returns_fresh_strategy_per_call(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two calls for the same host return DIFFERENT instances — each fan-out leg has its own state."""
-    a = resolve_throttle("https://api.coingecko.com/x")
-    b = resolve_throttle("https://api.coingecko.com/x")
+    monkeypatch.setitem(_HOST_FACTORIES, "api.example.com", lambda: FixedIntervalThrottle(0.2))
+    a = resolve_throttle("https://api.example.com/x")
+    b = resolve_throttle("https://api.example.com/x")
     assert a is not b, "resolve_throttle must return a fresh instance so siblings don't share lock state"
 
 

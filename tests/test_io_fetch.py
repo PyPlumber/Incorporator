@@ -350,69 +350,37 @@ async def test_fetch_concurrent_path_a_batched_no_cancel_cascade(
 
 
 # ----------------------------------------------------------------------
-# Host-aware rate-limit registry (_KNOWN_API_RATE_LIMITS / _resolve_host_safe_rate)
+# Host-aware rate-limit registry — opt-in via register_host_throttle.
+# Framework ships no implicit per-host throttling; these tests register
+# the host explicitly inline so the fetch path picks up the registered
+# rate via the canonical resolve_throttle() resolver.
 # ----------------------------------------------------------------------
 
 
-def test_resolve_host_safe_rate_coingecko() -> None:
-    from incorporator.io.fetch import _resolve_host_safe_rate
-
-    assert _resolve_host_safe_rate(["https://api.coingecko.com/api/v3/coins/markets"]) == 0.2
-
-
-def test_resolve_host_safe_rate_pokeapi() -> None:
-    from incorporator.io.fetch import _resolve_host_safe_rate
-
-    assert _resolve_host_safe_rate(["https://pokeapi.co/api/v2/pokemon/pikachu"]) == 1.5
-
-
-def test_resolve_host_safe_rate_nhtsa_post_endpoint() -> None:
-    """Registry is method-agnostic — POST URL against a registered host still throttles.
-
-    NHTSA vPIC supports both GET and POST against the same hostname; the
-    ``DecodeVINValuesBatch`` POST in the xml-post-audit appendix must hit
-    the same registry entry as a hypothetical GET drill against any other
-    vpic endpoint.
-    """
-    from incorporator.io.fetch import _resolve_host_safe_rate
-
-    assert _resolve_host_safe_rate(["https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/"]) == 1.5
-
-
-def test_resolve_host_safe_rate_most_restrictive_wins() -> None:
-    """Mixed-host call uses the smallest registered rate."""
-    from incorporator.io.fetch import _resolve_host_safe_rate
-
-    mixed = [
-        "https://api.coingecko.com/api/v3/coins/bitcoin",  # 0.2
-        "https://pokeapi.co/api/v2/pokemon/pikachu",       # 1.5
-    ]
-    assert _resolve_host_safe_rate(mixed) == 0.2
-
-
-def test_resolve_host_safe_rate_unknown_host_returns_none() -> None:
-    from incorporator.io.fetch import _resolve_host_safe_rate
-
-    assert _resolve_host_safe_rate(["https://api.binance.us/api/v3/ticker/price"]) is None
-    assert _resolve_host_safe_rate(["https://example.com/foo"]) is None
-
-
-def test_resolve_host_safe_rate_non_string_entries_skipped() -> None:
-    """Non-string entries (None, Path, etc.) don't blow up the resolver."""
-    from incorporator.io.fetch import _resolve_host_safe_rate
-
-    assert _resolve_host_safe_rate([None, 42, "https://api.coingecko.com/x"]) == 0.2  # type: ignore[list-item]
-
-
 @pytest.mark.asyncio
-async def test_host_aware_default_applied_for_coingecko(
+async def test_host_aware_throttle_applied_when_registered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No explicit requests_per_second + CoinGecko URL → RateLimiter pinned at 0.2."""
+    """Registering ``api.coingecko.com`` at 0.2 r/s pins the RateLimiter for that host.
+
+    Before v1.3.0, this rate was a built-in default in
+    ``incorporator/io/throttle.py:_HOST_FACTORIES``.  The framework now
+    ships no implicit per-host throttling; users register hosts they
+    care about explicitly (or pass ``requests_per_second=`` per call).
+    """
     from incorporator.io import fetch
+    from incorporator.io.throttle import (
+        FixedIntervalThrottle,
+        _HOST_FACTORIES,
+    )
+
+    monkeypatch.setitem(
+        _HOST_FACTORIES,
+        "api.coingecko.com",
+        lambda: FixedIntervalThrottle(0.2),
+    )
 
     captured: dict = {}
-
     real_init = fetch.RateLimiter.__init__
 
     def capture_init(self: Any, rps: float) -> None:

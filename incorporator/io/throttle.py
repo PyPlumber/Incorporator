@@ -168,25 +168,27 @@ class BurstThrottle:
 # ==========================================
 
 
-#: Per-host strategy factories — keyed by hostname (lowercase).  The factory
-#: returns a fresh :class:`ThrottleStrategy` per call so each fan-out leg
-#: gets independent state.  Public via :func:`register_host_throttle`.
+#: Per-host strategy factories — keyed by lowercase hostname.  **Empty by
+#: default**: the framework ships with no implicit per-host throttling.
+#: Use :func:`register_host_throttle` to attach a strategy for any host
+#: that requires one; the factory is called once per :func:`resolve_throttle`
+#: invocation so each fan-out leg gets independent state.
 #:
-#: Numbers below are conservative — comfortably under each provider's
-#: documented free-tier ceiling so a single concurrent burst can't trip
-#: the limiter.  Re-verify against the provider's published docs (linked
-#: per-entry) when updating.
-_HOST_FACTORIES: Dict[str, Callable[[], ThrottleStrategy]] = {
-    # CoinGecko public (anon): 5–15 req/min — 0.2 = 12 req/min, headroom.
-    # https://support.coingecko.com/hc/en-us/articles/4538771776153
-    "api.coingecko.com": lambda: FixedIntervalThrottle(0.2),
-    # PokeAPI: 100 req/min documented ceiling — 1.5 = 90 req/min.
-    # https://pokeapi.co/docs/v2#fairuse
-    "pokeapi.co": lambda: FixedIntervalThrottle(1.5),
-    # NHTSA vPIC: 100–200 req/min documented; method-agnostic.
-    # https://vpic.nhtsa.dot.gov/api/home/index/faq
-    "vpic.nhtsa.dot.gov": lambda: FixedIntervalThrottle(1.5),
-}
+#: Migration from v1.2.0 implicit hosts — register these at startup if you
+#: relied on them:
+#:
+#: .. code-block:: python
+#:
+#:     from incorporator import register_host_throttle
+#:     from incorporator.io.throttle import FixedIntervalThrottle
+#:
+#:     # CoinGecko public (anon): 5–15 req/min — 0.2 = 12 req/min, headroom.
+#:     register_host_throttle("api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
+#:     # PokeAPI: 100 req/min documented ceiling — 1.5 = 90 req/min.
+#:     register_host_throttle("pokeapi.co", lambda: FixedIntervalThrottle(1.5))
+#:     # NHTSA vPIC: 100–200 req/min documented; method-agnostic.
+#:     register_host_throttle("vpic.nhtsa.dot.gov", lambda: FixedIntervalThrottle(1.5))
+_HOST_FACTORIES: Dict[str, Callable[[], ThrottleStrategy]] = {}
 
 
 DEFAULT_RPS: float = 15.0
