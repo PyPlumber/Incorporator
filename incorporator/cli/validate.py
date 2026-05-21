@@ -22,6 +22,7 @@ the developer can override with ``--type stream|fjord|tideweaver``.
 from __future__ import annotations
 
 import importlib.util
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple
@@ -247,6 +248,14 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
             errors.append("'drain_timeout', if present, must be a non-negative number (seconds).")
     mode_key = "gate_mode" if "gate_mode" in config else "dependency_mode"
     has_mode = mode_key in config
+    if has_mode and mode_key == "dependency_mode":
+        warnings.warn(
+            "watershed.json: 'dependency_mode' is a deprecated alias for 'gate_mode' and "
+            "will be removed in the next minor release.  Replace 'dependency_mode' with "
+            "'gate_mode' in your config.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     has_flow = "flow" in config
     if has_mode and has_flow:
         errors.append(f"Pass {mode_key!r} (shorthand) or 'flow' (full dict), not both.")
@@ -330,9 +339,20 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
                     continue
                 f = edge.get("from")
                 t = edge.get("to")
-                # Per-edge flow control: ``mode`` / ``gate_mode`` string OR
-                # ``flow`` dict — mutually exclusive.  Default = hard.
-                edge_mode = edge.get("gate_mode") or edge.get("mode")
+                # Per-edge flow control: ``gate_mode`` string OR ``flow`` dict —
+                # mutually exclusive.  ``mode`` is a deprecated alias for
+                # ``gate_mode`` (emits DeprecationWarning; slated for removal
+                # in the next minor release).  Default = hard.
+                edge_mode = edge.get("gate_mode")
+                if edge_mode is None and "mode" in edge:
+                    warnings.warn(
+                        f"watershed.json edges[{i}] ({edge.get('from', '?')}->{edge.get('to', '?')}): "
+                        "'mode' is a deprecated alias for 'gate_mode' and will be removed in the "
+                        "next minor release.  Replace 'mode' with 'gate_mode'.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
+                    edge_mode = edge.get("mode")
                 edge_flow = edge.get("flow")
                 if not isinstance(f, str) or not isinstance(t, str):
                     errors.append(f"edges[{i}] must have string 'from' and 'to' fields.")

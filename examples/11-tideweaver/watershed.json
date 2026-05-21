@@ -17,7 +17,7 @@
   "shape": "diamond",
   "outflow": "examples/11-tideweaver/arb_outflow.py",
   "drain_timeout": 30,
-  "dependency_mode": "hard",
+  "gate_mode": "hard",
 
   "head": {
     "name": "binance",

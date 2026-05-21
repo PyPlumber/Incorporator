@@ -129,13 +129,15 @@ after A in topo order but doesn't wait for A's data).
 watershed = Watershed.chain(
     window=window,
     currents=[a, b, c],
-    dependency_mode="hard",  # or "soft"
+    gate_mode="hard",  # or "soft" or "weir"
 )
 ```
 
-Skip-ahead: if A's tick has been running longer than `skip_threshold * b.interval`
-(default 2.0×), B skips this pass with reason `"skip_ahead"` so it doesn't queue up
-behind a stuck upstream.
+Skip-ahead: when `gate_mode="hard"`, every edge gets a default
+`SurgeBarrier(threshold_multiple=2.0, action="skip")` — if A's tick has been
+running longer than `2.0 × b.interval`, B skips this pass with reason
+`"skip_ahead"` so it doesn't queue up behind a stuck upstream.  Override per
+edge with `flow=FlowControl(surge_barrier=SurgeBarrier(threshold_multiple=3.0, action="bypass"))`.
 
 ---
 
@@ -374,7 +376,7 @@ applied at load time.
   "shape": "diamond",
   "outflow": "arb_outflow.py",
   "drain_timeout": 30,
-  "dependency_mode": "hard",
+  "gate_mode": "hard",
   "head":   {"name": "binance", "class": "BinanceBook",    "verb": "stream", "interval": 15,
              "incorp_params": {"inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
                                "inc_code": "symbol"}},
@@ -397,8 +399,8 @@ Supported `shape` values:
 * `"chain"` — top-level `currents: [...]`.
 * `"diamond"` — `head` / `middle` / `tail`.
 * `"fanout"` — `source` + `sinks: [...]`.
-* `"parallel"` — `currents: [...]`, no `dependency_mode`.
-* `"custom"` — `currents: [...]` + `edges: [{"from": "a", "to": "b", "mode": "hard"}]`.
+* `"parallel"` — `currents: [...]`, no `gate_mode`.
+* `"custom"` — `currents: [...]` + `edges: [{"from": "a", "to": "b", "gate_mode": "hard"}]` (or `"flow": {...}` for a per-edge `FlowControl`).
 
 Each current entry's `"class"` is resolved against the outflow sidecar (same
 convention as `fjord()`).  Run it:

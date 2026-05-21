@@ -1781,8 +1781,8 @@ def test_json_custom_shape(tmp_path: Path) -> None:
         {"name": "c", "class": "FlagEvents", "verb": "stream", "interval": 30, "incorp_params": {}},
     ]
     body["edges"] = [
-        {"from": "a", "to": "b", "mode": "hard"},
-        {"from": "b", "to": "c", "mode": "soft"},
+        {"from": "a", "to": "b", "gate_mode": "hard"},
+        {"from": "b", "to": "c", "gate_mode": "soft"},
     ]
     cfg = tmp_path / "ws.json"
     cfg.write_text(json.dumps(body), encoding="utf-8")
@@ -1882,11 +1882,11 @@ def test_json_chain_top_level_flow(tmp_path: Path) -> None:
 
 
 def test_json_dependency_mode_alias_parses_as_gate_mode(tmp_path: Path) -> None:
-    """Legacy top-level ``dependency_mode`` parses identically to ``gate_mode``.
+    """Legacy top-level ``dependency_mode`` parses as ``gate_mode`` and emits DeprecationWarning.
 
-    The alias is documented as a one-release transition in
-    ``config.py:84-85``; this test pins its parity with ``gate_mode`` until
-    the alias is removed.
+    The alias is documented in the JSON loader as a one-release transition;
+    this test pins both the behavioural parity AND the deprecation signal
+    until the alias is removed in the next minor release.
     """
     from incorporator.observability.tideweaver import Weir
     from incorporator.observability.tideweaver.config import load_watershed
@@ -1900,9 +1900,30 @@ def test_json_dependency_mode_alias_parses_as_gate_mode(tmp_path: Path) -> None:
     ]
     cfg = tmp_path / "ws.json"
     cfg.write_text(json.dumps(body), encoding="utf-8")
-    ws = load_watershed(cfg)
+    with pytest.warns(DeprecationWarning, match="'dependency_mode' is a deprecated alias"):
+        ws = load_watershed(cfg)
     assert all(isinstance(e.flow.gate, Weir) for e in ws.edges), (
         "dependency_mode='weir' must produce Weir-gated edges (same as gate_mode='weir')"
+    )
+
+
+def test_json_edge_mode_alias_emits_deprecation_warning(tmp_path: Path) -> None:
+    """Per-edge legacy ``"mode"`` key emits ``DeprecationWarning`` and parses as ``gate_mode``."""
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [{"from": "a", "to": "b", "mode": "weir"}]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.warns(DeprecationWarning, match="'mode' is a deprecated alias"):
+        ws = load_watershed(cfg)
+    assert _gate_name(ws.edges[0]) == "weir", (
+        "edge 'mode' alias must parse to the same gate as 'gate_mode'"
     )
 
 
@@ -2371,8 +2392,8 @@ def test_validate_rejects_custom_cycle(tmp_path: Path) -> None:
             {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
         ],
         "edges": [
-            {"from": "a", "to": "b", "mode": "hard"},
-            {"from": "b", "to": "a", "mode": "hard"},
+            {"from": "a", "to": "b", "gate_mode": "hard"},
+            {"from": "b", "to": "a", "gate_mode": "hard"},
         ],
     }
     errs = validate_watershed_config(body, tmp_path)

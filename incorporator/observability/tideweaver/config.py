@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import warnings
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -81,11 +82,21 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
 
     # Resolve the top-level flow shorthand:
     #   ``gate_mode`` (string) or ``flow`` (full dict) — mutually exclusive.
-    # ``dependency_mode`` accepted as a legacy alias for ``gate_mode`` for
-    # one release while docs catch up.
+    # ``dependency_mode`` is a deprecated legacy alias for ``gate_mode``; it
+    # emits a DeprecationWarning and is slated for removal in the next minor
+    # release.  New configs should use ``gate_mode``.
     def _top_level_flow(raw_obj: Dict[str, Any]) -> Tuple[Optional[GateMode], Optional[FlowControl]]:
         raw_flow = raw_obj.get("flow")
-        raw_mode = raw_obj.get("gate_mode") or raw_obj.get("dependency_mode")
+        raw_mode = raw_obj.get("gate_mode")
+        if raw_mode is None and "dependency_mode" in raw_obj:
+            warnings.warn(
+                "watershed.json: 'dependency_mode' is a deprecated alias for 'gate_mode' and "
+                "will be removed in the next minor release.  Replace 'dependency_mode' with "
+                "'gate_mode' in your config.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            raw_mode = raw_obj["dependency_mode"]
         if raw_flow is not None and raw_mode is not None:
             raise ValueError(
                 "watershed.json: pass top-level 'flow' (full dict) or 'gate_mode' (string shorthand), not both."
@@ -131,7 +142,18 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
         edges = []
         for e in raw.get("edges", []):
             raw_flow = e.get("flow")
-            raw_mode = e.get("mode") or e.get("gate_mode")  # 'mode' = legacy alias
+            raw_mode = e.get("gate_mode")
+            if raw_mode is None and "mode" in e:
+                # ``mode`` is a deprecated per-edge alias for ``gate_mode``.
+                # Slated for removal in the next minor release.
+                warnings.warn(
+                    f"watershed.json edge {e.get('from', '?')}->{e.get('to', '?')}: "
+                    "'mode' is a deprecated alias for 'gate_mode' and will be removed in the "
+                    "next minor release.  Replace 'mode' with 'gate_mode' in your edge entry.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                raw_mode = e["mode"]
             if raw_flow is not None and raw_mode is not None:
                 raise ValueError(
                     f"edge {e.get('from', '?')}→{e.get('to', '?')}: "

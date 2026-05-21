@@ -20,7 +20,7 @@ The framework refuses to silently rebuild because the bigger the file gets, the 
 
 ## Pattern 1: `Export` current at window close
 
-Inside a `Watershed`, add an `Export` current after the head stream with a much longer `interval` than the head — typically the full window length. `Export` calls `cls.export()` against the live registry once per tick; with `interval=window_duration` and `dependency_mode="hard"`, it fires exactly once, right before window close.
+Inside a `Watershed`, add an `Export` current after the head stream with a much longer `interval` than the head — typically the full window length. `Export` calls `cls.export()` against the live registry once per tick; with `interval=window_duration` and `gate_mode="hard"`, it fires exactly once, right before window close.
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -37,7 +37,8 @@ end = start + timedelta(hours=1)
 
 watershed = Watershed.chain(
     window=(start, end),
-    nodes=[
+    gate_mode="hard",  # wait for the upstream Stream's data each tick
+    currents=[
         Stream(
             name="laps",
             cls=Lap,
@@ -51,7 +52,6 @@ watershed = Watershed.chain(
             name="laps_snapshot",
             cls=Lap,
             interval=3600,                                  # one tick: at the very end
-            dependency_mode="hard",                         # wait for the upstream Stream
             export_params={"file_path": "laps_snapshot.parquet"},
         ),
     ],
