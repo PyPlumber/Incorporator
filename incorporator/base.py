@@ -589,7 +589,7 @@ class Incorporator(BaseModel):
         __capture_into = kwargs.pop("__capture_into", None)
         payload_list = kwargs.pop("payload_list", None)
 
-        parsed_data, failed_sources = await network.fetch_concurrent_payloads(
+        parsed_data, dead_letter_queue = await network.fetch_concurrent_payloads(
             source_list=source_list,
             is_file_mode=is_file_mode,
             inc_page=inc_page,
@@ -610,7 +610,7 @@ class Incorporator(BaseModel):
             _factory.build_instances,
             cls,
             parsed_data,
-            failed_sources,
+            dead_letter_queue,
             is_single,
             inc_code=inc_code,
             inc_name=inc_name,
@@ -840,7 +840,7 @@ class Incorporator(BaseModel):
             if not source_list:
                 raise ValueError(f"[{cls.__name__}] Instances contain no origin URLs to refresh from.")
 
-        parsed_data, failed_sources = await network.fetch_concurrent_payloads(
+        parsed_data, dead_letter_queue = await network.fetch_concurrent_payloads(
             source_list=source_list,
             is_file_mode=bool(target_file) or (not target_url and getattr(inst_list[0], "inc_file", None) is not None),
             inc_page=inc_page,
@@ -852,7 +852,7 @@ class Incorporator(BaseModel):
             _factory.build_instances,
             cls,
             parsed_data,
-            failed_sources,
+            dead_letter_queue,
             is_single=(len(source_list) <= 1 and inc_page is None),
             target_class=TargetClass,
             inc_code=inc_code,

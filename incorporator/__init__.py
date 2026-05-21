@@ -18,6 +18,7 @@ Key sentinels exported from this package
 __version__ = "1.2.0"
 
 from .base import Incorporator
+from .dead_letter import DeadLetterEntry
 from .exceptions import (
     IncorporatorError,
     IncorporatorFormatError,
@@ -98,6 +99,7 @@ __all__ = [
     "SQLitePaginator",
     "CSVPaginator",
     "AvroPaginator",
+    "DeadLetterEntry",
     "IncorporatorError",
     "IncorporatorFormatError",
     "IncorporatorNetworkError",

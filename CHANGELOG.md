@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`DeadLetterEntry` structured error queue.**  `IncorporatorList`
+  now carries a `dead_letter_queue: List[DeadLetterEntry]` property
+  with structured failure records (`source`, `error_kind`, `message`,
+  `retry_after`, `wave_index`).  HTTP error sites in
+  `incorporator/io/fetch.py` build entries with `error_kind` from the
+  exception type and `retry_after` parsed from any
+  `Retry-After` header.
+
+  The legacy `failed_sources: List[str]` attribute remains as a
+  derived view (`[entry.source for entry in dead_letter_queue]`) so
+  existing user code, tests, and tutorials continue to work
+  unchanged.  Reach for `dead_letter_queue` when you need structured
+  access to the exception type or retry hint:
+
+  ```python
+  result = await Coin.incorp(inc_url=["...", "https://broken/"])
+  for entry in result.dead_letter_queue:
+      if entry.error_kind == "HTTPStatusError" and entry.retry_after:
+          schedule_retry(entry.source, after=entry.retry_after)
+  ```
+
+  Sidecar pipeline write sites (`chunked.py`, `_outflow.py`,
+  `_stateful_shim.py`) still route through the back-compat
+  `failed_sources=[...]` constructor kwarg and are auto-wrapped into
+  entries with `error_kind="Unknown"`.
+
+- **`SourceRef` value type for source dispatch.**  A new
+  `incorporator.io.SourceRef` frozen dataclass consolidates the
+  "what kind of source is this?" classification used by
+  `incorp()`, `architect()`, and other source-consuming verbs.  Five
+  factories (`from_url`, `from_file`, `from_parent`, `from_payload`,
+  `from_kwargs`) plus an auto-detect `parse()` classmethod.  Public
+  verb signatures unchanged; `SourceRef` is internal scaffolding plus
+  an opt-in public type for callers that want explicit source typing.
+
 ### Breaking
 
 - **`_EdgeState` now composes a `FlowState` field.**  The Tideweaver

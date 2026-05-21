@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
 
+from ..dead_letter import DeadLetterEntry
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from . import handlers as format_parsers
 from .compression import decompress_data, infer_compression
@@ -26,6 +27,34 @@ from .penstock import (
     resolve_penstock,
 )
 from .source_ref import SourceRef
+
+
+def _extract_retry_after(exc: Exception) -> Optional[float]:
+    """Pull a ``Retry-After`` hint from an HTTPStatusError if the server sent one.
+
+    The header value is interpreted as seconds (the HTTP/1.1 spec also
+    allows an HTTP-date form; we treat that as ``None`` to avoid the
+    parsing edge cases for a hint that's already advisory).
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        header = exc.response.headers.get("Retry-After")
+        if header:
+            try:
+                return float(header)
+            except ValueError:
+                return None
+    return None
+
+
+def _build_fetch_error_entry(source: str, exc: Exception) -> DeadLetterEntry:
+    """Construct a :class:`DeadLetterEntry` for one source's network failure."""
+    return DeadLetterEntry(
+        source=source,
+        error_kind=type(exc).__name__,
+        message=str(exc),
+        retry_after=_extract_retry_after(exc),
+    )
+
 
 logger = logging.getLogger(__name__)
 
@@ -477,10 +506,17 @@ async def fetch_concurrent_payloads(
     is_file_mode: bool,
     payload_list: Optional[List[Optional[Dict[str, Any]]]] = None,
     **kwargs: Any,
-) -> Tuple[List[Any], List[str]]:
-    """Unified Orchestrator: Exclusively manages sliding windows and concurrent batching."""
+) -> Tuple[List[Any], List[DeadLetterEntry]]:
+    """Unified Orchestrator: Exclusively manages sliding windows and concurrent batching.
 
-    failed_sources: List[str] = []
+    Returns ``(all_parsed_data, dead_letter_queue)`` — the second
+    element is a list of structured :class:`DeadLetterEntry` records
+    (one per failed source) with ``error_kind`` populated from the
+    underlying exception type and ``retry_after`` populated from any
+    HTTP ``Retry-After`` header.
+    """
+
+    dead_letter_queue: List[DeadLetterEntry] = []
 
     limit = kwargs.pop("concurrency_limit", 50)
     delay_between_batches = kwargs.pop("delay_between_batches", 0.0)
@@ -564,16 +600,16 @@ async def fetch_concurrent_payloads(
                     f"Tip: Lower `requests_per_second` (e.g. 0.2 for ~12 req/min); "
                     f"check the host's free-tier docs for the correct ceiling."
                 )
-                failed_sources.append(src)
+                dead_letter_queue.append(_build_fetch_error_entry(src, e))
                 return []
             raise IncorporatorNetworkError(f"HTTP error {e.response.status_code}") from e
         except httpx.RequestError as e:
             logger.warning(f"Network Connection Error for '{src}': {e.__class__.__name__}. Skipping.")
-            failed_sources.append(src)
+            dead_letter_queue.append(_build_fetch_error_entry(src, e))
             return []
         except IncorporatorFormatError as e:
             logger.warning(f"⚠️ PARSE FAILED for '{src}': {e}. Skipping.")
-            failed_sources.append(src)
+            dead_letter_queue.append(_build_fetch_error_entry(src, e))
             return []
 
     try:
@@ -605,7 +641,7 @@ async def fetch_concurrent_payloads(
                         raise res
                     if isinstance(res, Exception):
                         logger.warning(f"⚠️ FETCH ERROR on '{src}': {type(res).__name__}: {res}. Skipping.")
-                        failed_sources.append(str(src))
+                        dead_letter_queue.append(_build_fetch_error_entry(str(src), res))
                     elif res:
                         all_parsed_data.extend(res)
 
@@ -638,7 +674,7 @@ async def fetch_concurrent_payloads(
                         res = await _safe_execute(str(src), p)
                     except Exception as exc:
                         logger.warning(f"⚠️ FETCH ERROR on '{src}': {type(exc).__name__}: {exc}. Skipping.")
-                        failed_sources.append(str(src))
+                        dead_letter_queue.append(_build_fetch_error_entry(str(src), exc))
                         continue
                     if res:
                         ordered_results[idx] = res
@@ -650,7 +686,7 @@ async def fetch_concurrent_payloads(
             for res in ordered_results:
                 all_parsed_data.extend(res)
 
-        return all_parsed_data, failed_sources
+        return all_parsed_data, dead_letter_queue
 
     finally:
         if should_close and _client is not None:

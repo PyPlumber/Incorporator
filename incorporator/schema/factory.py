@@ -19,6 +19,7 @@ from . import converters, router
 
 if TYPE_CHECKING:
     from ..base import Incorporator
+    from ..dead_letter import DeadLetterEntry
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ async def child_incorp(
 def build_instances(
     cls: "Type[Incorporator]",
     parsed_data: List[Any],
-    failed_sources: List[str],
+    dead_letter_queue: List["DeadLetterEntry"],
     is_single: bool,
     target_class: Optional["Type[Incorporator]"] = None,
     inc_code: Optional[str] = None,
@@ -217,8 +218,10 @@ def build_instances(
     Args:
         cls: The calling :class:`Incorporator` subclass.
         parsed_data: Raw dicts from the format handler.
-        failed_sources: Any fetch failures accumulated upstream (surfaced as a
-            ``UserWarning`` and forwarded to :class:`IncorporatorList`).
+        dead_letter_queue: Structured failure entries accumulated
+            upstream (surfaced as a ``UserWarning`` and forwarded to
+            :class:`IncorporatorList`).  See
+            :class:`incorporator.DeadLetterEntry`.
         is_single: When ``True`` and ``parsed_data`` has exactly one item,
             returns a single instance rather than a list.
         target_class: Override the compiled model class (e.g. for
@@ -233,9 +236,9 @@ def build_instances(
         A single :class:`Incorporator` instance or an
         :class:`IncorporatorList`.
     """
-    if failed_sources:
+    if dead_letter_queue:
         warnings.warn(
-            f"Incorporator partial data returned: {len(failed_sources)} source(s) failed.",
+            f"Incorporator partial data returned: {len(dead_letter_queue)} source(s) failed.",
             stacklevel=2,
         )
 
@@ -245,7 +248,7 @@ def build_instances(
             "Type[Incorporator]",
             schema_builder.infer_dynamic_schema("DynamicModel", [{}], cls),
         )
-        return IncorporatorList(EmptyClass, [], failed_sources=failed_sources)
+        return IncorporatorList(EmptyClass, [], dead_letter_queue=dead_letter_queue)
 
     if is_single and len(parsed_data) == 1:
         parsed_data = parsed_data[0]
@@ -307,6 +310,6 @@ def build_instances(
         instances: List[Any] = []
         for i in range(0, len(transformed_data), _BATCH):
             instances.extend(ActualClass.model_validate(row) for row in transformed_data[i : i + _BATCH])
-        return IncorporatorList(ActualClass, instances, failed_sources=failed_sources)
+        return IncorporatorList(ActualClass, instances, dead_letter_queue=dead_letter_queue)
 
     return ActualClass(**transformed_data)

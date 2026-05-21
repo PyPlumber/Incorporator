@@ -266,8 +266,8 @@ async def test_fetch_concurrent_non_429_error_does_not_cancel_siblings(
     assert call_count["value"] == 3
     # Good sources returned their data.
     assert {row["src"] for row in parsed} == {"https://good-a.test/", "https://good-b.test/"}
-    # Bad source surfaces in failed_sources rather than aborting the batch.
-    assert "https://bad.test/" in failed
+    # Bad source surfaces in dead_letter_queue rather than aborting the batch.
+    assert "https://bad.test/" in [entry.source for entry in failed]
 
 
 @pytest.mark.asyncio
@@ -289,7 +289,7 @@ async def test_fetch_concurrent_all_5xx_returns_empty_with_all_failed(
     )
 
     assert parsed == []
-    assert sorted(failed) == sorted(urls)
+    assert sorted(entry.source for entry in failed) == sorted(urls)
 
 
 @pytest.mark.asyncio
@@ -314,7 +314,7 @@ async def test_fetch_concurrent_unexpected_error_surfaces_in_failed_sources(
     )
 
     assert any(row["src"] == "https://ok.test/" for row in parsed)
-    assert "https://boom.test/" in failed
+    assert "https://boom.test/" in [entry.source for entry in failed]
 
 
 @pytest.mark.asyncio
@@ -346,7 +346,7 @@ async def test_fetch_concurrent_path_a_batched_no_cancel_cascade(
     )
 
     assert {row["src"] for row in parsed} == {"https://good-a.test/", "https://good-b.test/"}
-    assert "https://bad.test/" in failed
+    assert "https://bad.test/" in [entry.source for entry in failed]
 
 
 # ----------------------------------------------------------------------

@@ -11,6 +11,8 @@ import logging
 import weakref
 from typing import Any, List, Optional, Type, TypeVar, cast
 
+from .dead_letter import DeadLetterEntry
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -62,21 +64,59 @@ class IncorporatorList(List[T]):
     4xx-other-than-429, network failure, unparseable payload).
     """
 
-    failed_sources: List[str]
-
     def __init__(
         self,
         model_class: Type[Any],
         items: List[Any],
         failed_sources: Optional[List[str]] = None,
+        dead_letter_queue: Optional[List[DeadLetterEntry]] = None,
     ):
         super().__init__(items)
         self._model_class = model_class
-        # Surface failed URLs / paths for dead-letter retry workflows.
-        self.failed_sources = failed_sources if failed_sources is not None else []
+        # Structured dead-letter queue.  Accept EITHER the legacy
+        # ``failed_sources`` (List[str] — auto-wrap each string in a
+        # minimal :class:`DeadLetterEntry`) OR the new
+        # ``dead_letter_queue`` (List[DeadLetterEntry] — preferred).
+        # Passing both raises so callers don't accidentally double-fill.
+        if failed_sources is not None and dead_letter_queue is not None:
+            raise ValueError(
+                "IncorporatorList: pass `failed_sources` (legacy List[str]) "
+                "OR `dead_letter_queue` (List[DeadLetterEntry]), not both."
+            )
+        if dead_letter_queue is not None:
+            self._dead_letter_queue: List[DeadLetterEntry] = list(dead_letter_queue)
+        elif failed_sources is not None:
+            self._dead_letter_queue = [
+                DeadLetterEntry(source=s, error_kind="Unknown", message=s) for s in failed_sources
+            ]
+        else:
+            self._dead_letter_queue = []
 
         # Per-list cache slot for graph-drilling routes (set by incorp()).
         self.inc_child_path: Optional[str] = None
+
+    @property
+    def dead_letter_queue(self) -> List[DeadLetterEntry]:
+        """Structured view of failed sources — preferred over ``failed_sources``.
+
+        Returns a defensive copy of the queue (the underlying list is
+        kept private so callers can't mutate framework state — entries
+        are frozen Pydantic models so the entries themselves are safe).
+        """
+        return list(self._dead_letter_queue)
+
+    @property
+    def failed_sources(self) -> List[str]:
+        """Legacy string-list view of the dead-letter queue.
+
+        Equivalent to ``[entry.source for entry in self.dead_letter_queue]``;
+        kept as a derived view so every existing user/test/example that
+        reads ``IncorporatorList.failed_sources`` continues working
+        unchanged.  Reach for :attr:`dead_letter_queue` when you need
+        structured access to ``error_kind`` / ``message`` /
+        ``retry_after`` / ``wave_index``.
+        """
+        return [entry.source for entry in self._dead_letter_queue]
 
     def __del__(self) -> None:
         """Diagnostic hook — emits a DEBUG log if a non-empty list is GC'd.

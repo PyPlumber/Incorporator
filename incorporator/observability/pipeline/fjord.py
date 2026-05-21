@@ -7,6 +7,7 @@ import time
 from types import ModuleType
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 
+from ...dead_letter import DeadLetterEntry
 from ..logger import Wave
 from ._daemons import _export_daemon, _refresh_daemon
 from ._outflow import _outflow_daemon
@@ -89,8 +90,8 @@ def _tiered_seed_order(
     return tiers
 
 
-def _format_seed_error(cls_name: str, exc: Exception, inflow_active: bool) -> str:
-    """Build the ``failed_sources`` entry for a seed exception.
+def _build_seed_error_entry(cls_name: str, exc: Exception, inflow_active: bool) -> DeadLetterEntry:
+    """Build a structured :class:`DeadLetterEntry` for a seed exception.
 
     ``KeyError`` raised under an active ``inflow_callable`` is almost always the
     ``state[ClassName]`` lookup failing — message it that way so the user
@@ -103,12 +104,24 @@ def _format_seed_error(cls_name: str, exc: Exception, inflow_active: bool) -> st
     exc_type = type(exc).__name__
     if inflow_active and isinstance(exc, KeyError) and exc.args:
         missing = exc.args[0]
-        return (
+        message = (
             f"inflow(state) for source {cls_name!r} raised KeyError on missing peer "
             f"{missing!r} — guard inflow(state) against missing keys "
             f"(e.g. state.get({missing!r}) or add depends_on={[missing]!r} to enforce ordering)"
         )
-    return f"Seed Error in source {cls_name!r}: {exc_type}: {exc}"
+    else:
+        message = f"Seed Error in source {cls_name!r}: {exc_type}: {exc}"
+    return DeadLetterEntry(source=cls_name, error_kind=exc_type, message=message)
+
+
+def _format_seed_error(cls_name: str, exc: Exception, inflow_active: bool) -> str:
+    """Legacy string wrapper around :func:`_build_seed_error_entry`.
+
+    Preserves the :attr:`Wave.failed_sources` string-list contract for
+    per-wave telemetry — callers that want structured access use the
+    entry-returning helper directly.
+    """
+    return _build_seed_error_entry(cls_name, exc, inflow_active).message
 
 
 def _resolve_seed_order(
