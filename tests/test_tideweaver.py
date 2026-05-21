@@ -606,6 +606,110 @@ async def test_reservoir_per_edge_isolation() -> None:
         delattr(_A, "_tideweaver_snapshot")
 
 
+# ---------------------------------------------------------------------------
+# Phase 3: Penstock (edge rate limit)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_penstock_limits_consumption_rate() -> None:
+    """``Penstock(rate_per_sec=5.0)`` skips downstream ticks that would exceed the rate.
+
+    Min gap = 1/5 = 0.2s.  With dependent.interval=0.05s, most passes hit
+    the penstock between consumptions and surface ``"penstock_limited"``.
+    """
+    from incorporator.observability.tideweaver import HardLock, Penstock
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=0.05)
+    capped_flow = FlowControl(gate=HardLock(), penstock=Penstock(rate_per_sec=5.0))
+    ws = Watershed(
+        window=_short_window(0.6),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=capped_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    tides = await _collect_tides(tw)
+    reasons = [reason for tide in tides for _name, reason in tide.skipped]
+    assert "penstock_limited" in reasons, (
+        f"Penstock must surface 'penstock_limited' under tight rate; got {reasons}"
+    )
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_penstock_none_means_unlimited() -> None:
+    """Without ``Penstock``, the dependent fires every interval (no rate cap)."""
+    fires: List[str] = []
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+        fires.append(current.name)
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=0.05)
+    # Default flow — no penstock.
+    ws = Watershed.chain(window=_short_window(0.4), currents=[a, b])
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    tides = await _collect_tides(tw)
+    reasons = [reason for tide in tides for _name, reason in tide.skipped]
+    assert "penstock_limited" not in reasons, (
+        f"Default (no Penstock) must NOT emit 'penstock_limited'; got {reasons}"
+    )
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_penstock_per_edge_independent() -> None:
+    """Two edges from the same upstream with different penstocks operate independently."""
+    from incorporator.observability.tideweaver import HardLock, Penstock
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "src":
+            inst = _A(inc_code=f"src-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    src = _stream("src", interval=0.05)
+    fast_sink = _stream("fast_sink", interval=0.05)
+    slow_sink = _stream("slow_sink", interval=0.05)
+    fast_flow = FlowControl(gate=HardLock(), penstock=Penstock(rate_per_sec=50.0))  # cap >> tick interval; basically uncapped
+    slow_flow = FlowControl(gate=HardLock(), penstock=Penstock(rate_per_sec=2.0))  # min_gap 0.5s
+    ws = Watershed(
+        window=_short_window(0.5),
+        currents=[src, fast_sink, slow_sink],
+        edges=[
+            Edge(from_name="src", to_name="fast_sink", flow=fast_flow),
+            Edge(from_name="src", to_name="slow_sink", flow=slow_flow),
+        ],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    tides = await _collect_tides(tw)
+    slow_skips = sum(1 for tide in tides for name, reason in tide.skipped if name == "slow_sink" and reason == "penstock_limited")
+    fast_skips = sum(1 for tide in tides for name, reason in tide.skipped if name == "fast_sink" and reason == "penstock_limited")
+    assert slow_skips > fast_skips, (
+        f"slow_sink (cap 2/s) must skip more often than fast_sink (cap 50/s); got slow={slow_skips}, fast={fast_skips}"
+    )
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
 @pytest.mark.asyncio
 async def test_graceful_drain() -> None:
     """An in-flight tick at window-end finishes inside drain_timeout."""

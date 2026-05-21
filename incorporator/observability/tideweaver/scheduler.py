@@ -393,11 +393,22 @@ class Tideweaver:
                     return "skip_ahead"
                 if surge.action == "halt":
                     return "surge_halted"
-                # action == "bypass" — fire ignoring this edge's gate.
+                # action == "bypass" — fire ignoring this edge's gate AND penstock.
                 continue
             gate_reason = flow.gate.gate_reason(self, current, up_name, now)
             if gate_reason is not None:
                 return gate_reason
+            # Penstock — sustained-rate cap at the edge layer.  If the
+            # dependent consumed from this edge less than ``1/rate_per_sec``
+            # ago, hold this pass.  Different from per-host HTTP throttling
+            # (incorporator.io.throttle): that limits HTTP calls; this
+            # limits *wave consumption* across one Watershed edge.
+            if flow.penstock is not None:
+                edge_state = self._edge_state.get((up_name, current.name))
+                if edge_state is not None and edge_state.last_consumed_at is not None:
+                    min_gap = 1.0 / flow.penstock.rate_per_sec
+                    if (now - edge_state.last_consumed_at) < min_gap:
+                        return "penstock_limited"
         return None
 
     def _spawn_tick(self, current: Current) -> None:
@@ -457,10 +468,17 @@ class Tideweaver:
             for up_name, value in consumed_snapshot.items():
                 self._last_consumed[(current.name, up_name)] = value
             # Also bump consumed for any upstream that produced a wave during this tick.
+            now_mono = time.monotonic()
             for up_name, _flow in self._upstream[current.name]:
                 latest = self._state[up_name].last_wave_at
                 if latest is not None:
                     self._last_consumed[(current.name, up_name)] = latest
+                # Edge-level consumption timestamp (for Penstock rate-limit
+                # enforcement on the next gate cycle).  Bumped once per
+                # successful tick regardless of dependent type.
+                edge_state = self._edge_state.get((up_name, current.name))
+                if edge_state is not None:
+                    edge_state.last_consumed_at = now_mono
             state.started_at = None
             # Push this tick's wave content into every outgoing edge's
             # reservoir.  Reads the strong-ref ``_tideweaver_snapshot`` the
@@ -623,17 +641,17 @@ class Tideweaver:
         upstream_names = self._transitive_upstreams(current.name)
         deps = [self._currents_by_name[up_name] for up_name in upstream_names]
         state: Dict[str, List[Any]] = {}
-        now_mono = time.monotonic()
         for dep in deps:
             # Direct upstream — prefer the edge's reservoir (the latest wave
             # held there) so depth>1 buffering and replay land cleanly.
             # Transitive upstream — no direct edge, fall back to the class
             # snapshot.  When the reservoir is empty (e.g. dependent fires
             # before upstream has emitted), fall back to the class snapshot.
+            # ``last_consumed_at`` is bumped by ``_tick_wrapper.finally``,
+            # not here — keeps the Penstock accounting in one place.
             edge_state = self._edge_state.get((dep.name, current.name))
             if edge_state is not None and edge_state.waves:
                 state[dep.cls.__name__] = list(edge_state.waves[-1])
-                edge_state.last_consumed_at = now_mono
                 continue
             snapshot = getattr(dep.cls, "_tideweaver_snapshot", None)
             if snapshot is not None:
