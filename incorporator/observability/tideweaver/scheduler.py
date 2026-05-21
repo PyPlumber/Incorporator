@@ -42,7 +42,7 @@ from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_
 from ...io.fetch import HTTPClientBuilder
 from ..pipeline._outflow import flush
 from .current import Current, Export, Fjord, Stream
-from .flow import FlowControl
+from .flow import BurstPenstock, FlowControl, WindowPenstock
 from .tide import Tide
 from .watershed import Watershed
 
@@ -60,8 +60,16 @@ class _EdgeState(BaseModel):
     new wave arrives, the displaced wave is routed through
     ``flow.spillway.overflow`` and ``overflow_count`` bumps for diagnostics.
 
-    ``last_consumed_at`` is reserved for Phase 3 (Penstock rate-limiting);
-    ``arbitrary_types_allowed`` lets the wave list hold any instance type.
+    Penstock strategies mutate the strategy-specific fields below:
+
+    * ``last_consumed_at`` — used by SustainedPenstock, BackpressurePenstock,
+      SignalPenstock (sustained-rate-style gating).
+    * ``bucket_tokens`` / ``bucket_last_refill_at`` — used by BurstPenstock
+      (token bucket).
+    * ``window_log`` — used by WindowPenstock (rolling-window quota).
+
+    All Penstock fields are Optional / empty by default, so edges that
+    don't use a given strategy pay nothing for the unused slots.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -71,10 +79,19 @@ class _EdgeState(BaseModel):
 
     last_consumed_at: Optional[float] = None
     """Monotonic time of the dependent's most recent consumption from this edge.
-    Phase 3 honors this for ``Penstock.rate_per_sec`` enforcement."""
+    Read by sustained-rate Penstock strategies."""
 
     overflow_count: int = 0
     """Cumulative count of waves displaced from the reservoir (for diagnostics)."""
+
+    bucket_tokens: Optional[float] = None
+    """Current token-bucket level (BurstPenstock)."""
+
+    bucket_last_refill_at: Optional[float] = None
+    """Monotonic time of the most recent token-bucket refill (BurstPenstock)."""
+
+    window_log: List[float] = Field(default_factory=list)
+    """Monotonic timestamps of consumptions within the current window (WindowPenstock)."""
 
 
 class _CurrentState(BaseModel):
@@ -421,17 +438,17 @@ class Tideweaver:
             gate_reason = flow.gate.gate_reason(self, current, up_name, now)
             if gate_reason is not None:
                 return gate_reason
-            # Penstock — sustained-rate cap at the edge layer.  If the
-            # dependent consumed from this edge less than ``1/rate_per_sec``
-            # ago, hold this pass.  Different from per-host HTTP throttling
-            # (incorporator.io.throttle): that limits HTTP calls; this
-            # limits *wave consumption* across one Watershed edge.
+            # Penstock — edge-layer flow-rate strategy.  Delegates to the
+            # strategy class (SustainedPenstock / BurstPenstock /
+            # WindowPenstock / BackpressurePenstock / SignalPenstock); each
+            # mutates its own slice of ``_EdgeState`` for bookkeeping and
+            # returns a skip reason or None.
             if flow.penstock is not None:
                 edge_state = self._edge_state.get((up_name, current.name))
-                if edge_state is not None and edge_state.last_consumed_at is not None:
-                    min_gap = 1.0 / flow.penstock.rate_per_sec
-                    if (now - edge_state.last_consumed_at) < min_gap:
-                        return "penstock_limited"
+                if edge_state is not None:
+                    penstock_reason = flow.penstock.consume_reason(self, edge_state, flow, now)
+                    if penstock_reason is not None:
+                        return penstock_reason
         return None
 
     def _spawn_tick(self, current: Current) -> None:
@@ -492,16 +509,22 @@ class Tideweaver:
                 self._last_consumed[(current.name, up_name)] = value
             # Also bump consumed for any upstream that produced a wave during this tick.
             now_mono = time.monotonic()
-            for up_name, _flow in self._upstream[current.name]:
+            for up_name, edge_flow in self._upstream[current.name]:
                 latest = self._state[up_name].last_wave_at
                 if latest is not None:
                     self._last_consumed[(current.name, up_name)] = latest
-                # Edge-level consumption timestamp (for Penstock rate-limit
-                # enforcement on the next gate cycle).  Bumped once per
-                # successful tick regardless of dependent type.
+                # Edge-level consumption timestamp + Penstock-strategy
+                # post-consumption updates.  Each strategy reads its own
+                # ``_EdgeState`` slice on the next gate cycle.
                 edge_state = self._edge_state.get((up_name, current.name))
                 if edge_state is not None:
                     edge_state.last_consumed_at = now_mono
+                    pen = edge_flow.penstock
+                    if pen is not None:
+                        if isinstance(pen, BurstPenstock) and edge_state.bucket_tokens is not None:
+                            edge_state.bucket_tokens = max(0.0, edge_state.bucket_tokens - 1.0)
+                        elif isinstance(pen, WindowPenstock):
+                            edge_state.window_log.append(now_mono)
             state.started_at = None
             # Push this tick's wave content into every outgoing edge's
             # reservoir.  Reads the strong-ref ``_tideweaver_snapshot`` the

@@ -607,18 +607,19 @@ async def test_reservoir_per_edge_isolation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: Penstock (edge rate limit)
+# Penstock hierarchy: 5 strategies (SustainedPenstock, BurstPenstock,
+# WindowPenstock, BackpressurePenstock, SignalPenstock)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_penstock_limits_consumption_rate() -> None:
-    """``Penstock(rate_per_sec=5.0)`` skips downstream ticks that would exceed the rate.
+async def test_sustained_penstock_limits_consumption_rate() -> None:
+    """``SustainedPenstock(rate_per_sec=5.0)`` skips downstream ticks that would exceed the rate.
 
     Min gap = 1/5 = 0.2s.  With dependent.interval=0.05s, most passes hit
     the penstock between consumptions and surface ``"penstock_limited"``.
     """
-    from incorporator.observability.tideweaver import HardLock, Penstock
+    from incorporator.observability.tideweaver import HardLock, SustainedPenstock
 
     strong_refs: List[_A] = []
 
@@ -630,7 +631,7 @@ async def test_penstock_limits_consumption_rate() -> None:
 
     a = _stream("a", interval=0.05)
     b = _stream("b", interval=0.05)
-    capped_flow = FlowControl(gate=HardLock(), penstock=Penstock(rate_per_sec=5.0))
+    capped_flow = FlowControl(gate=HardLock(), penstock=SustainedPenstock(rate_per_sec=5.0))
     ws = Watershed(
         window=_short_window(0.6),
         currents=[a, b],
@@ -648,7 +649,7 @@ async def test_penstock_limits_consumption_rate() -> None:
 
 @pytest.mark.asyncio
 async def test_penstock_none_means_unlimited() -> None:
-    """Without ``Penstock``, the dependent fires every interval (no rate cap)."""
+    """Without a Penstock strategy, the dependent fires every interval (no rate cap)."""
     fires: List[str] = []
     strong_refs: List[_A] = []
 
@@ -674,9 +675,9 @@ async def test_penstock_none_means_unlimited() -> None:
 
 
 @pytest.mark.asyncio
-async def test_penstock_per_edge_independent() -> None:
-    """Two edges from the same upstream with different penstocks operate independently."""
-    from incorporator.observability.tideweaver import HardLock, Penstock
+async def test_sustained_penstock_per_edge_independent() -> None:
+    """Two edges from the same upstream with different SustainedPenstocks operate independently."""
+    from incorporator.observability.tideweaver import HardLock, SustainedPenstock
 
     strong_refs: List[_A] = []
 
@@ -689,8 +690,8 @@ async def test_penstock_per_edge_independent() -> None:
     src = _stream("src", interval=0.05)
     fast_sink = _stream("fast_sink", interval=0.05)
     slow_sink = _stream("slow_sink", interval=0.05)
-    fast_flow = FlowControl(gate=HardLock(), penstock=Penstock(rate_per_sec=50.0))  # cap >> tick interval; basically uncapped
-    slow_flow = FlowControl(gate=HardLock(), penstock=Penstock(rate_per_sec=2.0))  # min_gap 0.5s
+    fast_flow = FlowControl(gate=HardLock(), penstock=SustainedPenstock(rate_per_sec=50.0))  # cap >> tick interval; basically uncapped
+    slow_flow = FlowControl(gate=HardLock(), penstock=SustainedPenstock(rate_per_sec=2.0))  # min_gap 0.5s
     ws = Watershed(
         window=_short_window(0.5),
         currents=[src, fast_sink, slow_sink],
@@ -708,6 +709,174 @@ async def test_penstock_per_edge_independent() -> None:
     )
     if "_tideweaver_snapshot" in _A.__dict__:
         delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_burst_penstock_allows_initial_burst_then_throttles() -> None:
+    """``BurstPenstock(rate_per_sec=2.0, burst=5)`` lets first 5 ticks pass fast, then throttles."""
+    from incorporator.observability.tideweaver import BurstPenstock, HardLock
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.02)
+    b = _stream("b", interval=0.02)
+    # rate=2/s, burst=5 — first 5 should pass quickly, then we should hit
+    # penstock_limited as the bucket drains (refill 2/sec).
+    burst_flow = FlowControl(gate=HardLock(), penstock=BurstPenstock(rate_per_sec=2.0, burst=5))
+    ws = Watershed(
+        window=_short_window(0.5),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=burst_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    tides = await _collect_tides(tw)
+    skip_reasons = [reason for tide in tides for _name, reason in tide.skipped if _name == "b"]
+    b_fires = sum(1 for tide in tides if "b" in tide.fired)
+    # The burst lets at least the first 5 through; the bucket then drains
+    # and we see penstock_limited skips.
+    assert b_fires >= 5, f"BurstPenstock(burst=5) must allow >= 5 initial ticks; got {b_fires}"
+    assert "penstock_limited" in skip_reasons, (
+        f"BurstPenstock should throttle after the burst; got {skip_reasons}"
+    )
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_burst_penstock_refills_capped_at_burst() -> None:
+    """Token bucket refills at ``rate_per_sec`` but never exceeds ``burst`` capacity.
+
+    Manually advance the bucket state to verify the cap.
+    """
+    from incorporator.observability.tideweaver import BurstPenstock
+
+    pen = BurstPenstock(rate_per_sec=2.0, burst=3)
+
+    class _MockEdge:
+        bucket_tokens: Optional[float] = None
+        bucket_last_refill_at: Optional[float] = None
+        last_consumed_at: Optional[float] = None
+        waves: List[Any] = []
+        window_log: List[float] = []
+
+    es = _MockEdge()
+    # Initial — bucket fills to burst=3.
+    assert pen.consume_reason(None, es, FlowControl(penstock=pen), 0.0) is None  # type: ignore[arg-type]
+    assert es.bucket_tokens == 3.0
+    # Idle for 100 seconds — at rate=2/s that's +200 tokens, capped at 3.
+    assert pen.consume_reason(None, es, FlowControl(penstock=pen), 100.0) is None  # type: ignore[arg-type]
+    assert es.bucket_tokens == 3.0, f"Bucket must cap at burst=3; got {es.bucket_tokens}"
+
+
+@pytest.mark.asyncio
+async def test_window_penstock_caps_at_window_size() -> None:
+    """``WindowPenstock(window_sec=0.4, cap=3)`` allows 3 ticks within window, hard-walls 4th."""
+    from incorporator.observability.tideweaver import HardLock, WindowPenstock
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.02)
+    b = _stream("b", interval=0.02)
+    win_flow = FlowControl(gate=HardLock(), penstock=WindowPenstock(window_sec=0.4, cap=3))
+    ws = Watershed(
+        window=_short_window(0.35),  # shorter than window_sec so the cap actually bites
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=win_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    tides = await _collect_tides(tw)
+    skip_reasons = [reason for tide in tides for name, reason in tide.skipped if name == "b"]
+    b_fires = sum(1 for tide in tides if "b" in tide.fired)
+    assert b_fires <= 3, f"WindowPenstock(cap=3) must allow at most 3 fires within the window; got {b_fires}"
+    if b_fires == 3:
+        assert "penstock_limited" in skip_reasons, (
+            "After cap is reached, WindowPenstock must skip with 'penstock_limited'"
+        )
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_backpressure_penstock_slows_under_full_reservoir() -> None:
+    """``BackpressurePenstock`` rate drops toward ``min_rate`` as the reservoir fills.
+
+    Unit-test the rate calculation directly — interpolation between
+    min_rate and max_rate based on fullness ratio.
+    """
+    from incorporator.observability.tideweaver import BackpressurePenstock, Reservoir
+
+    pen = BackpressurePenstock(min_rate=1.0, max_rate=10.0)
+
+    class _Es:
+        waves: List[Any]
+        last_consumed_at: Optional[float] = None
+        bucket_tokens: Optional[float] = None
+        bucket_last_refill_at: Optional[float] = None
+        window_log: List[float] = []
+
+        def __init__(self, wave_count: int) -> None:
+            self.waves = [None] * wave_count
+
+    flow = FlowControl(penstock=pen, reservoir=Reservoir(depth=5))
+    # Empty reservoir (0/5 fullness=0): effective_rate = 10 (max).  min_gap = 0.1s.
+    # last_consumed_at None → no rate-limit yet (initial call).
+    es_empty = _Es(0)
+    assert pen.consume_reason(None, es_empty, flow, 1.0) is None  # type: ignore[arg-type]
+    # Same edge, simulate consumption 0.05s ago: rate 10/s, gap < 0.1 → limited.
+    es_empty.last_consumed_at = 0.95
+    assert pen.consume_reason(None, es_empty, flow, 1.0) == "penstock_limited"  # type: ignore[arg-type]
+    # Full reservoir (5/5 fullness=1.0): effective_rate = 1.  min_gap = 1.0s.
+    es_full = _Es(5)
+    es_full.last_consumed_at = 0.5  # 0.5s ago, rate=1 → min_gap=1.0 → limited.
+    assert pen.consume_reason(None, es_full, flow, 1.0) == "penstock_limited"  # type: ignore[arg-type]
+    # After 1.0s+ idle on full reservoir, allowed again.
+    es_full.last_consumed_at = -0.1
+    assert pen.consume_reason(None, es_full, flow, 1.0) is None  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_signal_penstock_callable_drives_rate() -> None:
+    """``SignalPenstock`` rate_fn return value gates the dependent.
+
+    Returning 0 always blocks; returning a high rate allows steady firing.
+    """
+    from incorporator.observability.tideweaver import SignalPenstock
+
+    invocations: List[float] = []
+
+    def rate_fn(scheduler: Any, edge_state: Any, now: float) -> float:
+        invocations.append(now)
+        # Block until now > 1.0; then allow at 100/s (effectively uncapped).
+        return 0.0 if now < 1.0 else 100.0
+
+    pen = SignalPenstock(rate_fn=rate_fn)
+    flow = FlowControl(penstock=pen)
+
+    class _Es:
+        waves: List[Any] = []
+        last_consumed_at: Optional[float] = None
+        bucket_tokens: Optional[float] = None
+        bucket_last_refill_at: Optional[float] = None
+        window_log: List[float] = []
+
+    es = _Es()
+    # rate_fn returns 0 → must block.
+    assert pen.consume_reason(None, es, flow, 0.5) == "penstock_limited"  # type: ignore[arg-type]
+    # rate_fn returns 100 → allowed at clear rate; last_consumed_at None, so no gap to check.
+    assert pen.consume_reason(None, es, flow, 1.5) is None  # type: ignore[arg-type]
+    assert len(invocations) == 2, f"rate_fn must be called once per consume_reason; got {len(invocations)}"
 
 
 # ---------------------------------------------------------------------------

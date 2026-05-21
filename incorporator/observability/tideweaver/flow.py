@@ -7,7 +7,12 @@ primitives this module exposes, composed by :class:`FlowControl`:
   :class:`Weir`) — pass/hold decision per pass.
 * :class:`SurgeBarrier` — conditional override when upstream is in-flight
   beyond a threshold (storm-surge barrier semantics).
-* :class:`Penstock` — flow-rate limit (waves/sec) across the edge.
+* :class:`Penstock` (subclasses :class:`SustainedPenstock`,
+  :class:`BurstPenstock`, :class:`WindowPenstock`,
+  :class:`BackpressurePenstock`, :class:`SignalPenstock`) —
+  flow-rate strategies across the edge.  ``Backpressure`` reads
+  the reservoir to adapt — closing a control loop between the two
+  primitives.
 * :class:`Reservoir` — FIFO buffer of recent waves; absorbs upstream
   surges and supports replay.
 * :class:`Spillway` (subclasses :class:`DropOldest`, :class:`RaiseOverflow`,
@@ -19,14 +24,19 @@ dependent's tick schedule, not of one edge.
 
 :class:`FlowControl` composes the five edge-level primitives into the
 single per-edge config object the scheduler reads.  Mirrors the
-``ThrottleStrategy`` split in :mod:`incorporator.io.throttle` (sluices,
-flow-rate) with a parallel hierarchy here for pass/hold decisions.
+``ThrottleStrategy`` split in :mod:`incorporator.io.throttle` (HTTP-layer
+host throttles) with a parallel hierarchy here for wave-layer decisions.
+
+Layer separation: HTTP throttles (``io.throttle``) limit *requests per
+host*; Penstocks here limit *wave consumption per edge*.  They compose
+multiplicatively in a chain — see :mod:`incorporator.observability.tideweaver`
+package docstring for the canal-metaphor mapping.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Type
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -193,29 +203,213 @@ class SurgeBarrier(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Penstock — flow-rate limit at the edge layer (active in Phase 3)
+# Penstock hierarchy — edge-layer flow-rate strategies
 # ---------------------------------------------------------------------------
 
 
 class Penstock(BaseModel):
-    """Flow-rate limit at the edge layer.
+    """Edge-layer flow-rate strategy.  Subclasses define a concrete mechanic.
 
-    Different from :class:`~incorporator.io.throttle.ThrottleStrategy`:
-    that limits HTTP calls per host; this limits *wave consumption*
-    across one Watershed edge.  A slow downstream can throttle how fast
-    it sucks waves from a hot upstream without affecting upstream's
-    emission rate.
+    Different from :class:`~incorporator.io.throttle.ThrottleStrategy`
+    (which limits HTTP calls per host): Penstock limits *wave
+    consumption* across one Watershed edge.  A slow downstream can
+    throttle how fast it sucks waves from a hot upstream without
+    affecting upstream's HTTP emission rate.  See ``flow.py`` module
+    docstring for the canal-metaphor mapping.
 
-    Declared in Phase 1 (this commit); activated in Phase 3 when the
-    scheduler honors ``rate_per_sec`` in its gating cycle.
+    Override :meth:`consume_reason` to implement a concrete mechanic.
+    The scheduler delegates per-edge in the gate cycle; strategies
+    read scheduler state, mutate per-edge bookkeeping on
+    :class:`_EdgeState`, and return a skip reason or ``None``.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    rate_per_sec: float = Field(
-        gt=0.0,
-        description="Max wave consumptions per second across this edge.",
+    def consume_reason(
+        self,
+        scheduler: "Tideweaver",
+        edge_state: Any,
+        flow: "FlowControl",
+        now: float,
+    ) -> Optional[str]:
+        """Return a skip reason string, or ``None`` to allow consumption.
+
+        Strategies may mutate ``edge_state`` for bookkeeping (token
+        refill, window log eviction, etc.).  ``flow`` is the enclosing
+        :class:`FlowControl` — needed by
+        :class:`BackpressurePenstock` to read ``flow.reservoir.depth``;
+        ignored by the simpler strategies.
+        """
+        raise NotImplementedError
+
+
+class SustainedPenstock(Penstock):
+    """Sustained-rate leaky bucket: minimum gap ``1 / rate_per_sec`` between consumptions.
+
+    The simplest strategy and the closest analog to a real-world
+    *fixed-orifice penstock* — outflow proportional to a constant
+    cross-section.  Use when downstream just needs a smooth steady cap.
+    """
+
+    rate_per_sec: float = Field(gt=0.0, description="Max sustained wave consumptions per second.")
+
+    def consume_reason(
+        self,
+        scheduler: "Tideweaver",
+        edge_state: Any,
+        flow: "FlowControl",
+        now: float,
+    ) -> Optional[str]:
+        if edge_state.last_consumed_at is None:
+            return None
+        min_gap = 1.0 / self.rate_per_sec
+        if (now - edge_state.last_consumed_at) < min_gap:
+            return "penstock_limited"
+        return None
+
+
+class BurstPenstock(Penstock):
+    """Token bucket — allow an initial burst of ``burst`` waves, then sustain ``rate_per_sec``.
+
+    Mirrors :class:`incorporator.io.throttle.BurstThrottle` at the
+    wave layer.  Bucket starts full; each refill tops it up at
+    ``rate_per_sec`` tokens/sec; each consumption draws one token.
+    The scheduler debits a token on a successful tick (in
+    ``_tick_wrapper.finally``); ``consume_reason`` only refills + reads.
+    """
+
+    rate_per_sec: float = Field(gt=0.0, description="Refill rate (tokens / second).")
+    burst: int = Field(ge=1, description="Bucket capacity — max tokens held.")
+
+    def consume_reason(
+        self,
+        scheduler: "Tideweaver",
+        edge_state: Any,
+        flow: "FlowControl",
+        now: float,
+    ) -> Optional[str]:
+        # First-touch initialization: bucket starts full.
+        if edge_state.bucket_tokens is None:
+            edge_state.bucket_tokens = float(self.burst)
+            edge_state.bucket_last_refill_at = now
+        else:
+            elapsed = now - (edge_state.bucket_last_refill_at or now)
+            edge_state.bucket_tokens = min(
+                float(self.burst),
+                edge_state.bucket_tokens + elapsed * self.rate_per_sec,
+            )
+            edge_state.bucket_last_refill_at = now
+        if edge_state.bucket_tokens < 1.0:
+            return "penstock_limited"
+        return None
+
+
+class WindowPenstock(Penstock):
+    """Rolling-window quota: at most ``cap`` consumptions per ``window_sec``.
+
+    The right shape for hard API quotas of the form "N requests per
+    hour" — bursty within the window, hard wall when ``cap`` is
+    reached, opens up again as the window slides forward.
+
+    Different from :class:`BurstPenstock`: there's no refill rate.
+    The window is a fixed lookback; consumptions outside it are
+    forgotten.
+    """
+
+    window_sec: float = Field(gt=0.0, description="Rolling lookback window in seconds.")
+    cap: int = Field(ge=1, description="Max consumptions within the window.")
+
+    def consume_reason(
+        self,
+        scheduler: "Tideweaver",
+        edge_state: Any,
+        flow: "FlowControl",
+        now: float,
+    ) -> Optional[str]:
+        cutoff = now - self.window_sec
+        # Evict entries older than the window.  Mutation here is the
+        # natural place — keeps the log bounded as the window slides.
+        edge_state.window_log = [t for t in edge_state.window_log if t > cutoff]
+        if len(edge_state.window_log) >= self.cap:
+            return "penstock_limited"
+        return None
+
+
+class BackpressurePenstock(Penstock):
+    """Reservoir-aware adaptive rate — the canal-toolkit synergy point.
+
+    Reads its own edge's :class:`Reservoir` fullness to scale the
+    effective rate between ``min_rate`` and ``max_rate``::
+
+        fullness = len(edge_state.waves) / flow.reservoir.depth
+        effective_rate = max_rate - (max_rate - min_rate) * fullness
+
+    * Empty reservoir → ``max_rate`` (no backpressure; drain freely).
+    * Full reservoir → ``min_rate`` (downstream is overwhelmed; slow
+      consumption to let the buffer + upstream emission absorb load).
+
+    Closes a control loop between Penstock and Reservoir — a feature
+    only possible because both primitives live in the same architecture.
+    """
+
+    min_rate: float = Field(gt=0.0, description="Effective rate when reservoir is full.")
+    max_rate: float = Field(gt=0.0, description="Effective rate when reservoir is empty.")
+
+    def consume_reason(
+        self,
+        scheduler: "Tideweaver",
+        edge_state: Any,
+        flow: "FlowControl",
+        now: float,
+    ) -> Optional[str]:
+        depth = max(1, flow.reservoir.depth)
+        fullness = min(1.0, len(edge_state.waves) / depth)
+        effective_rate = self.max_rate - (self.max_rate - self.min_rate) * fullness
+        if effective_rate <= 0.0:
+            return "penstock_limited"
+        if edge_state.last_consumed_at is None:
+            return None
+        min_gap = 1.0 / effective_rate
+        if (now - edge_state.last_consumed_at) < min_gap:
+            return "penstock_limited"
+        return None
+
+
+class SignalPenstock(Penstock):
+    """User-supplied callable returns the current rate.
+
+    The escape hatch for everything the other strategies don't cover —
+    time-of-day schedules, CPU-load-driven throttling, external-metric
+    integration, mirroring a remote rate API.  The callable runs
+    synchronously inside the gate cycle, so keep it cheap.
+
+    Receives ``(scheduler, edge_state, now)``; returns the allowed
+    rate in waves/sec.  A return of ``<= 0`` blocks the edge entirely
+    (useful for circuit-breaker-style halts).
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    rate_fn: Callable[[Any, Any, float], float] = Field(
+        description="Callable returning the current allowed rate in waves/sec.",
     )
+
+    def consume_reason(
+        self,
+        scheduler: "Tideweaver",
+        edge_state: Any,
+        flow: "FlowControl",
+        now: float,
+    ) -> Optional[str]:
+        rate = self.rate_fn(scheduler, edge_state, now)
+        if rate <= 0.0:
+            return "penstock_limited"
+        if edge_state.last_consumed_at is None:
+            return None
+        min_gap = 1.0 / rate
+        if (now - edge_state.last_consumed_at) < min_gap:
+            return "penstock_limited"
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +595,8 @@ def flow_from_mode(mode: GateMode) -> FlowControl:
 
 
 __all__ = [
+    "BackpressurePenstock",
+    "BurstPenstock",
     "DropOldest",
     "ExportToArchive",
     "FlowControl",
@@ -410,10 +606,13 @@ __all__ = [
     "Penstock",
     "RaiseOverflow",
     "Reservoir",
+    "SignalPenstock",
     "SoftPass",
     "Spillway",
     "SurgeAction",
     "SurgeBarrier",
+    "SustainedPenstock",
     "Weir",
+    "WindowPenstock",
     "flow_from_mode",
 ]

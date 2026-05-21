@@ -32,6 +32,8 @@ per-interval ticking).  Stream source ingestion is owned by the upstream
 
 from .current import Current, Export, Fjord, Stream
 from .flow import (
+    BackpressurePenstock,
+    BurstPenstock,
     DropOldest,
     ExportToArchive,
     FlowControl,
@@ -41,11 +43,14 @@ from .flow import (
     Penstock,
     RaiseOverflow,
     Reservoir,
+    SignalPenstock,
     SoftPass,
     Spillway,
     SurgeAction,
     SurgeBarrier,
+    SustainedPenstock,
     Weir,
+    WindowPenstock,
     flow_from_mode,
 )
 from .scheduler import Tideweaver
@@ -53,6 +58,8 @@ from .tide import Tide
 from .watershed import Edge, Watershed
 
 __all__ = [
+    "BackpressurePenstock",
+    "BurstPenstock",
     "Current",
     "DropOldest",
     "Edge",
@@ -66,14 +73,17 @@ __all__ = [
     "Penstock",
     "RaiseOverflow",
     "Reservoir",
+    "SignalPenstock",
     "SoftPass",
     "Spillway",
     "Stream",
     "SurgeAction",
     "SurgeBarrier",
+    "SustainedPenstock",
     "Tide",
     "Tideweaver",
     "Watershed",
     "Weir",
+    "WindowPenstock",
     "flow_from_mode",
 ]
