@@ -1001,6 +1001,27 @@ async def test_backpressure_penstock_slows_under_full_reservoir() -> None:
     assert pen.consume_reason(None, es_full, flow, 1.0) is None  # type: ignore[arg-type]
 
 
+def test_backpressure_penstock_rejects_inverted_rates() -> None:
+    """``BackpressurePenstock`` must reject ``min_rate >= max_rate`` at construction.
+
+    The interpolation formula assumes ``min_rate < max_rate``; swapped values
+    silently invert the curve (full reservoir gets a *higher* rate than
+    empty).  The model_validator catches this at instantiation time.
+    """
+    from incorporator.observability.tideweaver import BackpressurePenstock
+
+    # Inverted — should raise.
+    with pytest.raises(ValueError, match="min_rate < max_rate"):
+        BackpressurePenstock(min_rate=10.0, max_rate=2.0)
+    # Equal — degenerate (constant rate, no backpressure curve) — also rejected.
+    with pytest.raises(ValueError, match="min_rate < max_rate"):
+        BackpressurePenstock(min_rate=5.0, max_rate=5.0)
+    # Correct ordering — accepted.
+    pen = BackpressurePenstock(min_rate=1.0, max_rate=10.0)
+    assert pen.min_rate == 1.0
+    assert pen.max_rate == 10.0
+
+
 @pytest.mark.asyncio
 async def test_signal_penstock_callable_drives_rate() -> None:
     """``SignalPenstock`` rate_fn return value gates the dependent.

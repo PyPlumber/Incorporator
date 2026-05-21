@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Dict, List, Literal, Optional, Tuple, Type, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +251,25 @@ class BackpressurePenstock(Penstock):
     type: Literal["backpressure"] = "backpressure"
     min_rate: float = Field(gt=0.0, description="Effective rate when reservoir is full.")
     max_rate: float = Field(gt=0.0, description="Effective rate when reservoir is empty.")
+
+    @model_validator(mode="after")
+    def _check_rate_ordering(self) -> "BackpressurePenstock":
+        """Reject inverted ``min_rate``/``max_rate`` — the formula assumes ``min_rate < max_rate``.
+
+        ``effective_rate = max_rate - (max_rate - min_rate) * fullness`` only
+        produces the intended backpressure curve (slower as the reservoir
+        fills) when ``min_rate < max_rate``.  Swapped values silently invert
+        the semantics — a full reservoir gets a *higher* effective rate than
+        an empty one.  Reject at construction time.
+        """
+        if self.min_rate >= self.max_rate:
+            raise ValueError(
+                f"BackpressurePenstock requires min_rate < max_rate "
+                f"(got min_rate={self.min_rate}, max_rate={self.max_rate}); "
+                "min_rate is the floor when the reservoir is full, "
+                "max_rate is the ceiling when it is empty."
+            )
+        return self
 
     def consume_reason(
         self,
