@@ -124,16 +124,15 @@ async def _mock_jsonplaceholder_chain(url: str, *args: Any, **kwargs: Any) -> ht
 async def test_chain_three_streams_apply_conv_dict_in_order(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Three Streams in a soft-mode chain each apply conv_dict independently.
+    """Three Streams in a weir-mode chain each apply conv_dict independently.
 
-    Uses ``Watershed.chain(..., dependency_mode="soft")`` so all three
-    Streams fire on their own cadence — the topological order is still
-    enforced within each pass (users sequenced before posts before
-    comments). Proves: (a) the chain shape carries three Streams; (b) each
-    hop applies its own ``conv_dict``; (c) topological first-appearance
-    is preserved. Hard-chain ordering with three currents is covered by
-    Test 2 below, where the tail Fjord's flush is fast enough that hard
-    gating fits in the test window.
+    Uses ``Watershed.chain(..., gate_mode="weir")`` — the third gating
+    mode introduced in the canal toolkit refactor.  ``weir`` keeps the
+    data dependency (downstream waits for at least one upstream wave)
+    but does NOT block on in-flight upstream the way ``"hard"`` does, so
+    all three Streams fit their realistic 3.0s intervals inside the
+    8.0s test window.  Previously this test had to drop the data
+    dependency entirely with ``gate_mode="soft"`` to make the window fit.
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
@@ -179,7 +178,7 @@ async def test_chain_three_streams_apply_conv_dict_in_order(
     # cadence within a tight test window. Test 2 below exercises hard-chain
     # ordering with three currents (chars → eps → joined Fjord).
     ws = Watershed.chain(
-        window=_short_window(8.0), currents=[users, posts, comments], gate_mode="soft"
+        window=_short_window(8.0), currents=[users, posts, comments], gate_mode="weir"
     )
     tw = Tideweaver(ws, pass_interval=0.05)
     tides = [tide async for tide in tw.run()]

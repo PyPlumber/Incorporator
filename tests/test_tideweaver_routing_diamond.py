@@ -126,26 +126,15 @@ def _make_routing_tick(tw: Tideweaver, strong_refs_by_cls: Dict[type, List[Any]]
             current.cls._tideweaver_snapshot = list(strong_refs_by_cls.get(current.cls, []))  # type: ignore[attr-defined]
         elif isinstance(current, Fjord):
             await tw._tick_fjord(current)
-            # The Fjord's flush creates output instances and exports them, but
-            # the WeakValueDict registry drops them immediately. To make the
-            # middle-Fjord output available to a downstream-of-Fjord consumer
-            # (Test 4 tail), re-read the export file and reconstruct instances
-            # under a test-scope strong ref. Middle Fjords use ``if_exists=
-            # "replace"`` so the file always reflects the latest tick.
-            from pathlib import Path as _Path
-            export_path = current.export_params.get("file_path")
-            if export_path and _Path(export_path).exists():
-                rows: List[Any] = []
-                for line in _Path(export_path).read_text(encoding="utf-8").splitlines():
-                    if not line.strip():
-                        continue
-                    data = json.loads(line)
-                    # Drop framework-managed fields so we don't double-set them.
-                    data.pop("inc_name", None)
-                    data.pop("last_rcd", None)
-                    rows.append(current.cls(**data))
-                strong_refs_by_cls[current.cls] = rows
-                current.cls._tideweaver_snapshot = list(rows)  # type: ignore[attr-defined]
+            # No file-reread workaround needed: ``_outflow.flush`` now parks
+            # ``_tideweaver_snapshot`` on the Fjord's output class directly
+            # (see commit b8a56f4), so downstream-of-Fjord consumers (Test 4
+            # tail) read the snapshot through the normal scheduler path.
+            # We still stash a strong-ref copy so the snapshot survives the
+            # WeakValueDict between this test's manual ticks.
+            snapshot = getattr(current.cls, "_tideweaver_snapshot", None)
+            if snapshot:
+                strong_refs_by_cls[current.cls] = list(snapshot)
         elif isinstance(current, Export):
             instance = strong_refs_by_cls.get(current.cls, []) or list(current.cls.inc_dict.values())
             if not instance:
@@ -235,7 +224,7 @@ async def test_diamond_mlb_teams_plus_players_fjord_join(
     teams = Stream(
         name="teams",
         cls=MLBTeam,
-        interval=1.5,
+        interval=0.5,
         on_error="isolate",
         incorp_params={
             "inc_url": "https://statsapi.mlb.com/api/v1/teams?sportId=1",
@@ -248,7 +237,7 @@ async def test_diamond_mlb_teams_plus_players_fjord_join(
     players = Stream(
         name="players",
         cls=MLBPlayer,
-        interval=1.5,
+        interval=0.5,
         on_error="isolate",
         incorp_params={
             "inc_url": "https://statsapi.mlb.com/api/v1/people/660271/stats?stats=career&group=hitting",
@@ -265,11 +254,15 @@ async def test_diamond_mlb_teams_plus_players_fjord_join(
         export_params={"file_path": str(out_file), "format": "ndjson", "if_exists": "append"},
     )
 
+    # gate_mode="weir" lets the middle Streams run at realistic 0.5s
+    # intervals (instead of the old 1.5s) and the tail Fjord run at 0.2s
+    # without starving on hard-mode in-flight blocks.
     ws = Watershed.diamond(
         window=_short_window(8.0),
         head=trigger,
         middle=[teams, players],
         tail=roster,
+        gate_mode="weir",
     )
     tw = Tideweaver(ws, pass_interval=0.05)
     monkeypatch.setattr(tw, "_invoke_tick", _make_routing_tick(tw, strong_refs_by_cls))
