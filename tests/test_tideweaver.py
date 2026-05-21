@@ -831,6 +831,81 @@ async def test_spillway_export_to_archive_routes_displaced_waves() -> None:
         delattr(_Archive, "_spillway_backlog")
 
 
+# ---------------------------------------------------------------------------
+# Phase 5: phase_offset_sec on Current (green-wave coordination)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_phase_offset_delays_first_tick() -> None:
+    """``Current(phase_offset_sec=0.3)`` skips with 'phase_offset' until the offset elapses."""
+    fires: List[Tuple[float, str]] = []
+
+    async def fake(current: Current) -> None:
+        fires.append((time.monotonic(), current.name))
+
+    a = Stream(name="a", cls=_A, interval=0.05, phase_offset_sec=0.3, incorp_params={})
+    ws = Watershed.parallel(window=_short_window(0.6), currents=[a])
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    start = time.monotonic()
+    tides = await _collect_tides(tw)
+    skip_reasons = [
+        reason for tide in tides for name, reason in tide.skipped if name == "a"
+    ]
+    assert "phase_offset" in skip_reasons, f"phase_offset must surface as skip reason; got {skip_reasons}"
+    # First fire must be at or after the offset.
+    assert fires, "current must eventually fire"
+    first_fire_dt = fires[0][0] - start
+    assert first_fire_dt >= 0.25, (
+        f"first tick must wait phase_offset_sec=0.3 (allowing ~0.05s slop); got {first_fire_dt:.3f}s"
+    )
+
+
+@pytest.mark.asyncio
+async def test_phase_offset_zero_matches_today() -> None:
+    """``phase_offset_sec=0.0`` (default) does NOT emit 'phase_offset' — first tick runs immediately."""
+    fires: List[str] = []
+
+    async def fake(current: Current) -> None:
+        fires.append(current.name)
+
+    a = _stream("a", interval=0.05)  # default phase_offset_sec=0.0
+    ws = Watershed.parallel(window=_short_window(0.2), currents=[a])
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    tides = await _collect_tides(tw)
+    skip_reasons = [reason for tide in tides for _name, reason in tide.skipped]
+    assert "phase_offset" not in skip_reasons, "default phase_offset_sec=0 must NOT emit 'phase_offset'"
+    assert fires, "current must fire when phase_offset_sec=0"
+
+
+@pytest.mark.asyncio
+async def test_phase_offset_green_wave_alignment() -> None:
+    """Two coupled currents with staggered phase offsets fire in the intended order.
+
+    A fires at t=0; B fires at t=phase_offset_sec.  When A's interval (0.5s)
+    is the long pole, B's phase_offset_sec=0.2s lands B's first tick squarely
+    inside A's first cycle — the green-wave intuition.
+    """
+    fires: List[Tuple[float, str]] = []
+
+    async def fake(current: Current) -> None:
+        fires.append((time.monotonic(), current.name))
+
+    a = Stream(name="a", cls=_A, interval=0.5, incorp_params={})  # phase 0
+    b = Stream(name="b", cls=_B, interval=0.5, phase_offset_sec=0.2, incorp_params={})
+    ws = Watershed.parallel(window=_short_window(0.4), currents=[a, b])
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    start = time.monotonic()
+    await _collect_tides(tw)
+    first_a = next((t for t, n in fires if n == "a"), None)
+    first_b = next((t for t, n in fires if n == "b"), None)
+    assert first_a is not None and first_b is not None
+    # A fires near t=0, B fires near t=0.2.
+    assert (first_a - start) < 0.1, f"A must fire promptly; got {first_a - start:.3f}s"
+    assert (first_b - start) >= 0.15, f"B must wait phase_offset; got {first_b - start:.3f}s"
+    assert first_b > first_a, "B's first tick must follow A's"
+
+
 @pytest.mark.asyncio
 async def test_graceful_drain() -> None:
     """An in-flight tick at window-end finishes inside drain_timeout."""

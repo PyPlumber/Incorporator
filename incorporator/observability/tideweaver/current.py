@@ -45,6 +45,12 @@ class Current(BaseModel):
         on_error: ``"restart"`` retries the tick (tenacity-backed exp backoff,
             5 attempts), ``"isolate"`` logs and continues siblings,
             ``"fail_watershed"`` re-raises and cancels the whole graph.
+        phase_offset_sec: Delay this current's FIRST tick by this many
+            seconds after the run starts.  Green-wave coordination: by
+            offsetting downstream's first tick to land just after upstream's
+            expected wave, fewer ``"awaiting_upstream"`` gating skips fire
+            on the warm-up pass.  Default ``0.0`` matches today (first tick
+            fires on pass 1 with no delay).
         inflow: Optional sidecar ``.py`` path (per-current override of the
             watershed-level default).
         outflow: Optional sidecar ``.py`` path (per-current override of the
@@ -64,6 +70,7 @@ class Current(BaseModel):
     interval: float = Field(..., gt=0.0, description="Seconds between ticks; must be positive.")
     depends_on: List[str] = Field(default_factory=list)
     on_error: OnErrorPolicy = "restart"
+    phase_offset_sec: float = Field(0.0, ge=0.0, description="Delay first tick by N seconds for green-wave alignment.")
     inflow: Optional[Path] = None
     outflow: Optional[Path] = None
 

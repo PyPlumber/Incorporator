@@ -164,7 +164,7 @@ def _build_current(
         "cls": cls,
         "interval": float(entry["interval"]),
     }
-    for key in ("depends_on", "on_error", "inflow", "outflow"):
+    for key in ("depends_on", "on_error", "phase_offset_sec", "inflow", "outflow"):
         if key in entry:
             common[key] = entry[key]
     if "skip_threshold" in entry:

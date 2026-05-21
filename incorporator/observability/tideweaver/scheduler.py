@@ -209,6 +209,13 @@ class Tideweaver:
         self._due_heap: List[Tuple[float, int, str]] = []
         self._heap_counter: int = 0
 
+        # Phase-offset bookkeeping.  Monotonic time when ``run()`` enters
+        # its first pass — set in ``run()`` so the offset is measured from
+        # the orchestration window, not from Tideweaver construction.
+        # ``None`` means ``run()`` hasn't started yet; phase gating is a
+        # no-op in that case.
+        self._run_started_at: Optional[float] = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -230,6 +237,17 @@ class Tideweaver:
         # reusable; each ``run()`` invocation gets a fresh pool that the
         # ``finally`` block below ``aclose()``s.
         self._client_pool: Dict[Tuple[Any, ...], httpx.AsyncClient] = {}
+        # Reset the phase-offset anchor for THIS run.  ``Current.phase_offset_sec``
+        # is measured from this timestamp, so a reused Tideweaver instance gets a
+        # fresh phase window each run.
+        self._run_started_at = time.monotonic()
+        # Pre-push heap entries for every phase-offset current so the
+        # adaptive-wake loop knows to re-evaluate them at the offset moment.
+        # Without this, the scheduler might be sleeping on an unrelated heap
+        # entry (e.g. another current's interval) and miss the phase boundary.
+        for c in self.watershed.currents:
+            if c.phase_offset_sec > 0.0:
+                self._push_due(c.name, self._run_started_at + c.phase_offset_sec)
         shutdown_event = asyncio.Event()
         stopper = asyncio.create_task(self._shutdown_at_window_end(shutdown_event))
         try:
@@ -384,7 +402,12 @@ class Tideweaver:
            pass/hold decision.
         """
         last = self._state[current.name].last_tick_started
-        if last is not None and (now - last) < current.interval:
+        if last is None:
+            # First tick — honor ``phase_offset_sec`` for green-wave coordination.
+            if current.phase_offset_sec > 0.0 and self._run_started_at is not None:
+                if (now - self._run_started_at) < current.phase_offset_sec:
+                    return "phase_offset"
+        elif (now - last) < current.interval:
             return "not_due"
         for up_name, flow in self._upstream[current.name]:
             surge = flow.surge_barrier
