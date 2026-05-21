@@ -16,8 +16,8 @@ pip install -e ".[dev,speedups]"
 # 3. Before opening a PR — these must all pass
 pytest --no-cov -q
 mypy incorporator/
-ruff check incorporator/ tests/
-black --check incorporator/ tests/
+ruff check incorporator/
+black --check incorporator/
 ```
 
 If you're adding format support, also run the benchmark suite:
@@ -30,10 +30,10 @@ pytest -m benchmark
 
 Every PR is expected to land with:
 
-- **All 627+ tests green** (`pytest --no-cov -q`).
-- **`mypy --strict` clean** on the source tree (55 files, no errors).
-- **`ruff check` clean** on source + tests.
-- **`black --check` clean** on source + tests (line length 120).
+- **All 703+ tests green** (`pytest --no-cov -q`).
+- **`mypy --strict` clean** on the source tree (57 files, no errors).
+- **`ruff check` clean** on `incorporator/` (tests are intentionally excluded — running ruff against `tests/` overrides the `[tool.ruff].exclude` config and produces a 1000+ line S101-assert storm).
+- **`black --check` clean** on `incorporator/` (line length 120).
 - **New tests** covering any new public method, handler, or CLI flag.
 - **No regressions** to the benchmark floors (run `pytest -m benchmark`
   if your change touches the parse / write hot paths).
