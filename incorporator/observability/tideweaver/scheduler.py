@@ -41,6 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_exponential
 
 from ...io.fetch import HTTPClientBuilder
+from ...io.penstock import FlowState
 from ..pipeline._outflow import flush
 from .current import Current, CustomCurrent, Export, Fjord, Stream
 from .flow import FlowControl, GateContext, SurgeContext
@@ -67,21 +68,24 @@ class _EdgeState(BaseModel):
     needs the displaced wave passed to ``overflow()`` before it's gone.
     """
 
-    last_consumed_at: Optional[float] = None
-    """Monotonic time of the dependent's most recent consumption from this edge.
-    Read by sustained-rate Penstock strategies."""
-
     overflow_count: int = 0
     """Cumulative count of waves displaced from the reservoir (for diagnostics)."""
 
-    bucket_tokens: Optional[float] = None
-    """Current token-bucket level (BurstPenstock)."""
+    flow_state: FlowState = Field(default_factory=FlowState)
+    """Mutable counters owned by the edge's :class:`Penstock`.
 
-    bucket_last_refill_at: Optional[float] = None
-    """Monotonic time of the most recent token-bucket refill (BurstPenstock)."""
+    Carries the per-edge rate-limit bookkeeping:
+    ``last_consumed_at`` (monotonic watermark, set by the
+    ``_tick_wrapper.finally`` block on every successful consumption),
+    ``bucket_tokens`` / ``bucket_last_refill_at``
+    (:class:`~incorporator.io.penstock.BurstPenstock`), and
+    ``window_log``
+    (:class:`~incorporator.io.penstock.WindowPenstock`).  See
+    :class:`incorporator.io.penstock.FlowState`.
 
-    window_log: List[float] = Field(default_factory=list)
-    """Monotonic timestamps of consumptions within the current window (WindowPenstock)."""
+    Composed (not inlined) as of i14 so the same shape can serve both
+    HTTP throttling (via ``BoundPenstock``) and edge throttling (via
+    ``_EdgeState``) without duplicating the field set."""
 
 
 class _CurrentState(BaseModel):
@@ -479,8 +483,8 @@ class Tideweaver:
             #    the next gate cycle knows this edge's consumption watermark)
             #    AND to the post-tick ``last_wave_at`` if upstream emitted
             #    during this tick.  The post-tick read wins on overlap.
-            # 2. Update ``edge_state.last_consumed_at`` (monotonic watermark
-            #    read by SustainedPenstock / BackpressurePenstock).
+            # 2. Update ``edge_state.flow_state.last_consumed_at`` (monotonic
+            #    watermark read by SustainedPenstock / BackpressurePenstock).
             # 3. Fire ``Penstock.post_consume`` so BurstPenstock debits its
             #    token and WindowPenstock appends to its log — skipped on
             #    bypassed edges per the bypass contract.
@@ -498,7 +502,7 @@ class Tideweaver:
                 edge_state = self._edge_state.get((up_name, current.name))
                 bypassed = up_name in bypassed_upstreams
                 if edge_state is not None:
-                    edge_state.last_consumed_at = now_mono
+                    edge_state.flow_state.last_consumed_at = now_mono
                     if edge_flow.penstock is not None and not bypassed:
                         edge_flow.penstock.post_consume(edge_state, now_mono)
                 if not bypassed:

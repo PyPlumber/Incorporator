@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`_EdgeState` now composes a `FlowState` field.**  The Tideweaver
+  scheduler's per-edge bookkeeping (`_EdgeState`) used to declare four
+  fields — `last_consumed_at`, `bucket_tokens`, `bucket_last_refill_at`,
+  `window_log` — directly.  They're now grouped under
+  ``_EdgeState.flow_state: FlowState`` (the canal-toolkit type from
+  ``incorporator.io.penstock``).  Built-in Penstocks were updated; only
+  third-party Penstock subclasses that override
+  ``consume_reason(edge_state, flow, now)`` and read the old top-level
+  fields are affected.
+
+  Migration:
+
+  ```python
+  # Before:
+  if edge_state.last_consumed_at is None:
+      ...
+  edge_state.bucket_tokens = float(self.burst)
+  edge_state.window_log.append(now)
+
+  # After:
+  if edge_state.flow_state.last_consumed_at is None:
+      ...
+  edge_state.flow_state.bucket_tokens = float(self.burst)
+  edge_state.flow_state.window_log.append(now)
+  ```
+
+  Finishes Phase A2's intent (i14): the dead Penstock-specific fields
+  no longer live at the top of ``_EdgeState`` for subclasses that don't
+  use them — they're behind the ``flow_state`` namespace owned by the
+  edge's Penstock.
+
 - **Removed implicit per-host throttling** for `api.coingecko.com`,
   `pokeapi.co`, and `vpic.nhtsa.dot.gov`.  The framework now ships
   throttle-agnostic — calls to these hosts that previously auto-paced

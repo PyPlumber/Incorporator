@@ -195,15 +195,22 @@ class BackpressurePenstock(Penstock):
         return self
 
     def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
+        # Backpressure needs BOTH the wave count (scheduler-owned on
+        # ``_EdgeState.waves``) AND the rate-limit watermark
+        # (Penstock-owned on ``_EdgeState.flow_state``).  Uses the same
+        # ``getattr(..., "flow_state", edge_state)`` fallback as the base
+        # ``consume_reason`` so unit tests passing a bare FlowState-shaped
+        # mock still work.
+        state = getattr(edge_state, "flow_state", edge_state)
         depth = max(1, flow.reservoir.depth)
         fullness = min(1.0, len(edge_state.waves) / depth)
         effective_rate = self.max_rate - (self.max_rate - self.min_rate) * fullness
         if effective_rate <= 0.0:
             return "penstock_limited"
-        if edge_state.last_consumed_at is None:
+        if state.last_consumed_at is None:
             return None
         min_gap = 1.0 / effective_rate
-        if (now - edge_state.last_consumed_at) < min_gap:
+        if (now - state.last_consumed_at) < min_gap:
             return "penstock_limited"
         return None
 

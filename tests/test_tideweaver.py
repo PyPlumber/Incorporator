@@ -558,8 +558,8 @@ async def test_bypass_does_not_charge_burst_penstock() -> None:
     edge_state = tw._edge_state[("a", "b")]
     # bucket_tokens is None when penstock never gated (bypass skips consume_reason),
     # or equals burst cap if initialized but never debited by the finally block.
-    assert edge_state.bucket_tokens is None or edge_state.bucket_tokens == 2.0, (
-        f"BurstPenstock must not be debited on bypass; got bucket_tokens={edge_state.bucket_tokens}"
+    assert edge_state.flow_state.bucket_tokens is None or edge_state.flow_state.bucket_tokens == 2.0, (
+        f"BurstPenstock must not be debited on bypass; got bucket_tokens={edge_state.flow_state.bucket_tokens}"
     )
 
 
@@ -587,8 +587,8 @@ async def test_bypass_does_not_log_window_penstock() -> None:
     tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
     await _collect_tides(tw)
     edge_state = tw._edge_state[("a", "b")]
-    assert edge_state.window_log == [], (
-        f"WindowPenstock must not be appended to on bypass; got window_log={edge_state.window_log}"
+    assert edge_state.flow_state.window_log == [], (
+        f"WindowPenstock must not be appended to on bypass; got window_log={edge_state.flow_state.window_log}"
     )
 
 

@@ -171,14 +171,21 @@ class Penstock(BaseModel):
     ) -> Optional[str]:
         """Edge-style throttle: return ``"penstock_limited"`` if blocked, ``None`` otherwise.
 
-        Default impl delegates to :meth:`evaluate` and translates the
-        wait-seconds return into a skip-reason.  Subclasses with edge-
-        specific needs (e.g. :class:`BackpressurePenstock` reading
-        reservoir depth from ``flow``) override directly.
+        Default impl reads the edge's :class:`FlowState` — either composed
+        under ``edge_state.flow_state`` (Tideweaver scheduler path) or
+        the ``edge_state`` itself when it already IS a FlowState (unit
+        tests, direct callers) — and delegates to :meth:`evaluate`,
+        translating the wait-seconds return into a skip reason.
+
+        Subclasses with edge-specific needs (e.g.
+        :class:`BackpressurePenstock` reading reservoir depth via
+        ``flow`` AND wave count via ``edge_state.waves``) override
+        directly and access the FlowState via the same fallback pattern.
 
         Args:
-            edge_state: Tideweaver scheduler ``_EdgeState`` instance —
-                duck-types as :class:`FlowState`.
+            edge_state: Tideweaver scheduler ``_EdgeState`` (with a
+                composed ``flow_state: FlowState`` attribute) OR a bare
+                :class:`FlowState` (or any duck-typed equivalent).
             flow: The parent :class:`FlowControl` for this edge.  Passed
                 to :meth:`evaluate` as ``context``; ignored by every
                 penstock except backpressure.
@@ -188,12 +195,18 @@ class Penstock(BaseModel):
             ``"penstock_limited"`` to skip this tick, or ``None`` to
             permit consumption.
         """
-        wait = self.evaluate(edge_state, now, context=flow)
+        state = getattr(edge_state, "flow_state", edge_state)
+        wait = self.evaluate(state, now, context=flow)
         return "penstock_limited" if wait is not None else None
 
     def post_consume(self, edge_state: Any, now: float) -> None:
-        """Edge-style post-consume hook (delegates to :meth:`record`)."""
-        self.record(edge_state, now)
+        """Edge-style post-consume hook (delegates to :meth:`record`).
+
+        Accepts either an ``_EdgeState`` with composed ``flow_state`` or a
+        bare :class:`FlowState` — matches :meth:`consume_reason`'s fallback.
+        """
+        state = getattr(edge_state, "flow_state", edge_state)
+        self.record(state, now)
 
 
 # ---------------------------------------------------------------------------
