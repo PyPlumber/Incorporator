@@ -99,7 +99,11 @@ class EdgeSpec:
 class OrchestrationPlan:
     """Cross-source recommendation produced by :func:`_analyze_topology`.
 
-    Renderers dispatch on :attr:`shape` to pick the right scaffold.
+    Renderers dispatch on :attr:`shape` to pick the right scaffold; the
+    :meth:`to_watershed` method materialises an in-memory
+    :class:`~incorporator.observability.tideweaver.Watershed` so callers
+    can probe → tune → run in one expression instead of round-tripping
+    through disk.
     """
 
     shape: str  # "parallel" | "diamond" | "fanout" | "custom"
@@ -108,6 +112,102 @@ class OrchestrationPlan:
     shape_rationale: str
     needs_tail_current: bool = False
     notes: List[str] = field(default_factory=list)
+
+    def to_watershed(
+        self,
+        window: Optional[Tuple[Any, Any]] = None,
+        *,
+        classes: Optional[Mapping[str, Any]] = None,
+    ) -> Any:
+        """Materialise the plan into a runnable :class:`Watershed`.
+
+        Args:
+            window: ``(start, end)`` UTC datetimes.  Defaults to ``(now,
+                now + 1h)``.  Pass an explicit window for production.
+            classes: Optional ``name -> Incorporator subclass`` mapping.
+                Used when the caller already has the classes the
+                ``CurrentSpec``\\s point at (typical when ``architect``
+                was invoked on a user's own subclass tree).  Names
+                missing from the mapping get an anonymous subclass of
+                :class:`Incorporator` whose ``__name__`` matches
+                :attr:`CurrentSpec.class_name`.
+
+        Returns:
+            A validated :class:`~incorporator.observability.tideweaver.Watershed`
+            that can be handed straight to ``Tideweaver(watershed).run()``.
+
+        Raises:
+            ValueError: when :attr:`needs_tail_current` is ``True`` and
+                the caller hasn't nominated a tail Current via the
+                ``classes`` mapping — the diamond shape requires a Fjord
+                to fuse the merging upstreams.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from ...base import Incorporator
+        from .current import Current, Export, Fjord, Stream
+        from .flow import SustainedPenstock, flow_from_mode
+        from .watershed import Edge, Watershed
+
+        if window is None:
+            now = datetime.now(timezone.utc)
+            window = (now, now + timedelta(hours=1))
+
+        if self.needs_tail_current and not (classes and any(spec.verb == "fjord" for spec in self.currents)):
+            raise ValueError(
+                f"OrchestrationPlan.to_watershed: shape={self.shape!r} requires a tail "
+                "Fjord current.  Re-run architect() with a {'verb': 'fjord'} entry in "
+                "sources, or pass a classes={...} mapping that maps one of the current "
+                "names to a Fjord-typed class."
+            )
+
+        verb_to_class = {"stream": Stream, "fjord": Fjord, "export": Export}
+
+        # Resolve user-supplied or fabricate per-spec Incorporator subclasses.
+        resolved_classes: Dict[str, Any] = dict(classes) if classes else {}
+        built_currents: Dict[str, Current] = {}
+        for spec in self.currents:
+            inc_cls = resolved_classes.get(spec.name)
+            if inc_cls is None:
+                inc_cls = type(spec.class_name, (Incorporator,), {})
+            current_cls = verb_to_class[spec.verb]
+            built_currents[spec.name] = current_cls(
+                name=spec.name,
+                cls=inc_cls,
+                interval=spec.interval_hint,
+                incorp_params=dict(spec.incorp_params),
+            )
+
+        # Materialise edges with the recommended FlowControl shape.  ``Edge``
+        # accepts ``gate_mode=`` (shorthand) XOR ``flow=`` (full dict); pick
+        # the shorthand when there's no per-edge penstock and the full form
+        # when the architect recommended a tier-1/2 Penstock.
+        built_edges: List[Edge] = []
+        for edge_spec in self.edges:
+            edge_kwargs: Dict[str, Any] = {
+                "from_name": edge_spec.from_name,
+                "to_name": edge_spec.to_name,
+            }
+            if edge_spec.penstock is not None and edge_spec.penstock.kind == "sustained":
+                # Build the FlowControl from gate_mode + the recommended penstock.
+                base_flow = flow_from_mode(edge_spec.gate_mode)  # type: ignore[arg-type]
+                edge_kwargs["flow"] = base_flow.model_copy(
+                    update={
+                        "penstock": SustainedPenstock(
+                            rate_per_sec=edge_spec.penstock.rate_per_sec,
+                        ),
+                    }
+                )
+            else:
+                edge_kwargs["gate_mode"] = edge_spec.gate_mode
+            built_edges.append(Edge(**edge_kwargs))
+
+        return Watershed(
+            window=window,
+            currents=list(built_currents.values()),
+            edges=built_edges,
+            drain_timeout=30.0,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -675,7 +775,7 @@ async def run(
     *,
     output: str = "report",
     shared_kwargs: Optional[Mapping[str, Any]] = None,
-) -> Optional[str]:
+) -> Optional[Union[str, OrchestrationPlan]]:
     """Probe ``sources``, run cross-source analysis, dispatch to a renderer.
 
     Args:
@@ -683,7 +783,11 @@ async def run(
             for discovered records.
         sources: Mapping of ``name -> URL | Path | dict``.  See
             :func:`_resolve_sources` for the value forms.
-        output: One of ``"report"``, ``"python"``, ``"json"``.
+        output: One of ``"report"`` (prints, returns ``None``),
+            ``"python"`` (paste-ready snippet, returns the rendered str),
+            ``"json"`` (paste-ready watershed.json, returns the rendered
+            str), or ``"plan"`` (returns the structured
+            :class:`OrchestrationPlan` directly — no print, no rendering).
         shared_kwargs: Common incorp() kwargs applied to every probe
             (timeout, headers, ...).  Per-source kwargs win on conflict.
 
@@ -691,15 +795,20 @@ async def run(
         ``None`` for ``output="report"`` (prints only).
         The rendered scaffold as a string for ``"python"`` and ``"json"``
         (also printed to stdout).
+        The :class:`OrchestrationPlan` directly for ``"plan"``.  Pair with
+        :meth:`OrchestrationPlan.to_watershed` to run the plan in-memory
+        without disk round-tripping.
     """
-    if output not in ("report", "python", "json"):
-        raise ValueError(f"output must be one of 'report' / 'python' / 'json'; got {output!r}")
+    if output not in ("report", "python", "json", "plan"):
+        raise ValueError(f"output must be one of 'report' / 'python' / 'json' / 'plan'; got {output!r}")
 
     resolved = _resolve_sources(sources, shared_kwargs)
     incorp_kwargs_by_name = {name: dict(kw) for name, kw in resolved}
     probes = await asyncio.gather(*(_probe_one(cls, name, kw) for name, kw in resolved))
     plan = _analyze_topology(probes, incorp_kwargs_by_name)
 
+    if output == "plan":
+        return plan
     if output == "report":
         render_report(probes, plan)
         return None

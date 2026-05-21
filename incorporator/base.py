@@ -1613,9 +1613,9 @@ class Incorporator(BaseModel):
         cls: Type[TIncorporator],
         sources: Mapping[str, Union[str, Path, Mapping[str, Any]]],
         *,
-        output: Literal["report", "python", "json"] = "report",
+        output: Literal["report", "python", "json", "plan"] = "report",
         shared_kwargs: Optional[Mapping[str, Any]] = None,
-    ) -> Optional[str]:
+    ) -> Optional[Any]:
         """Probe N sources, recommend a Watershed architecture (paste-ready).
 
         The multi-source counterpart of :meth:`test`.  Where ``test()`` profiles

@@ -92,9 +92,9 @@ async def architect(
     cls: Type[TIncorporator],
     sources: Mapping[str, Union[str, Path, Mapping[str, Any]]],
     *,
-    output: Literal["report", "python", "json"] = "report",
+    output: Literal["report", "python", "json", "plan"] = "report",
     shared_kwargs: Optional[Mapping[str, Any]] = None,
-) -> Optional[str]:
+) -> Optional[Union[str, OrchestrationPlan]]:
 ```
 
 **What it does (pseudocode)**
@@ -102,19 +102,20 @@ async def architect(
 2. For each source, create a throwaway subclass `type(f"_ArchitectProbe_{name}", (cls,), {})` and call its `test(**probe_kwargs, __capture_into=[...])`.  The throwaway shields the user's class from probe-driven mutation (`cls.inc_url` / `cls.inc_file` / `cls._incorp_kwargs` / `cls.inc_dict`); the `__capture_into` sidechannel suppresses the per-source print and routes the inspector's structured `SourceProfile` into a list.
 3. Run cross-source analysis on the captured profiles: detect `fanout` (one source's PK appears as a non-PK field in all others), `diamond` (multiple sources share a PK field name — needs a tail Fjord), `parallel` (disjoint field sets), or `custom` (some overlap but no clear pattern).
 4. For each downstream edge, pick a `Penstock` via a three-tier confidence ladder: known-strict host registry → 429 observed during probe → no penstock.
-5. Dispatch on `output=`: `"report"` prints inspector output + cross-source hints; `"python"` emits a paste-ready Python module (class defs + `Stream(...)` constructors + `Watershed.<shape>(...)` + a `Tideweaver` runner); `"json"` emits a paste-ready `watershed.json` that round-trips through `load_watershed()`.
+5. Dispatch on `output=`: `"report"` prints inspector output + cross-source hints; `"python"` emits a paste-ready Python module (class defs + `Stream(...)` constructors + `Watershed.<shape>(...)` + a `Tideweaver` runner); `"json"` emits a paste-ready `watershed.json` that round-trips through `load_watershed()`; `"plan"` returns the structured `OrchestrationPlan` dataclass directly so callers can probe → tune → run in one expression via `plan.to_watershed()`.
 
 **When to reach for it**
 The multi-source counterpart of `test()`.  Reach for it when you have several unknown endpoints / fixtures and you want a Tideweaver scaffold rather than per-call `incorp()` advice.  Especially useful for: cross-exchange arb diamonds, NASCAR race-day fusion graphs, anywhere you'd otherwise sketch the topology on a napkin first.
 
 **Common kwargs**
 - `sources` — mapping of `name` → URL string, file path / `Path`, or dict of `incorp()` kwargs.  Pass `{"verb": "fjord", ...}` in the dict form to nominate a tail Fjord on diamond shapes.
-- `output` — `"report"` (default, prints only), `"python"` (returns + prints a module), `"json"` (returns + prints `watershed.json`).
+- `output` — `"report"` (default, prints only), `"python"` (returns + prints a module), `"json"` (returns + prints `watershed.json`), `"plan"` (returns the structured `OrchestrationPlan` — no print, no rendering).
 - `shared_kwargs` — common `timeout` / `headers` / `requests_per_second` applied to every probe.
 
 **Yields / returns**
 - `output="report"` → `None` (prints only).
 - `output="python"` / `"json"` → the rendered string (also printed to stdout for human eyeballs).
+- `output="plan"` → the `OrchestrationPlan` dataclass directly.  Pair with `plan.to_watershed(window=...)` for the in-memory probe → tune → run handoff (no disk round-trip).
 
 **Worked example**
 ```python
@@ -131,6 +132,13 @@ await Coin.architect(
 )
 # → prints + returns a watershed.json that loads cleanly:
 #   incorporator tideweaver run watershed.json
+
+# In-memory probe → tune → run handoff (no disk round-trip):
+plan = await Coin.architect(sources={...}, output="plan")
+plan.currents[0].interval_hint = 10  # tune
+watershed = plan.to_watershed()
+async for tide in Tideweaver(watershed).run():
+    ...
 ```
 
 **Confidence honesty** — what `architect()` will NOT decide for you (left as `_TODO_` placeholders or commented suggestions in the scaffold):

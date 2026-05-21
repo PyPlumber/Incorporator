@@ -494,3 +494,143 @@ def test_cls_architect_classmethod_shim(tmp_path: Path) -> None:
     assert rendered is not None
     body = json.loads(rendered)
     assert body["shape"] == "fanout"
+
+
+# ---------------------------------------------------------------------------
+# output="plan" mode + Plan.to_watershed() — in-memory probe → tune → run handoff.
+# ---------------------------------------------------------------------------
+
+
+def test_run_output_plan_returns_orchestration_plan(tmp_path: Path) -> None:
+    """``output='plan'`` returns the :class:`OrchestrationPlan` dataclass directly.
+
+    No print side effects (architect's renderers don't fire); the caller
+    can inspect / mutate the plan in-memory and feed it to
+    :meth:`OrchestrationPlan.to_watershed`.
+    """
+    a = tmp_path / "users.json"
+    a.write_text(json.dumps([{"user_id": "u1", "name": "Ada"}]), encoding="utf-8")
+    b = tmp_path / "orders.json"
+    b.write_text(json.dumps([{"order_id": "o1", "user_id": "u1"}]), encoding="utf-8")
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        plan = asyncio.run(
+            run(Incorporator, sources={"users": a, "orders": b}, output="plan"),
+        )
+    # No rendering happened — capture buffer is empty (architect doesn't print
+    # the per-source inspector report when output="plan").
+    assert isinstance(plan, OrchestrationPlan)
+    assert plan.shape == "fanout"
+    assert {(e.from_name, e.to_name) for e in plan.edges} == {("users", "orders")}
+
+
+def test_plan_to_watershed_produces_valid_watershed() -> None:
+    """``Plan.to_watershed()`` materialises a runnable :class:`Watershed`."""
+    from datetime import datetime, timedelta, timezone
+
+    from incorporator.observability.tideweaver import Watershed
+
+    # Synthesise a small parallel plan (the simplest shape — no edges).
+    profiles: List[Tuple[str, SourceProfile]] = [
+        ("a", _profile({"a_id"}, pk="a_id")),
+        ("b", _profile({"b_id"}, pk="b_id")),
+    ]
+    plan = _analyze_topology(
+        profiles,
+        incorp_kwargs_by_name={
+            "a": {"inc_url": "https://x.example.com/a"},
+            "b": {"inc_url": "https://x.example.com/b"},
+        },
+    )
+    assert plan.shape == "parallel"
+
+    start = datetime(2026, 5, 21, tzinfo=timezone.utc)
+    end = start + timedelta(hours=1)
+    watershed = plan.to_watershed(window=(start, end))
+    assert isinstance(watershed, Watershed)
+    assert watershed.window == (start, end)
+    assert {c.name for c in watershed.currents} == {"a", "b"}
+    assert watershed.edges == []
+
+
+def test_plan_to_watershed_default_window() -> None:
+    """``Plan.to_watershed()`` with no window picks ``(now, now+1h)``."""
+    from datetime import datetime, timezone
+
+    profiles: List[Tuple[str, SourceProfile]] = [
+        ("a", _profile({"a_id"}, pk="a_id")),
+    ]
+    plan = _analyze_topology(profiles, incorp_kwargs_by_name={"a": {}})
+
+    before = datetime.now(timezone.utc)
+    watershed = plan.to_watershed()
+    after = datetime.now(timezone.utc)
+
+    # Window start lands between before and after.
+    assert before <= watershed.window[0] <= after
+    # End is exactly an hour past start.
+    delta_seconds = (watershed.window[1] - watershed.window[0]).total_seconds()
+    assert 3590 <= delta_seconds <= 3610  # 1h ± 10s slop
+
+
+def test_plan_to_watershed_uses_user_supplied_classes() -> None:
+    """``classes={...}`` maps current names to existing :class:`Incorporator` subclasses."""
+    profiles: List[Tuple[str, SourceProfile]] = [
+        ("users", _profile({"user_id"}, pk="user_id")),
+    ]
+    plan = _analyze_topology(profiles, incorp_kwargs_by_name={"users": {}})
+
+    class CustomUsers(Incorporator):
+        pass
+
+    watershed = plan.to_watershed(classes={"users": CustomUsers})
+    assert watershed.currents[0].cls is CustomUsers
+
+
+def test_plan_to_watershed_raises_when_diamond_lacks_tail() -> None:
+    """Diamond candidate without a Fjord tail in ``classes`` raises with a clear message."""
+    profiles: List[Tuple[str, SourceProfile]] = [
+        ("laps", _profile({"user_id", "lap_count"}, pk="user_id")),
+        ("pits", _profile({"user_id", "pit_count"}, pk="user_id")),
+    ]
+    plan = _analyze_topology(profiles, incorp_kwargs_by_name={"laps": {}, "pits": {}})
+    assert plan.needs_tail_current is True
+
+    with pytest.raises(ValueError, match="requires a tail Fjord"):
+        plan.to_watershed()
+
+
+def test_plan_to_watershed_carries_penstock_when_recommended() -> None:
+    """When architect recommends a tier-1 Penstock, the materialised edge carries it.
+
+    Uses a monkey-patched host registry so the test doesn't depend on
+    whichever hosts the user has registered globally.
+    """
+    from incorporator.io.throttle import FixedIntervalThrottle, _HOST_FACTORIES
+    from incorporator.observability.tideweaver import SustainedPenstock
+
+    # Register a slow rate so architect's _penstock_for fires tier-1.
+    original = _HOST_FACTORIES.get("api.fixture.example")
+    _HOST_FACTORIES["api.fixture.example"] = lambda: FixedIntervalThrottle(0.5)
+    try:
+        profiles: List[Tuple[str, SourceProfile]] = [
+            ("users", _profile({"user_id"}, pk="user_id", host="api.fixture.example")),
+            ("orders", _profile({"order_id", "user_id"}, pk="order_id", host="api.fixture.example")),
+        ]
+        plan = _analyze_topology(
+            profiles,
+            incorp_kwargs_by_name={n: {} for n, _p in profiles},
+        )
+        assert plan.shape == "fanout"
+        assert plan.edges[0].penstock is not None
+
+        watershed = plan.to_watershed()
+        edge = watershed.edges[0]
+        assert isinstance(edge.flow.penstock, SustainedPenstock)
+        assert edge.flow.penstock.rate_per_sec == 0.5
+    finally:
+        if original is None:
+            _HOST_FACTORIES.pop("api.fixture.example", None)
+        else:
+            _HOST_FACTORIES["api.fixture.example"] = original
