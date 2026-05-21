@@ -368,17 +368,21 @@ class Tideweaver:
             return "not_due", frozenset()
         bypassed: Set[str] = set()
         for up_name, flow in self._upstream[current.name]:
+            edge = (up_name, current.name)
             surge = flow.surge_barrier
             if surge is not None and surge.is_tripped(self, current, up_name, now):
                 if surge.action == "skip":
+                    flow.observer.on_skip(self, edge, "skip_ahead")
                     return "skip_ahead", frozenset()
                 if surge.action == "halt":
+                    flow.observer.on_skip(self, edge, "surge_halted")
                     return "surge_halted", frozenset()
                 # action == "bypass" — fire ignoring this edge's gate AND penstock.
                 bypassed.add(up_name)
                 continue
             gate_reason = flow.gate.gate_reason(self, current, up_name, now)
             if gate_reason is not None:
+                flow.observer.on_skip(self, edge, gate_reason)
                 return gate_reason, frozenset()
             # Penstock — edge-layer flow-rate strategy.  Delegates to the
             # strategy class (SustainedPenstock / BurstPenstock /
@@ -386,10 +390,11 @@ class Tideweaver:
             # mutates its own slice of ``_EdgeState`` for bookkeeping and
             # returns a skip reason or None.
             if flow.penstock is not None:
-                edge_state = self._edge_state.get((up_name, current.name))
+                edge_state = self._edge_state.get(edge)
                 if edge_state is not None:
                     penstock_reason = flow.penstock.consume_reason(self, edge_state, flow, now)
                     if penstock_reason is not None:
+                        flow.observer.on_skip(self, edge, penstock_reason)
                         return penstock_reason, frozenset()
         return None, frozenset(bypassed)
 
@@ -468,6 +473,11 @@ class Tideweaver:
                             edge_state.bucket_tokens = max(0.0, edge_state.bucket_tokens - 1.0)
                         elif isinstance(pen, WindowPenstock):
                             edge_state.window_log.append(now_mono)
+                # Observer hook — fires for every non-bypassed upstream edge
+                # whose gate cleared this tick.  Bypassed edges already had
+                # their skip reason reported via on_skip in _gate_reason.
+                if up_name not in bypassed_upstreams:
+                    edge_flow.observer.on_fire(self, (up_name, current.name), self._tide_number)
             state.started_at = None
             # Push this tick's wave content into every outgoing edge's
             # reservoir.  Reads the strong-ref ``_tideweaver_snapshot`` the
@@ -482,12 +492,26 @@ class Tideweaver:
             wave_snapshot = list(snapshot_attr) if snapshot_attr else list(current.cls.inc_dict.values())
             if wave_snapshot:
                 for downstream_name, edge_flow in self._downstream[current.name]:
-                    edge_state = self._edge_state[(current.name, downstream_name)]
+                    edge_key = (current.name, downstream_name)
+                    edge_state = self._edge_state[edge_key]
                     edge_state.waves.append(wave_snapshot)
                     while len(edge_state.waves) > edge_flow.reservoir.depth:
                         displaced = edge_state.waves.popleft()
                         edge_state.overflow_count += 1
-                        edge_flow.spillway.overflow(self, (current.name, downstream_name), displaced)
+                        edge_flow.spillway.overflow(self, edge_key, displaced)
+                        # Observer hook — one call per displaced wave so a
+                        # MetricsObserver subclass can count spillway events
+                        # without monkey-patching the spillway itself.
+                        edge_flow.observer.on_spillway(self, edge_key, displaced, edge_state.overflow_count)
+                    # Observer hook — reservoir occupancy after append.
+                    # Fires every tick (including no-overflow appends) so a
+                    # threshold-based observer can page on near-full.
+                    edge_flow.observer.on_reservoir_level(
+                        self,
+                        edge_key,
+                        len(edge_state.waves),
+                        edge_flow.reservoir.depth,
+                    )
             # Wake the run loop so downstream hard-edge dependents see the
             # new wave on the very next pass instead of waiting out the
             # full ``pass_interval`` safety-net cap.

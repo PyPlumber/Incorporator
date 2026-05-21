@@ -331,9 +331,9 @@ def _build_flow(
 ) -> FlowControl:
     """Inflate a :class:`FlowControl` from a JSON dict.
 
-    Resolves the two string-reference fields — ``SignalPenstock.rate_fn``
-    and ``ExportToArchive.archive_cls`` — into Python objects, then
-    delegates to ``FlowControl.model_validate(...)``.
+    Resolves the three string-reference fields — ``SignalPenstock.rate_fn``,
+    ``ExportToArchive.archive_cls``, and ``SignalObserver.callback`` —
+    into Python objects, then delegates to ``FlowControl.model_validate(...)``.
     """
     # 1. SignalPenstock.rate_fn — resolve string → callable.
     pen = raw_flow.get("penstock")
@@ -358,6 +358,19 @@ def _build_flow(
                 "spillway": {
                     **sw,
                     "archive_cls": _resolve_archive_class(archive, outflow_module, inflow_module),
+                },
+            }
+
+    # 3. SignalObserver.callback — resolve string → callable.
+    obs = raw_flow.get("observer")
+    if isinstance(obs, dict) and obs.get("type") == "signal":
+        callback = obs.get("callback")
+        if isinstance(callback, str):
+            raw_flow = {
+                **raw_flow,
+                "observer": {
+                    **obs,
+                    "callback": _resolve_callable(callback, outflow_module, inflow_module),
                 },
             }
 

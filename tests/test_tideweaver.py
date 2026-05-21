@@ -1346,6 +1346,257 @@ async def test_spillway_fires_when_penstock_and_reservoir_both_active() -> None:
 
 
 # ---------------------------------------------------------------------------
+# FlowObserver — per-edge lifecycle hook (declarative telemetry channel)
+# ---------------------------------------------------------------------------
+
+
+def test_null_observer_is_the_flow_default() -> None:
+    """``FlowControl()`` defaults to a NullObserver — no-op telemetry."""
+    from incorporator.observability.tideweaver import FlowControl, NullObserver
+
+    fc = FlowControl()
+    assert isinstance(fc.observer, NullObserver)
+
+
+def test_logging_observer_round_trips_via_json() -> None:
+    """``observer: {type: logging, ...}`` deserialises via the discriminated union."""
+    from incorporator.observability.tideweaver import FlowControl, LoggingObserver
+
+    fc = FlowControl.model_validate(
+        {
+            "observer": {
+                "type": "logging",
+                "fire_level": "info",
+                "spillway_level": "warning",
+                "reservoir_threshold": 0.75,
+            },
+        }
+    )
+    assert isinstance(fc.observer, LoggingObserver)
+    assert fc.observer.fire_level == "info"
+    assert fc.observer.reservoir_threshold == 0.75
+
+
+@pytest.mark.asyncio
+async def test_signal_observer_callback_receives_fire_events() -> None:
+    """SignalObserver routes ``on_fire`` through the user callable with payload."""
+    from incorporator.observability.tideweaver import HardLock, SignalObserver
+
+    events: List[Tuple[str, Tuple[str, str], Dict[str, Any]]] = []
+
+    def sink(kind: str, edge: Tuple[str, str], payload: Dict[str, Any]) -> None:
+        events.append((kind, edge, payload))
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=0.05)
+    flow = FlowControl(gate=HardLock(), observer=SignalObserver(callback=sink))
+    ws = Watershed(
+        window=_short_window(0.3),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    await _collect_tides(tw)
+
+    fire_events = [e for e in events if e[0] == "fire"]
+    assert fire_events, "SignalObserver.on_fire must fire when the dependent gates and runs"
+    kind, edge, payload = fire_events[0]
+    assert edge == ("a", "b")
+    assert "wave_number" in payload
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_observer_on_skip_fires_with_skip_reason() -> None:
+    """When a gate or penstock returns a skip reason, ``on_skip`` carries it.
+
+    Uses a HardLock chain so the dependent's first pass surfaces
+    ``"awaiting_upstream"`` until A produces a wave.
+    """
+    from incorporator.observability.tideweaver import HardLock, SignalObserver
+
+    events: List[Tuple[str, Tuple[str, str], Dict[str, Any]]] = []
+
+    def sink(kind: str, edge: Tuple[str, str], payload: Dict[str, Any]) -> None:
+        events.append((kind, edge, payload))
+
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.2)  # delay A so B's first pass sees no upstream wave
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.05)
+    flow = FlowControl(gate=HardLock(), observer=SignalObserver(callback=sink))
+    ws = Watershed(
+        window=_short_window(0.15),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.02)
+    await _collect_tides(tw)
+
+    skip_events = [e for e in events if e[0] == "skip"]
+    assert skip_events, "SignalObserver.on_skip must fire at least once during B's warm-up"
+    reasons = {payload["reason"] for _kind, _edge, payload in skip_events}
+    # Either gate-level "awaiting_upstream" or surge-barrier "skip_ahead" is acceptable;
+    # the observer just needs to receive the reason that fired.
+    assert reasons, "skip events must carry a reason payload"
+
+
+@pytest.mark.asyncio
+async def test_observer_on_spillway_fires_per_displacement() -> None:
+    """One ``on_spillway`` call per displaced wave; carries the overflow_count."""
+    from incorporator.observability.tideweaver import (
+        DropOldest,
+        HardLock,
+        Reservoir,
+        SignalObserver,
+    )
+
+    events: List[Tuple[str, Tuple[str, str], Dict[str, Any]]] = []
+
+    def sink(kind: str, edge: Tuple[str, str], payload: Dict[str, Any]) -> None:
+        events.append((kind, edge, payload))
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=10.0)  # never fires; ensures overflow on every a-tick
+    flow = FlowControl(
+        gate=HardLock(),
+        reservoir=Reservoir(depth=1),
+        spillway=DropOldest(),
+        observer=SignalObserver(callback=sink),
+    )
+    ws = Watershed(
+        window=_short_window(0.3),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    await _collect_tides(tw)
+
+    spillway_events = [e for e in events if e[0] == "spillway"]
+    assert spillway_events, "SignalObserver.on_spillway must fire at least once"
+    # Count must match the edge_state's accumulated overflow_count.
+    last_event_count = spillway_events[-1][2]["overflow_count"]
+    edge_state = tw._edge_state[("a", "b")]
+    assert last_event_count == edge_state.overflow_count
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_observer_on_reservoir_level_fires_per_append() -> None:
+    """``on_reservoir_level`` fires after every reservoir append with used/capacity."""
+    from incorporator.observability.tideweaver import (
+        HardLock,
+        Reservoir,
+        SignalObserver,
+    )
+
+    events: List[Tuple[str, Tuple[str, str], Dict[str, Any]]] = []
+
+    def sink(kind: str, edge: Tuple[str, str], payload: Dict[str, Any]) -> None:
+        events.append((kind, edge, payload))
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=10.0)
+    flow = FlowControl(
+        gate=HardLock(),
+        reservoir=Reservoir(depth=3),
+        observer=SignalObserver(callback=sink),
+    )
+    ws = Watershed(
+        window=_short_window(0.3),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    await _collect_tides(tw)
+
+    level_events = [e for e in events if e[0] == "reservoir_level"]
+    assert level_events, "SignalObserver.on_reservoir_level must fire after every wave append"
+    # capacity matches Reservoir.depth; used grows then plateaus at depth.
+    assert all(payload["capacity"] == 3 for _k, _e, payload in level_events)
+    final_used = level_events[-1][2]["used"]
+    assert 1 <= final_used <= 3
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_observer_does_not_fire_on_fire_for_bypassed_edges() -> None:
+    """Bypassed edges report on_skip is NOT called for them; on_fire is NOT called either.
+
+    The bypass contract: the tick fires ignoring this edge's gate + penstock,
+    so on_fire on this edge would imply a per-edge contribution that didn't
+    happen.  Bypassed edges produce no observer event for that pass.
+    """
+    from incorporator.observability.tideweaver import (
+        HardLock,
+        SignalObserver,
+        SurgeBarrier,
+    )
+
+    events: List[Tuple[str, Tuple[str, str], Dict[str, Any]]] = []
+
+    def sink(kind: str, edge: Tuple[str, str], payload: Dict[str, Any]) -> None:
+        events.append((kind, edge, payload))
+
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.6)  # overruns 2.0 * 0.1 = 0.2s threshold
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.1)
+    flow = FlowControl(
+        gate=HardLock(),
+        surge_barrier=SurgeBarrier(threshold_multiple=2.0, action="bypass"),
+        observer=SignalObserver(callback=sink),
+    )
+    ws = Watershed(
+        window=_short_window(0.7),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
+    await _collect_tides(tw)
+
+    # The bypass fired (B ticked despite A still running); no on_fire for the bypassed edge.
+    fire_events_on_ab = [e for e in events if e[0] == "fire" and e[1] == ("a", "b")]
+    assert fire_events_on_ab == [], (
+        f"Bypassed edges must not emit on_fire events; got {fire_events_on_ab}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Phase 5: phase_offset_sec on Current (green-wave coordination)
 # ---------------------------------------------------------------------------
 

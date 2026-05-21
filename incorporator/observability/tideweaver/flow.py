@@ -422,6 +422,242 @@ class ExportToArchive(Spillway):
 
 
 # ---------------------------------------------------------------------------
+# FlowObserver — per-edge lifecycle hook for declarative telemetry
+# ---------------------------------------------------------------------------
+
+
+class FlowObserver(BaseModel):
+    """Per-edge lifecycle observer — declarative telemetry channel.
+
+    Optional sixth :class:`FlowControl` primitive.  The scheduler calls
+    one of four hooks at every per-edge event:
+
+    * :meth:`on_fire` — dependent's tick fired with this upstream's wave.
+    * :meth:`on_skip` — the gate / penstock / surge barrier on this edge
+      returned a skip reason (``"awaiting_upstream"`` / ``"penstock_limited"``
+      / ``"skip_ahead"`` / ``"surge_halted"``).
+    * :meth:`on_spillway` — a wave was displaced from a full reservoir on
+      this edge (fires after :meth:`Spillway.overflow`).
+    * :meth:`on_reservoir_level` — the reservoir was appended to; ``used``
+      / ``capacity`` describe the post-append occupancy.
+
+    Hooks are **synchronous and cheap** — the scheduler does not ``await``
+    them.  Slow work should be queued / dispatched off-thread by the
+    observer subclass.
+
+    Default subclass is the no-op base.  Concrete options ship as
+    :class:`NullObserver` (explicit-default, identical to base),
+    :class:`LoggingObserver` (per-event ``logging`` emission with
+    configurable levels), and :class:`SignalObserver` (user callable for
+    metric pipelines).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    def on_fire(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        wave_number: int,
+    ) -> None:
+        """Dependent fired this pass — upstream's wave contributed to the tick."""
+        return None
+
+    def on_skip(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        reason: str,
+    ) -> None:
+        """This edge produced ``reason`` — its gate / penstock / surge barrier blocked the dependent."""
+        return None
+
+    def on_spillway(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        displaced_wave: object,
+        overflow_count: int,
+    ) -> None:
+        """A wave was displaced from a full reservoir on this edge."""
+        return None
+
+    def on_reservoir_level(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        used: int,
+        capacity: int,
+    ) -> None:
+        """The reservoir was appended to; ``used`` / ``capacity`` are the post-append occupancy."""
+        return None
+
+
+class NullObserver(FlowObserver):
+    """Default — emit nothing.  Cheap function-call overhead per event."""
+
+    type: Literal["null"] = "null"
+
+
+_LogLevel = Literal["debug", "info", "warning"]
+
+
+class LoggingObserver(FlowObserver):
+    """Emit per-event records through Python ``logging`` at configurable levels.
+
+    Per-event level defaults match the legacy hand-rolled emissions:
+    fire/skip at DEBUG (most users don't want this in production),
+    spillway at WARNING (mirrors today's :class:`RaiseOverflow`), and
+    reservoir-level at DEBUG with an optional fraction threshold.
+
+    Records carry a ``meta`` line in the same flat ``key: value`` shape
+    other Tideweaver telemetry uses, suitable for downstream JSONL
+    ingestion.
+    """
+
+    type: Literal["logging"] = "logging"
+    fire_level: _LogLevel = "debug"
+    skip_level: _LogLevel = "debug"
+    spillway_level: _LogLevel = "warning"
+    reservoir_level_level: _LogLevel = "debug"
+    reservoir_threshold: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Only emit on_reservoir_level when used/capacity >= this fraction.",
+    )
+
+    @staticmethod
+    def _level_to_int(level: _LogLevel) -> int:
+        return {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING}[level]
+
+    def on_fire(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        wave_number: int,
+    ) -> None:
+        logger.log(
+            self._level_to_int(self.fire_level),
+            "Tideweaver: edge %s → %s fired (wave=%d)",
+            edge[0],
+            edge[1],
+            wave_number,
+        )
+
+    def on_skip(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        reason: str,
+    ) -> None:
+        logger.log(
+            self._level_to_int(self.skip_level),
+            "Tideweaver: edge %s → %s skipped (reason=%s)",
+            edge[0],
+            edge[1],
+            reason,
+        )
+
+    def on_spillway(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        displaced_wave: object,
+        overflow_count: int,
+    ) -> None:
+        logger.log(
+            self._level_to_int(self.spillway_level),
+            "Tideweaver: spillway overflow on edge %s → %s (count=%d)",
+            edge[0],
+            edge[1],
+            overflow_count,
+        )
+
+    def on_reservoir_level(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        used: int,
+        capacity: int,
+    ) -> None:
+        if capacity == 0:
+            return None
+        fraction = used / capacity
+        if fraction < self.reservoir_threshold:
+            return None
+        logger.log(
+            self._level_to_int(self.reservoir_level_level),
+            "Tideweaver: reservoir on edge %s → %s at %d/%d (%.1f%%)",
+            edge[0],
+            edge[1],
+            used,
+            capacity,
+            fraction * 100.0,
+        )
+
+
+class SignalObserver(FlowObserver):
+    """Forward every event to a user callable.
+
+    The callable receives ``(event_kind, edge, payload_dict)`` where
+    ``event_kind`` is one of ``"fire"`` / ``"skip"`` / ``"spillway"`` /
+    ``"reservoir_level"`` and ``payload_dict`` carries the per-event
+    data (``wave_number`` / ``reason`` / ``displaced_wave``+``overflow_count``
+    / ``used``+``capacity``).
+
+    String-form ``callback`` in ``watershed.json`` (e.g. ``"my_metrics_sink"``
+    or ``"module.path:func"``) is resolved by the config loader at load
+    time, matching :class:`SignalPenstock.rate_fn`.
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    type: Literal["signal"] = "signal"
+    callback: Callable[[str, Tuple[str, str], Dict[str, Any]], None] = Field(
+        description="Callable invoked once per per-edge event.",
+    )
+
+    def on_fire(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        wave_number: int,
+    ) -> None:
+        self.callback("fire", edge, {"wave_number": wave_number})
+
+    def on_skip(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        reason: str,
+    ) -> None:
+        self.callback("skip", edge, {"reason": reason})
+
+    def on_spillway(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        displaced_wave: object,
+        overflow_count: int,
+    ) -> None:
+        self.callback(
+            "spillway",
+            edge,
+            {"displaced_wave": displaced_wave, "overflow_count": overflow_count},
+        )
+
+    def on_reservoir_level(
+        self,
+        scheduler: "Tideweaver",
+        edge: Tuple[str, str],
+        used: int,
+        capacity: int,
+    ) -> None:
+        self.callback("reservoir_level", edge, {"used": used, "capacity": capacity})
+
+
+# ---------------------------------------------------------------------------
 # FlowControl — per-edge composition of all primitives
 # ---------------------------------------------------------------------------
 
@@ -438,18 +674,24 @@ _SpillwayUnion = Annotated[
     Union[DropOldest, RaiseOverflow, ExportToArchive],
     Field(discriminator="type"),
 ]
+_ObserverUnion = Annotated[
+    Union[NullObserver, LoggingObserver, SignalObserver],
+    Field(discriminator="type"),
+]
 
 
 class FlowControl(BaseModel):
-    """Per-edge flow control: ``gate`` + optional ``penstock`` / ``surge_barrier`` + ``reservoir`` + ``spillway``.
+    """Per-edge composition of gate / penstock / reservoir / spillway / surge_barrier / observer.
 
     Defaults: ``HardLock`` gate, ``Reservoir(depth=1)``, ``DropOldest``
-    spillway, no penstock, no surge barrier.
+    spillway, ``NullObserver`` (no-op telemetry), no penstock, no surge
+    barrier.
 
-    ``gate`` / ``penstock`` / ``spillway`` are Pydantic discriminated
-    unions keyed on each strategy's ``type`` Literal — JSON dicts like
-    ``{"gate": {"type": "weir"}, "penstock": {"type": "burst", ...}}``
-    deserialize directly via :meth:`model_validate`.
+    ``gate`` / ``penstock`` / ``spillway`` / ``observer`` are Pydantic
+    discriminated unions keyed on each strategy's ``type`` Literal —
+    JSON dicts like ``{"gate": {"type": "weir"}, "observer": {"type":
+    "logging", "spillway_level": "info"}}`` deserialize directly via
+    :meth:`model_validate`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -459,6 +701,7 @@ class FlowControl(BaseModel):
     reservoir: Reservoir = Field(default_factory=Reservoir)
     spillway: _SpillwayUnion = Field(default_factory=DropOldest)
     surge_barrier: Optional[SurgeBarrier] = None
+    observer: _ObserverUnion = Field(default_factory=NullObserver)
 
 
 # ---------------------------------------------------------------------------
@@ -497,12 +740,16 @@ __all__ = [
     "DropOldest",
     "ExportToArchive",
     "FlowControl",
+    "FlowObserver",
     "Gate",
     "GateMode",
     "HardLock",
+    "LoggingObserver",
+    "NullObserver",
     "Penstock",
     "RaiseOverflow",
     "Reservoir",
+    "SignalObserver",
     "SignalPenstock",
     "SoftPass",
     "Spillway",
