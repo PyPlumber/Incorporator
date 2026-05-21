@@ -17,7 +17,14 @@ Run with:
 
 import asyncio
 
-from incorporator import Incorporator
+from incorporator import Incorporator, register_host_throttle
+from incorporator.io.throttle import FixedIntervalThrottle
+
+# Respect CoinGecko's anon-tier rate ceiling (5-15 req/min documented):
+# 0.2 req/sec = 12 req/min, comfortably under.  The framework ships
+# no implicit per-host throttling — register hosts you care about
+# explicitly at startup (or pass `requests_per_second=` per call).
+register_host_throttle("api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
 
 
 class Coin(Incorporator):

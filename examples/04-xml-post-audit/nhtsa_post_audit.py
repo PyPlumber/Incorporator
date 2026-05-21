@@ -15,8 +15,13 @@ It highlights:
 import asyncio
 from pathlib import Path
 
-from incorporator import Incorporator
+from incorporator import Incorporator, register_host_throttle
+from incorporator.io.throttle import FixedIntervalThrottle
 from incorporator.schema.extractors import join_all
+
+# Pace NHTSA vPIC at 1.5 req/sec (90/min — under the 100-200/min
+# documented ceiling).  Method-agnostic: applies to both GET and POST.
+register_host_throttle("vpic.nhtsa.dot.gov", lambda: FixedIntervalThrottle(1.5))
 
 HERE = Path(__file__).resolve().parent
 

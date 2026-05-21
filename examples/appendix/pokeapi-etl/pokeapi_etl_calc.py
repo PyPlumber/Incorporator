@@ -12,9 +12,15 @@ functions on them, and flatten them into simple strings and integers.
 import asyncio
 from typing import Any
 
-from incorporator import Incorporator
-from incorporator.schema.converters import calc
+from incorporator import Incorporator, register_host_throttle
 from incorporator.io.pagination import NextUrlPaginator
+from incorporator.io.throttle import FixedIntervalThrottle
+from incorporator.schema.converters import calc
+
+# Pace pokeapi.co at 1.5 req/sec (90/min — under the 100/min documented
+# ceiling).  The framework ships throttle-agnostic; register explicitly
+# at startup.
+register_host_throttle("pokeapi.co", lambda: FixedIntervalThrottle(1.5))
 
 
 # --- EXPLICIT SUBCLASSING ---

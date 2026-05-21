@@ -10,10 +10,11 @@ concurrently through one shared HTTP/2 client, retries on transient
 failure, and surfaces any DLQ entries on `failed_sources`.
 
 **Rate-limit note.**  CoinGecko's free public tier is 5–15 requests
-per *minute* (not per second).  Incorporator's host-aware registry
-auto-paces calls against `api.coingecko.com` at 0.2 req/sec (12/min) —
-the explicit ``requests_per_second`` kwarg below documents the throttle
-so readers see the knob and can crank it up with an API key.
+per *minute* (not per second).  The framework ships no implicit
+per-host throttling; this script calls ``register_host_throttle`` at
+startup to pace ``api.coingecko.com`` at 0.2 req/sec (12/min).  The
+explicit ``requests_per_second`` kwarg further down documents the same
+knob for per-call override scenarios.
 
 Set ``COINGECKO_DEMO_API_KEY`` in your environment to use CoinGecko's
 free Demo plan (30 req/min stable, requires email signup at
@@ -27,7 +28,12 @@ Run with:
 import asyncio
 import os
 
-from incorporator import Incorporator
+from incorporator import Incorporator, register_host_throttle
+from incorporator.io.throttle import FixedIntervalThrottle
+
+# Pace api.coingecko.com at 0.2 req/sec (12/min — comfortably under
+# the 5-15/min free-tier ceiling).
+register_host_throttle("api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
 
 
 class Coin(Incorporator):

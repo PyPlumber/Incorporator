@@ -11,8 +11,13 @@ to create a deeply interconnected, null-safe data graph.
 
 import asyncio
 
-from incorporator import Incorporator, link_to
+from incorporator import Incorporator, link_to, register_host_throttle
+from incorporator.io.throttle import FixedIntervalThrottle
 from incorporator.schema.converters import calc
+
+# Pace api.coingecko.com at 0.2 req/sec (12/min — under the 5-15/min
+# free-tier ceiling).
+register_host_throttle("api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
 
 
 # ==========================================

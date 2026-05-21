@@ -5,6 +5,64 @@ All notable changes to Incorporator are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking
+
+- **Removed implicit per-host throttling** for `api.coingecko.com`,
+  `pokeapi.co`, and `vpic.nhtsa.dot.gov`.  The framework now ships
+  throttle-agnostic — calls to these hosts that previously auto-paced
+  at 0.2 / 1.5 / 1.5 req/sec respectively will hit the
+  `DEFAULT_RPS=15` fallback unless you explicitly opt in.
+
+  Migration — pick one of:
+
+  ```python
+  # Option A: per-call kwarg (most local, easiest to discover).
+  await Coin.incorp(
+      inc_url="https://api.coingecko.com/api/v3/coins/markets",
+      requests_per_second=0.2,
+  )
+
+  # Option B: register once at startup; every subsequent call against
+  # the host respects the rate.
+  from incorporator import register_host_throttle
+  from incorporator.io.throttle import FixedIntervalThrottle
+
+  register_host_throttle("api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
+  register_host_throttle("pokeapi.co", lambda: FixedIntervalThrottle(1.5))
+  register_host_throttle("vpic.nhtsa.dot.gov", lambda: FixedIntervalThrottle(1.5))
+  ```
+
+  Per-host rationale (rates from the previous registry — re-verify
+  against the provider's published docs when you copy):
+
+  - `api.coingecko.com` → 0.2 r/s (12/min, comfortably under the 5-15/min anon ceiling).
+  - `pokeapi.co` → 1.5 r/s (90/min, under the 100/min documented ceiling).
+  - `vpic.nhtsa.dot.gov` → 1.5 r/s (under the 100-200/min documented ceiling).
+
+- **Dropped `incorporator.io.fetch._KNOWN_API_RATE_LIMITS`** and
+  **`_resolve_host_safe_rate`** — the backward-compat shims have no
+  remaining callers.  Use `incorporator.io.throttle.known_host_rates()`
+  for the live registry view.
+
+### Added
+
+- **`register_host_throttle` promoted to package top-level.**
+  `from incorporator import register_host_throttle` works; the
+  submodule path `incorporator.io.throttle.register_host_throttle`
+  continues to work and is the same callable.  New entry in
+  [`docs/api_atlas.md`](docs/api_atlas.md) walks the registration API
+  side-by-side with the existing `resolve_throttle` resolver.
+
+### Internal
+
+- **`incorporator/observability/tideweaver/architect.py`** routes
+  Penstock tier-1 (host-aware) recommendations through the live
+  `known_host_rates()` view rather than the import-time
+  `_KNOWN_API_RATE_LIMITS` shim.  Behavior unchanged for users who
+  register hosts; tier-1 falls silent for users who don't.
+
 ## [1.2.0] - 2026-05-21
 
 ### Added — Canal toolkit (per-edge `FlowControl` primitives)
