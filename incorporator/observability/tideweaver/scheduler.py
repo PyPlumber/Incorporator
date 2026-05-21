@@ -52,25 +52,7 @@ TickFactory = Callable[[Current], Awaitable[None]]
 
 
 class _EdgeState(BaseModel):
-    """Per-edge scheduler bookkeeping for reservoir / penstock / spillway.
-
-    Lives in :attr:`Tideweaver._edge_state`, keyed by ``(from_name, to_name)``.
-    The reservoir holds the most-recent N waves' instance lists (FIFO; depth
-    bounded by ``flow.reservoir.depth``).  When the reservoir is full and a
-    new wave arrives, the displaced wave is routed through
-    ``flow.spillway.overflow`` and ``overflow_count`` bumps for diagnostics.
-
-    Penstock strategies mutate the strategy-specific fields below:
-
-    * ``last_consumed_at`` — used by SustainedPenstock, BackpressurePenstock,
-      SignalPenstock (sustained-rate-style gating).
-    * ``bucket_tokens`` / ``bucket_last_refill_at`` — used by BurstPenstock
-      (token bucket).
-    * ``window_log`` — used by WindowPenstock (rolling-window quota).
-
-    All Penstock fields are Optional / empty by default, so edges that
-    don't use a given strategy pay nothing for the unused slots.
-    """
+    """Per-edge scheduler bookkeeping, keyed by ``(from_name, to_name)``."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -95,23 +77,7 @@ class _EdgeState(BaseModel):
 
 
 class _CurrentState(BaseModel):
-    """Per-current scheduler bookkeeping.
-
-    Instances are pre-allocated for every current at :class:`Tideweaver`
-    construction time and looked up by ``current.name`` in
-    :attr:`Tideweaver._state`.  Replaces four parallel dicts
-    (``_last_tick_started`` / ``_last_wave_at`` / ``_started_at`` /
-    ``_inflight``) keyed by the same name with one struct per current.
-    ``_last_consumed`` stays separate on :class:`Tideweaver` because its
-    key is the *edge* tuple ``(dependent, upstream)``, not the current
-    name.
-
-    ``arbitrary_types_allowed=True`` is required so :attr:`in_flight`
-    can hold an :class:`asyncio.Task` — Pydantic V2 doesn't have a
-    native validator for it but accepts it as an opaque type when
-    allowed.  The model is mutable (Pydantic default) so the scheduler's
-    tick wrapper can update fields in place.
-    """
+    """Per-current scheduler bookkeeping, keyed by ``current.name`` in :attr:`Tideweaver._state`."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -183,25 +149,13 @@ class Tideweaver:
             min(1.0, min(c.interval for c in watershed.currents) / 2.0),
         )
 
-        # Per-current scheduler bookkeeping bundled into one struct per
-        # current (see :class:`_CurrentState`).  Pre-allocated for every
-        # current so reads in the gate / spawn / wrapper hot paths never
-        # need ``dict.get(name, default)`` defensives — the entry always
-        # exists.  ``_last_consumed`` stays a standalone dict because
-        # its key is the edge tuple, not the current name.
         self._state: Dict[str, _CurrentState] = {c.name: _CurrentState() for c in watershed.currents}
+        # ``_last_consumed`` keys on edge tuples, not current names — so it's
+        # a standalone dict instead of a field on ``_CurrentState``.
         self._last_consumed: Dict[Tuple[str, str], datetime] = {}
         self._tide_number = 0
         self._currents_by_name: Dict[str, Current] = {c.name: c for c in watershed.currents}
         self._topo: List[str] = watershed.toposort()
-        # _upstream maps a dependent's name to the list of (upstream_name,
-        # FlowControl) tuples governing its inbound edges.  FlowControl is
-        # the per-edge bundle of gate + surge_barrier + penstock + reservoir
-        # + spillway; the scheduler reaches into it for gating decisions.
-        # _downstream is the symmetric reverse — needed by ``_tick_wrapper``
-        # to push freshly-emitted waves into every outgoing edge's reservoir.
-        # _edge_state holds the reservoir / penstock / spillway bookkeeping
-        # per edge, indexed by ``(from_name, to_name)``.
         self._upstream: Dict[str, List[Tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
         self._downstream: Dict[str, List[Tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
         self._edge_state: Dict[Tuple[str, str], _EdgeState] = {}
@@ -209,28 +163,13 @@ class Tideweaver:
             self._upstream[e.to_name].append((e.from_name, e.flow))
             self._downstream[e.from_name].append((e.to_name, e.flow))
             self._edge_state[(e.from_name, e.to_name)] = _EdgeState()
-        # Watershed topology is immutable for the run, so cache the
-        # transitive-closure result per dependent.  Populated lazily by
-        # ``_transitive_upstreams``.
         self._transitive_cache: Dict[str, List[str]] = {}
 
-        # Adaptive-wakeup state.  The loop sleeps until the earliest of:
-        # (a) the heap's next due-time, (b) ``_wake_event`` (set by any
-        # ``_tick_wrapper.finally`` so downstream hard-edge dependents
-        # re-evaluate immediately after an upstream wave lands), or
-        # (c) shutdown.  Heap entries are ``(due_at_monotonic, counter,
-        # name)`` triples — the counter is a tiebreaker so heapq never
-        # tries to compare ``Current`` names lexicographically when two
-        # entries share the same due time.
+        # Heap entries are ``(due_at_monotonic, counter, name)`` — counter
+        # tiebreaks so heapq never compares Current names lexicographically.
         self._wake_event: asyncio.Event = asyncio.Event()
         self._due_heap: List[Tuple[float, int, str]] = []
         self._heap_counter: int = 0
-
-        # Phase-offset bookkeeping.  Monotonic time when ``run()`` enters
-        # its first pass — set in ``run()`` so the offset is measured from
-        # the orchestration window, not from Tideweaver construction.
-        # ``None`` means ``run()`` hasn't started yet; phase gating is a
-        # no-op in that case.
         self._run_started_at: Optional[float] = None
 
     # ------------------------------------------------------------------
@@ -247,21 +186,10 @@ class Tideweaver:
         reached the loop drains in-flight ticks (bounded by
         ``watershed.drain_timeout``) and then exits cleanly.
         """
-        # Across-drain HTTP client pool — keyed by the HTTP-config tuple
-        # so two currents with identical config share one client while
-        # currents with distinct configs each get their own.  Initialised
-        # here (not in ``__init__``) so the Tideweaver instance is safely
-        # reusable; each ``run()`` invocation gets a fresh pool that the
-        # ``finally`` block below ``aclose()``s.
+        # HTTP client pool + phase-offset anchor reset per-run, so a
+        # Tideweaver instance is safely reusable across ``run()`` calls.
         self._client_pool: Dict[Tuple[Any, ...], httpx.AsyncClient] = {}
-        # Reset the phase-offset anchor for THIS run.  ``Current.phase_offset_sec``
-        # is measured from this timestamp, so a reused Tideweaver instance gets a
-        # fresh phase window each run.
         self._run_started_at = time.monotonic()
-        # Pre-push heap entries for every phase-offset current so the
-        # adaptive-wake loop knows to re-evaluate them at the offset moment.
-        # Without this, the scheduler might be sleeping on an unrelated heap
-        # entry (e.g. another current's interval) and miss the phase boundary.
         for c in self.watershed.currents:
             if c.phase_offset_sec > 0.0:
                 self._push_due(c.name, self._run_started_at + c.phase_offset_sec)

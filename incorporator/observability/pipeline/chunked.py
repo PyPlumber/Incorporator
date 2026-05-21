@@ -33,21 +33,8 @@ async def _run_chunking_engine(
     Yields:
         Wave: one per chunk, success or failure.
     """
-    # The monolithic-format + paginator data-loss guard runs at the
-    # ``stream()`` call site via ``assert_engine_supported`` so the
-    # traceback points at the user code, not at this generator.
-    #
-    # Build one httpx.AsyncClient for the drain and thread it via the
-    # ``_client`` hook ``fetch_concurrent_payloads`` already accepts,
-    # unless either condition holds:
-    #
-    # * **File-mode incorps** (``inc_file`` set) never touch httpx —
-    #   mirror the skip already applied at ``fetch.py:578``.
-    # * **Caller-supplied client** (``_client`` already in
-    #   ``incorp_params``) — Tideweaver's across-drain pool, a future
-    #   public ``client=`` kwarg, or a test injection.  We use the
-    #   caller's client but don't own its lifetime; ``aclose()`` only
-    #   runs on a client we built ourselves.
+    # Build one shared client per drain.  Skip when in file-mode (httpx
+    # unused) or when the caller supplied one (we don't own its lifetime).
     is_file_mode = bool(incorp_params.get("inc_file"))
     caller_supplied_client = "_client" in incorp_params
     shared_client: Optional[httpx.AsyncClient] = None
@@ -66,10 +53,7 @@ async def _run_chunking_engine(
                 chunk_idx += 1
                 start_time = time.perf_counter()
 
-                # Always copy so the ``_client`` slot-in doesn't mutate the
-                # caller's ``incorp_params``.  ``setdefault`` honours an
-                # already-supplied ``_client`` (a future caller threading
-                # their own takes precedence over our shared client).
+                # Copy so the ``_client`` slot-in doesn't mutate the caller's dict.
                 if paginator:
                     if getattr(paginator, "is_exhausted", False):
                         break
@@ -102,9 +86,6 @@ async def _run_chunking_engine(
 
                     del dataset
                     # Yield the event loop so other tasks can run between chunks.
-                    # Manual gc.collect() removed — Python's generational GC handles
-                    # short-lived datasets without manual intervention, and calling
-                    # gc.collect() here would block the event loop for milliseconds.
                     await asyncio.sleep(0)
 
                     if not paginator:

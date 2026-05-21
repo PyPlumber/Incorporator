@@ -342,9 +342,7 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
                 if t not in name_set:
                     errors.append(f"edges[{i}].to references unknown current {t!r}.")
                 if edge_mode is not None and edge_flow is not None:
-                    errors.append(
-                        f"edges[{i}]: pass 'gate_mode' (string shorthand) or 'flow' (full dict), not both."
-                    )
+                    errors.append(f"edges[{i}]: pass 'gate_mode' (string shorthand) or 'flow' (full dict), not both.")
                 if edge_mode is not None and edge_mode not in _TIDEWEAVER_EDGE_MODES:
                     errors.append(
                         f"edges[{i}].gate_mode must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}; got {edge_mode!r}."

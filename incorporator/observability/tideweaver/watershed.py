@@ -26,21 +26,14 @@ from .flow import FlowControl, GateMode, flow_from_mode
 
 
 class Edge(BaseModel):
-    """The dependency-edge contract: link one current to another with a :class:`FlowControl`.
-
-    Each edge carries a :class:`~.flow.FlowControl` describing how waves
-    pass through it — gate (pass/hold), optional surge barrier, optional
-    penstock (rate limit), reservoir (buffer depth), spillway (overflow
-    handler).  Defaults match today's behavior: ``FlowControl()`` is
-    ``HardLock + no penstock + Reservoir(depth=1) + DropOldest + no
-    surge barrier``.
+    """One directed edge in a :class:`Watershed`, governed by a :class:`~.flow.FlowControl`.
 
     .. code-block:: python
 
         # Default — hard gating, single-wave snapshot.
         Edge(from_name="binance", to_name="arb_fjord")
 
-        # Shorthand via mode string (mutually exclusive with flow=).
+        # Mode shorthand (mutually exclusive with ``flow=``).
         Edge(from_name="binance", to_name="arb_fjord", gate_mode="weir")
 
         # Full control.
@@ -54,11 +47,8 @@ class Edge(BaseModel):
             ),
         )
 
-    JSON-friendly: ``from_name`` / ``to_name`` accept the shorter
-    aliases ``"from"`` / ``"to"`` when constructing from a dict, so a
-    config file reads ``{"from": "binance", "to": "arb_fjord", ...}``
-    naturally.  Python users keep ``from_name=`` / ``to_name=`` (since
-    ``from`` is a Python keyword).
+    JSON aliases: ``from_name`` / ``to_name`` accept ``"from"`` / ``"to"``
+    when constructing from a dict (since ``from`` is a Python keyword).
 
     Attributes:
         from_name: The upstream current name.
@@ -75,12 +65,7 @@ class Edge(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _gate_mode_shorthand(cls, data: Any) -> Any:
-        """Translate ``gate_mode="weir"`` shorthand into ``flow=flow_from_mode("weir")``.
-
-        Mutually exclusive with ``flow=``; raises ``ValueError`` if
-        both are passed.  Mirrors the same shorthand on
-        :meth:`Watershed.chain` / ``.diamond`` / ``.fanout``.
-        """
+        """Translate ``gate_mode="weir"`` into ``flow=flow_from_mode("weir")``.  Mutex with ``flow=``."""
         if isinstance(data, dict) and "gate_mode" in data:
             mode = data.pop("gate_mode")
             if data.get("flow") is not None:

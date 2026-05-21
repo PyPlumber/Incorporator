@@ -240,14 +240,7 @@ def _resolve_archive_class(
     outflow_module: Optional[ModuleType],
     inflow_module: Optional[ModuleType],
 ) -> type:
-    """Look up an archive-target class by name on the sidecar modules.
-
-    Distinct from :func:`_resolve_class` because the archive target need
-    NOT be an :class:`Incorporator` subclass — it can be any class the
-    user wants displaced-wave instances appended to as a
-    ``_spillway_backlog`` list.  We still require the name to resolve to
-    a class object so a typo doesn't silently land on a function/value.
-    """
+    """Look up an archive class by name on the sidecar modules.  Need not be an Incorporator subclass."""
     for module in (outflow_module, inflow_module):
         if module is None:
             continue
@@ -269,17 +262,11 @@ def _resolve_callable(
 ) -> Callable[..., Any]:
     """Resolve a callable from a string reference.
 
-    Two forms accepted:
+    Two forms:
 
-    * ``"fn_name"`` — looked up on ``outflow_module`` first, then
-      ``inflow_module``.  Mirrors the sidecar lookup that
-      :func:`_resolve_class` uses for class references.
-    * ``"package.module:fn_name"`` — imports ``package.module`` via
-      :func:`importlib.import_module` then ``getattr(module, fn_name)``.
-      Escape hatch for callables that live outside the sidecar files
-      (e.g. stdlib utilities or third-party rate-decision libraries).
-
-    Used by :class:`~.flow.SignalPenstock(rate_fn=...)` JSON inflation.
+    * ``"fn_name"`` — looked up on the outflow / inflow sidecar modules.
+    * ``"package.module:fn_name"`` — imports ``package.module`` then
+      ``getattr(module, fn_name)``.
     """
     if ":" in ref:
         # Module:function path.
@@ -320,22 +307,11 @@ def _build_flow(
     outflow_module: Optional[ModuleType],
     inflow_module: Optional[ModuleType],
 ) -> FlowControl:
-    """Inflate a :class:`FlowControl` from a raw JSON dict.
+    """Inflate a :class:`FlowControl` from a JSON dict.
 
-    Pre-processes the two string-reference cases — ``SignalPenstock.rate_fn``
-    (callable) and ``ExportToArchive.archive_cls`` (class) — into actual
-    Python objects, then delegates to ``FlowControl.model_validate(...)``.
-    Pydantic's discriminated unions handle every other strategy from the
-    ``type`` field on the child dict.
-
-    Args:
-        raw_flow: A dict shaped like
-            ``{"gate": {"type": "weir"}, "penstock": {...}, ...}``.
-        outflow_module: Loaded ``outflow.py`` module for sidecar lookups.
-        inflow_module: Loaded ``inflow.py`` module for sidecar lookups.
-
-    Returns:
-        A validated :class:`FlowControl` ready to attach to an Edge.
+    Resolves the two string-reference fields — ``SignalPenstock.rate_fn``
+    and ``ExportToArchive.archive_cls`` — into Python objects, then
+    delegates to ``FlowControl.model_validate(...)``.
     """
     # 1. SignalPenstock.rate_fn — resolve string → callable.
     pen = raw_flow.get("penstock")
