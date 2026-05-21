@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple, Type, 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..exceptions import IncorporatorSchemaError
-from .converters import CalcAllOp, CalcOp
+from .converters import CalcAllOp, CalcOp, is_garbage_value
 
 logger = logging.getLogger(__name__)
 
@@ -146,11 +146,21 @@ def apply_etl_transformations(
                 inputs = operation.input_list if operation.input_list else [key]
                 for d in dict_items:
                     args = [d.get(dep) for dep in inputs]
-                    try:
-                        val = func(*args)
-                    except Exception as e:
-                        logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
+                    # Align with inc()'s null-handling contract: when EVERY
+                    # input value is garbage (None/""/n-a/null/unknown/nan/
+                    # undefined), skip the user-supplied func and silently
+                    # fall back to default.  Saves one Python exception raise
+                    # + one logger.warning call per garbage row — the per-
+                    # row pre-check is ~50ns, the exception path it replaces
+                    # is ~30µs.  See H3 reshape's efficiency analysis.
+                    if all(is_garbage_value(a) for a in args):
                         val = default
+                    else:
+                        try:
+                            val = func(*args)
+                        except Exception as e:
+                            logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
+                            val = default
 
                     if target_type is not None:
                         try:
@@ -166,11 +176,17 @@ def apply_etl_transformations(
                 target_type = operation.target_type if callable(operation.target_type) else None
                 inputs = operation.input_list if operation.input_list else [key]
                 col_args = [[d.get(dep) for d in dict_items] for dep in inputs]
-                try:
-                    results = func(*col_args)
-                except Exception as e:
-                    logger.warning("calc_all failed for key '%s': %s", key, e)
+                # Symmetric to CalcOp's pre-check, applied across the full
+                # column matrix: if every cell of every input column is
+                # garbage, skip the func call and default every output row.
+                if all(is_garbage_value(v) for col in col_args for v in col):
                     results = [default] * len(dict_items)
+                else:
+                    try:
+                        results = func(*col_args)
+                    except Exception as e:
+                        logger.warning("calc_all failed for key '%s': %s", key, e)
+                        results = [default] * len(dict_items)
 
                 for idx, d in enumerate(dict_items):
                     try:

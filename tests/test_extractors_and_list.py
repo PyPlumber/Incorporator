@@ -186,3 +186,80 @@ def test_incorporator_list_gc_warn_on_gc_flag() -> None:
     lst._warn_on_gc = True  # type: ignore[attr-defined]
     # Explicitly invoke __del__ — must not raise
     lst.__del__()
+
+
+# ==========================================
+# 8. H3 reshape: graph-map helpers' null-handling aligned with inc()
+#
+# pluck's ``chain``, link_to's ``extractor``, link_to_list's
+# ``extractor``, and split_and_get's input handling all now skip the
+# user-supplied callable when the source value is garbage (per
+# :func:`is_garbage_value`).  Garbage → silent None — no
+# "conv_dict failed" WARNING at the dispatch boundary.
+# ==========================================
+
+
+def test_pluck_chain_skips_on_garbage_extracted_value() -> None:
+    """pluck("a.b", chain=str.lower) short-circuits to None when the path is missing.
+
+    The chain callable is never invoked on garbage extracted values, so
+    a chain of ``str.lower`` does not raise TypeError on None paths.
+    """
+    op = pluck("data.title", chain=str.lower)
+    # Missing intermediate key
+    assert op({"data": {}}) is None
+    # Explicit None at the leaf
+    assert op({"data": {"title": None}}) is None
+    # Garbage-sentinel string at the leaf
+    assert op({"data": {"title": "n/a"}}) == "n/a"  # falsy by garbage test, returned as-is
+
+    # Real data still flows through chain.
+    assert op({"data": {"title": "Hello"}}) == "hello"
+
+
+def test_link_to_extractor_skips_on_garbage_fk() -> None:
+    """link_to(dataset, extractor=str.upper) short-circuits to None on garbage FKs.
+
+    Without the pre-check, ``str.upper(None)`` would raise TypeError and
+    trigger a per-row WARNING at the builder.py dispatch boundary.
+    """
+    books = [
+        SimpleNamespace(inc_code="BTC"),
+        SimpleNamespace(inc_code="ETH"),
+    ]
+    op = link_to(books, extractor=str.upper)
+    # Garbage FKs short-circuit silently.
+    assert op(None) is None
+    assert op("") is None
+    assert op("n/a") is None
+    # Real FK still routes through extractor and registry.
+    assert op("btc").inc_code == "BTC"
+
+
+def test_link_to_list_filters_garbage_elements() -> None:
+    """link_to_list filters garbage list elements before invoking the per-element linker."""
+    books = [SimpleNamespace(inc_code="BTC"), SimpleNamespace(inc_code="ETH")]
+    op = link_to_list(books, extractor=str.upper)
+    result = op(["btc", None, "n/a", "eth", ""])
+    assert [item.inc_code for item in result] == ["BTC", "ETH"]
+
+
+def test_split_and_get_widens_null_check_to_garbage_set() -> None:
+    """split_and_get short-circuits to None on the full garbage-value set.
+
+    Previously the narrow check was ``value is None or value == ""``;
+    now garbage strings (``"n/a"``, ``"null"``, ``"unknown"``, ``"nan"``,
+    ``"undefined"``) also short-circuit to None instead of being
+    attempted as a delimited path.
+    """
+    op = split_and_get("/", index=-1, cast_type=int)
+    assert op("n/a") is None
+    assert op("null") is None
+    assert op("unknown") is None
+    assert op("nan") is None
+    assert op("undefined") is None
+    # Legacy null path still works.
+    assert op(None) is None
+    assert op("") is None
+    # Real input still parses.
+    assert op("https://api.com/items/42/") == 42

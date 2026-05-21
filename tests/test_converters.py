@@ -367,3 +367,80 @@ def test_get_url_injection() -> None:
         "https://api.com/users/alpha/profile",
         "https://api.com/users/beta/profile",
     ]
+
+
+# ---------------------------------------------------------------------------
+# H3 reshape: calc/calc_all null-handling aligned with inc().
+#
+# The framework now pre-checks ``is_garbage_value`` on every input before
+# invoking the user's ``func``.  When ALL inputs are garbage the func is
+# skipped entirely — silent default-out, no warning.  When at least one
+# input is real and the func raises on it, the WARNING is preserved
+# (genuine anomaly).
+# ---------------------------------------------------------------------------
+
+
+def _run_calc(op: Any, rows: list) -> list:
+    """Tiny driver: run a CalcOp/CalcAllOp through the builder's dispatch loop.
+
+    Avoids spinning up a full Incorporator.incorp() call for these focused
+    regression tests.
+    """
+    from incorporator.schema.builder import apply_etl_transformations
+
+    apply_etl_transformations(rows, conv_dict={"out": op}, excl_lst=None, name_chg=None)
+    return rows
+
+
+def test_calc_short_circuits_when_all_inputs_garbage(caplog: pytest.LogCaptureFixture) -> None:
+    """All-garbage input → silent default; no warning emitted on the calc path."""
+    op = calc(str.lower, "title", default="", target_type=str)
+    rows = [{"title": None}, {"title": ""}, {"title": "n/a"}, {"title": "Null"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert all(r["out"] == "" for r in result), "every garbage row should default-out"
+    assert not [r for r in caplog.records if "calc failed" in r.getMessage()], (
+        "garbage rows must not trigger a calc warning"
+    )
+
+
+def test_calc_still_warns_on_real_func_failure(caplog: pytest.LogCaptureFixture) -> None:
+    """At least one real input + func raises on it → WARNING preserved."""
+
+    def explode(x: Any) -> int:
+        return int(x)  # raises on non-numeric strings
+
+    op = calc(explode, "id", default=-1, target_type=int)
+    rows = [{"id": "not-a-number"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert result[0]["out"] == -1
+    assert any("calc failed" in r.getMessage() for r in caplog.records), (
+        "real func failure on real data must still warn"
+    )
+
+
+def test_calc_real_data_passes_through_unchanged(caplog: pytest.LogCaptureFixture) -> None:
+    """Real-data rows still produce the func's result; the pre-check does not interfere."""
+    op = calc(str.lower, "title", default="", target_type=str)
+    rows = [{"title": "Hello"}, {"title": None}, {"title": "WORLD"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert result[0]["out"] == "hello"
+    assert result[1]["out"] == ""  # None → default
+    assert result[2]["out"] == "world"
+    assert not [r for r in caplog.records if "calc failed" in r.getMessage()]
+
+
+def test_calc_all_short_circuits_when_every_cell_garbage(caplog: pytest.LogCaptureFixture) -> None:
+    """All-garbage across every column → silent per-row default; no warning."""
+
+    def should_not_run(scores: list) -> list:
+        raise AssertionError("calc_all func must not run when every cell is garbage")
+
+    op = calc_all(should_not_run, "score", default=0, target_type=int)
+    rows = [{"score": None}, {"score": ""}, {"score": "n/a"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert [r["out"] for r in result] == [0, 0, 0]
+    assert not [r for r in caplog.records if "calc_all failed" in r.getMessage()]

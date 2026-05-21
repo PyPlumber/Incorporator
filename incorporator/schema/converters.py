@@ -101,6 +101,24 @@ def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target
         A :class:`CalcOp` marker — store it in ``conv_dict``; the engine
         unwraps it during instance construction.
 
+    **Null handling.**  Missing or garbage input values (``None``,
+    ``""``, ``"N/A"``, ``"null"``, ``"unknown"``, ``"nan"``,
+    ``"undefined"``) are detected via :func:`is_garbage_value` BEFORE
+    ``func`` is called.  When EVERY ``input_keys`` value is garbage,
+    ``calc`` short-circuits to ``default`` silently — no warning
+    emitted.  ``func`` is only invoked when at least one input is real
+    data; if it raises on that real data, the warning fires and
+    ``default`` is used.
+
+    This mirrors :func:`inc`'s null-handling contract: in both, the
+    caller never has to write ``lambda v: v.lower() if v else ""`` —
+    the framework guards the null path itself.  Prefer the canonical
+    lambda-free form::
+
+        calc(str.lower, "title", default="", target_type=str)
+
+    over the explicit-null-guard lambda; same behaviour, no log noise.
+
     For column-wide aggregation (a single call across every row) use
     :func:`calc_all` instead.
     """
@@ -141,6 +159,13 @@ def calc_all(func: Callable[..., Any], *input_keys: str, default: Any = None, ta
 
     Returns:
         A :class:`CalcAllOp` marker — store it in ``conv_dict``.
+
+    **Null handling.**  When every cell across every input column is
+    garbage (per :func:`is_garbage_value`), ``calc_all`` short-circuits
+    to ``[default] * len(rows)`` silently — no warning emitted.  ``func``
+    is only invoked when at least one cell is real data; if it raises
+    on that real data, the warning fires and the per-row default is
+    used.  Symmetric with :func:`calc`'s row-level contract.
 
     For per-row computation use :func:`calc` instead.
     """

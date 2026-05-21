@@ -11,7 +11,7 @@ import logging
 import weakref
 from typing import Any, Callable, Dict, List, Optional
 
-from .converters import _EachSentinel
+from .converters import _EachSentinel, is_garbage_value
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +89,19 @@ def split_and_get(
         cast_type: Optional callable applied to the extracted string
             (e.g. ``int`` to convert a numeric ID).
 
-    Returns a closure for use in ``conv_dict``.  ``None`` / empty values
-    pass through as ``None``; out-of-range indices and failed casts also
-    return ``None`` rather than raising.
+    Returns a closure for use in ``conv_dict``.  Garbage values
+    (``None``, ``""``, ``"N/A"``, ``"null"``, ``"unknown"``, ``"nan"``,
+    ``"undefined"`` — see :func:`is_garbage_value`) pass through as
+    ``None``; out-of-range indices and failed casts also return ``None``
+    rather than raising.
     """
 
     def _splitter(value: Any) -> Any:
-        if value is None or value == "":
+        # Align with inc()'s null contract via :func:`is_garbage_value`:
+        # ``None``, ``""``, and the canonical garbage set (``"n/a"``,
+        # ``"null"``, ``"unknown"``, ``"nan"``, ``"undefined"``) all
+        # short-circuit to ``None`` without entering the split/cast path.
+        if is_garbage_value(value):
             return None
         try:
             result = str(value).strip(delimiter).split(delimiter)[index]
@@ -153,6 +159,12 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
         form to absorb the common "API returns int, registry keyed by
         string" mismatch.
 
+    **Null handling.**  The optional ``extractor`` callable is only
+    invoked when the source value passes :func:`is_garbage_value` —
+    garbage FKs short-circuit to ``None`` without entering the extractor
+    (otherwise an ``extractor`` like ``str.upper`` would raise on a None
+    FK and trigger a per-row WARNING at the dispatch boundary).
+
     For lists of foreign keys (e.g. tags → tag objects) use
     :func:`link_to_list`.
     """
@@ -194,6 +206,14 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
                 _add_to_cache(k, v)
 
     def _mapper(val: Any) -> Any:
+        # Align with inc()'s null-handling contract: garbage input
+        # short-circuits to ``None`` BEFORE invoking the optional
+        # ``extractor`` callable.  Without this pre-check, a None FK +
+        # an extractor like ``str.upper`` would raise TypeError, get
+        # caught at the builder.py dispatch boundary, and emit a
+        # "conv_dict failed" WARNING on every garbage row.
+        if is_garbage_value(val):
+            return None
         key = extractor(val) if extractor is not None else val
         if key is None:
             return None
@@ -249,13 +269,21 @@ def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None)
         A converter closure that accepts a list of foreign keys and returns
         a list of matched objects.  Non-list inputs return an empty list;
         unmatched individual keys are silently omitted.
+
+    **Null handling.**  Garbage list elements (per :func:`is_garbage_value`)
+    are filtered before the per-element lookup.  Mirrors :func:`link_to`'s
+    extractor pre-check.
     """
     base_linker = link_to(dataset, extractor)
 
     def _mapper(val_list: Any) -> List[Any]:
         if not isinstance(val_list, list):
             return []
-        return [obj for v in val_list if (obj := base_linker(v)) is not None]
+        # Per-element garbage filter mirrors link_to's pre-check.  The
+        # inner base_linker also pre-checks for safety, but skipping the
+        # closure invocation entirely is the cheaper path on garbage-heavy
+        # lists.
+        return [obj for v in val_list if not is_garbage_value(v) and (obj := base_linker(v)) is not None]
 
     return _mapper
 
@@ -291,6 +319,13 @@ def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[A
     Returns a converter closure.  Missing path segments resolve to ``None``
     rather than raising — drilling through ``{"a": None}`` for path
     ``"a.b"`` returns ``None`` safely.
+
+    **Null handling.**  The optional ``chain`` callable is only invoked
+    when the extracted value passes :func:`is_garbage_value` — missing
+    path segments / garbage leaf values short-circuit to ``None``
+    without entering the chain callable.  Lets you compose stdlib
+    callables (``pluck("data.title", chain=str.lower)``) without writing
+    a defensive null guard.
     """
     parts = key.split(".")
 
@@ -307,7 +342,14 @@ def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[A
                 if extracted is None:
                     break
 
-        return chain(extracted) if chain else extracted
+        # Align with inc()'s null contract: only invoke ``chain`` on real
+        # data.  Missing path segments / garbage source values
+        # short-circuit to ``None`` without entering the chain callable —
+        # otherwise ``chain(None)`` for chain=str.lower (etc.) would raise
+        # and trigger a per-row WARNING at the dispatch boundary.
+        if chain is None or is_garbage_value(extracted):
+            return extracted
+        return chain(extracted)
 
     return _plucker
 
