@@ -547,17 +547,24 @@ class Incorporator(BaseModel):
         # tick.  Without this, the stateful-daemon refresh would hit the
         # bare URL — e.g. CoinGecko returns 422 when ``?vs_currency=usd``
         # is dropped.  User-supplied ``refresh_params`` still win on key
-        # conflict (handled in ``refresh()`` below).  ``__inspect`` is a
-        # one-shot inspector flag and is intentionally not replayed.
+        # conflict (handled in ``refresh()`` below).  ``__inspect`` and
+        # ``__capture_into`` are one-shot inspector flags, intentionally
+        # not replayed by ``refresh()``.
         cls._incorp_kwargs = {
             "conv_dict": conv_dict,
             "excl_lst": excl_lst,
             "name_chg": name_chg,
-            **{k: v for k, v in kwargs.items() if k != "__inspect"},
+            **{k: v for k, v in kwargs.items() if k not in ("__inspect", "__capture_into")},
         }
 
         # Extract control flags before network call so they don't pollute handlers
         __inspect = kwargs.pop("__inspect", False)
+        # ``__capture_into`` is the architect's sidechannel: when set to a
+        # mutable list, the inspector's structured ``SourceProfile`` lands in
+        # it and the print path is suppressed.  Lets ``cls.architect()``
+        # share the same probe codebase as ``cls.test()`` without printing
+        # N per-source reports.
+        __capture_into = kwargs.pop("__capture_into", None)
         payload_list = kwargs.pop("payload_list", None)
 
         parsed_data, failed_sources = await network.fetch_concurrent_payloads(
@@ -570,9 +577,12 @@ class Incorporator(BaseModel):
         )
 
         if __inspect:
-            from .tools.inspector import analyze_data
+            from .tools.inspector import analyze_data, capture_signals
 
-            analyze_data(parsed_data, {"rec_path": kwargs.get("rec_path")})
+            if __capture_into is not None:
+                __capture_into.append(capture_signals(parsed_data, {"rec_path": kwargs.get("rec_path")}))
+            else:
+                analyze_data(parsed_data, {"rec_path": kwargs.get("rec_path")})
 
         result = await asyncio.to_thread(
             _factory.build_instances,
