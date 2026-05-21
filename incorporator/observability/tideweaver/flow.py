@@ -2,10 +2,15 @@
 
 :class:`FlowControl` composes five orthogonal per-edge primitives:
 gating (:class:`Gate`), conditional override (:class:`SurgeBarrier`),
-flow-rate limiting (:class:`Penstock`), wave buffering (:class:`Reservoir`),
-and overflow handling (:class:`Spillway`).  HTTP-layer host throttles
-in :mod:`incorporator.io.throttle` are a separate concern: they cap
-requests per host, Penstocks here cap wave consumption per edge.
+flow-rate limiting (:class:`Penstock`), wave buffering
+(:class:`Reservoir`), and overflow handling (:class:`Spillway`).
+
+:class:`Penstock` and its concrete subclasses (:class:`SustainedPenstock`,
+:class:`BurstPenstock`, :class:`WindowPenstock`, :class:`SignalPenstock`,
+:class:`NullPenstock`) live in :mod:`incorporator.io.penstock` — the
+canal-toolkit vocabulary is shared with the HTTP throttle layer.  This
+module re-exports them and adds the edge-only
+:class:`BackpressurePenstock` (which reads reservoir context).
 """
 
 from __future__ import annotations
@@ -16,6 +21,15 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from ...io.penstock import (
+    BurstPenstock,
+    NullPenstock,
+    Penstock,
+    SignalPenstock,
+    SustainedPenstock,
+    WindowPenstock,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,97 +156,12 @@ class SurgeBarrier(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Penstock hierarchy — edge-layer flow-rate strategies
+# Penstock hierarchy — edge-layer flow-rate strategies.
+#
+# Penstock + Null/Sustained/Burst/Window/Signal are imported at the top
+# of the module from incorporator.io.penstock; only the edge-specific
+# BackpressurePenstock is defined here, since it reads reservoir context.
 # ---------------------------------------------------------------------------
-
-
-class Penstock(BaseModel):
-    """Edge-layer flow-rate strategy: caps wave consumption per edge.
-
-    Subclasses implement :meth:`consume_reason` (the pre-consume gate check)
-    and optionally override :meth:`post_consume` (called on every
-    successful consumption to update the strategy's accumulated state).
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
-        """Return a skip reason, or ``None`` to allow consumption.  May mutate ``edge_state``."""
-        raise NotImplementedError
-
-    def post_consume(self, edge_state: Any, now: float) -> None:
-        """Hook fired after a successful consumption.  Default: no-op.
-
-        Subclasses that accumulate per-consumption state (token-bucket
-        debit, sliding-window log append) override this instead of the
-        scheduler reaching in via ``isinstance`` branches.
-        """
-        return None
-
-
-class SustainedPenstock(Penstock):
-    """Leaky bucket: minimum gap ``1 / rate_per_sec`` between consumptions."""
-
-    type: Literal["sustained"] = "sustained"
-    rate_per_sec: float = Field(gt=0.0, description="Max sustained wave consumptions per second.")
-
-    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
-        if edge_state.last_consumed_at is None:
-            return None
-        min_gap = 1.0 / self.rate_per_sec
-        if (now - edge_state.last_consumed_at) < min_gap:
-            return "penstock_limited"
-        return None
-
-
-class BurstPenstock(Penstock):
-    """Token bucket: initial burst of ``burst`` waves, then refills at ``rate_per_sec`` tokens/sec."""
-
-    type: Literal["burst"] = "burst"
-    rate_per_sec: float = Field(gt=0.0, description="Refill rate (tokens / second).")
-    burst: int = Field(ge=1, description="Bucket capacity — max tokens held.")
-
-    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
-        # First-touch initialization: bucket starts full.
-        if edge_state.bucket_tokens is None:
-            edge_state.bucket_tokens = float(self.burst)
-            edge_state.bucket_last_refill_at = now
-        else:
-            elapsed = now - (edge_state.bucket_last_refill_at or now)
-            edge_state.bucket_tokens = min(
-                float(self.burst),
-                edge_state.bucket_tokens + elapsed * self.rate_per_sec,
-            )
-            edge_state.bucket_last_refill_at = now
-        if edge_state.bucket_tokens < 1.0:
-            return "penstock_limited"
-        return None
-
-    def post_consume(self, edge_state: Any, now: float) -> None:
-        """Debit one token after a consumption fired."""
-        if edge_state.bucket_tokens is not None:
-            edge_state.bucket_tokens = max(0.0, edge_state.bucket_tokens - 1.0)
-
-
-class WindowPenstock(Penstock):
-    """Rolling-window quota: at most ``cap`` consumptions per ``window_sec``."""
-
-    type: Literal["window"] = "window"
-    window_sec: float = Field(gt=0.0, description="Rolling lookback window in seconds.")
-    cap: int = Field(ge=1, description="Max consumptions within the window.")
-
-    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
-        cutoff = now - self.window_sec
-        # Evict entries older than the window.  Mutation here is the
-        # natural place — keeps the log bounded as the window slides.
-        edge_state.window_log = [t for t in edge_state.window_log if t > cutoff]
-        if len(edge_state.window_log) >= self.cap:
-            return "penstock_limited"
-        return None
-
-    def post_consume(self, edge_state: Any, now: float) -> None:
-        """Append the consumption timestamp to the sliding window log."""
-        edge_state.window_log.append(now)
 
 
 class BackpressurePenstock(Penstock):
@@ -274,37 +203,6 @@ class BackpressurePenstock(Penstock):
         if edge_state.last_consumed_at is None:
             return None
         min_gap = 1.0 / effective_rate
-        if (now - edge_state.last_consumed_at) < min_gap:
-            return "penstock_limited"
-        return None
-
-
-class SignalPenstock(Penstock):
-    """User callable returns the current rate.
-
-    ``rate_fn(edge_state, now) -> float`` runs in the gate cycle; a
-    return ``<= 0`` blocks the edge entirely.
-
-    Note: ``rate_fn`` signature changed in v1.3.0 — the legacy
-    ``rate_fn(scheduler, edge_state, now)`` shape no longer receives
-    the scheduler; the strategy hierarchy doesn't read scheduler
-    privates anymore.  Migration: drop the first ``scheduler`` arg.
-    """
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
-
-    type: Literal["signal"] = "signal"
-    rate_fn: Callable[[Any, float], float] = Field(
-        description="Callable returning the current allowed rate in waves/sec.",
-    )
-
-    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
-        rate = self.rate_fn(edge_state, now)
-        if rate <= 0.0:
-            return "penstock_limited"
-        if edge_state.last_consumed_at is None:
-            return None
-        min_gap = 1.0 / rate
         if (now - edge_state.last_consumed_at) < min_gap:
             return "penstock_limited"
         return None
@@ -726,6 +624,7 @@ __all__ = [
     "HardLock",
     "LoggingObserver",
     "NullObserver",
+    "NullPenstock",
     "Penstock",
     "RaiseOverflow",
     "Reservoir",
