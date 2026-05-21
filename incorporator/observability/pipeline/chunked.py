@@ -4,6 +4,8 @@ import asyncio
 import time
 from typing import Any, AsyncGenerator, Dict, Optional
 
+import httpx
+
 from ...io.fetch import HTTPClientBuilder
 from ..logger import Wave
 from ._shared import _enrich_and_load, _row_count
@@ -35,26 +37,28 @@ async def _run_chunking_engine(
     # ``stream()`` call site via ``assert_engine_supported`` so the
     # traceback points at the user code, not at this generator.
     #
-    # Build ONE httpx.AsyncClient for the entire drain and thread it via
-    # the ``_client`` hook ``fetch_concurrent_payloads`` already accepts.
-    # Previously each chunk rebuilt the client, paying HTTP/2 settings
-    # negotiation + TLS handshake + keepalive-pool init N times per N-chunk
-    # paginated drain.  File-mode incorps ignore the client (``fetch.py``
-    # short-circuits the client construction when ``is_file_mode`` is True
-    # AND no ``_client`` was passed); the unused client we built costs
-    # only the constructor allocation, reclaimed on ``aclose()`` below.
+    # Build one httpx.AsyncClient for the drain and thread it via the
+    # ``_client`` hook ``fetch_concurrent_payloads`` already accepts,
+    # unless either condition holds:
     #
-    # Each drain owns its own client so distinct Tideweaver currents (with
-    # different timeouts / headers / SSL config in their ``incorp_params``)
-    # keep working as they do today — the pooling is within a drain, not
-    # across drains.
-    shared_client = HTTPClientBuilder.build_client(
-        concurrency_limit=incorp_params.get("concurrency_limit", 50),
-        ignore_ssl=incorp_params.get("ignore_ssl", False),
-        timeout=incorp_params.get("timeout", 15.0),
-        headers=incorp_params.get("headers"),
-        block_internal_redirects=incorp_params.get("block_internal_redirects", False),
-    )
+    # * **File-mode incorps** (``inc_file`` set) never touch httpx —
+    #   mirror the skip already applied at ``fetch.py:578``.
+    # * **Caller-supplied client** (``_client`` already in
+    #   ``incorp_params``) — Tideweaver's across-drain pool, a future
+    #   public ``client=`` kwarg, or a test injection.  We use the
+    #   caller's client but don't own its lifetime; ``aclose()`` only
+    #   runs on a client we built ourselves.
+    is_file_mode = bool(incorp_params.get("inc_file"))
+    caller_supplied_client = "_client" in incorp_params
+    shared_client: Optional[httpx.AsyncClient] = None
+    if not is_file_mode and not caller_supplied_client:
+        shared_client = HTTPClientBuilder.build_client(
+            concurrency_limit=incorp_params.get("concurrency_limit", 50),
+            ignore_ssl=incorp_params.get("ignore_ssl", False),
+            timeout=incorp_params.get("timeout", 15.0),
+            headers=incorp_params.get("headers"),
+            block_internal_redirects=incorp_params.get("block_internal_redirects", False),
+        )
     try:
         while True:
             chunk_idx = 0
@@ -73,7 +77,8 @@ async def _run_chunking_engine(
                     params["call_lim"] = 1
                 else:
                     params = dict(incorp_params)
-                params.setdefault("_client", shared_client)
+                if shared_client is not None:
+                    params.setdefault("_client", shared_client)
 
                 try:
                     dataset = await cls.incorp(**params)
@@ -122,4 +127,5 @@ async def _run_chunking_engine(
 
             await asyncio.sleep(poll_interval)
     finally:
-        await shared_client.aclose()
+        if shared_client is not None:
+            await shared_client.aclose()
