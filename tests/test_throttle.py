@@ -203,6 +203,22 @@ def test_register_host_throttle_re_registration_replaces(monkeypatch: pytest.Mon
     assert strategy.rate == 99.0
 
 
+def test_register_host_throttle_top_level_import() -> None:
+    """``from incorporator import register_host_throttle`` works.
+
+    Pins the v1.3.0 surface-promotion: users have one import path for
+    the registration API rather than reaching into a submodule.
+    """
+    import incorporator
+
+    assert hasattr(incorporator, "register_host_throttle")
+    assert "register_host_throttle" in incorporator.__all__
+    # Same callable as the throttle submodule.
+    from incorporator.io.throttle import register_host_throttle as deep_ref
+
+    assert incorporator.register_host_throttle is deep_ref
+
+
 def test_default_registry_is_empty() -> None:
     """Fresh import: framework ships no implicit per-host throttling.
 

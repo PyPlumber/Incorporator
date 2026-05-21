@@ -200,6 +200,53 @@ Returns a single `TIncorporator` for one-record sources, otherwise an `Incorpora
 
 ---
 
+### register_host_throttle
+
+**Signature**
+```python
+def register_host_throttle(host: str, factory: Callable[[], ThrottleStrategy]) -> None:
+```
+
+**What it does (pseudocode)**
+1. Registers a per-host throttle factory keyed by lowercase hostname.
+2. The factory is called once per `resolve_throttle()` invocation so each fan-out leg gets independent state.
+3. Re-registering the same host replaces the previous factory.
+
+**When to reach for it**
+The framework ships with **no implicit per-host throttling**.  Use this to attach a throttle for an in-house API or any public host that imposes a documented rate ceiling.  The alternative — `incorp(..., requests_per_second=X)` per call — is fine for one-shot scripts; the registry is the right tool when you have many call sites against the same host and want one source of truth.
+
+**Worked example**
+```python
+from incorporator import register_host_throttle
+from incorporator.io.throttle import FixedIntervalThrottle, BurstThrottle
+
+# Conservative rate for CoinGecko's anon tier (5-15 req/min documented).
+register_host_throttle("api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
+
+# Bursty in-house API: 50 req/s sustained, 200-burst tolerance.
+register_host_throttle(
+    "api.internal.acme.com",
+    lambda: BurstThrottle(requests_per_second=50.0, burst=200),
+)
+```
+
+**Common kwargs**
+- `host` — lowercase hostname; `urllib.parse` extracts this from URLs at resolve time.
+- `factory` — zero-arg callable returning a fresh `ThrottleStrategy`.  Strategies are stateful (token-bucket counters, last-fire timestamps); the per-call factory keeps fan-out legs independent.
+
+**Yields / returns**
+`None`.  Side-effect-only: mutates the module-level `_HOST_FACTORIES` dict.
+
+**Related**
+- `incorporator.io.throttle.resolve_throttle(source, requests_per_second=, burst=)` — the resolver every `incorp()` call routes through.  Five-tier precedence: env-var bypass > `rps<=0` > caller rps > registered host > `DEFAULT_RPS=15` fallback.
+- `incorporator.io.throttle.known_host_rates()` — diagnostic view of `host → float` rates currently registered.
+
+**See also**
+[Tutorial 1](../examples/01-first-steps/README.md) — CoinGecko example with explicit registration ·
+[Library Reference](./library_reference.md)
+
+---
+
 ## Live updates
 
 ### refresh
