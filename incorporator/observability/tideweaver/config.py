@@ -13,16 +13,17 @@ imported directly (rare; mostly an escape hatch for tests).
 
 from __future__ import annotations
 
+import importlib
 import json
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 from ...base import Incorporator
 from ...usercode import load_user_module
 from .current import Current, Export, Fjord, Stream
-from .flow import GateMode, flow_from_mode
+from .flow import FlowControl, GateMode, flow_from_mode
 from .watershed import Edge, Watershed
 
 
@@ -78,30 +79,50 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
         "drain_timeout": drain_timeout,
     }
 
-    # JSON accepts ``gate_mode`` (canonical name); supports legacy
-    # ``dependency_mode`` as an alias for one release while the docs catch up.
-    def _gate_mode_for(raw_obj: Dict[str, Any]) -> GateMode:
-        key = "gate_mode" if "gate_mode" in raw_obj else "dependency_mode"
-        return cast(GateMode, raw_obj.get(key, "hard"))
+    # Resolve the top-level flow shorthand:
+    #   ``gate_mode`` (string) or ``flow`` (full dict) — mutually exclusive.
+    # ``dependency_mode`` accepted as a legacy alias for ``gate_mode`` for
+    # one release while docs catch up.
+    def _top_level_flow(raw_obj: Dict[str, Any]) -> Tuple[Optional[GateMode], Optional[FlowControl]]:
+        raw_flow = raw_obj.get("flow")
+        raw_mode = raw_obj.get("gate_mode") or raw_obj.get("dependency_mode")
+        if raw_flow is not None and raw_mode is not None:
+            raise ValueError(
+                "watershed.json: pass top-level 'flow' (full dict) or 'gate_mode' (string shorthand), not both."
+            )
+        if raw_flow is not None:
+            return None, _build_flow(raw_flow, outflow_module, inflow_module)
+        if raw_mode is not None:
+            return cast(GateMode, raw_mode), None
+        return None, None
 
     if shape == "chain":
         currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
-        return Watershed.chain(currents=currents, gate_mode=_gate_mode_for(raw), **common)
+        gate_mode, flow = _top_level_flow(raw)
+        if flow is not None:
+            return Watershed.chain(currents=currents, flow=flow, **common)
+        return Watershed.chain(currents=currents, gate_mode=gate_mode or "hard", **common)
 
     if shape == "diamond":
         head = _build_current(raw["head"], outflow_module, inflow_module)
         middle = _build_currents(raw.get("middle", []), outflow_module, inflow_module)
         tail = _build_current(raw["tail"], outflow_module, inflow_module)
-        return Watershed.diamond(head=head, middle=middle, tail=tail, gate_mode=_gate_mode_for(raw), **common)
+        gate_mode, flow = _top_level_flow(raw)
+        if flow is not None:
+            return Watershed.diamond(head=head, middle=middle, tail=tail, flow=flow, **common)
+        return Watershed.diamond(head=head, middle=middle, tail=tail, gate_mode=gate_mode or "hard", **common)
 
     if shape == "fanout":
         source = _build_current(raw["source"], outflow_module, inflow_module)
         sinks = _build_currents(raw.get("sinks", []), outflow_module, inflow_module)
-        return Watershed.fanout(source=source, sinks=sinks, gate_mode=_gate_mode_for(raw), **common)
+        gate_mode, flow = _top_level_flow(raw)
+        if flow is not None:
+            return Watershed.fanout(source=source, sinks=sinks, flow=flow, **common)
+        return Watershed.fanout(source=source, sinks=sinks, gate_mode=gate_mode or "hard", **common)
 
     if shape == "parallel":
-        if "gate_mode" in raw or "dependency_mode" in raw:
-            raise ValueError("shape='parallel' does not accept gate_mode — there are no edges.")
+        if "gate_mode" in raw or "dependency_mode" in raw or "flow" in raw:
+            raise ValueError("shape='parallel' does not accept gate_mode/flow — there are no edges to govern.")
         currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
         return Watershed.parallel(currents=currents, **common)
 
@@ -109,14 +130,20 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
         currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
         edges = []
         for e in raw.get("edges", []):
-            edge_mode_raw = e.get("mode") or e.get("gate_mode") or "hard"
-            edges.append(
-                Edge(
-                    from_name=e["from"],
-                    to_name=e["to"],
-                    flow=flow_from_mode(cast(GateMode, edge_mode_raw)),
+            raw_flow = e.get("flow")
+            raw_mode = e.get("mode") or e.get("gate_mode")  # 'mode' = legacy alias
+            if raw_flow is not None and raw_mode is not None:
+                raise ValueError(
+                    f"edge {e.get('from', '?')}→{e.get('to', '?')}: "
+                    "pass 'flow' (full dict) or 'gate_mode' (string shorthand), not both."
                 )
-            )
+            if raw_flow is not None:
+                edge_flow = _build_flow(raw_flow, outflow_module, inflow_module)
+            elif raw_mode is not None:
+                edge_flow = flow_from_mode(cast(GateMode, raw_mode))
+            else:
+                edge_flow = FlowControl()
+            edges.append(Edge(from_name=e["from"], to_name=e["to"], flow=edge_flow))
         return Watershed(currents=currents, edges=edges, **common)
 
     raise ValueError(f"Unknown shape: {shape!r}. Expected one of: 'chain', 'diamond', 'fanout', 'parallel', 'custom'.")
@@ -206,3 +233,134 @@ def _resolve_class(
         "was found in the outflow or inflow sidecar modules.  Define the class in your "
         "outflow.py (or inflow.py)."
     )
+
+
+def _resolve_archive_class(
+    class_name: str,
+    outflow_module: Optional[ModuleType],
+    inflow_module: Optional[ModuleType],
+) -> type:
+    """Look up an archive-target class by name on the sidecar modules.
+
+    Distinct from :func:`_resolve_class` because the archive target need
+    NOT be an :class:`Incorporator` subclass — it can be any class the
+    user wants displaced-wave instances appended to as a
+    ``_spillway_backlog`` list.  We still require the name to resolve to
+    a class object so a typo doesn't silently land on a function/value.
+    """
+    for module in (outflow_module, inflow_module):
+        if module is None:
+            continue
+        target = getattr(module, class_name, None)
+        if isinstance(target, type):
+            return target
+    raise ValueError(
+        f"watershed.json references archive_cls={class_name!r}, but no such class was found "
+        "in the outflow or inflow sidecar modules.  Define the class in your outflow.py "
+        "(or inflow.py) — typically an :class:`Incorporator` subclass that an out-of-band "
+        "drain will consume from."
+    )
+
+
+def _resolve_callable(
+    ref: str,
+    outflow_module: Optional[ModuleType],
+    inflow_module: Optional[ModuleType],
+) -> Callable[..., Any]:
+    """Resolve a callable from a string reference.
+
+    Two forms accepted:
+
+    * ``"fn_name"`` — looked up on ``outflow_module`` first, then
+      ``inflow_module``.  Mirrors the sidecar lookup that
+      :func:`_resolve_class` uses for class references.
+    * ``"package.module:fn_name"`` — imports ``package.module`` via
+      :func:`importlib.import_module` then ``getattr(module, fn_name)``.
+      Escape hatch for callables that live outside the sidecar files
+      (e.g. stdlib utilities or third-party rate-decision libraries).
+
+    Used by :class:`~.flow.SignalPenstock(rate_fn=...)` JSON inflation.
+    """
+    if ":" in ref:
+        # Module:function path.
+        module_path, _, fn_name = ref.partition(":")
+        if not module_path or not fn_name:
+            raise ValueError(
+                f"watershed.json: callable ref {ref!r} has empty module-path or function name. "
+                "Expected ``package.module:fn_name``."
+            )
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError as exc:
+            raise ValueError(
+                f"watershed.json: failed to import module {module_path!r} from callable ref {ref!r}: {exc}"
+            ) from exc
+        target = getattr(module, fn_name, None)
+        if not callable(target):
+            raise ValueError(
+                f"watershed.json: {ref!r} did not resolve to a callable "
+                f"({fn_name!r} on {module_path!r} is {type(target).__name__!r})."
+            )
+        return cast(Callable[..., Any], target)
+
+    # Bare name — look up on the sidecar modules.
+    for module in (m for m in (outflow_module, inflow_module) if m is not None):
+        target = getattr(module, ref, None)
+        if callable(target):
+            return cast(Callable[..., Any], target)
+    raise ValueError(
+        f"watershed.json references callable {ref!r}, but no such name was found "
+        "in the outflow or inflow sidecar modules.  Define the function in your "
+        "outflow.py (or inflow.py), or use the ``module.path:fn_name`` form."
+    )
+
+
+def _build_flow(
+    raw_flow: Dict[str, Any],
+    outflow_module: Optional[ModuleType],
+    inflow_module: Optional[ModuleType],
+) -> FlowControl:
+    """Inflate a :class:`FlowControl` from a raw JSON dict.
+
+    Pre-processes the two string-reference cases — ``SignalPenstock.rate_fn``
+    (callable) and ``ExportToArchive.archive_cls`` (class) — into actual
+    Python objects, then delegates to ``FlowControl.model_validate(...)``.
+    Pydantic's discriminated unions handle every other strategy from the
+    ``type`` field on the child dict.
+
+    Args:
+        raw_flow: A dict shaped like
+            ``{"gate": {"type": "weir"}, "penstock": {...}, ...}``.
+        outflow_module: Loaded ``outflow.py`` module for sidecar lookups.
+        inflow_module: Loaded ``inflow.py`` module for sidecar lookups.
+
+    Returns:
+        A validated :class:`FlowControl` ready to attach to an Edge.
+    """
+    # 1. SignalPenstock.rate_fn — resolve string → callable.
+    pen = raw_flow.get("penstock")
+    if isinstance(pen, dict) and pen.get("type") == "signal":
+        rate_fn = pen.get("rate_fn")
+        if isinstance(rate_fn, str):
+            raw_flow = {
+                **raw_flow,
+                "penstock": {
+                    **pen,
+                    "rate_fn": _resolve_callable(rate_fn, outflow_module, inflow_module),
+                },
+            }
+
+    # 2. ExportToArchive.archive_cls — resolve string → class.
+    sw = raw_flow.get("spillway")
+    if isinstance(sw, dict) and sw.get("type") == "export_to_archive":
+        archive = sw.get("archive_cls")
+        if isinstance(archive, str):
+            raw_flow = {
+                **raw_flow,
+                "spillway": {
+                    **sw,
+                    "archive_cls": _resolve_archive_class(archive, outflow_module, inflow_module),
+                },
+            }
+
+    return FlowControl.model_validate(raw_flow)

@@ -691,9 +691,7 @@ async def test_reservoir_per_edge_isolation() -> None:
     assert len(state_a.waves) <= 2, "sink_a reservoir bounded at depth=2"
     assert len(state_b.waves) <= 5, "sink_b reservoir bounded at depth=5"
     # Independent state: sink_b holds at least as many waves as sink_a.
-    assert len(state_b.waves) >= len(state_a.waves), (
-        "deeper reservoir should hold >= waves than shallower one"
-    )
+    assert len(state_b.waves) >= len(state_a.waves), "deeper reservoir should hold >= waves than shallower one"
     if "_tideweaver_snapshot" in _A.__dict__:
         delattr(_A, "_tideweaver_snapshot")
 
@@ -732,9 +730,7 @@ async def test_sustained_penstock_limits_consumption_rate() -> None:
     tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
     tides = await _collect_tides(tw)
     reasons = [reason for tide in tides for _name, reason in tide.skipped]
-    assert "penstock_limited" in reasons, (
-        f"Penstock must surface 'penstock_limited' under tight rate; got {reasons}"
-    )
+    assert "penstock_limited" in reasons, f"Penstock must surface 'penstock_limited' under tight rate; got {reasons}"
     if "_tideweaver_snapshot" in _A.__dict__:
         delattr(_A, "_tideweaver_snapshot")
 
@@ -759,9 +755,7 @@ async def test_penstock_none_means_unlimited() -> None:
     tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
     tides = await _collect_tides(tw)
     reasons = [reason for tide in tides for _name, reason in tide.skipped]
-    assert "penstock_limited" not in reasons, (
-        f"Default (no Penstock) must NOT emit 'penstock_limited'; got {reasons}"
-    )
+    assert "penstock_limited" not in reasons, f"Default (no Penstock) must NOT emit 'penstock_limited'; got {reasons}"
     if "_tideweaver_snapshot" in _A.__dict__:
         delattr(_A, "_tideweaver_snapshot")
 
@@ -782,7 +776,9 @@ async def test_sustained_penstock_per_edge_independent() -> None:
     src = _stream("src", interval=0.05)
     fast_sink = _stream("fast_sink", interval=0.05)
     slow_sink = _stream("slow_sink", interval=0.05)
-    fast_flow = FlowControl(gate=HardLock(), penstock=SustainedPenstock(rate_per_sec=50.0))  # cap >> tick interval; basically uncapped
+    fast_flow = FlowControl(
+        gate=HardLock(), penstock=SustainedPenstock(rate_per_sec=50.0)
+    )  # cap >> tick interval; basically uncapped
     slow_flow = FlowControl(gate=HardLock(), penstock=SustainedPenstock(rate_per_sec=2.0))  # min_gap 0.5s
     ws = Watershed(
         window=_short_window(0.5),
@@ -794,8 +790,12 @@ async def test_sustained_penstock_per_edge_independent() -> None:
     )
     tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
     tides = await _collect_tides(tw)
-    slow_skips = sum(1 for tide in tides for name, reason in tide.skipped if name == "slow_sink" and reason == "penstock_limited")
-    fast_skips = sum(1 for tide in tides for name, reason in tide.skipped if name == "fast_sink" and reason == "penstock_limited")
+    slow_skips = sum(
+        1 for tide in tides for name, reason in tide.skipped if name == "slow_sink" and reason == "penstock_limited"
+    )
+    fast_skips = sum(
+        1 for tide in tides for name, reason in tide.skipped if name == "fast_sink" and reason == "penstock_limited"
+    )
     assert slow_skips > fast_skips, (
         f"slow_sink (cap 2/s) must skip more often than fast_sink (cap 50/s); got slow={slow_skips}, fast={fast_skips}"
     )
@@ -833,9 +833,7 @@ async def test_burst_penstock_allows_initial_burst_then_throttles() -> None:
     # The burst lets at least the first 5 through; the bucket then drains
     # and we see penstock_limited skips.
     assert b_fires >= 5, f"BurstPenstock(burst=5) must allow >= 5 initial ticks; got {b_fires}"
-    assert "penstock_limited" in skip_reasons, (
-        f"BurstPenstock should throttle after the burst; got {skip_reasons}"
-    )
+    assert "penstock_limited" in skip_reasons, f"BurstPenstock should throttle after the burst; got {skip_reasons}"
     if "_tideweaver_snapshot" in _A.__dict__:
         delattr(_A, "_tideweaver_snapshot")
 
@@ -1110,9 +1108,7 @@ async def test_phase_offset_delays_first_tick() -> None:
     tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
     start = time.monotonic()
     tides = await _collect_tides(tw)
-    skip_reasons = [
-        reason for tide in tides for name, reason in tide.skipped if name == "a"
-    ]
+    skip_reasons = [reason for tide in tides for name, reason in tide.skipped if name == "a"]
     assert "phase_offset" in skip_reasons, f"phase_offset must surface as skip reason; got {skip_reasons}"
     # First fire must be at or after the offset.
     assert fires, "current must eventually fire"
@@ -1500,6 +1496,300 @@ def test_json_custom_shape(tmp_path: Path) -> None:
     ws = load_watershed(cfg)
     modes = {(e.from_name, e.to_name): _gate_name(e) for e in ws.edges}
     assert modes == {("a", "b"): "hard", ("b", "c"): "soft"}
+
+
+# ---------------------------------------------------------------------------
+# JSON loader: rich FlowControl support (per-edge "flow" dicts, top-level "flow",
+# SignalPenstock + ExportToArchive sidecar resolution)
+# ---------------------------------------------------------------------------
+
+
+def test_json_custom_edge_full_flowcontrol(tmp_path: Path) -> None:
+    """A per-edge ``flow: {...}`` round-trips through the loader, inflating every primitive."""
+    from incorporator.observability.tideweaver import (
+        BurstPenstock,
+        RaiseOverflow,
+        Reservoir,
+        SurgeBarrier,
+        Weir,
+    )
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [
+        {
+            "from": "a",
+            "to": "b",
+            "flow": {
+                "gate": {"type": "weir"},
+                "penstock": {"type": "burst", "rate_per_sec": 2.0, "burst": 5},
+                "reservoir": {"depth": 5},
+                "spillway": {"type": "raise_overflow"},
+                "surge_barrier": {"threshold_multiple": 10.0, "action": "bypass"},
+            },
+        }
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+    [edge] = ws.edges
+    assert isinstance(edge.flow.gate, Weir)
+    assert isinstance(edge.flow.penstock, BurstPenstock)
+    assert edge.flow.penstock.rate_per_sec == 2.0
+    assert edge.flow.penstock.burst == 5
+    assert isinstance(edge.flow.reservoir, Reservoir) and edge.flow.reservoir.depth == 5
+    assert isinstance(edge.flow.spillway, RaiseOverflow)
+    assert isinstance(edge.flow.surge_barrier, SurgeBarrier)
+    assert edge.flow.surge_barrier.action == "bypass"
+    assert edge.flow.surge_barrier.threshold_multiple == 10.0
+
+
+def test_json_custom_edge_rejects_both_flow_and_mode(tmp_path: Path) -> None:
+    """Per-edge ``flow`` + ``gate_mode`` raises a clear ValueError."""
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [
+        {"from": "a", "to": "b", "gate_mode": "weir", "flow": {"gate": {"type": "hard"}}},
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(ValueError, match="not both"):
+        load_watershed(cfg)
+
+
+def test_json_chain_top_level_flow(tmp_path: Path) -> None:
+    """``{"shape": "chain", "flow": {...}}`` builds a chain where every edge shares the parsed FlowControl."""
+    from incorporator.observability.tideweaver import Weir
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("chain", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "c", "class": "FlagEvents", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["flow"] = {"gate": {"type": "weir"}, "reservoir": {"depth": 5}}
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+    assert all(isinstance(e.flow.gate, Weir) for e in ws.edges)
+    assert all(e.flow.reservoir.depth == 5 for e in ws.edges)
+
+
+def test_json_top_level_rejects_both_flow_and_gate_mode(tmp_path: Path) -> None:
+    """Top-level ``flow`` + ``gate_mode`` on a shape constructor raises."""
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("chain")  # already sets gate_mode="hard"
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["flow"] = {"gate": {"type": "weir"}}
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(ValueError, match="not both"):
+        load_watershed(cfg)
+
+
+def test_json_signal_penstock_resolves_sidecar_callable(tmp_path: Path) -> None:
+    """``SignalPenstock.rate_fn`` resolves a bare name on the outflow sidecar."""
+    from incorporator.observability.tideweaver import SignalPenstock
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    # Outflow.py defines peak_rate alongside the required outflow() function.
+    _write_sidecar(
+        tmp_path / "outflow.py",
+        "from incorporator import Incorporator\n"
+        "class LapData(Incorporator):\n    pass\n"
+        "class PitStops(Incorporator):\n    pass\n"
+        "def peak_rate(scheduler, edge_state, now):\n    return 5.0\n"
+        "def outflow(state):\n    return []\n",
+    )
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [
+        {
+            "from": "a",
+            "to": "b",
+            "flow": {
+                "gate": {"type": "weir"},
+                "penstock": {"type": "signal", "rate_fn": "peak_rate"},
+            },
+        },
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+    [edge] = ws.edges
+    assert isinstance(edge.flow.penstock, SignalPenstock)
+    # Callable resolved + invocable.
+    assert edge.flow.penstock.rate_fn(None, None, 0.0) == 5.0
+
+
+def test_json_signal_penstock_resolves_module_path(tmp_path: Path) -> None:
+    """``rate_fn: "module:fn"`` resolves via importlib (stdlib reference to avoid sidecar coupling)."""
+    from incorporator.observability.tideweaver import SignalPenstock
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [
+        {
+            "from": "a",
+            "to": "b",
+            "flow": {
+                "penstock": {"type": "signal", "rate_fn": "json:loads"},
+            },
+        },
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+    [edge] = ws.edges
+    assert isinstance(edge.flow.penstock, SignalPenstock)
+    # Identity check: same callable as json.loads.
+    import json as _json
+
+    assert edge.flow.penstock.rate_fn is _json.loads
+
+
+def test_json_signal_penstock_missing_callable_raises(tmp_path: Path) -> None:
+    """An unknown ``rate_fn`` name surfaces a clear ValueError."""
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [
+        {
+            "from": "a",
+            "to": "b",
+            "flow": {
+                "penstock": {"type": "signal", "rate_fn": "no_such_function"},
+            },
+        },
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(ValueError, match="no_such_function"):
+        load_watershed(cfg)
+
+
+def test_json_export_to_archive_resolves_archive_cls(tmp_path: Path) -> None:
+    """``ExportToArchive.archive_cls`` resolves a class name on the outflow sidecar."""
+    from incorporator.observability.tideweaver import ExportToArchive
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    # Outflow.py defines ArchivedTrades next to the required outflow().
+    _write_sidecar(
+        tmp_path / "outflow.py",
+        "from incorporator import Incorporator\n"
+        "class LapData(Incorporator):\n    pass\n"
+        "class PitStops(Incorporator):\n    pass\n"
+        "class ArchivedTrades(Incorporator):\n    pass\n"
+        "def outflow(state):\n    return []\n",
+    )
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [
+        {
+            "from": "a",
+            "to": "b",
+            "flow": {
+                "spillway": {"type": "export_to_archive", "archive_cls": "ArchivedTrades"},
+            },
+        },
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+    [edge] = ws.edges
+    assert isinstance(edge.flow.spillway, ExportToArchive)
+    assert edge.flow.spillway.archive_cls.__name__ == "ArchivedTrades"
+
+
+def test_json_export_to_archive_missing_class_raises(tmp_path: Path) -> None:
+    """An unknown ``archive_cls`` name surfaces a clear ValueError."""
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [
+        {
+            "from": "a",
+            "to": "b",
+            "flow": {
+                "spillway": {"type": "export_to_archive", "archive_cls": "NoSuchArchive"},
+            },
+        },
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(ValueError, match="NoSuchArchive"):
+        load_watershed(cfg)
+
+
+def test_json_reservoir_and_surge_barrier_native(tmp_path: Path) -> None:
+    """``reservoir`` and ``surge_barrier`` need no resolution — pass through Pydantic natively."""
+    from incorporator.observability.tideweaver import Reservoir, SurgeBarrier
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [
+        {
+            "from": "a",
+            "to": "b",
+            "flow": {
+                "reservoir": {"depth": 10},
+                "surge_barrier": {"threshold_multiple": 5.0, "action": "halt"},
+            },
+        },
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+    [edge] = ws.edges
+    assert isinstance(edge.flow.reservoir, Reservoir)
+    assert edge.flow.reservoir.depth == 10
+    assert isinstance(edge.flow.surge_barrier, SurgeBarrier)
+    assert edge.flow.surge_barrier.action == "halt"
+    assert edge.flow.surge_barrier.threshold_multiple == 5.0
 
 
 def test_json_env_interpolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2115,6 +2405,4 @@ async def test_fjord_flush_parks_tideweaver_snapshot_on_output_class(
         "currents will see an empty inc_dict"
     )
     derived_ids = {getattr(d, "derived_id", None) for d in snapshot}
-    assert derived_ids == {101, 102}, (
-        f"snapshot must contain both derived rows by derived_id, got {derived_ids}"
-    )
+    assert derived_ids == {101, 102}, f"snapshot must contain both derived rows by derived_id, got {derived_ids}"

@@ -235,16 +235,27 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
         errors.append(f"'shape' must be one of {sorted(_TIDEWEAVER_SHAPES)}; got {shape!r}.")
         return errors  # downstream checks all assume a known shape
 
-    # --- drain_timeout / gate_mode -------------------------------------
+    # --- drain_timeout / gate_mode / flow ------------------------------
+    # Top-level flow control accepts either ``gate_mode`` (string shorthand)
+    # or ``flow`` (full FlowControl dict).  Mutually exclusive; neither is
+    # valid with shape='parallel'.  Deep validation of the FlowControl dict
+    # is deferred to load time — Pydantic surfaces a clear, structured error
+    # there with field paths.
     if "drain_timeout" in config:
         dt = config["drain_timeout"]
         if not isinstance(dt, (int, float)) or dt < 0:
             errors.append("'drain_timeout', if present, must be a non-negative number (seconds).")
     mode_key = "gate_mode" if "gate_mode" in config else "dependency_mode"
-    if shape == "parallel" and mode_key in config:
-        errors.append(f"{mode_key!r} is not valid with shape='parallel' (no edges to govern).")
-    if mode_key in config and config.get(mode_key) not in _TIDEWEAVER_EDGE_MODES:
+    has_mode = mode_key in config
+    has_flow = "flow" in config
+    if has_mode and has_flow:
+        errors.append(f"Pass {mode_key!r} (shorthand) or 'flow' (full dict), not both.")
+    if shape == "parallel" and (has_mode or has_flow):
+        errors.append(f"{mode_key!r}/'flow' is not valid with shape='parallel' (no edges to govern).")
+    if has_mode and config.get(mode_key) not in _TIDEWEAVER_EDGE_MODES:
         errors.append(f"{mode_key!r} must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}.")
+    if has_flow and not isinstance(config.get("flow"), dict):
+        errors.append("'flow', if present, must be a JSON object (FlowControl dict).")
 
     # --- sidecars (import-check) ---------------------------------------
     _, inflow_module = _validate_sidecar_file(config, "inflow", config_dir, errors, capture_module=True)
@@ -311,7 +322,7 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
     if shape == "custom":
         edges = config.get("edges", [])
         if not isinstance(edges, list):
-            errors.append("shape='custom' requires 'edges' to be a list of {from,to,mode?} objects.")
+            errors.append("shape='custom' requires 'edges' to be a list of {from,to,gate_mode?|flow?} objects.")
         else:
             for i, edge in enumerate(edges):
                 if not isinstance(edge, dict):
@@ -319,7 +330,10 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
                     continue
                 f = edge.get("from")
                 t = edge.get("to")
-                m = edge.get("mode", "hard")
+                # Per-edge flow control: ``mode`` / ``gate_mode`` string OR
+                # ``flow`` dict — mutually exclusive.  Default = hard.
+                edge_mode = edge.get("gate_mode") or edge.get("mode")
+                edge_flow = edge.get("flow")
                 if not isinstance(f, str) or not isinstance(t, str):
                     errors.append(f"edges[{i}] must have string 'from' and 'to' fields.")
                     continue
@@ -327,8 +341,16 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
                     errors.append(f"edges[{i}].from references unknown current {f!r}.")
                 if t not in name_set:
                     errors.append(f"edges[{i}].to references unknown current {t!r}.")
-                if m not in _TIDEWEAVER_EDGE_MODES:
-                    errors.append(f"edges[{i}].mode must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}.")
+                if edge_mode is not None and edge_flow is not None:
+                    errors.append(
+                        f"edges[{i}]: pass 'gate_mode' (string shorthand) or 'flow' (full dict), not both."
+                    )
+                if edge_mode is not None and edge_mode not in _TIDEWEAVER_EDGE_MODES:
+                    errors.append(
+                        f"edges[{i}].gate_mode must be one of {sorted(_TIDEWEAVER_EDGE_MODES)}; got {edge_mode!r}."
+                    )
+                if edge_flow is not None and not isinstance(edge_flow, dict):
+                    errors.append(f"edges[{i}].flow, if present, must be a JSON object (FlowControl dict).")
                 if isinstance(f, str) and isinstance(t, str) and f in name_set and t in name_set:
                     edges_to_check.append((f, t))
 
