@@ -710,6 +710,127 @@ async def test_penstock_per_edge_independent() -> None:
         delattr(_A, "_tideweaver_snapshot")
 
 
+# ---------------------------------------------------------------------------
+# Phase 4: Spillway strategies (overflow handling)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_spillway_drop_oldest_is_silent_default() -> None:
+    """``DropOldest`` (the default) silently discards displaced waves — no logs, no archive."""
+    from incorporator.observability.tideweaver import DropOldest, HardLock, Reservoir
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=10.0)
+    flow = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=2), spillway=DropOldest())
+    ws = Watershed(
+        window=_short_window(0.3),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    await _collect_tides(tw)
+    state = tw._edge_state[("a", "b")]
+    # Even though many waves were displaced, DropOldest leaves no trace
+    # beyond the overflow_count counter and the reservoir's bounded size.
+    assert state.overflow_count > 0, "depth=2 + many ticks should produce overflow"
+    assert len(state.waves) == 2
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_spillway_raise_overflow_logs_each_overflow(caplog: pytest.LogCaptureFixture) -> None:
+    """``RaiseOverflow`` emits a WARNING log line per displaced wave."""
+    import logging
+
+    from incorporator.observability.tideweaver import HardLock, RaiseOverflow, Reservoir
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=10.0)
+    flow = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=1), spillway=RaiseOverflow())
+    ws = Watershed(
+        window=_short_window(0.3),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    with caplog.at_level(logging.WARNING, logger="incorporator.observability.tideweaver.flow"):
+        await _collect_tides(tw)
+    overflow_logs = [r for r in caplog.records if "spillway overflow" in r.message]
+    assert overflow_logs, "RaiseOverflow must emit warning logs on overflow"
+    state = tw._edge_state[("a", "b")]
+    assert len(overflow_logs) == state.overflow_count, (
+        f"one log per overflow; got {len(overflow_logs)} logs vs {state.overflow_count} overflows"
+    )
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_spillway_export_to_archive_routes_displaced_waves() -> None:
+    """``ExportToArchive`` appends each displaced wave's instances to ``archive_cls._spillway_backlog``."""
+    from incorporator.observability.tideweaver import ExportToArchive, HardLock, Reservoir
+
+    class _Archive(Incorporator):
+        """Backlog destination for displaced waves."""
+
+    if "_spillway_backlog" in _Archive.__dict__:
+        delattr(_Archive, "_spillway_backlog")
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=10.0)
+    flow = FlowControl(
+        gate=HardLock(),
+        reservoir=Reservoir(depth=1),
+        spillway=ExportToArchive(archive_cls=_Archive),
+    )
+    ws = Watershed(
+        window=_short_window(0.3),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    await _collect_tides(tw)
+    state = tw._edge_state[("a", "b")]
+    backlog: List[Any] = getattr(_Archive, "_spillway_backlog", [])
+    assert backlog, "ExportToArchive must populate the archive backlog when overflow occurs"
+    # The backlog accumulates instances across overflow events; size grows
+    # at least as fast as the overflow count.
+    assert len(backlog) >= state.overflow_count, (
+        f"backlog must hold at least one instance per displaced wave; "
+        f"got {len(backlog)} instances vs {state.overflow_count} overflows"
+    )
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+    if "_spillway_backlog" in _Archive.__dict__:
+        delattr(_Archive, "_spillway_backlog")
+
+
 @pytest.mark.asyncio
 async def test_graceful_drain() -> None:
     """An in-flight tick at window-end finishes inside drain_timeout."""

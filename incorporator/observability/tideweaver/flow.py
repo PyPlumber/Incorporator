@@ -25,9 +25,12 @@ flow-rate) with a parallel hierarchy here for pass/hold decisions.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Literal, Optional, Tuple, Type
+import logging
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Type
 
 from pydantic import BaseModel, ConfigDict, Field
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .current import Current
@@ -278,7 +281,7 @@ class DropOldest(Spillway):
 
 
 class RaiseOverflow(Spillway):
-    """Log + count overflows.  Never raises during a tick (Phase 4 activates the log)."""
+    """Log + count overflows.  Never raises during a tick — diagnostic only."""
 
     def overflow(
         self,
@@ -286,24 +289,36 @@ class RaiseOverflow(Spillway):
         edge: Tuple[str, str],
         displaced_wave: object,
     ) -> None:
-        # Concrete implementation lands in Phase 4 — bumps state.overflow_count
-        # and emits a logger.warning.  Today this is still a no-op.
-        return None
+        # ``edge_state.overflow_count`` is bumped by the scheduler before
+        # ``overflow()`` is called, so we can read it for the log line.
+        state = scheduler._edge_state.get(edge)
+        count = state.overflow_count if state is not None else "?"
+        logger.warning(
+            "Tideweaver: spillway overflow on edge %s → %s (count=%s)",
+            edge[0],
+            edge[1],
+            count,
+        )
 
 
 class ExportToArchive(Spillway):
-    """Route displaced waves to an archive class's ``inc_dict``.
+    """Route displaced waves to a strong-ref backlog on an archive class.
 
-    Declared in Phase 1; concrete in Phase 4.  When active, the
-    displaced wave's instances are re-registered under ``archive_cls``
-    so an out-of-band drain (an Export current downstream, a daily
-    Parquet snapshot, etc.) can persist what would otherwise be lost.
+    Appends each displaced wave's instances to
+    ``archive_cls._spillway_backlog`` — a plain Python list living on
+    the class object as a strong-ref store.  A downstream :class:`Export`
+    or out-of-band drainer can read the backlog and persist what would
+    otherwise be lost when the reservoir slides forward.
+
+    Why a list (not ``inc_dict``)?  ``inc_dict`` is a ``WeakValueDictionary``
+    and would drop instances immediately; a backlog list holds strong refs
+    so they survive until the user explicitly drains them.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    archive_cls: Type[object] = Field(
-        description="Incorporator subclass that receives displaced wave instances.",
+    archive_cls: Type[Any] = Field(
+        description="Incorporator subclass (or any class) that receives displaced wave instances.",
     )
 
     def overflow(
@@ -312,10 +327,13 @@ class ExportToArchive(Spillway):
         edge: Tuple[str, str],
         displaced_wave: object,
     ) -> None:
-        # Phase 4 will rewrite this to register instances onto
-        # ``self.archive_cls.inc_dict``.  Today no-op so the class is
-        # constructible without changing behavior.
-        return None
+        if not isinstance(displaced_wave, list):
+            return None
+        backlog: Optional[List[Any]] = getattr(self.archive_cls, "_spillway_backlog", None)
+        if backlog is None:
+            backlog = []
+            self.archive_cls._spillway_backlog = backlog
+        backlog.extend(displaced_wave)
 
 
 # ---------------------------------------------------------------------------
