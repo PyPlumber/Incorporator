@@ -964,6 +964,47 @@ async def test_window_penstock_caps_at_window_size() -> None:
 
 
 @pytest.mark.asyncio
+async def test_window_penstock_eviction_across_multiple_passes() -> None:
+    """``WindowPenstock`` window slides — old entries evict and downstream fires again.
+
+    The companion ``test_window_penstock_caps_at_window_size`` runs shorter
+    than ``window_sec`` so the window never evicts — it only verifies the
+    initial-cap behavior.  This test runs ``4x window_sec`` and asserts that
+    downstream fires more than ``cap`` times total, which is only possible
+    once early consumptions slide out of the window.
+    """
+    from incorporator.observability.tideweaver import HardLock, WindowPenstock
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.02)
+    b = _stream("b", interval=0.02)
+    win_flow = FlowControl(gate=HardLock(), penstock=WindowPenstock(window_sec=0.15, cap=2))
+    ws = Watershed(
+        window=_short_window(0.6),  # 4x window_sec — plenty of room for the window to slide
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=win_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    tides = await _collect_tides(tw)
+    b_total_fires = sum(1 for tide in tides if "b" in tide.fired)
+    # If the window never evicted, b would be hard-capped at 2 fires total.
+    # Sliding eviction across ~4 windows admits substantially more.
+    assert b_total_fires > 2, (
+        f"WindowPenstock(window_sec=0.15, cap=2) must allow b > 2 fires over 0.6s "
+        f"once the window starts sliding (eviction frees capacity); got {b_total_fires}"
+    )
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
 async def test_backpressure_penstock_slows_under_full_reservoir() -> None:
     """``BackpressurePenstock`` rate drops toward ``min_rate`` as the reservoir fills.
 
@@ -1177,6 +1218,69 @@ async def test_spillway_export_to_archive_routes_displaced_waves() -> None:
 
 
 @pytest.mark.asyncio
+async def test_export_to_archive_backlog_is_strong_ref() -> None:
+    """``_spillway_backlog`` entries survive ``gc.collect()`` after all other refs drop.
+
+    The companion ``test_spillway_export_to_archive_routes_displaced_waves``
+    confirms the backlog gets populated.  This pins that the entries are
+    held by strong refs — not weak-collected once the originating
+    ``_tideweaver_snapshot`` and the user's strong-ref list go away.
+    """
+    import gc
+
+    from incorporator.observability.tideweaver import ExportToArchive, HardLock, Reservoir
+
+    class _Archive(Incorporator):
+        """Backlog destination for displaced waves."""
+
+    if "_spillway_backlog" in _Archive.__dict__:
+        delattr(_Archive, "_spillway_backlog")
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=10.0)  # never fires; ensures overflow on every a-tick after the first
+    flow = FlowControl(
+        gate=HardLock(),
+        reservoir=Reservoir(depth=1),
+        spillway=ExportToArchive(archive_cls=_Archive),
+    )
+    ws = Watershed(
+        window=_short_window(0.3),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    await _collect_tides(tw)
+
+    initial_count = len(getattr(_Archive, "_spillway_backlog", []))
+    assert initial_count > 0, "spillway must have populated the backlog"
+
+    # Drop every external strong ref to the archived instances, force GC.
+    strong_refs.clear()
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+    gc.collect()
+
+    surviving = getattr(_Archive, "_spillway_backlog", [])
+    assert len(surviving) == initial_count, (
+        f"_spillway_backlog must hold strong refs; expected {initial_count} entries "
+        f"after gc.collect(), got {len(surviving)}"
+    )
+    for entry in surviving:
+        assert entry is not None, "backlog entry must survive GC"
+
+    if "_spillway_backlog" in _Archive.__dict__:
+        delattr(_Archive, "_spillway_backlog")
+
+
+@pytest.mark.asyncio
 async def test_spillway_fires_when_penstock_and_reservoir_both_active() -> None:
     """Penstock + Reservoir + Spillway all engage in one composed edge.
 
@@ -1312,6 +1416,44 @@ async def test_phase_offset_green_wave_alignment() -> None:
     assert (first_a - start) < 0.1, f"A must fire promptly; got {first_a - start:.3f}s"
     assert (first_b - start) >= 0.15, f"B must wait phase_offset; got {first_b - start:.3f}s"
     assert first_b > first_a, "B's first tick must follow A's"
+
+
+@pytest.mark.asyncio
+async def test_phase_offset_with_hard_gated_upstream() -> None:
+    """``phase_offset_sec`` on a dependent in a HardLock chain — both ``phase_offset``
+    and ``awaiting_upstream`` can interleave as skip reasons during warm-up;
+    the dependent must still fire after both clear.
+
+    Distinct from ``test_phase_offset_green_wave_alignment`` which uses
+    ``parallel`` (no edges).  This exercises the chain path where the gate's
+    ``awaiting_upstream`` check runs alongside the phase_offset check.
+    """
+    fires: List[Tuple[float, str]] = []
+
+    async def fake(current: Current) -> None:
+        fires.append((time.monotonic(), current.name))
+
+    a = Stream(name="a", cls=_A, interval=0.1, incorp_params={})
+    b = Stream(name="b", cls=_B, interval=0.1, phase_offset_sec=0.2, incorp_params={})
+    ws = Watershed.chain(window=_short_window(0.6), currents=[a, b])
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    start = time.monotonic()
+    tides = await _collect_tides(tw)
+
+    b_skips = [reason for tide in tides for name, reason in tide.skipped if name == "b"]
+    assert "phase_offset" in b_skips, (
+        f"b must emit 'phase_offset' during warm-up; got {b_skips}"
+    )
+    # awaiting_upstream may or may not appear depending on exact scheduling —
+    # either gate can be the proximate skip cause on any given early pass.
+    # The contract is that b eventually fires once both clear.
+    b_fires = [t for t, n in fires if n == "b"]
+    assert b_fires, "b must fire after phase_offset + gate clear"
+    first_b = b_fires[0] - start
+    assert first_b >= 0.15, (
+        f"b's first fire must be at or after phase_offset_sec=0.2 (allowing "
+        f"~0.05s slop); got {first_b:.3f}s"
+    )
 
 
 @pytest.mark.asyncio
@@ -1737,6 +1879,31 @@ def test_json_chain_top_level_flow(tmp_path: Path) -> None:
     ws = load_watershed(cfg)
     assert all(isinstance(e.flow.gate, Weir) for e in ws.edges)
     assert all(e.flow.reservoir.depth == 5 for e in ws.edges)
+
+
+def test_json_dependency_mode_alias_parses_as_gate_mode(tmp_path: Path) -> None:
+    """Legacy top-level ``dependency_mode`` parses identically to ``gate_mode``.
+
+    The alias is documented as a one-release transition in
+    ``config.py:84-85``; this test pins its parity with ``gate_mode`` until
+    the alias is removed.
+    """
+    from incorporator.observability.tideweaver import Weir
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("chain", with_mode=False)
+    body["dependency_mode"] = "weir"
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+    assert all(isinstance(e.flow.gate, Weir) for e in ws.edges), (
+        "dependency_mode='weir' must produce Weir-gated edges (same as gate_mode='weir')"
+    )
 
 
 def test_json_top_level_rejects_both_flow_and_gate_mode(tmp_path: Path) -> None:
