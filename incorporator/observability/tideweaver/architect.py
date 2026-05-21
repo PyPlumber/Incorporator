@@ -34,10 +34,14 @@ from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Type, Union, 
 from urllib.parse import urlparse
 
 from ...io.penstock import known_host_rates
+from ...io.source_ref import SourceRef
 from ...tools.inspector import ResponseMeta, SourceProfile, analyze_data
 
 # Mapping-typed source values may be runtime dicts (Mapping) — we accept any
 # Mapping for input, but the internal source list normalises to Dict[str, Any].
+# Kept as the architect public input alias; internal classification routes
+# through :class:`incorporator.io.source_ref.SourceRef` after the loose union
+# input is narrowed.
 SourceValue = Union[str, Path, Mapping[str, Any]]
 
 
@@ -232,33 +236,62 @@ def _resolve_sources(
     land, so a single ``timeout=10.0`` or ``headers={...}`` propagates
     without forcing the escape-hatch form.  Per-source kwargs win on
     conflict.
+
+    Internal: classifies each value as a :class:`SourceRef` (architect's
+    strict mode — bare strings that don't look like paths or URLs raise
+    immediately) and then converts the ref to its ``incorp()`` kwargs
+    form.  Routing through ``SourceRef`` keeps the "what kind of source
+    is this?" dispatch consistent with the fetch layer's
+    :func:`_normalize_source_list`.
     """
     shared = dict(shared_kwargs) if shared_kwargs else {}
     resolved: List[Tuple[str, Dict[str, Any]]] = []
     for name, value in sources.items():
-        if isinstance(value, Mapping):
-            kw: Dict[str, Any] = {**shared, **dict(value)}
-        elif isinstance(value, Path):
-            kw = {**shared, "inc_file": str(value)}
-        elif isinstance(value, str):
-            if value.startswith(("http://", "https://")):
-                kw = {**shared, "inc_url": value}
-            elif value.startswith(("./", "../", "/", "~")) or Path(value).exists():
-                kw = {**shared, "inc_file": value}
-            else:
-                raise ValueError(
-                    f"Cannot resolve source {name!r}={value!r}.  Accepted forms: "
-                    "URL string (http(s)://...), file path or pathlib.Path "
-                    "(must exist or start with ./ ../ / or ~), "
-                    "or a dict of incorp() kwargs."
-                )
-        else:
-            raise ValueError(
-                f"Cannot resolve source {name!r}={value!r}.  Accepted forms: "
-                "URL string, file path / pathlib.Path, or dict of incorp() kwargs."
-            )
-        resolved.append((name, kw))
+        ref = _classify_source(name, value)
+        resolved.append((name, {**shared, **_ref_to_kwargs(ref)}))
     return resolved
+
+
+def _classify_source(name: str, value: Any) -> SourceRef:
+    """Architect's strict source classifier — narrows the loose input union to a SourceRef.
+
+    Stricter than :meth:`SourceRef.parse`: a bare string is only a file
+    if it starts with one of ``./``, ``../``, ``/``, ``~`` OR an existing
+    file lives at that path.  Anything else raises ``ValueError`` so
+    typos in source names surface immediately at architect()-time
+    instead of failing mid-probe.
+    """
+    if isinstance(value, Mapping):
+        return SourceRef.from_kwargs(value)
+    if isinstance(value, Path):
+        return SourceRef.from_file(value)
+    if isinstance(value, str):
+        if value.startswith(("http://", "https://")):
+            return SourceRef.from_url(value)
+        if value.startswith(("./", "../", "/", "~")) or Path(value).exists():
+            return SourceRef.from_file(value)
+        raise ValueError(
+            f"Cannot resolve source {name!r}={value!r}.  Accepted forms: "
+            "URL string (http(s)://...), file path or pathlib.Path "
+            "(must exist or start with ./ ../ / or ~), "
+            "or a dict of incorp() kwargs."
+        )
+    raise ValueError(
+        f"Cannot resolve source {name!r}={value!r}.  Accepted forms: "
+        "URL string, file path / pathlib.Path, or dict of incorp() kwargs."
+    )
+
+
+def _ref_to_kwargs(ref: SourceRef) -> Dict[str, Any]:
+    """Map a :class:`SourceRef` into the ``incorp()`` kwargs it represents."""
+    if ref.kind == "url":
+        return {"inc_url": ref.value}
+    if ref.kind == "file":
+        return {"inc_file": str(ref.value)}
+    if ref.kind == "kwargs":
+        return dict(ref.value)
+    # parent / payload — not produced by architect's classifier; defensive.
+    raise ValueError(f"_ref_to_kwargs: unsupported source kind {ref.kind!r} for architect probes.")
 
 
 # ---------------------------------------------------------------------------

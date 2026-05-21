@@ -7,7 +7,6 @@ and asynchronous connection-pooling for maximum throughput.
 import asyncio
 import ipaddress
 import logging
-import os
 import re
 import socket
 from pathlib import Path
@@ -26,6 +25,7 @@ from .penstock import (
     BoundPenstock,
     resolve_penstock,
 )
+from .source_ref import SourceRef
 
 logger = logging.getLogger(__name__)
 
@@ -447,16 +447,24 @@ def _normalize_source_list(
         source URLs).
       * Anything else → empty list (defers to the caller's source-required
         check at ``base.py:438`` for the diagnostic).
+
+    Internal: routes through :meth:`incorporator.io.source_ref.SourceRef.parse`
+    so the URL / file classification lives in one place.  The flat
+    ``List[str]`` return contract is preserved.
     """
-    if isinstance(source, list):
-        return [os.fspath(s) if isinstance(s, os.PathLike) else str(s) for s in source if s is not None]
-    if isinstance(source, str):
-        return [source]
-    if isinstance(source, os.PathLike):
-        return [os.fspath(source)]
-    if payload_list:
-        return [""] * len(payload_list)
-    return []
+    if source is None:
+        return [""] * len(payload_list) if payload_list else []
+    items = source if isinstance(source, list) else [source]
+    out: List[str] = []
+    for item in items:
+        if item is None:
+            continue
+        try:
+            ref = SourceRef.parse(item)
+        except ValueError:
+            continue
+        out.append(ref.as_str())
+    return out
 
 
 # ==========================================

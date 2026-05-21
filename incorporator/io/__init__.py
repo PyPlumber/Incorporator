@@ -29,6 +29,7 @@ from .penstock import (
     register_host_penstock,
     resolve_penstock,
 )
+from .source_ref import SourceKind, SourceRef
 
 __all__ = [
     "DEFAULT_RPS",
@@ -38,6 +39,8 @@ __all__ = [
     "NullPenstock",
     "Penstock",
     "SignalPenstock",
+    "SourceKind",
+    "SourceRef",
     "SustainedPenstock",
     "WindowPenstock",
     "known_host_rates",
