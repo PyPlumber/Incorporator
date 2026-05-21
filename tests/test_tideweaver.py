@@ -471,6 +471,71 @@ async def test_surge_barrier_bypass_forces_pass_under_extreme_upstream() -> None
 
 
 @pytest.mark.asyncio
+async def test_bypass_does_not_charge_burst_penstock() -> None:
+    """SurgeBarrier(action='bypass') must not debit BurstPenstock.bucket_tokens.
+
+    Bypass contract per scheduler._gate_reason: bypassed ticks ignore gate
+    AND penstock. The finally block previously debited every upstream edge
+    unconditionally — bypassed ticks paid the bucket.
+    """
+    from incorporator.observability.tideweaver import BurstPenstock
+
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.6)
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.1)
+    bypass_flow = FlowControl(
+        gate=HardLock(),
+        surge_barrier=SurgeBarrier(threshold_multiple=2.0, action="bypass"),
+        penstock=BurstPenstock(rate_per_sec=10.0, burst=2),
+    )
+    ws = Watershed(
+        window=_short_window(0.7),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=bypass_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
+    await _collect_tides(tw)
+    edge_state = tw._edge_state[("a", "b")]
+    # bucket_tokens is None when penstock never gated (bypass skips consume_reason),
+    # or equals burst cap if initialized but never debited by the finally block.
+    assert edge_state.bucket_tokens is None or edge_state.bucket_tokens == 2.0, (
+        f"BurstPenstock must not be debited on bypass; got bucket_tokens={edge_state.bucket_tokens}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_bypass_does_not_log_window_penstock() -> None:
+    """SurgeBarrier(action='bypass') must not append to WindowPenstock.window_log."""
+    from incorporator.observability.tideweaver import WindowPenstock
+
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.6)
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.1)
+    bypass_flow = FlowControl(
+        gate=HardLock(),
+        surge_barrier=SurgeBarrier(threshold_multiple=2.0, action="bypass"),
+        penstock=WindowPenstock(window_sec=10.0, cap=100),
+    )
+    ws = Watershed(
+        window=_short_window(0.7),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=bypass_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
+    await _collect_tides(tw)
+    edge_state = tw._edge_state[("a", "b")]
+    assert edge_state.window_log == [], (
+        f"WindowPenstock must not be appended to on bypass; got window_log={edge_state.window_log}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_surge_barrier_halt_circuit_breaks_until_upstream_completes() -> None:
     """SurgeBarrier(action='halt') yields skip reason 'surge_halted' while A is overrun."""
 

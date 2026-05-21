@@ -33,7 +33,7 @@ import heapq
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, cast
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, cast
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -317,11 +317,11 @@ class Tideweaver:
             if existing is not None and not existing.done():
                 skipped.append((name, "still_running"))
                 continue
-            reason = self._gate_reason(current, time.monotonic())
+            reason, bypassed = self._gate_reason(current, time.monotonic())
             if reason is not None:
                 skipped.append((name, reason))
                 continue
-            self._spawn_tick(current)
+            self._spawn_tick(current, bypassed)
             fired.append(name)
             # Schedule the adaptive wake for this current's next interval.
             # Data-gated skips don't need an entry — ``_wake_event`` fires
@@ -333,8 +333,8 @@ class Tideweaver:
         duration = time.monotonic() - started
         return Tide(tide_number=self._tide_number, fired=fired, skipped=skipped, duration_sec=duration)
 
-    def _gate_reason(self, current: Current, now: float) -> Optional[str]:
-        """Return ``None`` if ``current`` may fire; else a short skip reason.
+    def _gate_reason(self, current: Current, now: float) -> Tuple[Optional[str], FrozenSet[str]]:
+        """Return ``(None, bypassed)`` if ``current`` may fire; else ``(reason, set())``.
 
         Walks each inbound edge's :class:`FlowControl`:
 
@@ -345,27 +345,33 @@ class Tideweaver:
            ``"surge_halted"``.
         2. :class:`Gate` (HardLock / SoftPass / Weir) handles the normal
            pass/hold decision.
+
+        The second return value is the set of upstream names whose
+        :class:`SurgeBarrier` tripped with ``action="bypass"`` this pass.
+        Penstock post-consumption must be skipped for these edges.
         """
         last = self._state[current.name].last_tick_started
         if last is None:
             # First tick — honor ``phase_offset_sec`` for green-wave coordination.
             if current.phase_offset_sec > 0.0 and self._run_started_at is not None:
                 if (now - self._run_started_at) < current.phase_offset_sec:
-                    return "phase_offset"
+                    return "phase_offset", frozenset()
         elif (now - last) < current.interval:
-            return "not_due"
+            return "not_due", frozenset()
+        bypassed: Set[str] = set()
         for up_name, flow in self._upstream[current.name]:
             surge = flow.surge_barrier
             if surge is not None and surge.is_tripped(self, current, up_name, now):
                 if surge.action == "skip":
-                    return "skip_ahead"
+                    return "skip_ahead", frozenset()
                 if surge.action == "halt":
-                    return "surge_halted"
+                    return "surge_halted", frozenset()
                 # action == "bypass" — fire ignoring this edge's gate AND penstock.
+                bypassed.add(up_name)
                 continue
             gate_reason = flow.gate.gate_reason(self, current, up_name, now)
             if gate_reason is not None:
-                return gate_reason
+                return gate_reason, frozenset()
             # Penstock — edge-layer flow-rate strategy.  Delegates to the
             # strategy class (SustainedPenstock / BurstPenstock /
             # WindowPenstock / BackpressurePenstock / SignalPenstock); each
@@ -376,10 +382,10 @@ class Tideweaver:
                 if edge_state is not None:
                     penstock_reason = flow.penstock.consume_reason(self, edge_state, flow, now)
                     if penstock_reason is not None:
-                        return penstock_reason
-        return None
+                        return penstock_reason, frozenset()
+        return None, frozenset(bypassed)
 
-    def _spawn_tick(self, current: Current) -> None:
+    def _spawn_tick(self, current: Current, bypassed_upstreams: FrozenSet[str] = frozenset()) -> None:
         now_mono = time.monotonic()
         state = self._state[current.name]
         state.last_tick_started = now_mono
@@ -399,13 +405,14 @@ class Tideweaver:
             up_wave = self._state[up_name].last_wave_at
             if up_wave is not None:
                 consumed_snapshot[up_name] = up_wave
-        task = asyncio.create_task(self._tick_wrapper(current, consumed_snapshot))
+        task = asyncio.create_task(self._tick_wrapper(current, consumed_snapshot, bypassed_upstreams))
         state.in_flight = task
 
     async def _tick_wrapper(
         self,
         current: Current,
         consumed_snapshot: Dict[str, datetime],
+        bypassed_upstreams: FrozenSet[str] = frozenset(),
     ) -> None:
         """Run one tick under the current's :attr:`on_error` policy."""
         try:
@@ -448,7 +455,7 @@ class Tideweaver:
                 if edge_state is not None:
                     edge_state.last_consumed_at = now_mono
                     pen = edge_flow.penstock
-                    if pen is not None:
+                    if pen is not None and up_name not in bypassed_upstreams:
                         if isinstance(pen, BurstPenstock) and edge_state.bucket_tokens is not None:
                             edge_state.bucket_tokens = max(0.0, edge_state.bucket_tokens - 1.0)
                         elif isinstance(pen, WindowPenstock):
