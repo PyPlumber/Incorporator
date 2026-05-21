@@ -133,3 +133,53 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+# ----------------------------------------------------------------------
+# Tideweaver integration sketch (illustrative, not executed)
+# ----------------------------------------------------------------------
+#
+# This script demonstrates parent-child drilling and the single-source
+# stateful_polling shim.  When you outgrow that — e.g. you want the
+# launch feed gated behind a Weir on a downstream Export current that
+# snapshots the joined launch/rocket/pad object graph every 5 minutes —
+# wrap the feed in a Tideweaver edge:
+#
+#   from datetime import datetime, timedelta, timezone
+#   from incorporator import Tideweaver, Watershed, Stream, Export
+#   from incorporator.observability.tideweaver import (
+#       Edge, FlowControl, Weir, BurstPenstock, LoggingObserver,
+#   )
+#
+#   feed = Stream(
+#       name="upcoming",
+#       cls=StreamedLaunch,
+#       interval=120,
+#       incorp_params={
+#           "inc_url": "https://api.spacexdata.com/v4/launches/upcoming",
+#           "inc_code": "id",
+#       },
+#   )
+#   snapshot = Export(
+#       name="snapshot",
+#       cls=StreamedLaunch,
+#       interval=300,
+#       export_params={"file_path": "out/launches.ndjson"},
+#       depends_on=["upcoming"],
+#   )
+#   edge_flow = FlowControl(
+#       gate=Weir(),                                       # fire on fresh wave
+#       penstock=BurstPenstock(rate_per_sec=1.0, burst=2), # smooth bursts
+#       observer=LoggingObserver(fire_level="info"),       # per-edge telemetry
+#   )
+#   window = (datetime.now(timezone.utc), datetime.now(timezone.utc) + timedelta(hours=4))
+#   watershed = Watershed(
+#       window=window,
+#       currents=[feed, snapshot],
+#       edges=[Edge(from_name="upcoming", to_name="snapshot", flow=edge_flow)],
+#   )
+#   # async for tide in Tideweaver(watershed).run():
+#   #     ...
+#
+# For a runnable diamond pattern see examples/11-tideweaver/ or
+# examples/appendix/nascar-tideweaver/.

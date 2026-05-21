@@ -174,7 +174,39 @@ async for tide in Tideweaver(watershed).run():
 ```
 Four shape helpers (`parallel`, `chain`, `fanout`, `diamond`) plus `custom` with explicit `edges`. Declarative `watershed.json` config + `incorporator tideweaver run / validate` CLI mirror the `stream` / `fjord` workflow.
 
-→ [Tutorial 11 — Tideweaver](./examples/11-tideweaver/README.md)
+**Probe → plan → run, no disk round-trip.** When you have N unknown endpoints, `architect()` profiles each one and emits a runnable plan you can tune in-memory before handing it to `Tideweaver`:
+
+```python
+plan = await Coin.architect(
+    sources={"binance": book_url, "coinbase": cb_url, "kraken": kr_url},
+    output="plan",
+)
+plan.currents[0].interval_hint = 10                  # tune
+watershed = plan.to_watershed(window=(start, end))   # materialise
+async for tide in Tideweaver(watershed).run():
+    ...
+```
+
+`architect(output=...)` also emits `"report"` (pretty-printed), `"python"` (paste-ready module), or `"json"` (paste-ready `watershed.json`).
+
+**Per-edge flow control.** Each edge composes six orthogonal primitives — `Gate` (HardLock / SoftPass / Weir), `SurgeBarrier`, `Penstock` (Sustained / Burst / Window / Backpressure / Signal), `Reservoir`, `Spillway` (DropOldest / RaiseOverflow / ExportToArchive), and a declarative `FlowObserver` (Null / Logging / Signal) for telemetry. The shape constructors accept a top-level `flow=` or `gate_mode=` shorthand; explicit `Edge(...)` carries its own:
+
+```python
+from incorporator.observability.tideweaver import (
+    FlowControl, Weir, BurstPenstock, Reservoir, LoggingObserver,
+)
+
+edge_flow = FlowControl(
+    gate=Weir(),                                          # fire on freshness
+    penstock=BurstPenstock(rate_per_sec=2.0, burst=5),    # token bucket
+    reservoir=Reservoir(depth=3),                         # buffer 3 waves
+    observer=LoggingObserver(fire_level="info"),          # declarative telemetry
+)
+```
+
+The same shapes deserialize from `watershed.json` via Pydantic discriminated unions (`{"gate": {"type": "weir"}, ...}`) — see [Appendix — NASCAR Tideweaver](./examples/appendix/nascar-tideweaver/README.md) for the JSON form on a working diamond. For non-verb tick logic (cron-style cleanups, custom side-effects), subclass `CustomCurrent` and override `async tick(scheduler)`.
+
+→ [Tutorial 11 — Tideweaver](./examples/11-tideweaver/README.md) · [Canal toolkit primitives in API Atlas](./docs/api_atlas.md#canal-toolkit-primitives)
 
 ### When to reach for which long-running verb
 
@@ -215,7 +247,30 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
 
 * **GIL-free hyperthreading** via the `[speedups]` extra. → [Installation](./docs/installation.md)
 * **Invisible decompression** for `.gz`, `.bz2`, `.lzma`, `.zip`, `.tar` — ZIP/TAR paths validated against directory-traversal and a 1 GB bomb cap. → [Formats](./docs/formats_and_compression.md)
-* **Connection pooling + retries + DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity backoff, failed URLs on `wave.failed_sources`. Opt-in `block_internal_redirects=True` rejects 3xx Locations to RFC1918 / loopback / cloud-metadata IPs.
+* **Connection pooling + retries + structured DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity backoff, and `IncorporatorList.dead_letter_queue: List[DeadLetterEntry]` carrying `source` / `error_kind` / `message` / `retry_after` / `wave_index` for every failed source.  The legacy flat `failed_sources: List[str]` is preserved as a derived view.  Opt-in `block_internal_redirects=True` rejects 3xx Locations to RFC1918 / loopback / cloud-metadata IPs.
+* **Friendly rate limiting** — the framework ships with **no implicit per-host throttling**.  Opt in once at startup with `register_host_penstock` (one source of truth across every `incorp()` call) or pass `requests_per_second=X` per call.  The same `Penstock` primitive serves both the HTTP layer and Tideweaver edges:
+
+  ```python
+  from incorporator import register_host_penstock
+  from incorporator.io.penstock import SustainedPenstock
+
+  register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))   # ~12 r/min
+  register_host_penstock("pokeapi.co",        SustainedPenstock(rate_per_sec=1.5))   # ~90 r/min
+  register_host_penstock("vpic.nhtsa.dot.gov", SustainedPenstock(rate_per_sec=1.5))
+  ```
+
+  `architect()` surfaces 429 / `Retry-After` hints during probing and recommends a `Penstock` on the matching edge.  See [`register_host_penstock` in the API Atlas](./docs/api_atlas.md#register_host_penstock).
+* **Lambda-free `conv_dict`** — `inc`, `calc`, `calc_all`, `pluck`, `link_to`, `link_to_list`, `split_and_get` all short-circuit silently on garbage input (`None`, `""`, `"N/A"`, `"null"`, `"unknown"`, `"nan"`, `"undefined"`) before the user callable runs.  Defensive null guards inside lambdas are no longer needed; use stdlib callables directly:
+
+  ```python
+  conv_dict = {
+      "id":     inc(int),                                              # type coerce
+      "title":  calc(str.lower, "title", default="", target_type=str), # transform
+      "status": calc("Alive".__eq__, "status", default=False),         # enum-to-bool
+  }
+  ```
+
+  See `incorporator.io.SourceRef` for the opt-in typed source value (URL / file / parent / payload / kwargs) when you need explicit source dispatch.
 * **Atomic writes + spreadsheet-injection guard** — Parquet / Feather / ORC / JSON / XML / XLSX build via tempfile + `os.replace()` (no half-written files); CSV / XLSX cells starting with `=` / `@` / `+` / `-` are quoted on export (OWASP).
 * **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop.
 * **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML. → [Tutorial 3](./examples/03-universal-formats/README.md)

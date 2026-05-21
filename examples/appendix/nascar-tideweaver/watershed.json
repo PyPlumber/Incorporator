@@ -13,7 +13,15 @@
   "shape": "diamond",
   "outflow": "examples/appendix/nascar-tideweaver/race_outflow.py",
   "drain_timeout": 30,
-  "gate_mode": "hard",
+
+  "_flow_note_": "Full FlowControl literal on every diamond edge — same runtime semantics as the gate_mode='hard' shorthand, but adds a LoggingObserver so per-edge fire / skip / spillway events emit through Python logging.  Switch any field's `type` value to swap strategies (see docs/api_atlas.md#canal-toolkit-primitives).",
+
+  "flow": {
+    "gate":      {"type": "hard"},
+    "reservoir": {"depth": 1},
+    "spillway":  {"type": "drop_oldest"},
+    "observer":  {"type": "logging", "fire_level": "info", "skip_level": "debug", "spillway_level": "warning"}
+  },
 
   "head": {
     "name": "laps",

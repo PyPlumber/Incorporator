@@ -41,7 +41,7 @@ Every public class, method, function, and converter is documented with
 its full signature, parameter table, return value, raised exceptions,
 and worked examples. The library surface, by verb:
 
-For a paste-ready lookup map of every public callable — signature, 3-7 step pseudocode, "when to reach for it" narrative, and tutorial cross-links — see the [API Atlas](./api_atlas.md).
+For a paste-ready lookup map of every public callable — signature, 3-7 step pseudocode, "when to reach for it" narrative, and tutorial cross-links — see the [API Atlas](./api_atlas.md).  Post-1.2.0 public types (`DeadLetterEntry`, `SourceRef`, `CustomCurrent`, `FlowObserver` hierarchy, and the narrow context value types `GateContext` / `SurgeContext` / `FlowState`) are documented inline in the [API Atlas](./api_atlas.md).
 
 ### Core verbs on `Incorporator`
 - `incorp()` — fetch + parse + build the object graph. Accepts an

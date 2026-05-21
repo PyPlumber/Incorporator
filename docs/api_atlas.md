@@ -193,13 +193,13 @@ This is the cold-start verb — the one you call when a new endpoint hits your r
 - `inc_url` / `inc_file` — single string or list; list triggers concurrent fan-out.
 - `inc_code` — field name to use as the primary key in `inc_dict`.
 - `inc_parent` + `inc_child` — drill a parent list's URLs into child fetches (HATEOAS).
-- `conv_dict` — `{field_name: converter}` pre-validation coercion (`inc`, `calc`, `link_to`, `pluck`, ...).
+- `conv_dict` — `{field_name: converter}` pre-validation coercion (`inc`, `calc`, `calc_all`, `pluck`, `link_to`, `link_to_list`, `split_and_get`).  **Null-handling contract:** every converter short-circuits on garbage input (`None`, `""`, `"N/A"`, `"null"`, `"unknown"`, `"nan"`, `"undefined"`) before invoking the user callable — defensive null guards in lambdas are unnecessary.  Idioms: `calc(str.lower, "title", default="", target_type=str)` · `calc(str.upper, "code", default="", target_type=str)` · `calc(str.strip, "name", default="", target_type=str)` · `calc(len, "body", default=0, target_type=int)` · `calc("Alive".__eq__, "status", default=False)` · `inc(float)` (type coerce; use `inc()`, not `calc()`).
 - `inc_page` — `AsyncPaginator` subclass for paginated endpoints.
 - `rec_path` — dot-notation drill into a wrapper response (e.g. `"results"`).
 - `concurrency_limit`, `requests_per_second`, `timeout`, `headers` — network knobs.
 
 **Yields / returns**
-Returns a single `TIncorporator` for one-record sources, otherwise an `IncorporatorList[TIncorporator]` whose `.failed_sources` is the DLQ.
+Returns a single `TIncorporator` for one-record sources, otherwise an `IncorporatorList[TIncorporator]` whose `.failed_sources: List[str]` is the legacy flat DLQ view.  For structured access — exception type, `Retry-After` hints, wave index — read `.dead_letter_queue: List[DeadLetterEntry]` (fields: `source`, `error_kind`, `message`, `retry_after`, `wave_index`).  HTTP error sites populate the structured form; legacy string callers continue to flow through `failed_sources`.
 
 **See also**
 [Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md) ·
@@ -597,6 +597,7 @@ class FlowControl(BaseModel):
     penstock: Optional[Penstock] = None
     reservoir: Reservoir                          # default Reservoir(depth=1)
     spillway: Spillway                            # default DropOldest()
+    observer: FlowObserver                        # default NullObserver()
 
 
 # Gate — pass / hold decision per upstream
@@ -609,7 +610,7 @@ class SurgeBarrier(BaseModel):
     threshold_multiple: float = 2.0
     action: Literal["skip", "halt", "bypass"] = "skip"
 
-# Penstock — edge-level rate limit
+# Penstock — edge-level rate limit (same primitive as HTTP `register_host_penstock`)
 class SustainedPenstock(Penstock):    # rate_per_sec: float
 class BurstPenstock(Penstock):        # rate_per_sec: float, burst: int
 class WindowPenstock(Penstock):       # window_sec: float, cap: int
@@ -623,16 +624,28 @@ class Reservoir(BaseModel):
 # Spillway — overflow handler when reservoir is full
 class DropOldest(Spillway): ...                       # silent default
 class RaiseOverflow(Spillway): ...                    # WARNING log per displacement
-class ExportToArchive(Spillway):                       # strong-ref backlog list
+class ExportToArchive(Spillway):                      # strong-ref backlog list
     archive_cls: Type[Incorporator]
+
+# FlowObserver — declarative per-edge telemetry (synchronous, cheap)
+class NullObserver(FlowObserver): ...                   # no-op default
+class LoggingObserver(FlowObserver):                    # per-event Python logging
+    fire_level: Literal["debug","info","warning"]      = "debug"
+    skip_level: Literal["debug","info","warning"]      = "debug"
+    spillway_level: Literal["debug","info","warning"]  = "warning"
+    reservoir_level_level: Literal[...]                = "debug"
+    reservoir_threshold: Optional[float] = None         # only emit when used/cap >= threshold
+class SignalObserver(FlowObserver):                     # forward to user callable
+    callback: Callable[[str, Tuple[str, str], dict], None]
 ```
 
 **What each does (pseudocode)**
 - **`Gate`** — `HardLock` blocks until upstream has a wave newer than the dependent's last consumption; `SoftPass` ignores upstream entirely (sequence-only); `Weir` gates on freshness without triggering surge logic — fire-on-own-cadence once upstream emitted at least one wave.
 - **`SurgeBarrier`** — when an upstream's currently-running tick exceeds `threshold_multiple × upstream.interval`, fires `action`: `"skip"` (skip this dependent pass), `"halt"` (skip until upstream finishes), `"bypass"` (fire ignoring this edge's gate AND penstock).
-- **`Penstock`** — per-edge rate-limit strategy.  `SustainedPenstock` is a flat rate (1/rate_per_sec min gap); `BurstPenstock` token bucket with burst capacity; `WindowPenstock` sliding-window cap; `BackpressurePenstock` interpolates `max_rate → min_rate` as the reservoir fills; `SignalPenstock` calls a user callable for the live rate.
+- **`Penstock`** — per-edge rate-limit strategy.  `SustainedPenstock` is a flat rate (1/rate_per_sec min gap); `BurstPenstock` token bucket with burst capacity; `WindowPenstock` sliding-window cap; `BackpressurePenstock` interpolates `max_rate → min_rate` as the reservoir fills; `SignalPenstock` calls a user callable for the live rate.  The same `Penstock` class hierarchy serves the HTTP host registry via [`register_host_penstock`](#register_host_penstock).
 - **`Reservoir`** — buffers the last N wave-snapshots on each edge.  Default `depth=1` keeps the most recent.  Read by `BackpressurePenstock` for fullness; surfaced to user code via `edge_state.waves`.
 - **`Spillway`** — fires when a wave is displaced from a full reservoir.  `DropOldest` silently evicts; `RaiseOverflow` emits a WARNING log; `ExportToArchive` extends `archive_cls._spillway_backlog` (strong-ref) with the displaced instances.
+- **`FlowObserver`** — synchronous lifecycle hooks called by the scheduler on every per-edge event.  Four hooks: `on_fire` (dependent tick fired), `on_skip(reason)` (gate/penstock/surge blocked), `on_spillway(displaced_wave, overflow_count)`, `on_reservoir_level(used, capacity)`.  Ships with `NullObserver` (no-op default), `LoggingObserver` (configurable Python-`logging` emission per event), and `SignalObserver` (forwards to a user callable for metric pipelines like statsd / Prometheus).  Hooks must not `await` — queue slow work off-thread.
 
 **Worked example**
 ```python
@@ -641,12 +654,15 @@ from incorporator.observability.tideweaver import (
     HardLock, SurgeBarrier, BurstPenstock, Reservoir, ExportToArchive,
 )
 
+from incorporator.observability.tideweaver import LoggingObserver
+
 flow = FlowControl(
     gate=HardLock(),
     surge_barrier=SurgeBarrier(threshold_multiple=3.0, action="bypass"),
     penstock=BurstPenstock(rate_per_sec=5.0, burst=10),
     reservoir=Reservoir(depth=8),
     spillway=ExportToArchive(archive_cls=AuditArchive),
+    observer=LoggingObserver(fire_level="info", spillway_level="warning"),
 )
 watershed = Watershed(
     window=(start, end),
@@ -663,7 +679,8 @@ watershed = Watershed(
     "surge_barrier":{"threshold_multiple": 3.0, "action": "bypass"},
     "penstock":     {"type": "burst", "rate_per_sec": 5.0, "burst": 10},
     "reservoir":    {"depth": 8},
-    "spillway":     {"type": "export_to_archive", "archive_cls": "audit:AuditArchive"}
+    "spillway":     {"type": "export_to_archive", "archive_cls": "audit:AuditArchive"},
+    "observer":     {"type": "logging", "fire_level": "info", "spillway_level": "warning"}
   }
 }
 ```
@@ -893,6 +910,11 @@ The class-level counterpart to `log_info` / `log_error` — use these inside `@c
 | `failed_sources` | `IncorporatorList` | `List[str]` | DLQ surface — every URL/file that hit a permanent failure. Read by retry orchestrators. |
 | `Wave.{chunk_index, operation, rows_processed, failed_sources, processing_time_sec, timestamp}` | `Wave` (frozen Pydantic) | model fields | one record per pipeline tick. Yielded by `stream()` and `fjord()`. |
 | `IncorporatorList.inc_dict` | property on the list | shared view of class registry | what `incorp()`'s return value exposes; mutations write through to `cls.inc_dict`. |
+| `IncorporatorList.dead_letter_queue` | property on the list | `List[DeadLetterEntry]` | structured DLQ — entry fields: `source`, `error_kind`, `message`, `retry_after`, `wave_index`.  Read by retry orchestrators that want the exception type or `Retry-After` hint without parsing strings. |
+| `DeadLetterEntry` (top-level export) | frozen Pydantic | failure record | `from incorporator import DeadLetterEntry`.  Populated by HTTP error sites in `io/fetch.py` and fjord seed errors. |
+| `SourceRef` (`incorporator.io.SourceRef`) | frozen dataclass | source value type | Five factories (`from_url` / `from_file` / `from_parent` / `from_payload` / `from_kwargs`) plus an auto-detect `parse()` classmethod.  Internal scaffolding for `incorp()` / `architect()` source dispatch; opt-in public API for callers wanting explicit source typing. |
+| `CustomCurrent` (`incorporator.observability.tideweaver.CustomCurrent`) | abstract `Current` subclass | escape hatch | Subclass and override `async tick(self, scheduler: Tideweaver) -> None` for non-verb tick logic (cron-style cleanups, custom side-effects, externally-driven publishers). |
+| `GateContext` / `SurgeContext` / `FlowState` | frozen dataclasses | narrow value types | What custom `Gate.gate_reason(ctx)` / `SurgeBarrier.is_tripped(ctx)` / `Penstock.consume_reason(state, flow, now)` overrides read.  Authoring a custom strategy?  Subclass against these — never the scheduler. |
 
 ---
 
