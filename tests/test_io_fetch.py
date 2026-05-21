@@ -350,49 +350,55 @@ async def test_fetch_concurrent_path_a_batched_no_cancel_cascade(
 
 
 # ----------------------------------------------------------------------
-# Host-aware rate-limit registry — opt-in via register_host_throttle.
+# Host-aware rate-limit registry — opt-in via register_host_penstock.
 # Framework ships no implicit per-host throttling; these tests register
 # the host explicitly inline so the fetch path picks up the registered
-# rate via the canonical resolve_throttle() resolver.
+# rate via the canonical resolve_penstock() resolver.
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_host_aware_throttle_applied_when_registered(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Registering ``api.coingecko.com`` at 0.2 r/s pins the RateLimiter for that host.
+def _capture_resolved_rates(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Patch ``fetch.resolve_penstock`` to record each resolved rate_per_sec.
 
-    Before v1.3.0, this rate was a built-in default in
-    ``incorporator/io/throttle.py:_HOST_FACTORIES``.  The framework now
-    ships no implicit per-host throttling; users register hosts they
-    care about explicitly (or pass ``requests_per_second=`` per call).
+    Returns the list that accumulates rates; caller asserts against it.
     """
     from incorporator.io import fetch
-    from incorporator.io.throttle import (
-        FixedIntervalThrottle,
-        _HOST_FACTORIES,
-    )
 
-    monkeypatch.setitem(
-        _HOST_FACTORIES,
-        "api.coingecko.com",
-        lambda: FixedIntervalThrottle(0.2),
-    )
+    captured_rates: list = []
+    real_resolve = fetch.resolve_penstock
 
-    captured: dict = {}
-    real_init = fetch.RateLimiter.__init__
+    def capture_resolve(*args: Any, **kwargs: Any) -> Any:
+        bound = real_resolve(*args, **kwargs)
+        rate = getattr(bound.penstock, "rate_per_sec", None)
+        if rate is not None:
+            captured_rates.append(rate)
+        return bound
 
-    def capture_init(self: Any, rps: float) -> None:
-        captured["rps"] = rps
-        real_init(self, rps)
-
-    monkeypatch.setattr(fetch.RateLimiter, "__init__", capture_init)
+    monkeypatch.setattr(fetch, "resolve_penstock", capture_resolve)
 
     async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
         return [{"src": src}]
 
     monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+    return captured_rates
+
+
+@pytest.mark.asyncio
+async def test_host_aware_penstock_applied_when_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Registering ``api.coingecko.com`` at 0.2 r/s pins the penstock rate for that host.
+
+    Before v1.3.0, this rate was a built-in default in
+    ``incorporator/io/throttle.py``.  The framework now ships no
+    implicit per-host throttling; users register hosts they care about
+    explicitly (or pass ``requests_per_second=`` per call).
+    """
+    from incorporator.io import fetch
+    from incorporator.io.penstock import _HOST_PENSTOCKS, SustainedPenstock
+
+    monkeypatch.setitem(_HOST_PENSTOCKS, "api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+    captured_rates = _capture_resolved_rates(monkeypatch)
 
     await fetch.fetch_concurrent_payloads(
         source_list=["https://api.coingecko.com/api/v3/coins/bitcoin"],
@@ -401,7 +407,7 @@ async def test_host_aware_throttle_applied_when_registered(
         limit=1,
     )
 
-    assert captured["rps"] == 0.2
+    assert 0.2 in captured_rates
 
 
 @pytest.mark.asyncio
@@ -411,20 +417,7 @@ async def test_explicit_requests_per_second_overrides_host_default(
     """Caller-supplied requests_per_second wins even on a registered host."""
     from incorporator.io import fetch
 
-    captured: dict = {}
-
-    real_init = fetch.RateLimiter.__init__
-
-    def capture_init(self: Any, rps: float) -> None:
-        captured["rps"] = rps
-        real_init(self, rps)
-
-    monkeypatch.setattr(fetch.RateLimiter, "__init__", capture_init)
-
-    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
-        return [{"src": src}]
-
-    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+    captured_rates = _capture_resolved_rates(monkeypatch)
 
     await fetch.fetch_concurrent_payloads(
         source_list=["https://api.coingecko.com/api/v3/coins/bitcoin"],
@@ -434,30 +427,17 @@ async def test_explicit_requests_per_second_overrides_host_default(
         requests_per_second=5.0,
     )
 
-    assert captured["rps"] == 5.0
+    assert 5.0 in captured_rates
 
 
 @pytest.mark.asyncio
 async def test_unknown_host_keeps_documented_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Unknown host → RateLimiter falls back to the 15.0 documented default."""
+    """Unknown host → SustainedPenstock falls back to the 15.0 documented default."""
     from incorporator.io import fetch
 
-    captured: dict = {}
-
-    real_init = fetch.RateLimiter.__init__
-
-    def capture_init(self: Any, rps: float) -> None:
-        captured["rps"] = rps
-        real_init(self, rps)
-
-    monkeypatch.setattr(fetch.RateLimiter, "__init__", capture_init)
-
-    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
-        return [{"src": src}]
-
-    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+    captured_rates = _capture_resolved_rates(monkeypatch)
 
     await fetch.fetch_concurrent_payloads(
         source_list=["https://api.binance.us/api/v3/ticker/price"],
@@ -466,4 +446,4 @@ async def test_unknown_host_keeps_documented_default(
         limit=1,
     )
 
-    assert captured["rps"] == 15.0
+    assert 15.0 in captured_rates

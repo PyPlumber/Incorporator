@@ -22,10 +22,9 @@ from . import handlers as format_parsers
 from .compression import decompress_data, infer_compression
 from .formats import FormatType, infer_format
 from .pagination.base import AsyncPaginator
-from .throttle import (
-    FixedIntervalThrottle,
-    ThrottleStrategy,
-    resolve_throttle,
+from .penstock import (
+    BoundPenstock,
+    resolve_penstock,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,13 +33,6 @@ logger = logging.getLogger(__name__)
 # ==========================================
 # 1. THROTTLING & RESILIENCE
 # ==========================================
-
-# Backward-compat alias — the original :class:`RateLimiter` is the
-# fixed-interval token bucket, now lives in
-# :mod:`incorporator.io.throttle` as :class:`FixedIntervalThrottle`.
-# Existing callers and tests that monkey-patch ``RateLimiter.__init__``
-# keep working because the alias and the new class are the same object.
-RateLimiter = FixedIntervalThrottle
 
 
 # ==========================================
@@ -231,7 +223,7 @@ async def execute_request(
     params: Optional[Dict[str, Any]] = None,
     json_payload: Optional[Dict[str, Any]] = None,
     form_payload: Optional[Dict[str, Any]] = None,
-    rate_limiter: Optional[ThrottleStrategy] = None,
+    rate_limiter: Optional[BoundPenstock] = None,
 ) -> httpx.Response:
     """Executes a resilient, jittered HTTP request supporting GET/POST and query strings."""
     _validate_url(url)
@@ -319,7 +311,7 @@ async def _process_single_source(
     source_val: str,
     is_file_mode: bool,
     client: Optional[httpx.AsyncClient],
-    rate_limiter: Optional[ThrottleStrategy],
+    rate_limiter: Optional[BoundPenstock],
     dynamic_payload: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> List[Any]:
@@ -515,30 +507,30 @@ async def fetch_concurrent_payloads(
     # CoinGecko + PokeAPI fan-out was collapsed to CoinGecko's 0.2
     # rps for every request.
     # ------------------------------------------------------------------
-    throttle_for_source: Dict[str, ThrottleStrategy] = {}
+    throttle_for_source: Dict[str, BoundPenstock] = {}
     if _rate_limiter is not None:
         # Explicit caller injection (test hook / advanced usage) — honour it.
         for src in source_list:
             throttle_for_source[src] = _rate_limiter
     elif _user_provided_rps:
         # Legacy semantics: caller rate is a global cap.  Build one
-        # throttle and reuse it across every source.
-        shared = resolve_throttle("", requests_per_second=_requests_per_second, burst=_user_burst)
+        # penstock and reuse it across every source.
+        shared = resolve_penstock("", requests_per_second=_requests_per_second, burst=_user_burst)
         for src in source_list:
             throttle_for_source[src] = shared
     else:
-        # Per-host resolution: one strategy per distinct host.
-        by_host: Dict[str, ThrottleStrategy] = {}
+        # Per-host resolution: one penstock per distinct host.
+        by_host: Dict[str, BoundPenstock] = {}
         for src in source_list:
             host = urlparse(src).hostname or "" if isinstance(src, str) else ""
             if host not in by_host:
-                by_host[host] = resolve_throttle(src)
+                by_host[host] = resolve_penstock(src)
             throttle_for_source[src] = by_host[host]
         if not is_file_mode and by_host:
-            applied = {h: getattr(t, "rate", "n/a") for h, t in by_host.items() if h}
+            applied = {h: getattr(t.penstock, "rate_per_sec", "n/a") for h, t in by_host.items() if h}
             if applied:
                 logger.info(
-                    "Per-host throttles applied: %s.  Pass requests_per_second=N for a global cap.",
+                    "Per-host penstocks applied: %s.  Pass requests_per_second=N for a global cap.",
                     ", ".join(f"{h}={r}" for h, r in applied.items()),
                 )
 

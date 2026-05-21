@@ -7,15 +7,16 @@ submodule:
 
 .. code-block:: python
 
-    from incorporator.io import BurstPenstock, register_host_throttle
+    from incorporator.io import BurstPenstock, register_host_penstock
 
-    register_host_throttle(
+    register_host_penstock(
         "api.internal.acme.com",
-        lambda: BurstPenstock(rate_per_sec=50.0, burst=200),
+        BurstPenstock(rate_per_sec=50.0, burst=200),
     )
 """
 
 from .penstock import (
+    DEFAULT_RPS,
     BoundPenstock,
     BurstPenstock,
     FlowState,
@@ -24,29 +25,22 @@ from .penstock import (
     SignalPenstock,
     SustainedPenstock,
     WindowPenstock,
-)
-from .throttle import (
-    BurstThrottle,
-    FixedIntervalThrottle,
-    NullThrottle,
-    ThrottleStrategy,
-    register_host_throttle,
-    resolve_throttle,
+    known_host_rates,
+    register_host_penstock,
+    resolve_penstock,
 )
 
 __all__ = [
+    "DEFAULT_RPS",
     "BoundPenstock",
     "BurstPenstock",
-    "BurstThrottle",
-    "FixedIntervalThrottle",
     "FlowState",
     "NullPenstock",
-    "NullThrottle",
     "Penstock",
     "SignalPenstock",
     "SustainedPenstock",
-    "ThrottleStrategy",
     "WindowPenstock",
-    "register_host_throttle",
-    "resolve_throttle",
+    "known_host_rates",
+    "register_host_penstock",
+    "resolve_penstock",
 ]

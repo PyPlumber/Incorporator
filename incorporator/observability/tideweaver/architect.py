@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Type, Union, cast
 from urllib.parse import urlparse
 
-from ...io.throttle import known_host_rates
+from ...io.penstock import known_host_rates
 from ...tools.inspector import ResponseMeta, SourceProfile, analyze_data
 
 # Mapping-typed source values may be runtime dicts (Mapping) — we accept any
@@ -322,11 +322,11 @@ async def _probe_one(
 def _penstock_for(profile: SourceProfile) -> Optional[PenstockSpec]:
     """Return a ``PenstockSpec`` per the three-tier confidence ladder, or ``None``.
 
-    Tier 1 reads :func:`incorporator.io.throttle.known_host_rates` — the
+    Tier 1 reads :func:`incorporator.io.penstock.known_host_rates` — the
     live registry view.  The framework no longer ships any implicit per-host
     throttling; tier 1 fires only when the caller has previously called
-    :func:`incorporator.io.throttle.register_host_throttle` (or
-    ``incorporator.register_host_throttle``) for the host.
+    :func:`incorporator.io.penstock.register_host_penstock` (or
+    ``incorporator.register_host_penstock``) for the host.
     """
     meta = profile.response_meta
     if meta and meta.host:
@@ -337,7 +337,7 @@ def _penstock_for(profile: SourceProfile) -> Optional[PenstockSpec]:
                 kind="sustained",
                 rate_per_sec=rate,
                 confidence="high",
-                rationale=f"{meta.host} is in the host-throttle registry ({rate} req/sec)",
+                rationale=f"{meta.host} is in the host-penstock registry ({rate} req/sec)",
             )
     if meta and meta.rate_limited:
         return PenstockSpec(

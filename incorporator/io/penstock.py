@@ -32,8 +32,10 @@ it has no meaningful HTTP-layer interpretation.
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass, field
-from typing import Any, Callable, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -402,3 +404,146 @@ class BoundPenstock:
     async def acquire(self) -> None:
         """Throttle one consumption — sleeps under the lock until permitted."""
         await self.penstock.acquire(self.state, self.lock)
+
+
+# ---------------------------------------------------------------------------
+# Per-host penstock registry — the HTTP-layer entry point
+# ---------------------------------------------------------------------------
+
+
+#: Per-host penstock registry — keyed by lowercase hostname.  **Empty by
+#: default**: the framework ships with no implicit per-host throttling.
+#: Use :func:`register_host_penstock` to attach a penstock to any host
+#: that requires one; the penstock config is shared but each
+#: :func:`resolve_penstock` call gets a fresh :class:`FlowState` + lock
+#: pair so concurrent fan-out legs run independently.
+#:
+#: Migration from v1.2.0 implicit hosts — register these at startup if
+#: you relied on them:
+#:
+#: .. code-block:: python
+#:
+#:     from incorporator import register_host_penstock
+#:     from incorporator.io.penstock import SustainedPenstock
+#:
+#:     # CoinGecko public (anon): 5–15 req/min — 0.2 = 12 req/min, headroom.
+#:     register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+#:     # PokeAPI: 100 req/min documented ceiling — 1.5 = 90 req/min.
+#:     register_host_penstock("pokeapi.co", SustainedPenstock(rate_per_sec=1.5))
+#:     # NHTSA vPIC: 100–200 req/min documented; method-agnostic.
+#:     register_host_penstock("vpic.nhtsa.dot.gov", SustainedPenstock(rate_per_sec=1.5))
+_HOST_PENSTOCKS: Dict[str, Penstock] = {}
+
+
+DEFAULT_RPS: float = 15.0
+"""Penstock rate used when no host match and no caller-supplied rate."""
+
+
+_BYPASS_ENV_VAR: str = "INCORPORATOR_RATE_LIMIT_BYPASS"
+"""Set to ``"1"`` to force :class:`NullPenstock` everywhere — test-only."""
+
+
+def register_host_penstock(host: str, penstock: Union[Penstock, Callable[[], Penstock]]) -> None:
+    """Register a per-host penstock for outbound HTTP throttling.
+
+    Use this to attach a rate-limit policy to an in-house API or to
+    override a built-in entry.  Each call to :func:`resolve_penstock`
+    returns a fresh :class:`BoundPenstock` (sharing the registered
+    penstock config but with its own :class:`FlowState` + lock) so
+    each fan-out leg gets independent state.
+
+    Args:
+        host: Lowercase hostname (e.g. ``"api.internal.acme.com"``).
+        penstock: Either a :class:`Penstock` instance (the canonical
+            form) or a zero-arg callable returning a fresh
+            :class:`Penstock` (the legacy factory form — accepted for
+            back-compat with v1.2.0 ``register_host_throttle`` calls
+            that pass ``lambda: FixedIntervalThrottle(rate)``).
+
+    Example::
+
+        from incorporator import register_host_penstock
+        from incorporator.io.penstock import BurstPenstock
+
+        register_host_penstock(
+            "api.internal.acme.com",
+            BurstPenstock(rate_per_sec=50.0, burst=200),
+        )
+    """
+    if callable(penstock) and not isinstance(penstock, Penstock):
+        _HOST_PENSTOCKS[host] = penstock()
+    else:
+        _HOST_PENSTOCKS[host] = penstock
+
+
+def resolve_penstock(
+    source: Any,
+    *,
+    requests_per_second: Optional[float] = None,
+    burst: Optional[int] = None,
+) -> BoundPenstock:
+    """Pick a penstock for one source URL, bound with fresh state + lock.
+
+    Precedence:
+
+    1. ``INCORPORATOR_RATE_LIMIT_BYPASS=1`` env var → :class:`NullPenstock`
+       (the global test-friendly escape hatch).
+    2. Caller-supplied ``requests_per_second <= 0`` → :class:`NullPenstock`
+       (the documented per-call escape hatch).
+    3. Caller-supplied positive ``requests_per_second`` → either
+       :class:`SustainedPenstock` or :class:`BurstPenstock` if ``burst``
+       was also passed.
+    4. Per-host registry match → the registered penstock config (with a
+       fresh :class:`FlowState`).
+    5. Fallback → ``SustainedPenstock(rate_per_sec=DEFAULT_RPS)``
+       (15 req/sec).
+
+    Args:
+        source: A URL string (or any value with a hostname extractable
+            via ``urllib.parse``).  Non-string sources skip the host
+            lookup and use the default.
+        requests_per_second: Caller override.  ``0`` or negative selects
+            :class:`NullPenstock`.
+        burst: Optional burst capacity; if supplied alongside a positive
+            ``requests_per_second``, returns :class:`BurstPenstock`.
+
+    Returns:
+        A fresh :class:`BoundPenstock` ready for one source's
+        :meth:`acquire` calls.
+    """
+    penstock: Penstock
+    if os.environ.get(_BYPASS_ENV_VAR) == "1":
+        penstock = NullPenstock()
+    elif requests_per_second is not None:
+        if requests_per_second <= 0:
+            penstock = NullPenstock()
+        elif burst is not None:
+            penstock = BurstPenstock(rate_per_sec=requests_per_second, burst=burst)
+        else:
+            penstock = SustainedPenstock(rate_per_sec=requests_per_second)
+    else:
+        matched: Optional[Penstock] = None
+        if isinstance(source, str):
+            host = urlparse(source).hostname or ""
+            matched = _HOST_PENSTOCKS.get(host)
+        penstock = matched if matched is not None else SustainedPenstock(rate_per_sec=DEFAULT_RPS)
+    return BoundPenstock(penstock=penstock, state=FlowState(), lock=asyncio.Lock())
+
+
+def known_host_rates() -> Dict[str, float]:
+    """Return ``host → rate_per_sec`` for every host in the penstock registry.
+
+    Intended for diagnostics, logging, and the
+    :func:`incorporator.observability.tideweaver.architect` probe that
+    wants to suggest the user's already-registered rate without
+    instantiating the penstock.  Only penstocks exposing a
+    ``rate_per_sec`` field (Sustained, Burst, …) appear in the result;
+    Window / Signal / Null / custom subclasses without a single rate
+    figure are skipped.
+    """
+    rates: Dict[str, float] = {}
+    for host, penstock in _HOST_PENSTOCKS.items():
+        rate = getattr(penstock, "rate_per_sec", None)
+        if isinstance(rate, (int, float)):
+            rates[host] = float(rate)
+    return rates

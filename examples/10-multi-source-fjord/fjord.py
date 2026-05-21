@@ -23,13 +23,13 @@ import asyncio
 import sys
 from pathlib import Path
 
-from incorporator import Incorporator, register_host_throttle
-from incorporator.io.throttle import FixedIntervalThrottle
+from incorporator import Incorporator, register_host_penstock
+from incorporator.io.penstock import SustainedPenstock
 
 # Pace api.coingecko.com at 0.2 req/sec (12/min) — under the free-tier
 # 5-15/min ceiling.  Binance has no per-host registry entry; the default
 # 15 req/sec applies.
-register_host_throttle("api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
+register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"

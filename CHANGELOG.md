@@ -26,12 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   # Option B: register once at startup; every subsequent call against
   # the host respects the rate.
-  from incorporator import register_host_throttle
-  from incorporator.io.throttle import FixedIntervalThrottle
+  from incorporator import register_host_penstock
+  from incorporator.io.penstock import SustainedPenstock
 
-  register_host_throttle("api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
-  register_host_throttle("pokeapi.co", lambda: FixedIntervalThrottle(1.5))
-  register_host_throttle("vpic.nhtsa.dot.gov", lambda: FixedIntervalThrottle(1.5))
+  register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+  register_host_penstock("pokeapi.co", SustainedPenstock(rate_per_sec=1.5))
+  register_host_penstock("vpic.nhtsa.dot.gov", SustainedPenstock(rate_per_sec=1.5))
   ```
 
   Per-host rationale (rates from the previous registry — re-verify
@@ -43,8 +43,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dropped `incorporator.io.fetch._KNOWN_API_RATE_LIMITS`** and
   **`_resolve_host_safe_rate`** — the backward-compat shims have no
-  remaining callers.  Use `incorporator.io.throttle.known_host_rates()`
+  remaining callers.  Use `incorporator.io.penstock.known_host_rates()`
   for the live registry view.
+
+- **Unified rate-limit primitive: `Penstock` replaces `ThrottleStrategy`.**
+  The HTTP throttle layer and the Tideweaver edge layer now share one
+  canal-toolkit primitive — `Penstock` is the structural gate, the
+  throttle settings (`rate_per_sec`, `burst`, `window_sec`) configure
+  it, and the rate is the computed output.  `io/throttle.py` is gone;
+  the new home is `io/penstock.py`.  JSON config shapes (`watershed.json`)
+  are unchanged — the same `{"type": "burst", "rate_per_sec": ..., "burst": ...}`
+  payload works at both layers.
+
+  Migration:
+
+  | Before | After |
+  | --- | --- |
+  | `from incorporator.io.throttle import FixedIntervalThrottle` | `from incorporator.io.penstock import SustainedPenstock` |
+  | `FixedIntervalThrottle(0.2)` | `SustainedPenstock(rate_per_sec=0.2)` |
+  | `BurstThrottle(2.0, 10)` | `BurstPenstock(rate_per_sec=2.0, burst=10)` |
+  | `NullThrottle()` | `NullPenstock()` |
+  | `register_host_throttle("h", lambda: FixedIntervalThrottle(0.2))` | `register_host_penstock("h", SustainedPenstock(rate_per_sec=0.2))` |
+  | `from incorporator import register_host_throttle` | `from incorporator import register_host_penstock` |
+  | `ThrottleStrategy` (Protocol) | `Penstock` (Pydantic BaseModel) |
+  | `resolve_throttle(...)` | `resolve_penstock(...)` |
+
+  The legacy factory-callable form still works on
+  `register_host_penstock` (it accepts either a `Penstock` instance or
+  a zero-arg callable returning one), so `lambda: FixedIntervalThrottle(...)`
+  ports cleanly by changing the inner class name.
+
+  Bug fix included: `BurstPenstock`'s refill logic now does an explicit
+  `None` check on `bucket_last_refill_at` instead of `or now`, so a
+  legitimate `0.0` watermark no longer silently erases the refill
+  window (latent in the previous `BurstThrottle` since v1.0).
 
 - **Removed `watershed.json` legacy aliases** — the v1.2.0
   `dependency_mode` (top-level) and `"mode"` (per-edge) aliases for

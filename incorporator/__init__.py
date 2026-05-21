@@ -37,7 +37,7 @@ from .io.pagination import (
     PageNumberPaginator,
     SQLitePaginator,
 )
-from .io.throttle import register_host_throttle
+from .io.penstock import register_host_penstock
 from .list import IncorporatorList
 from .observability.logger import LoggedIncorporator, LoggingMixin, Wave, setup_class_logger
 from .observability.tideweaver import (
@@ -75,7 +75,7 @@ __all__ = [
     "setup_class_logger",
     "FormatType",
     "CompressionType",
-    "register_host_throttle",
+    "register_host_penstock",
     "Wave",
     "inc",
     "calc",

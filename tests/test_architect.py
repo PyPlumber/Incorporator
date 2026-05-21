@@ -167,9 +167,9 @@ def test_penstock_for_registered_host_high_confidence(monkeypatch: pytest.Monkey
     explicitly registers ``api.coingecko.com`` first, then asserts
     architect picks the registered rate.
     """
-    from incorporator.io.throttle import FixedIntervalThrottle, _HOST_FACTORIES
+    from incorporator.io.penstock import SustainedPenstock, _HOST_PENSTOCKS
 
-    monkeypatch.setitem(_HOST_FACTORIES, "api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
+    monkeypatch.setitem(_HOST_PENSTOCKS, "api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
     profile = _profile({"id"}, pk="id", host="api.coingecko.com")
     spec = _penstock_for(profile)
     assert spec is not None
@@ -186,7 +186,7 @@ def test_penstock_for_unregistered_host_no_tier_1(monkeypatch: pytest.MonkeyPatc
     coingecko / pokeapi / nhtsa.  Architect's high-confidence recommendation
     is now opt-in — fires only after explicit registration.
     """
-    from incorporator.io.throttle import _HOST_FACTORIES
+    from incorporator.io.penstock import _HOST_PENSTOCKS
 
     # Ensure registry is clean for these three historical hosts.
     monkeypatch.setattr(
@@ -197,7 +197,7 @@ def test_penstock_for_unregistered_host_no_tier_1(monkeypatch: pytest.MonkeyPatc
     spec = _penstock_for(profile)
     assert spec is None
     # Sanity: monkeypatch didn't leak into the real registry.
-    assert "api.coingecko.com" not in _HOST_FACTORIES
+    assert "api.coingecko.com" not in _HOST_PENSTOCKS
 
 
 def test_penstock_for_429_observed_medium_confidence() -> None:
@@ -274,10 +274,10 @@ def test_analyze_topology_carries_penstock_recommendations_on_edges(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When the user has registered hosts, architect threads the recommendation onto each edge."""
-    from incorporator.io.throttle import FixedIntervalThrottle, _HOST_FACTORIES
+    from incorporator.io.penstock import SustainedPenstock, _HOST_PENSTOCKS
 
-    monkeypatch.setitem(_HOST_FACTORIES, "api.coingecko.com", lambda: FixedIntervalThrottle(0.2))
-    monkeypatch.setitem(_HOST_FACTORIES, "pokeapi.co", lambda: FixedIntervalThrottle(1.5))
+    monkeypatch.setitem(_HOST_PENSTOCKS, "api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+    monkeypatch.setitem(_HOST_PENSTOCKS, "pokeapi.co", SustainedPenstock(rate_per_sec=1.5))
 
     profiles = [
         ("users", _profile({"user_id"}, pk="user_id", host="api.coingecko.com")),
@@ -607,12 +607,11 @@ def test_plan_to_watershed_carries_penstock_when_recommended() -> None:
     Uses a monkey-patched host registry so the test doesn't depend on
     whichever hosts the user has registered globally.
     """
-    from incorporator.io.throttle import FixedIntervalThrottle, _HOST_FACTORIES
-    from incorporator.observability.tideweaver import SustainedPenstock
+    from incorporator.io.penstock import SustainedPenstock, _HOST_PENSTOCKS
 
     # Register a slow rate so architect's _penstock_for fires tier-1.
-    original = _HOST_FACTORIES.get("api.fixture.example")
-    _HOST_FACTORIES["api.fixture.example"] = lambda: FixedIntervalThrottle(0.5)
+    original = _HOST_PENSTOCKS.get("api.fixture.example")
+    _HOST_PENSTOCKS["api.fixture.example"] = SustainedPenstock(rate_per_sec=0.5)
     try:
         profiles: List[Tuple[str, SourceProfile]] = [
             ("users", _profile({"user_id"}, pk="user_id", host="api.fixture.example")),
@@ -631,6 +630,6 @@ def test_plan_to_watershed_carries_penstock_when_recommended() -> None:
         assert edge.flow.penstock.rate_per_sec == 0.5
     finally:
         if original is None:
-            _HOST_FACTORIES.pop("api.fixture.example", None)
+            _HOST_PENSTOCKS.pop("api.fixture.example", None)
         else:
-            _HOST_FACTORIES["api.fixture.example"] = original
+            _HOST_PENSTOCKS["api.fixture.example"] = original
