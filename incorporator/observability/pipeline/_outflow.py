@@ -190,8 +190,13 @@ async def flush(
        on ``outflow_module`` whose name matches; else build via
        :func:`infer_dynamic_schema`.
     2. Clear the class's ``inc_dict``, materialise instances, park a
-       strong-ref ``_fjord_snapshot`` to defeat the
-       :class:`weakref.WeakValueDictionary` registry.
+       strong-ref ``_tideweaver_snapshot`` to defeat the
+       :class:`weakref.WeakValueDictionary` registry — this is the same
+       attribute :meth:`Tideweaver._tick_stream` parks on Stream
+       classes, so downstream :class:`Fjord` / :class:`Export` ticks
+       walking upstream output via ``getattr(dep.cls,
+       "_tideweaver_snapshot", None)`` find Fjord outputs uniformly
+       alongside Stream outputs.
     3. Resolve the per-class slice of ``export_params`` via
        :func:`_resolve_export_params_for`.
     4. ``await cls.export()`` when an export config is present.
@@ -247,7 +252,12 @@ async def flush(
                 # Pydantic's Rust core amortise field-offset lookups across the
                 # whole list — matches the build_instances:300 fast path.
                 instances = [derived_cls.model_validate(row) for row in rows]
-            derived_cls._fjord_snapshot = instances  # strong-ref keeps the WeakValueDictionary alive
+            # Strong-ref bridge: pins instances on the class object so
+            # ``inc_dict`` (a ``WeakValueDictionary``) keeps them alive
+            # AND so downstream ticks reading ``getattr(dep.cls,
+            # "_tideweaver_snapshot", None)`` find them.  Same attribute
+            # ``_tick_stream`` parks on Stream classes — unified name.
+            derived_cls._tideweaver_snapshot = instances
 
             class_export = _resolve_export_params_for(derived_name, export_params, is_multi)
             if not class_export:
@@ -320,7 +330,7 @@ async def _outflow_daemon(
          same-shape ticks reuse the cached class object.
       3. Clears the class's ``inc_dict``, materialises one instance
          per row (Pydantic ``model_post_init`` auto-registers), stashes
-         a strong-ref ``_fjord_snapshot`` to defeat the
+         a strong-ref ``_tideweaver_snapshot`` to defeat the
          WeakValueDictionary GC, and exports via the matching
          per-class ``export_params`` slice.
 

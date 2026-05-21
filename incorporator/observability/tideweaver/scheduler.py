@@ -524,7 +524,9 @@ class Tideweaver:
             accumulated.update(current.cls.inc_dict)
         # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
         # Runtime-only escape-hatch attribute (no field on Incorporator itself).
-        # cast(Any) mirrors the same trick _outflow.py uses for _fjord_snapshot.
+        # ``_outflow.py:flush`` parks the same attribute on Fjord output
+        # classes, so downstream readers walk Stream and Fjord upstreams
+        # uniformly via ``getattr(dep.cls, "_tideweaver_snapshot", None)``.
         cls_any = cast(Any, current.cls)
         cls_any._tideweaver_snapshot = list(accumulated.values())
 

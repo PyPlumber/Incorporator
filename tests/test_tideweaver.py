@@ -1159,3 +1159,105 @@ async def test_real_stream_to_fjord_chain_sees_upstream_snapshot(
     assert rows, "Fjord outflow saw zero upstream rows — the snapshot race regressed"
     seen_ids = {r["post_id"] for r in rows}
     assert seen_ids >= {11, 12, 13}, f"outflow must observe every mocked post id, got {sorted(seen_ids)}"
+
+
+@pytest.mark.asyncio
+async def test_fjord_flush_parks_tideweaver_snapshot_on_output_class(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fjord flush parks ``_tideweaver_snapshot`` on its output class.
+
+    Regression for the Middle-Fjord routing gap: ``_outflow.py:flush`` used to
+    park its strong-ref under ``_fjord_snapshot``, but downstream tick bodies
+    (``_tick_fjord``, ``_tick_export``) only read ``_tideweaver_snapshot`` —
+    so a Fjord whose output fed another current saw an empty ``inc_dict`` and
+    forced callers (and the routing tests) to file-reread the exported
+    NDJSON to reconstruct the snapshot by hand.
+
+    After the unification, Stream and Fjord outputs both carry
+    ``_tideweaver_snapshot`` and downstream readers walk them uniformly.
+    """
+    import httpx
+    from pydantic import ConfigDict
+
+    from incorporator.io import fetch
+    from incorporator.usercode import load_outflow_module
+
+    monkeypatch.chdir(tmp_path)
+
+    class SrcPost(Incorporator):
+        """Upstream Stream source for the Fjord-output snapshot test."""
+
+        model_config = ConfigDict(extra="allow")
+
+    Incorporator.inc_dict.clear()
+    if "_tideweaver_snapshot" in SrcPost.__dict__:
+        delattr(SrcPost, "_tideweaver_snapshot")
+
+    async def _mock(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        payload = [
+            {"id": 101, "title": "x", "userId": 1},
+            {"id": 102, "title": "y", "userId": 1},
+        ]
+        return httpx.Response(200, text=json.dumps(payload), request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch, "execute_request", _mock)
+
+    # The Fjord's output class must be defined IN the outflow module so
+    # ``_outflow.py:flush`` picks it up via ``getattr(outflow_module,
+    # derived_name, None)`` — otherwise flush would build a dynamic
+    # subclass and park the snapshot there instead, defeating the
+    # cross-module assertion.  Load via ``load_outflow_module`` so the
+    # test and ``_tick_fjord`` share the SAME cached module instance
+    # (and therefore the same ``DerivedState`` class object).
+    outflow_py = tmp_path / "outflow_mod.py"
+    outflow_py.write_text(
+        "from pydantic import ConfigDict\n"
+        "from incorporator import Incorporator\n"
+        "\n"
+        "class DerivedState(Incorporator):\n"
+        "    model_config = ConfigDict(extra='allow')\n"
+        "\n"
+        "def outflow(state):\n"
+        "    posts = state.get('SrcPost', [])\n"
+        "    return [{'derived_id': getattr(p, 'id', None)} for p in posts]\n",
+        encoding="utf-8",
+    )
+    _, outflow_module = load_outflow_module(outflow_py)
+    DerivedState = outflow_module.DerivedState
+
+    out_file = tmp_path / "derived_state.ndjson"
+
+    posts = Stream(
+        name="posts",
+        cls=SrcPost,
+        interval=3.0,
+        on_error="fail_watershed",
+        incorp_params={"inc_url": "https://x/posts", "inc_code": "id"},
+    )
+    fjord = Fjord(
+        name="state",
+        cls=DerivedState,
+        interval=0.2,
+        skip_threshold=50.0,
+        export_params={"file_path": str(out_file), "format": "ndjson", "if_exists": "replace"},
+        outflow=outflow_py,
+        on_error="fail_watershed",
+    )
+    ws = Watershed.chain(window=_short_window(2.0), currents=[posts, fjord])
+    tw = Tideweaver(ws, pass_interval=0.05)
+    await _collect_tides(tw)
+
+    # The headline assertion: the Fjord's output class carries a non-empty
+    # ``_tideweaver_snapshot``.  Pre-fix this was None / AttributeError because
+    # ``_outflow.py:flush`` parked the strong ref under ``_fjord_snapshot``.
+    snapshot: List[Any] = list(getattr(DerivedState, "_tideweaver_snapshot", []))
+    assert snapshot, (
+        "Fjord output class must carry a non-empty _tideweaver_snapshot — "
+        "empty means the Middle-Fjord snapshot-parking regressed and downstream "
+        "currents will see an empty inc_dict"
+    )
+    derived_ids = {getattr(d, "derived_id", None) for d in snapshot}
+    assert derived_ids == {101, 102}, (
+        f"snapshot must contain both derived rows by derived_id, got {derived_ids}"
+    )
