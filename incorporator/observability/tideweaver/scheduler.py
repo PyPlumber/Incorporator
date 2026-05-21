@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, cast
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_exponential
 
 from ...io.fetch import HTTPClientBuilder
@@ -49,6 +49,32 @@ from .watershed import Watershed
 logger = logging.getLogger(__name__)
 
 TickFactory = Callable[[Current], Awaitable[None]]
+
+
+class _EdgeState(BaseModel):
+    """Per-edge scheduler bookkeeping for reservoir / penstock / spillway.
+
+    Lives in :attr:`Tideweaver._edge_state`, keyed by ``(from_name, to_name)``.
+    The reservoir holds the most-recent N waves' instance lists (FIFO; depth
+    bounded by ``flow.reservoir.depth``).  When the reservoir is full and a
+    new wave arrives, the displaced wave is routed through
+    ``flow.spillway.overflow`` and ``overflow_count`` bumps for diagnostics.
+
+    ``last_consumed_at`` is reserved for Phase 3 (Penstock rate-limiting);
+    ``arbitrary_types_allowed`` lets the wave list hold any instance type.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    waves: List[List[Any]] = Field(default_factory=list)
+    """FIFO history of wave snapshots; each entry is one tick's instance list."""
+
+    last_consumed_at: Optional[float] = None
+    """Monotonic time of the dependent's most recent consumption from this edge.
+    Phase 3 honors this for ``Penstock.rate_per_sec`` enforcement."""
+
+    overflow_count: int = 0
+    """Cumulative count of waves displaced from the reservoir (for diagnostics)."""
 
 
 class _CurrentState(BaseModel):
@@ -155,9 +181,17 @@ class Tideweaver:
         # FlowControl) tuples governing its inbound edges.  FlowControl is
         # the per-edge bundle of gate + surge_barrier + penstock + reservoir
         # + spillway; the scheduler reaches into it for gating decisions.
+        # _downstream is the symmetric reverse — needed by ``_tick_wrapper``
+        # to push freshly-emitted waves into every outgoing edge's reservoir.
+        # _edge_state holds the reservoir / penstock / spillway bookkeeping
+        # per edge, indexed by ``(from_name, to_name)``.
         self._upstream: Dict[str, List[Tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
+        self._downstream: Dict[str, List[Tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
+        self._edge_state: Dict[Tuple[str, str], _EdgeState] = {}
         for e in watershed.edges:
             self._upstream[e.to_name].append((e.from_name, e.flow))
+            self._downstream[e.from_name].append((e.to_name, e.flow))
+            self._edge_state[(e.from_name, e.to_name)] = _EdgeState()
         # Watershed topology is immutable for the run, so cache the
         # transitive-closure result per dependent.  Populated lazily by
         # ``_transitive_upstreams``.
@@ -428,6 +462,25 @@ class Tideweaver:
                 if latest is not None:
                     self._last_consumed[(current.name, up_name)] = latest
             state.started_at = None
+            # Push this tick's wave content into every outgoing edge's
+            # reservoir.  Reads the strong-ref ``_tideweaver_snapshot`` the
+            # tick body parks on its output class (Stream parks one in
+            # ``_tick_stream``; Fjord parks one per derived class in
+            # ``_outflow.flush``).  Falls back to ``cls.inc_dict.values()``
+            # when no snapshot is parked — preserves the legacy behavior of
+            # custom tick factories that mutate ``inc_dict`` directly
+            # (e.g. test doubles).  Empty waves are skipped to avoid
+            # polluting the reservoir with no-op ticks.
+            snapshot_attr = getattr(current.cls, "_tideweaver_snapshot", None)
+            wave_snapshot = list(snapshot_attr) if snapshot_attr else list(current.cls.inc_dict.values())
+            if wave_snapshot:
+                for downstream_name, edge_flow in self._downstream[current.name]:
+                    edge_state = self._edge_state[(current.name, downstream_name)]
+                    edge_state.waves.append(wave_snapshot)
+                    while len(edge_state.waves) > edge_flow.reservoir.depth:
+                        displaced = edge_state.waves.pop(0)
+                        edge_state.overflow_count += 1
+                        edge_flow.spillway.overflow(self, (current.name, downstream_name), displaced)
             # Wake the run loop so downstream hard-edge dependents see the
             # new wave on the very next pass instead of waiting out the
             # full ``pass_interval`` safety-net cap.
@@ -570,10 +623,18 @@ class Tideweaver:
         upstream_names = self._transitive_upstreams(current.name)
         deps = [self._currents_by_name[up_name] for up_name in upstream_names]
         state: Dict[str, List[Any]] = {}
+        now_mono = time.monotonic()
         for dep in deps:
-            # Prefer the chunking-mode strong-ref snapshot if the upstream is a
-            # Stream; fall back to live inc_dict (which works for sources that
-            # naturally hold strong refs).
+            # Direct upstream — prefer the edge's reservoir (the latest wave
+            # held there) so depth>1 buffering and replay land cleanly.
+            # Transitive upstream — no direct edge, fall back to the class
+            # snapshot.  When the reservoir is empty (e.g. dependent fires
+            # before upstream has emitted), fall back to the class snapshot.
+            edge_state = self._edge_state.get((dep.name, current.name))
+            if edge_state is not None and edge_state.waves:
+                state[dep.cls.__name__] = list(edge_state.waves[-1])
+                edge_state.last_consumed_at = now_mono
+                continue
             snapshot = getattr(dep.cls, "_tideweaver_snapshot", None)
             if snapshot is not None:
                 state[dep.cls.__name__] = list(snapshot)

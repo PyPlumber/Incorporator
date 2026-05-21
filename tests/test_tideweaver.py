@@ -495,6 +495,117 @@ async def test_surge_barrier_halt_circuit_breaks_until_upstream_completes() -> N
     assert "surge_halted" in skip_reasons, f"halt must surface 'surge_halted'; got {skip_reasons}"
 
 
+# ---------------------------------------------------------------------------
+# Phase 2: Reservoir (per-edge wave buffer)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reservoir_default_depth_one_holds_one_wave() -> None:
+    """Default ``Reservoir(depth=1)`` keeps only the most recent wave per edge."""
+    from incorporator.observability.tideweaver import Reservoir
+
+    waves_seen: List[List[Any]] = []
+    strong: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        # Populate inc_dict via strong refs so the reservoir captures non-empty waves.
+        inst = _A(inc_code=f"{current.name}-{len(strong)}")
+        strong.append(inst)
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.1)
+    ws = Watershed.chain(window=_short_window(0.6), currents=[a, b])
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.05)
+    await _collect_tides(tw)
+    edge_state = tw._edge_state[("a", "b")]
+    waves_seen.append(edge_state.waves)
+    assert len(edge_state.waves) <= 1, (
+        f"depth=1 reservoir must hold at most one wave; got {len(edge_state.waves)} waves"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reservoir_depth_3_holds_last_three_waves() -> None:
+    """A reservoir with depth=3 holds the last 3 waves; older are displaced."""
+    from incorporator.observability.tideweaver import HardLock, Reservoir
+
+    tick_count = {"a": 0}
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            tick_count["a"] += 1
+            inst = _A(inc_code=f"a-{tick_count['a']}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=10.0)  # never fires; just hosts the inbound edge
+    deep_flow = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=3))
+    ws = Watershed(
+        window=_short_window(0.4),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=deep_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    await _collect_tides(tw)
+
+    edge_state = tw._edge_state[("a", "b")]
+    assert len(edge_state.waves) == 3, (
+        f"depth=3 reservoir must hold 3 waves after many upstream ticks; got {len(edge_state.waves)}"
+    )
+    # The displaced overflow count = total a-ticks - 3.
+    assert edge_state.overflow_count == max(0, tick_count["a"] - 3), (
+        f"overflow_count must reflect displaced waves; got {edge_state.overflow_count} "
+        f"vs (ticks={tick_count['a']} - depth=3)"
+    )
+    # Clean up class-level snapshot to avoid leaking into other tests.
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_reservoir_per_edge_isolation() -> None:
+    """Two outgoing edges from the same upstream have independent reservoirs."""
+    from incorporator.observability.tideweaver import HardLock, Reservoir
+
+    strong_refs: List[_A] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "src":
+            inst = _A(inc_code=f"src-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    src = _stream("src", interval=0.05)
+    sink_a = _stream("sink_a", interval=10.0)
+    sink_b = _stream("sink_b", interval=10.0)
+    flow_depth_2 = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=2))
+    flow_depth_5 = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=5))
+    ws = Watershed(
+        window=_short_window(0.3),
+        currents=[src, sink_a, sink_b],
+        edges=[
+            Edge(from_name="src", to_name="sink_a", flow=flow_depth_2),
+            Edge(from_name="src", to_name="sink_b", flow=flow_depth_5),
+        ],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    await _collect_tides(tw)
+
+    state_a = tw._edge_state[("src", "sink_a")]
+    state_b = tw._edge_state[("src", "sink_b")]
+    assert len(state_a.waves) <= 2, "sink_a reservoir bounded at depth=2"
+    assert len(state_b.waves) <= 5, "sink_b reservoir bounded at depth=5"
+    # Independent state: sink_b holds at least as many waves as sink_a.
+    assert len(state_b.waves) >= len(state_a.waves), (
+        "deeper reservoir should hold >= waves than shallower one"
+    )
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
 @pytest.mark.asyncio
 async def test_graceful_drain() -> None:
     """An in-flight tick at window-end finishes inside drain_timeout."""
