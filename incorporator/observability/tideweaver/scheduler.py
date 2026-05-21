@@ -648,32 +648,43 @@ class Tideweaver:
             )
         outflow_fn, outflow_module = load_outflow_module(outflow_path)
 
-        # Snapshot upstream Currents' Incorporator class registries.
-        # Walks the *transitive* upstream closure so a Fjord flush in a
-        # diamond/chain sees state from every source that feeds it, not just
-        # its direct edges.  This matches user intuition: "give my outflow
-        # everything upstream" instead of "give me what my immediate parents
-        # processed."
-        upstream_names = self._transitive_upstreams(current.name)
-        deps = [self._currents_by_name[up_name] for up_name in upstream_names]
+        # Snapshot upstream Currents' Incorporator class registries.  Two
+        # distinct resolution paths, split for clarity:
+        #
+        # 1. Direct upstreams (those that share an edge with this Fjord) —
+        #    read the per-edge reservoir's latest wave so depth>1 buffering
+        #    and replay land cleanly.  Fall through to the class snapshot
+        #    when the reservoir is empty (dependent fires before upstream
+        #    has emitted).
+        # 2. Transitive upstreams (further up the closure with no direct
+        #    edge) — there's no edge-state to consult, so go straight to
+        #    the class snapshot or live inc_dict.
+        #
+        # ``last_consumed_at`` is bumped by ``_tick_wrapper.finally``, not
+        # here — keeps the Penstock accounting in one place.
         state: Dict[str, List[Any]] = {}
-        for dep in deps:
-            # Direct upstream — prefer the edge's reservoir (the latest wave
-            # held there) so depth>1 buffering and replay land cleanly.
-            # Transitive upstream — no direct edge, fall back to the class
-            # snapshot.  When the reservoir is empty (e.g. dependent fires
-            # before upstream has emitted), fall back to the class snapshot.
-            # ``last_consumed_at`` is bumped by ``_tick_wrapper.finally``,
-            # not here — keeps the Penstock accounting in one place.
-            edge_state = self._edge_state.get((dep.name, current.name))
+        direct_upstreams = {up_name for up_name, _flow in self._upstream[current.name]}
+        all_upstreams = self._transitive_upstreams(current.name)
+
+        # Direct: edge reservoir → class snapshot → inc_dict fallback.
+        for up_name in all_upstreams:
+            if up_name not in direct_upstreams:
+                continue
+            dep = self._currents_by_name[up_name]
+            edge_state = self._edge_state.get((up_name, current.name))
             if edge_state is not None and edge_state.waves:
                 state[dep.cls.__name__] = list(edge_state.waves[-1])
                 continue
             snapshot = getattr(dep.cls, "_tideweaver_snapshot", None)
-            if snapshot is not None:
-                state[dep.cls.__name__] = list(snapshot)
-            else:
-                state[dep.cls.__name__] = list(dep.cls.inc_dict.values())
+            state[dep.cls.__name__] = list(snapshot) if snapshot is not None else list(dep.cls.inc_dict.values())
+
+        # Transitive (non-direct) upstreams — class snapshot only.
+        for up_name in all_upstreams:
+            if up_name in direct_upstreams:
+                continue
+            dep = self._currents_by_name[up_name]
+            snapshot = getattr(dep.cls, "_tideweaver_snapshot", None)
+            state[dep.cls.__name__] = list(snapshot) if snapshot is not None else list(dep.cls.inc_dict.values())
 
         async for derived_name, _count, err in flush(
             outflow_fn,

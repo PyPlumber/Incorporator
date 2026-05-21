@@ -32,6 +32,33 @@ class FormatType(str, Enum):
     ORC = "orc"
     HTML = "html"
 
+    @property
+    def is_append_safe(self) -> bool:
+        """``True`` for formats whose write handler accepts ``if_exists="append"``.
+
+        Single source of truth for the "can this format accumulate chunks
+        without rewriting the file" question.  Chunked-streaming /
+        stateful-polling / fjord engines all consult this property to
+        decide whether to inject append semantics on subsequent ticks
+        or fall back to ``"replace"`` so monolithic formats stay
+        readable.
+
+        Append-friendly: NDJSON, CSV, TSV, PSV, SQLite, Avro.
+        Monolithic:      JSON, XML, SQLITE-bulk, XLSX, Parquet,
+                         Feather, ORC, HTML.
+        """
+        return self in _APPEND_FRIENDLY
+
+
+_APPEND_FRIENDLY: Set["FormatType"] = {
+    FormatType.NDJSON,
+    FormatType.CSV,
+    FormatType.TSV,
+    FormatType.PSV,
+    FormatType.SQLITE,
+    FormatType.AVRO,
+}
+
 
 # ── (FormatType, format-type-string) → Python type ──────────────────────
 FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {

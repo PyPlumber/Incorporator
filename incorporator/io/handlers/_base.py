@@ -94,11 +94,10 @@ def atomic_write_path(target: Union[str, Path]) -> Iterator[Path]:
         os.replace(tmp_path, target_path)
 
 
-# Formats whose write handlers accept ``if_exists="append"``.  The pipeline
-# engines consult this set to decide whether to inject append semantics on
-# subsequent chunks/ticks or to fall back to "replace" so monolithic formats
-# stay readable (the alternative would crash mid-pipeline or silently lose
-# pre-tick data).  Source of truth for the append-fallback contract.
+# Backward-compat module-level set + helper — preferred surface is
+# :attr:`FormatType.is_append_safe`, the property co-located with the
+# enum.  Both views share the same membership set so existing callers
+# don't break.
 APPEND_FRIENDLY_FORMATS: set[FormatType] = {
     FormatType.NDJSON,
     FormatType.CSV,
@@ -112,13 +111,10 @@ APPEND_FRIENDLY_FORMATS: set[FormatType] = {
 def supports_append(format_type: FormatType) -> bool:
     """Return True when the format's write handler supports ``if_exists="append"``.
 
-    Used by the chunked / stateful / fjord engines to decide whether to
-    request append on subsequent chunks (accumulate output) or to fall back
-    to ``"replace"`` so each chunk overwrites the file with the latest
-    snapshot — the only sensible behaviour for monolithic formats like
-    Parquet / Excel / XML / JSON under a streaming daemon.
+    Backward-compat wrapper over :attr:`FormatType.is_append_safe`.  Prefer
+    the property on new code.
     """
-    return format_type in APPEND_FRIENDLY_FORMATS
+    return format_type.is_append_safe
 
 
 # Spreadsheet-aware CSV/XLSX formula-injection prefixes.  When a string cell

@@ -712,18 +712,13 @@ class FlowControl(BaseModel):
 GateMode = Literal["hard", "soft", "weir"]
 
 
-_GATE_BY_MODE: Dict[str, Type[Gate]] = {
-    "hard": HardLock,
-    "soft": SoftPass,
-    "weir": Weir,
-}
-
-
 def flow_from_mode(mode: GateMode) -> FlowControl:
     """Build a :class:`FlowControl` for ``"hard"``, ``"soft"``, or ``"weir"``.
 
     ``"hard"`` attaches a default :class:`SurgeBarrier` (threshold 2.0,
-    action ``"skip"``); the others leave ``surge_barrier=None``.
+    action ``"skip"``); the others leave ``surge_barrier=None``.  Branches
+    rather than dict-dispatches because the ``"hard"`` mode bundles a
+    SurgeBarrier that the other two modes don't ship.
     """
     if mode == "hard":
         return FlowControl(gate=HardLock(), surge_barrier=SurgeBarrier())
@@ -731,7 +726,7 @@ def flow_from_mode(mode: GateMode) -> FlowControl:
         return FlowControl(gate=SoftPass())
     if mode == "weir":
         return FlowControl(gate=Weir())
-    raise ValueError(f"unknown GateMode: {mode!r} (expected one of {sorted(_GATE_BY_MODE)})")
+    raise ValueError(f"unknown GateMode: {mode!r} (expected one of ['hard', 'soft', 'weir'])")
 
 
 __all__ = [

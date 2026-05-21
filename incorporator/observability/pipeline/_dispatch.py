@@ -18,7 +18,6 @@ from typing import Any, Optional, Union
 
 from ...exceptions import IncorporatorFormatError
 from ...io.formats import infer_format
-from ...io.handlers._base import supports_append
 
 __all__ = ["assert_engine_supported"]
 
@@ -71,7 +70,7 @@ def assert_engine_supported(
         # error with the format-specific message.
         return
 
-    if supports_append(fmt):
+    if fmt.is_append_safe:
         return
 
     raise IncorporatorFormatError(
