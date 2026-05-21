@@ -563,7 +563,7 @@ Both accept the same observability flags as `stream` / `fjord`:
   "shape": "diamond",
   "outflow": "race_outflow.py",
   "drain_timeout": 30,
-  "dependency_mode": "hard",
+  "gate_mode": "hard",
   "head":   {"name": "laps",  "class": "LapData",     "verb": "stream", "interval": 30, "incorp_params": {"inc_url": "..."}},
   "middle": [
     {"name": "pits",  "class": "PitStops",   "verb": "stream", "interval": 30, "incorp_params": {"inc_url": "..."}},
@@ -579,6 +579,64 @@ Five `shape` values are supported, each driving a different edge layout:
 list for mixed-mode topologies).  See [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md)
 for the full walk-through plus the Python-API equivalents.
 
+> **Legacy alias.** The JSON loader accepts `"dependency_mode"` as a
+> one-release alias for `"gate_mode"` at the top level (chain / diamond /
+> fanout shapes), and `"mode"` as an alias for `"gate_mode"` on per-edge
+> entries.  New configs should use the canonical names; the aliases will
+> be removed in a future minor release.
+
+### Per-edge flow control
+
+Beyond `gate_mode`, watershed.json supports the full per-edge **canal
+toolkit** — five orthogonal primitives composable into a `FlowControl`:
+gating, surge override, rate limiting, wave buffering, and overflow
+handling.  Use the shape-level `"flow": {...}` to share one FlowControl
+across every shape-built edge, or the explicit `"edges"` list with a
+per-edge `"flow"` for mixed topologies:
+
+```json
+{
+  "shape": "custom",
+  "currents": [
+    {"name": "upstream",   "class": "Quote",  "verb": "stream", "interval": 1,  "incorp_params": {"inc_url": "..."}},
+    {"name": "downstream", "class": "Spread", "verb": "fjord",  "interval": 5,
+     "export_params": {"file_path": "data/spread.ndjson", "format": "ndjson"}}
+  ],
+  "edges": [
+    {
+      "from": "upstream",
+      "to":   "downstream",
+      "flow": {
+        "gate":          {"type": "hard"},
+        "surge_barrier": {"threshold_multiple": 3.0, "action": "bypass"},
+        "penstock":      {"type": "burst", "rate_per_sec": 5.0, "burst": 10},
+        "reservoir":     {"depth": 8},
+        "spillway":      {"type": "export_to_archive", "archive_cls": "audit:AuditArchive"}
+      }
+    }
+  ]
+}
+```
+
+| Primitive | JSON type tags | What it does |
+| :--- | :--- | :--- |
+| **`gate`** | `"hard"` / `"soft"` / `"weir"` | Pass/hold decision per upstream. `hard` blocks until a fresh upstream wave; `soft` fires on own cadence; `weir` gates on freshness without skip-ahead. |
+| **`surge_barrier`** | (single shape — `threshold_multiple` + `action`) | When upstream's tick runs long (>= `threshold_multiple × upstream.interval`), fire `action`: `"skip"` / `"halt"` / `"bypass"`. `bypass` ignores this edge's gate AND penstock for that pass. |
+| **`penstock`** | `"sustained"` / `"burst"` / `"window"` / `"backpressure"` / `"signal"` | Edge-level rate limit. `sustained` flat rate; `burst` token bucket; `window` sliding-window cap; `backpressure` interpolates `max_rate → min_rate` as the reservoir fills; `signal` calls a user `rate_fn` callable. Returns skip reason `"penstock_limited"`. |
+| **`reservoir`** | (single shape — `depth: 1..1024`) | Per-edge FIFO buffer of recent waves. Default `depth: 1` keeps just the latest. |
+| **`spillway`** | `"drop_oldest"` / `"raise_overflow"` / `"export_to_archive"` | Fires when a wave is displaced from a full reservoir. `drop_oldest` is silent; `raise_overflow` logs a WARNING; `export_to_archive` extends `archive_cls._spillway_backlog` (strong refs). |
+
+**Sidecar string resolution:** `SignalPenstock.rate_fn` accepts either a
+bare name (`"peak_rate"`, looked up on the watershed-level `outflow.py`)
+or a `module:attr` form (`"mymodule.signals:peak_rate"`).  Same for
+`ExportToArchive.archive_cls` — `"AuditArchive"` (sidecar) or
+`"audit:AuditArchive"` (module path).  Missing names raise at load time.
+
+**The top-level `gate_mode` is shorthand** for `"flow": {"gate": {"type": "<mode>"}}` —
+plus an implicit `SurgeBarrier(threshold_multiple=2.0, action="skip")`
+when `gate_mode="hard"`.  Pass `"flow": {...}` explicitly to opt out of
+the implicit surge barrier on `"hard"`.
+
 ### Operation tags
 
 | Operation tag | Emitted by |
@@ -588,9 +646,10 @@ for the full walk-through plus the Python-API equivalents.
 | `outflow:<DerivedName>` | Each fjord-flush export (same prefix as the standalone fjord engine) |
 
 The Tide record captures which currents `fired` this pass and which
-`skipped` (with reasons: `not_due`, `awaiting_upstream`, `skip_ahead`,
-`still_running`).  Use it for cadence audits without parsing per-current
-Waves.
+`skipped` (with reasons: `not_due`, `awaiting_upstream`, `still_running`,
+`skip_ahead` / `surge_halted` (`SurgeBarrier`), `penstock_limited`
+(`Penstock`), `phase_offset` (`Current.phase_offset_sec`)).  Use it for
+cadence audits without parsing per-current Waves.
 
 For the full method-level signature of `fjord()`, see the pdoc-built
 [Library reference](./library_reference.md).

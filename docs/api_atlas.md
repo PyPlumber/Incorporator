@@ -414,14 +414,22 @@ class Tideweaver:
 
 class Watershed(BaseModel):
     @classmethod
-    def chain(cls, *, window, currents, dependency_mode="hard", **kwargs) -> "Watershed": ...
+    def chain(cls, *, window, currents, gate_mode=None, flow=None, **kwargs) -> "Watershed": ...
     @classmethod
-    def diamond(cls, *, window, head, middle, tail, dependency_mode="hard", **kwargs) -> "Watershed": ...
+    def diamond(cls, *, window, head, middle, tail, gate_mode=None, flow=None, **kwargs) -> "Watershed": ...
     @classmethod
-    def fanout(cls, *, window, source, sinks, dependency_mode="hard", **kwargs) -> "Watershed": ...
+    def fanout(cls, *, window, source, sinks, gate_mode=None, flow=None, **kwargs) -> "Watershed": ...
     @classmethod
     def parallel(cls, *, window, currents, **kwargs) -> "Watershed": ...
 ```
+
+`gate_mode=` is the shorthand (one of `"hard"` / `"soft"` / `"weir"`, default
+`"hard"`).  `flow=` is the full-dict form: a :class:`FlowControl` composing
+gate + surge_barrier + penstock + reservoir + spillway.  They are mutually
+exclusive — pass one, neither (defaults to `gate_mode="hard"`), but not both.
+`Edge(gate_mode=..., flow=...)` follows the same mutex rule for custom
+explicit-edge graphs.  See [Canal toolkit primitives](#canal-toolkit-primitives)
+below for the full per-edge FlowControl surface.
 
 **What it does (pseudocode)**
 1. Construct a `Watershed` via one of the four shape constructors (`chain` / `diamond` / `fanout` / `parallel`) — or the bare `Watershed(...)` for custom mixed-mode edges.
@@ -437,9 +445,10 @@ The windowed orchestration verb — when one source's `stream()` isn't enough, w
 **Common kwargs**
 - `window=(start, end)` — inclusive start, exclusive end; the run exits at `end`.
 - `currents=[...]` — list of `Stream` / `Fjord` / `Export` (or bare `Current` for tests).
-- `edges=[...]` — explicit edges with `mode="hard"` (gate on data) or `"soft"` (sequence only).
+- `edges=[...]` — explicit edges; each `Edge(from_name=..., to_name=..., gate_mode="hard"/"soft"/"weir")` shorthand or `flow=FlowControl(...)` full-dict form.
 - `inflow=` / `outflow=` — graph-level sidecar defaults; per-current values win.
-- `dependency_mode` (shape constructors) — `"hard"` (default) or `"soft"`.
+- `gate_mode` (shape constructors) — `"hard"` (default), `"soft"`, or `"weir"`. Mutually exclusive with `flow=`.
+- `flow` (shape constructors) — full `FlowControl(...)` shared across every edge produced by the shape. Mutually exclusive with `gate_mode=`.
 - `drain_timeout` — seconds the scheduler waits for in-flight ticks at window close.
 - `pass_interval` (`Tideweaver`) — override the auto-derived scheduler tick.
 
@@ -449,6 +458,104 @@ The windowed orchestration verb — when one source's `stream()` isn't enough, w
 **See also**
 [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) ·
 [Appendix — NASCAR Tideweaver](../examples/appendix/nascar-tideweaver/README.md) ·
+[Library Reference](./library_reference.md)
+
+---
+
+### Canal toolkit primitives
+
+Per-edge flow control.  Every `Edge` carries a `FlowControl` composing
+five orthogonal primitives — each is a Pydantic strategy hierarchy and
+serialises into `watershed.json` via discriminated unions.
+
+**Signatures**
+```python
+class FlowControl(BaseModel):
+    gate: Gate                                    # default HardLock()
+    surge_barrier: Optional[SurgeBarrier] = None
+    penstock: Optional[Penstock] = None
+    reservoir: Reservoir                          # default Reservoir(depth=1)
+    spillway: Spillway                            # default DropOldest()
+
+
+# Gate — pass / hold decision per upstream
+class HardLock(Gate): ...    # block until a fresh upstream wave arrived
+class SoftPass(Gate): ...    # fire on own cadence regardless of upstream
+class Weir(Gate): ...        # gate on wave freshness, no skip-ahead
+
+# SurgeBarrier — conditional override when upstream runs long
+class SurgeBarrier(BaseModel):
+    threshold_multiple: float = 2.0
+    action: Literal["skip", "halt", "bypass"] = "skip"
+
+# Penstock — edge-level rate limit
+class SustainedPenstock(Penstock):    # rate_per_sec: float
+class BurstPenstock(Penstock):        # rate_per_sec: float, burst: int
+class WindowPenstock(Penstock):       # window_sec: float, cap: int
+class BackpressurePenstock(Penstock): # min_rate < max_rate, scales with reservoir
+class SignalPenstock(Penstock):       # rate_fn(scheduler, edge_state, now) -> float
+
+# Reservoir — per-edge FIFO buffer of recent waves
+class Reservoir(BaseModel):
+    depth: int = 1   # 1..1024
+
+# Spillway — overflow handler when reservoir is full
+class DropOldest(Spillway): ...                       # silent default
+class RaiseOverflow(Spillway): ...                    # WARNING log per displacement
+class ExportToArchive(Spillway):                       # strong-ref backlog list
+    archive_cls: Type[Incorporator]
+```
+
+**What each does (pseudocode)**
+- **`Gate`** — `HardLock` blocks until upstream has a wave newer than the dependent's last consumption; `SoftPass` ignores upstream entirely (sequence-only); `Weir` gates on freshness without triggering surge logic — fire-on-own-cadence once upstream emitted at least one wave.
+- **`SurgeBarrier`** — when an upstream's currently-running tick exceeds `threshold_multiple × upstream.interval`, fires `action`: `"skip"` (skip this dependent pass), `"halt"` (skip until upstream finishes), `"bypass"` (fire ignoring this edge's gate AND penstock).
+- **`Penstock`** — per-edge rate-limit strategy.  `SustainedPenstock` is a flat rate (1/rate_per_sec min gap); `BurstPenstock` token bucket with burst capacity; `WindowPenstock` sliding-window cap; `BackpressurePenstock` interpolates `max_rate → min_rate` as the reservoir fills; `SignalPenstock` calls a user callable for the live rate.
+- **`Reservoir`** — buffers the last N wave-snapshots on each edge.  Default `depth=1` keeps the most recent.  Read by `BackpressurePenstock` for fullness; surfaced to user code via `edge_state.waves`.
+- **`Spillway`** — fires when a wave is displaced from a full reservoir.  `DropOldest` silently evicts; `RaiseOverflow` emits a WARNING log; `ExportToArchive` extends `archive_cls._spillway_backlog` (strong-ref) with the displaced instances.
+
+**Worked example**
+```python
+from incorporator.observability.tideweaver import (
+    Edge, FlowControl, Watershed,
+    HardLock, SurgeBarrier, BurstPenstock, Reservoir, ExportToArchive,
+)
+
+flow = FlowControl(
+    gate=HardLock(),
+    surge_barrier=SurgeBarrier(threshold_multiple=3.0, action="bypass"),
+    penstock=BurstPenstock(rate_per_sec=5.0, burst=10),
+    reservoir=Reservoir(depth=8),
+    spillway=ExportToArchive(archive_cls=AuditArchive),
+)
+watershed = Watershed(
+    window=(start, end),
+    currents=[upstream, downstream],
+    edges=[Edge(from_name="upstream", to_name="downstream", flow=flow)],
+)
+```
+
+**JSON form** — every primitive uses a `type` discriminator tag:
+```json
+{
+  "flow": {
+    "gate":         {"type": "hard"},
+    "surge_barrier":{"threshold_multiple": 3.0, "action": "bypass"},
+    "penstock":     {"type": "burst", "rate_per_sec": 5.0, "burst": 10},
+    "reservoir":    {"depth": 8},
+    "spillway":     {"type": "export_to_archive", "archive_cls": "audit:AuditArchive"}
+  }
+}
+```
+
+**When to reach for it**
+- Lab default (no kwargs) — bare `Watershed.chain(currents=[...])` is `HardLock` + `Reservoir(depth=1)` + `DropOldest` + a default `SurgeBarrier(threshold_multiple=2.0, action="skip")`.  Good enough for most pipelines.
+- Production needs (slow downstream behind a fast upstream) — add a `Penstock` to throttle and a deeper `Reservoir` + an `ExportToArchive` `Spillway` to audit what didn't get processed.
+- Multi-source fusion where one feed can lag — `SurgeBarrier(action="bypass")` keeps the fjord ticking on the others.
+- Green-wave coordination — pair a deeper `Reservoir` with `BackpressurePenstock` to smooth consumption rate against upstream burstiness.
+
+**See also**
+[Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) ·
+[`docs/cli_and_configuration.md §9`](./cli_and_configuration.md) ·
 [Library Reference](./library_reference.md)
 
 ---

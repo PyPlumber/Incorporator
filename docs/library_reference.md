@@ -75,9 +75,16 @@ For a paste-ready lookup map of every public callable — signature, 3-7 step ps
   fjord / tideweaver` Typer subcommands
 - `incorporator.observability` — `LoggedIncorporator`, `Wave`,
   `LoggingMixin`, plus the pipeline engines
-- `incorporator.observability.tideweaver` — `Tideweaver`, `Watershed`,
-  `Current` / `Stream` / `Fjord` / `Export`, `Tide` — orchestration layer
-  over `stream()` and fjord-flush primitives (see [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md))
+- `incorporator.observability.tideweaver` — orchestration layer over
+  `stream()` and fjord-flush primitives. **Core five:** `Tideweaver`,
+  `Watershed`, `Current` (subclasses `Stream` / `Fjord` / `Export`),
+  `Tide`, `Wave`. **Canal toolkit** (per-edge `FlowControl`):
+  `Gate` (`HardLock` / `SoftPass` / `Weir`), `SurgeBarrier`, `Penstock`
+  (`SustainedPenstock` / `BurstPenstock` / `WindowPenstock` /
+  `BackpressurePenstock` / `SignalPenstock`), `Reservoir`, `Spillway`
+  (`DropOldest` / `RaiseOverflow` / `ExportToArchive`).
+  See [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md)
+  and the [API Atlas Canal toolkit section](./api_atlas.md#canal-toolkit-primitives).
 - `incorporator.io.formats` — `FormatType` enum + extension inference
   *(see the [Cross-Format Type Bridge](./formats_and_compression.md#-cross-format-type-bridge)
   for how every Python type round-trips through every supported format)*
