@@ -125,6 +125,43 @@ def test_setup_class_logger_max_threads_eviction(
     assert "EvictA" not in _ACTIVE_LISTENERS
 
 
+def test_safe_log_filename_default_uses_relative_logs_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``INCORPORATOR_LOG_DIR`` unset → logs land in ``./logs`` relative to CWD."""
+    from incorporator.observability.logger import _safe_log_filename
+
+    monkeypatch.delenv("INCORPORATOR_LOG_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    path = _safe_log_filename("MyClass", "error.log")
+    resolved = Path(path).resolve()
+    assert resolved.parent.name == "logs"
+    assert resolved.parent == (tmp_path / "logs").resolve()
+    assert resolved.parent.exists()
+
+
+def test_safe_log_filename_honours_env_var_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``INCORPORATOR_LOG_DIR`` set → logs land at that absolute path.
+
+    Senior-review pass-2 finding M-DOC2: containerised deployments
+    (ECS / CloudRun / K8s) need a way to redirect logs to a mounted
+    volume or stdout-collector path without changing the working dir.
+    """
+    from incorporator.observability.logger import _safe_log_filename
+
+    target = tmp_path / "container_logs"
+    monkeypatch.setenv("INCORPORATOR_LOG_DIR", str(target))
+
+    path = _safe_log_filename("MyClass", "error.log")
+    resolved = Path(path).resolve()
+    assert resolved.parent == target.resolve()
+    assert resolved.parent.exists()  # created lazily
+    assert resolved.name == "MyClass_error.log"
+
+
 def test_json_formatter_includes_exc_info() -> None:
     """JSONFormatter.format must include 'exc_info' when a record carries exception info."""
     formatter = JSONFormatter()

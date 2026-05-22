@@ -4,6 +4,7 @@ import asyncio
 import atexit
 import json
 import logging
+import os
 import queue
 import re
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
@@ -118,9 +119,21 @@ atexit.register(_cleanup_listeners)
 
 
 def _safe_log_filename(prefix: str, suffix: str) -> str:
-    """Sanitizes strings and routes all files to a dedicated 'logs/' directory."""
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+    """Sanitises class names and routes all log files to a dedicated logs directory.
+
+    Resolution order for the log directory:
+
+    1. ``INCORPORATOR_LOG_DIR`` environment variable — preferred for
+       container deployments (e.g. ``/var/log/incorporator``) and any
+       caller whose current working directory isn't a useful log target.
+    2. ``./logs`` relative to the process CWD — back-compat default for
+       local development.
+
+    The directory is created lazily on first call.
+    """
+    raw = os.environ.get("INCORPORATOR_LOG_DIR")
+    log_dir = Path(raw) if raw else Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     clean_prefix = re.sub(r"[^a-zA-Z0-9_-]", "_", prefix)
     return str(log_dir / f"{clean_prefix}_{suffix}")

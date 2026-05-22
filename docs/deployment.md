@@ -71,6 +71,55 @@ Three options, increasing isolation:
 since most teams keep environment-specific configs out of source
 control — copy yours into `config/` per environment.
 
+> ### Sandboxing `${file:...}` with `INCORPORATOR_SECRETS_ROOT`
+>
+> Without a sandbox, a hostile or typo'd `pipeline.json` containing
+> `${file:/etc/passwd}` would silently exfiltrate host files at
+> expansion time.  The framework's defence is the
+> `INCORPORATOR_SECRETS_ROOT` env-var — set it to an absolute
+> directory, and **any `${file:...}` reference resolving outside
+> that root is rejected** with a clear diagnostic before any file
+> is opened.
+>
+> The canonical `docker-compose.yml` sets it to `/run/secrets` to
+> match Docker Swarm / Kubernetes Secrets mount conventions:
+>
+> ```yaml
+> services:
+>   incorporator:
+>     environment:
+>       INCORPORATOR_SECRETS_ROOT: /run/secrets
+> ```
+>
+> For Kubernetes pods, set the same env-var via the Pod spec's
+> `env:` block.  When the var is unset (local dev), the framework
+> falls back to permissive behaviour — `${file:...}` can read any
+> readable host file.  **Always set the var in production.**
+
+### Log directory
+
+By default, `LoggedIncorporator` writes rotating JSON logs to
+`./logs/<ClassName>_{api,error,debug}.log` relative to the process
+CWD.  In a containerised environment the CWD is `/app` (set by the
+Dockerfile's `WORKDIR`), so logs land at `/app/logs/...` — and
+`docker-compose.yml` bind-mounts `./logs` there for host visibility.
+
+Override with `INCORPORATOR_LOG_DIR` when the default doesn't match
+your environment — e.g. ECS / CloudRun / Kubernetes patterns that
+expect logs under a specific path:
+
+```yaml
+services:
+  incorporator:
+    environment:
+      INCORPORATOR_LOG_DIR: /var/log/incorporator
+    volumes:
+      - /var/log/incorporator:/var/log/incorporator
+```
+
+The directory is created lazily on first log write.  When the env-var
+is unset, the default `./logs` behaviour is preserved.
+
 ### Healthcheck
 
 The Dockerfile and `docker-compose.yml` both declare a `HEALTHCHECK`
