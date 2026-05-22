@@ -1,0 +1,51 @@
+name: Publish Docker image to GHCR
+
+# Builds and pushes the Incorporator container image to GitHub Container
+# Registry on every tag matching `v*` (e.g. v1.2.0, v1.3.0).  Users can
+# then ``docker pull ghcr.io/pyplumber/incorporator:v1.2.0`` or
+# ``ghcr.io/pyplumber/incorporator:latest`` without building locally.
+#
+# The build runs in the same Dockerfile-validating CI as the per-PR
+# `docker` job (ci.yml) — this workflow exists only for the publish-on-tag
+# step so the CI matrix stays focused on regression catching.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/incorporator
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

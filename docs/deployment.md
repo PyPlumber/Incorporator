@@ -28,10 +28,18 @@ cp examples/cli-templates/stream-basic.json config/pipeline.json
 # 4. Validate before you ship.
 incorporator validate config/pipeline.json
 
-# 5. Build + run.
+# 5. Pull + run (or build locally — see below).
 docker compose up -d
 docker compose logs -f
 ```
+
+> **Image source.**  By default `docker-compose.yml` points at the
+> pre-built GHCR image (`ghcr.io/pyplumber/incorporator:latest`),
+> published from the `docker-publish.yml` workflow on every `v*`
+> tag.  Pin to a specific version for production
+> (`ghcr.io/pyplumber/incorporator:v1.2.0`).  To build locally
+> instead — useful for testing in-flight changes — comment out the
+> `image:` line and uncomment `build: .` in `docker-compose.yml`.
 
 Volumes mounted by `docker-compose.yml`:
 
