@@ -182,6 +182,28 @@ window runs, omit `restart` and the container stops when the window
 closes.  `--json-output` and `--heartbeat-file` work the same as
 they do for `stream` / `fjord`.
 
+> ### Coupling `drain_timeout` with `stop_grace_period`
+>
+> Docker / Compose / Kubernetes send SIGTERM to the container then
+> wait **`--stop-timeout` / `stop_grace_period`** before sending
+> SIGKILL.  The platform default is **10 seconds** — shorter than
+> Tideweaver's default `drain_timeout` of 30s.  Without matching
+> them, every `docker stop` truncates the drain and loses
+> in-flight ticks silently.
+>
+> Three knobs, in precedence order:
+>
+> 1. `incorporator tideweaver run --drain-timeout=N` — CLI flag.
+> 2. `INCORPORATOR_DRAIN_TIMEOUT=N` — env-var (preferred for
+>    containers; the canonical `docker-compose.yml` sets it).
+> 3. `drain_timeout: N` inside `watershed.json` — last-resort
+>    fallback.
+>
+> Pair whichever you pick with a matching `stop_grace_period: <N+5>s`
+> in your `docker-compose.yml` (or `terminationGracePeriodSeconds`
+> in your K8s Pod spec) — a few seconds of slack covers the drain
+> cleanup itself.
+
 See [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) for the watershed.json
 shape.
 

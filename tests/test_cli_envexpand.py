@@ -135,6 +135,33 @@ def test_secrets_root_unset_falls_back_to_permissive(
     assert out == {"x": "permissive-token"}
 
 
+def test_drain_timeout_resolver_precedence_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``incorporator.cli.tideweaver._resolve_drain_timeout`` honours CLI > env > JSON.
+
+    Senior-review pass-2 finding CC2 — the drain-timeout knob has three
+    sources of truth and the precedence MUST be (1) explicit ``--drain-timeout``
+    CLI flag, (2) ``INCORPORATOR_DRAIN_TIMEOUT`` env-var, (3) ``None`` (fall
+    through to watershed.json's value).
+    """
+    from incorporator.cli.tideweaver import _resolve_drain_timeout
+
+    # 1. CLI override wins over env-var.
+    monkeypatch.setenv("INCORPORATOR_DRAIN_TIMEOUT", "45")
+    assert _resolve_drain_timeout(60.0) == 60.0
+
+    # 2. Env-var consumed when CLI override is None.
+    monkeypatch.setenv("INCORPORATOR_DRAIN_TIMEOUT", "45")
+    assert _resolve_drain_timeout(None) == 45.0
+
+    # 3. Both absent → None (caller falls back to watershed.json).
+    monkeypatch.delenv("INCORPORATOR_DRAIN_TIMEOUT", raising=False)
+    assert _resolve_drain_timeout(None) is None
+
+    # 4. Malformed env-var → None + warning (don't crash the CLI).
+    monkeypatch.setenv("INCORPORATOR_DRAIN_TIMEOUT", "not-a-float")
+    assert _resolve_drain_timeout(None) is None
+
+
 def test_secrets_root_rejects_directory_traversal_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -27,11 +28,42 @@ from ..observability.tideweaver.config import build_watershed
 logger = logging.getLogger(__name__)
 
 
+def _resolve_drain_timeout(cli_override: Optional[float]) -> Optional[float]:
+    """Compose the drain-timeout from CLI flag → env-var → watershed.json fallback.
+
+    Precedence (highest first):
+      1. ``--drain-timeout`` CLI flag (if set).
+      2. ``INCORPORATOR_DRAIN_TIMEOUT`` env-var (container-friendly default).
+      3. ``None`` → use the watershed.json ``drain_timeout`` field (or its
+         Pydantic default of 30s).
+
+    The env-var is the canonical knob for Docker / Kubernetes deployments:
+    set it in ``docker-compose.yml``'s ``environment:`` block to a value
+    matching the orchestrator's ``stop_grace_period`` so SIGTERM-then-SIGKILL
+    cycles don't truncate in-flight drains.
+    """
+    if cli_override is not None:
+        return cli_override
+    env_val = os.environ.get("INCORPORATOR_DRAIN_TIMEOUT")
+    if env_val is None:
+        return None
+    try:
+        return float(env_val)
+    except ValueError:
+        logger.warning(
+            "INCORPORATOR_DRAIN_TIMEOUT=%r is not a valid float; ignoring and "
+            "falling back to watershed.json drain_timeout.",
+            env_val,
+        )
+        return None
+
+
 async def _run_tideweaver(
     config_path: Path,
     *,
     json_output: bool,
     heartbeat_file: Optional[Path],
+    drain_timeout_override: Optional[float] = None,
 ) -> None:
     """Async runner — pre-flight validate, build the Watershed, emit Tides."""
     # Lazy imports to avoid cli/__init__.py circular load when this module is
@@ -41,6 +73,9 @@ async def _run_tideweaver(
     raw_config = _load_pipeline_config(config_path)
     _run_validation(raw_config, config_path.parent.resolve(), type_override="tideweaver")
     watershed = build_watershed(raw_config, config_path.parent.resolve())
+    if drain_timeout_override is not None:
+        # Watershed is not frozen — direct assignment is the contract here.
+        watershed.drain_timeout = drain_timeout_override
     tw = Tideweaver(watershed)
     async for tide in tw.run():
         _emit_tide(tide, json_output=json_output)
@@ -91,6 +126,17 @@ def build_app() -> Any:
             "--heartbeat-file",
             help="Touch this path after every tide; pairs with Docker HEALTHCHECK.",
         ),
+        drain_timeout: Optional[float] = _typer.Option(  # noqa: B008
+            None,
+            "--drain-timeout",
+            help=(
+                "Override watershed.json drain_timeout (seconds) — how long the "
+                "scheduler waits for in-flight ticks to finish before exiting on "
+                "window close or SIGTERM.  Falls back to INCORPORATOR_DRAIN_TIMEOUT "
+                "env-var, then to the JSON value, then to 30s.  Set this to match "
+                "your container orchestrator's stop_grace_period."
+            ),
+        ),
     ) -> None:
         """Execute a Tideweaver watershed from a JSON configuration file."""
         if logs:
@@ -104,6 +150,7 @@ def build_app() -> Any:
                     config,
                     json_output=json_output,
                     heartbeat_file=heartbeat_file,
+                    drain_timeout_override=_resolve_drain_timeout(drain_timeout),
                 )
             )
         except KeyboardInterrupt:
