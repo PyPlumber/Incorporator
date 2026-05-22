@@ -236,6 +236,33 @@ def test_link_to_extractor_skips_on_garbage_fk() -> None:
     assert op("btc").inc_code == "BTC"
 
 
+def test_link_to_extractor_return_value_garbage_check() -> None:
+    """link_to extractor returning a garbage value short-circuits to None silently.
+
+    Symmetric output-side guard (senior-review M4): when a user-supplied
+    extractor returns garbage (e.g. ``str.strip`` on whitespace-only
+    input returning ``""``, or a custom extractor returning ``"n/a"``
+    when it can't compute a key), short-circuit to ``None`` before
+    the registry lookup.  The dict lookup wouldn't find anything either
+    way, but skipping it saves the str-coercion + four lookups AND
+    prevents a future warning-instrumented lookup from falsely
+    surfacing this as a "missed join" when it's actually a missing FK.
+    """
+    books = [SimpleNamespace(inc_code="BTC"), SimpleNamespace(inc_code="ETH")]
+    # Extractor that always returns empty string — a stand-in for a real
+    # extractor failing to compute a key from messy input.
+    op = link_to(books, extractor=lambda v: "")
+    assert op("btc") is None  # extractor returned "", short-circuit
+
+    # Extractor that returns "n/a" — common in real data cleaning fns.
+    op_na = link_to(books, extractor=lambda v: "n/a")
+    assert op_na("btc") is None
+
+    # Sanity: a real-value extractor still hits the registry.
+    op_ok = link_to(books, extractor=str.upper)
+    assert op_ok("btc").inc_code == "BTC"
+
+
 def test_link_to_list_filters_garbage_elements() -> None:
     """link_to_list filters garbage list elements before invoking the per-element linker."""
     books = [SimpleNamespace(inc_code="BTC"), SimpleNamespace(inc_code="ETH")]

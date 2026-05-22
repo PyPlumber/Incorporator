@@ -473,12 +473,22 @@ def _normalize_source_list(
       * Anything else → empty list (defers to the caller's source-required
         check at ``base.py:438`` for the diagnostic).
 
-    Internal: routes through :meth:`incorporator.io.source_ref.SourceRef.parse`
-    so the URL / file classification lives in one place.  The flat
-    ``List[str]`` return contract is preserved.
+    Internal: routes every kind through :class:`SourceRef` — URL / file /
+    kwargs via :meth:`SourceRef.parse`, payload-list via
+    :meth:`SourceRef.from_payload`.  The flat ``List[str]`` return
+    contract is preserved by :meth:`SourceRef.as_str` (URL / file kinds
+    return their string form; payload / kwargs / parent kinds return
+    ``""`` so the fetch dispatcher's per-source loop reads
+    ``payload_list[i]`` independently).
     """
     if source is None:
-        return [""] * len(payload_list) if payload_list else []
+        if not payload_list:
+            return []
+        # Payload-driven dispatch: every entry shares an empty source
+        # placeholder.  The SourceRef construction validates shape and
+        # gives future payload-aware diagnostics one place to hang.
+        payload_ref = SourceRef.from_payload(payload_list)
+        return [payload_ref.as_str()] * len(payload_list)
     items = source if isinstance(source, list) else [source]
     out: List[str] = []
     for item in items:

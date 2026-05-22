@@ -215,7 +215,15 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
         if is_garbage_value(val):
             return None
         key = extractor(val) if extractor is not None else val
-        if key is None:
+        # Symmetric output-side guard: when an extractor returns
+        # garbage (``None``, ``""``, ``"N/A"``, etc.), short-circuit
+        # to ``None`` instead of attempting the registry lookup.
+        # The dict lookup itself wouldn't find anything, but garbage
+        # keys would still cost the str-coercion + four lookups
+        # below — and a future warning-instrumented lookup would
+        # falsely surface this as a "missed join" when it's actually
+        # a missing FK.
+        if is_garbage_value(key):
             return None
 
         # O(1) Instant Lookup (Check Weak Registry first, then Fallback)
