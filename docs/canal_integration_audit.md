@@ -10,8 +10,8 @@ Tideweaver landed in v1.1.3; the per-edge canal toolkit (FlowControl + Gate / Su
 
 ## 1. Summary
 
-1. **Does Tideweaver use every canal function it can?** ✅ At the scheduler ↔ canal boundary, yes — every hook is called from the scheduler at exactly the right site (table in §3). At the verb ↔ canal boundary, **no** — two real gaps remain (§4): canal-layer skips don't surface as `RejectEntry` records, and `stream()` / `fjord()` don't adopt the `Reservoir` / `Spillway` model for their own wave history.
-2. **Have we intertwined the two systems as best as possible?** ⚠️ Mostly. The scheduler↔canal seam is tight (10/10 hook coverage, narrow contexts honored). The verb↔canal seam is the loose one: `RejectEntry` is HTTP-only (fetch.py:45-52), and the Reservoir/Spillway abstraction stops at the Tideweaver edge layer instead of extending down into the stream chunking and fjord daemons where it could also bound memory.
+1. **Does Tideweaver use every canal function it can?** ✅ At the scheduler ↔ canal boundary, yes — every hook is called from the scheduler at exactly the right site (table in §3). At the verb ↔ canal boundary, **no** — three real gaps remain (§4): canal-layer skips don't surface as `RejectEntry` records, `stream()` / `fjord()` don't adopt the `Reservoir` / `Spillway` model for their own wave history, and **paginators have no first-class Penstock awareness** (web throttles by injection accident, local paginators are completely unthrottled — added in §4.4 after user push-back on the F-6 framing).
+2. **Have we intertwined the two systems as best as possible?** ⚠️ Mostly. The scheduler↔canal seam is tight (10/10 hook coverage, narrow contexts honored). The verb↔canal seam is the loose one: `RejectEntry` is HTTP-only (fetch.py:45-52), the Reservoir/Spillway abstraction stops at the Tideweaver edge layer, and **paginators have no `penstock=` field on the base class** so local paginators iterate at disk speed and web paginators can't override host-level throttle per instance.
 3. **Are there top-down structural improvements?** Small ones. The import DAG is acyclic and five-layer stratified — no structural reshaping needed. Two opportunities: (a) `flow.py` (685 LOC, 18 classes) could split into four files for navigation; (b) `FlowObserver` hooks still take `scheduler: "Tideweaver"` as their first arg (flow.py:364-400) — the sole A1 narrow-context violation. Neither is urgent.
 4. **Are there base-Incorporator verb-level changes that improve scaling under large instance counts per wave?** Yes, three candidates ranked by expected impact (§6). The highest-impact one — `TypeAdapter(List[Cls]).validate_python(rows)` batch validation — needs a benchmark first because the existing comment at [factory.py:305-308](../incorporator/schema/factory.py) chose per-row `model_validate` for a documented Pydantic-schema-cache reason. The second highest — incremental snapshot maintenance — changes the strong-ref contract. The third is purely a doc warning around WeakValueDictionary churn ceilings.
 
@@ -106,6 +106,30 @@ The `Reservoir(depth=N)` / `Spillway` abstraction lives only at the Tideweaver e
 - `fjord()` daemon (outside Tideweaver) has no Penstock-style throttling of its flush cadence — it spins as fast as its own loop allows
 
 This is **probably correct as a design**: `stream()` is paginator-driven (the page size IS the bound), and the standalone `fjord()` daemon has an explicit `interval=` arg. But the architectural symmetry is missing — a user reading "Reservoir bounds wave history with spillway overflow" might expect to apply that pattern to a stream's chunk buffer and find no public API for it. Not urgent; flagged as a stub in §7.
+
+### 4.4 Gap 3 — Paginator ↔ Penstock seam (missed in the F-6 framing)
+
+The original §4.3 framing missed a sharper, related gap: **paginators have no first-class Penstock awareness.** Web paginators inherit throttling by accident of injection, not by design — and local paginators have no throttle at all.
+
+**Web paginators — throttled by accident.** The verb sets `paginator.fetch_func = bound_fetch` at [fetch.py:415](../incorporator/io/fetch.py); the paginator's `_fetch` helper at [pagination/base.py:68-71](../incorporator/io/pagination/base.py) calls it; `bound_fetch` routes through `execute_request` which awaits `rate_limiter.acquire()` at fetch.py:255-256. Throttling exists because the paginator happens to call the right function. There is no first-class API saying "this paginator obeys this penstock."
+
+**Local paginators — completely unthrottled.** `_LocalChunkedPaginator.paginate()` at [pagination/local.py:73-110](../incorporator/io/pagination/local.py) drives its loop via `chunk_data = await asyncio.to_thread(self._fetch_chunk)` followed immediately by `yield chunk_data`. There's no `execute_request` in this path, no `rate_limiter`, no `await penstock.acquire()`. SQLite/CSV/Avro iterate at disk speed.
+
+**No per-paginator API exists.** Grep of paginator `__init__` methods across [pagination/web.py:71-501](../incorporator/io/pagination/web.py) and [pagination/local.py](../incorporator/io/pagination/local.py): none accept `rate_per_sec` / `penstock` / `requests_per_second` kwargs. `register_host_penstock` keys on hostname only. There's no `URL_PATTERN_PENSTOCKS` or `PAGINATOR_PENSTOCKS` registry.
+
+**Higher-level dispatcher also gives no throttle.** The stream chunking dispatcher's between-chunk sleep at [pipeline/chunked.py:89](../incorporator/observability/pipeline/chunked.py) is `await asyncio.sleep(0)` — yields the event loop, not a real throttle. For web sources the per-page acquire compounds; for local sources nothing else throttles either.
+
+**Impact (three concrete scenarios):**
+
+| Scenario | Today | Closes with F-9 |
+|---|---|---|
+| Web paginator + `register_host_penstock("api.example.com", SustainedPenstock(2.0))` | ✅ Throttled (host-keyed, transitively) | ✅ Same path + per-paginator override available |
+| Web paginator wants per-instance cap distinct from host (e.g., "this scraper at 0.5 r/s, not host-level 5 r/s") | ❌ Not supported | ✅ `NextUrlPaginator(penstock=SustainedPenstock(0.5))` composes with host throttle |
+| `SQLitePaginator` on 10GB file, user wants "1 chunk/sec" | ❌ No API exists | ✅ `SQLitePaginator(..., penstock=SustainedPenstock(1.0))` |
+
+The clean extension point is already there: [penstock.py:148](../incorporator/io/penstock.py) exposes `async def acquire(state, lock)` on the bare `Penstock` (independent of `BoundPenstock`'s HTTP wrapper). Paginators can own their own `FlowState` + `asyncio.Lock` and call it directly. **Promoted to concrete plan F-9.**
+
+This is a distinct concept from F-6 (Reservoir in stream chunking — a memory-bound idea, not a rate-bound one). Both stay on the follow-up list.
 
 ---
 
@@ -248,6 +272,10 @@ The §5.2 A1 leak. Small breaking change (third-party subclasses, none in repo).
 ### F-8 (stub) — Split `flow.py` into four files
 
 The §5.3 navigation point. Pure refactor; semantics unchanged. Defer until the file grows past ~900 LOC.
+
+### F-9 (concrete plan written; **second-most urgent after F-1**) — Paginator-level Penstock integration
+
+The §4.4 gap. Add `penstock: Penstock = Field(default_factory=NullPenstock)` to the `AsyncPaginator` base class. Each `paginate()` method awaits `self.penstock.acquire(self._flow_state, self._lock)` immediately before yielding (local) or before `self._fetch(...)` (web). Composes additively with host-level penstock for web — both must permit before a page fires. Closes the local-paginator gap entirely (today: no throttle path); adds per-instance override for web (today: host-only). Extension point already exists at [penstock.py:148](../incorporator/io/penstock.py) — `Penstock.acquire(state, lock)` is independent of `BoundPenstock`. See `C:\Users\Eric\.claude\plans\paginator-penstock-integration.md` for the spawn plan.
 
 ---
 
