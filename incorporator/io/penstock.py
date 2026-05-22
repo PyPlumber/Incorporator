@@ -396,6 +396,18 @@ class SignalPenstock(Penstock):
 # ---------------------------------------------------------------------------
 
 
+def _try_make_lock() -> Optional[asyncio.Lock]:
+    # On Python 3.9, asyncio.Lock.__init__ eagerly calls get_event_loop(),
+    # which raises RuntimeError when called outside a running loop (e.g. in
+    # sync test collection).  3.10+ made this lazy so the call always succeeds.
+    # Returning None here lets acquire() construct the lock inside a coroutine
+    # where a running loop is guaranteed.
+    try:
+        return asyncio.Lock()
+    except RuntimeError:
+        return None
+
+
 @dataclass
 class BoundPenstock:
     """A :class:`Penstock` paired with its per-source state and lock.
@@ -417,11 +429,22 @@ class BoundPenstock:
 
     penstock: Penstock
     state: FlowState
-    lock: asyncio.Lock
+    lock: Optional[asyncio.Lock] = field(default_factory=_try_make_lock)
 
     async def acquire(self) -> None:
-        """Throttle one consumption — sleeps under the lock until permitted."""
-        await self.penstock.acquire(self.state, self.lock)
+        """Throttle one consumption — sleeps under the lock until permitted.
+
+        The lock is constructed lazily on first acquire so that
+        :func:`resolve_penstock` can run in a synchronous context on
+        Python 3.9, where ``asyncio.Lock()`` eagerly resolves the event
+        loop.  By the time ``acquire`` runs, we are inside a coroutine
+        and a running loop is guaranteed.
+        """
+        lock = self.lock
+        if lock is None:
+            lock = asyncio.Lock()
+            self.lock = lock
+        await self.penstock.acquire(self.state, lock)
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +566,7 @@ def resolve_penstock(
             host = urlparse(source).hostname or ""
             matched = _HOST_PENSTOCKS.get(host)
         penstock = matched if matched is not None else SustainedPenstock(rate_per_sec=DEFAULT_RPS)
-    return BoundPenstock(penstock=penstock, state=FlowState(), lock=asyncio.Lock())
+    return BoundPenstock(penstock=penstock, state=FlowState())
 
 
 def known_host_rates() -> Dict[str, float]:
