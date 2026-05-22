@@ -525,6 +525,16 @@ async def test_surge_barrier_bypass_forces_pass_under_extreme_upstream() -> None
     await _collect_tides(tw)
     # Under bypass, B fires multiple times during A's long in-flight.
     assert fires.count("b") >= 2, f"bypass must let B fire during A's slow tick; got {fires.count('b')}"
+    # Regression guard: bypass must NOT populate Tideweaver.rejects with
+    # skip-class entries.  ``action="bypass"`` ``continue``s past both
+    # the gate and the penstock blocks in ``_gate_reason``, so neither
+    # the SkipAhead nor the SurgeHalted reject-append paths fire.  If a
+    # future refactor moves the reject-append before the ``continue``,
+    # this assertion catches it.
+    bypass_class_rejects = [r for r in tw.rejects if r.error_kind in {"SkipAhead", "SurgeHalted"}]
+    assert not bypass_class_rejects, (
+        f"bypass path must not populate skip-class rejects; got {bypass_class_rejects}"
+    )
 
 
 @pytest.mark.asyncio
@@ -727,6 +737,42 @@ async def test_awaiting_upstream_does_not_populate_rejects() -> None:
         f"'awaiting_upstream' is a normal transient and must NOT populate "
         f"Tideweaver.rejects; got {tw.rejects}"
     )
+
+
+@pytest.mark.asyncio
+async def test_skip_ahead_populates_rejects() -> None:
+    """SurgeBarrier(action='skip') surfaces ``SkipAhead`` on Tideweaver.rejects.
+
+    Mirrors :func:`test_skip_ahead` (which asserts on the Tide telemetry)
+    but asserts on the structured DLQ instead.  Default ``gate_mode="hard"``
+    auto-attaches a :class:`SurgeBarrier` with ``action="skip"``; under a
+    long-running upstream this fires the SkipAhead reject-append at the
+    surge-skip branch of ``_gate_reason``.
+
+    Regression guard: a refactor that drops the reject-append at the
+    ``surge.action == "skip"`` branch (e.g. while reshuffling the bypass
+    plumbing) would not be caught by ``test_skip_ahead`` alone — that
+    test only checks the Tide stream, which is populated by the observer
+    hook *before* the reject-append.
+    """
+
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.6)  # >> threshold * b.interval = 2 * 0.1 = 0.2s
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.1)
+    ws = Watershed.chain(window=_short_window(0.7), currents=[a, b])
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
+    await _collect_tides(tw)
+
+    sa_rejects = [r for r in tw.rejects if r.error_kind == "SkipAhead"]
+    assert sa_rejects, f"expected at least one SkipAhead reject; got rejects={tw.rejects}"
+    sa = sa_rejects[0]
+    assert sa.source == "_B", f"source should be downstream class name; got {sa.source!r}"
+    assert "edge a→b" in sa.message, f"message should name the edge; got {sa.message!r}"
+    assert "skip-ahead" in sa.message
+    assert sa.wave_index is not None
 
 
 # ---------------------------------------------------------------------------
