@@ -70,3 +70,90 @@ def test_expand_env_preserves_non_string_leaves() -> None:
     """Numbers, bools, None pass through. Walker must not crash on them."""
     obj = {"int": 42, "float": 1.5, "bool": True, "none": None, "list": [1, 2, 3]}
     assert expand_env(obj) == obj
+
+
+# ---------------------------------------------------------------------------
+# Senior-review CC1: INCORPORATOR_SECRETS_ROOT sandbox.
+#
+# The sandbox is the framework's only path-traversal protection for
+# ``${file:...}`` references.  Without these regression tests, a future
+# refactor could silently break the protection and CI would pass.
+# ---------------------------------------------------------------------------
+
+
+def test_secrets_root_rejects_path_outside_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sandbox active + ``${file:...}`` points OUTSIDE root → ``EnvExpansionError``.
+
+    The check happens BEFORE any file open, so a hostile config that uses
+    ``${file:/etc/passwd}`` to exfiltrate a sensitive host file at startup
+    is rejected with a clear message rather than silently succeeding.
+    """
+    sandbox = tmp_path / "secrets"
+    sandbox.mkdir()
+    outside = tmp_path / "elsewhere" / "exfil.txt"
+    outside.parent.mkdir()
+    outside.write_text("would-be-stolen", encoding="utf-8")
+
+    monkeypatch.setenv("INCORPORATOR_SECRETS_ROOT", str(sandbox))
+
+    with pytest.raises(EnvExpansionError, match="outside the configured INCORPORATOR_SECRETS_ROOT"):
+        expand_env({"x": f"${{file:{outside}}}"})
+
+
+def test_secrets_root_accepts_path_inside_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sandbox active + ``${file:...}`` points INSIDE root → resolves normally."""
+    sandbox = tmp_path / "secrets"
+    sandbox.mkdir()
+    inside = sandbox / "api_key"
+    inside.write_text("legitimate-token\n", encoding="utf-8")
+
+    monkeypatch.setenv("INCORPORATOR_SECRETS_ROOT", str(sandbox))
+
+    out = expand_env({"headers": {"Authorization": f"Bearer ${{file:{inside}}}"}})
+    assert out == {"headers": {"Authorization": "Bearer legitimate-token"}}
+
+
+def test_secrets_root_unset_falls_back_to_permissive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sandbox env-var unset → no path-traversal check; any readable file works.
+
+    Preserves the legacy permissive behaviour for users who haven't opted in
+    to the sandbox.  The file still has to exist and be readable; the only
+    relaxation is that it doesn't have to resolve under any specific root.
+    """
+    monkeypatch.delenv("INCORPORATOR_SECRETS_ROOT", raising=False)
+
+    secret = tmp_path / "loose_secret"
+    secret.write_text("permissive-token\n", encoding="utf-8")
+
+    out = expand_env({"x": f"${{file:{secret}}}"})
+    assert out == {"x": "permissive-token"}
+
+
+def test_secrets_root_rejects_directory_traversal_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``../`` traversal from inside the sandbox to outside is rejected.
+
+    Uses an absolute path that contains traversal segments resolving to a
+    location OUTSIDE the sandbox.  Path.resolve() collapses ``..`` segments,
+    so the relative_to check correctly detects the escape regardless of
+    whether the attacker uses literal absolute paths or traversal tricks.
+    """
+    sandbox = tmp_path / "secrets"
+    sandbox.mkdir()
+    sibling = tmp_path / "outside.txt"
+    sibling.write_text("not-yours", encoding="utf-8")
+
+    monkeypatch.setenv("INCORPORATOR_SECRETS_ROOT", str(sandbox))
+
+    # Path constructed to look like it's "under" the sandbox but resolves out.
+    traversal = sandbox / ".." / "outside.txt"
+
+    with pytest.raises(EnvExpansionError, match="outside the configured INCORPORATOR_SECRETS_ROOT"):
+        expand_env({"x": f"${{file:{traversal}}}"})
