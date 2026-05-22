@@ -151,13 +151,6 @@ def _run_validation(config: Dict[str, Any], config_dir: Path, type_override: Opt
 # ---------------------------------------------------------------------------
 
 
-# Per-process counter of heartbeat-file failures, keyed on path.  The first
-# failure for any given path escalates to ERROR (loud enough to surface in
-# production log filters); subsequent failures stay at WARNING so a stuck
-# heartbeat doesn't flood the logs.
-_HEARTBEAT_FAILURE_COUNTS: Dict[str, int] = {}
-
-
 def _emit_wave(wave: Any, *, json_output: bool, heartbeat_file: Optional[Path]) -> None:
     """Per-wave side effects: print line + touch the heartbeat file."""
     if json_output:
@@ -177,19 +170,8 @@ def _emit_wave(wave: Any, *, json_output: bool, heartbeat_file: Optional[Path]) 
         try:
             heartbeat_file.touch()
         except OSError as exc:
-            # Heartbeat is best-effort, never fatal — but the FIRST failure
-            # for a given path is ERROR-level so prod log filters catch it.
-            # Subsequent failures stay at WARNING to avoid flooding logs.
-            key = str(heartbeat_file)
-            _HEARTBEAT_FAILURE_COUNTS[key] = _HEARTBEAT_FAILURE_COUNTS.get(key, 0) + 1
-            if _HEARTBEAT_FAILURE_COUNTS[key] == 1:
-                logger.error(
-                    "Could not update heartbeat file %s: %s. Healthcheck will report stalled until this is fixed.",
-                    heartbeat_file,
-                    exc,
-                )
-            else:
-                logger.warning("Heartbeat update still failing for %s: %s", heartbeat_file, exc)
+            # Logged once but never fatal — heartbeat is best-effort.
+            logger.warning("Could not update heartbeat file %s: %s", heartbeat_file, exc)
 
 
 # ---------------------------------------------------------------------------
