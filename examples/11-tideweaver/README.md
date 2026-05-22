@@ -320,10 +320,9 @@ function normalizes to a canonical key (e.g. `"BTC"`), then computes best bid / 
 ask across venues.
 
 > **Sidecar naming is project convention, not a framework rule.**  The three
-> fjord/Tideweaver tutorials each pick differently — T9 uses `outflow.py`
-> (matches the `incorporator init --type fjord` scaffold); T10 names it
-> after the dynamic output class (`crypto_spread.py` → `CryptoSpread`);
-> T11 (here) names it after the entry verb (`arb_outflow.py`).  All three
+> fjord/Tideweaver tutorials each pick differently — T9 and T10 both use
+> `outflow.py` (matches the `incorporator init --type fjord` scaffold);
+> T11 (here) names it after the entry verb (`arb_outflow.py`).  Both
 > are valid — pick whichever fits your deployment shape.
 >
 > **Output class is dynamic here.**  `outflow(state)` returns a list of

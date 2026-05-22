@@ -393,7 +393,7 @@ zero-schema philosophy as `incorp()`. The class name is derived from the
 `outflow` filename: **snake_case → PascalCase**.
 
 - `coin_market.py` → `CoinMarket`
-- `crypto_spread.py` → `CryptoSpread`
+- `arb_outflow.py` → `ArbOutflow`
 - `nascar_fantasy.py` → `NascarFantasy`
 
 ### Configuration File (`fjord.json`)

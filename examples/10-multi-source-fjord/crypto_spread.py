@@ -1,77 +1,94 @@
 """
-Outflow sidecar for `examples/10-multi-source-fjord/fjord.py`.
+Tutorial 10 — Multi-Source Fjord: Live Crypto Spread
+----------------------------------------------------
+Companion script for `examples/10-multi-source-fjord/README.md`.
 
-The fjord engine imports this file at runtime, registers the two source
-classes (CoinGecko + BinancePair), and calls `outflow(state)` on each
-export wave to fuse them into a single row stream: the basis-point
-spread between CoinGecko USD price and Binance USDT price for every
-overlapping symbol.
+`stream()` watches one source. `fjord()` watches N sources concurrently
+and lets you fuse them through a user-defined `outflow(state)` function.
 
-Dynamic output class is built from this file's stem —
-`crypto_spread.py` → `CryptoSpread`.
+This pipeline fuses two live feeds — CoinGecko USD prices and Binance
+USDT prices — and emits a basis-point spread row per overlapping
+symbol. Each source refreshes on its own cadence; the outflow daemon
+snapshots every source under a shared lock and calls `outflow()` in a
+worker thread so a heavy join can't block the refresh daemons.
+
+The dynamic output class is built from the outflow filename stem —
+`crypto_spread.py` → `CryptoSpread`. No output class to declare.
+
+Run with:
+    python examples/10-multi-source-fjord/fjord.py
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+import asyncio
+import sys
+from pathlib import Path
 
-from incorporator import Incorporator
+from incorporator import Incorporator, register_host_penstock
+from incorporator.io.penstock import SustainedPenstock
+
+# Pace api.coingecko.com at 0.2 req/sec (12/min) — under the free-tier
+# 5-15/min ceiling.  Binance has no per-host registry entry; the default
+# 15 req/sec applies.
+register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+
+HERE = Path(__file__).resolve().parent
+OUT = HERE / "out"
+OUT.mkdir(exist_ok=True)
+
+# Make the sidecar importable when this script is run via ``python -m`` /
+# pytest / any path other than ``python examples/10-multi-source-fjord/fjord.py``
+# (Python only adds the script's directory to sys.path automatically in the
+# bare-script case).
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+# Bring the source classes into scope so fjord() can register them.
+from crypto_spread import BinancePair, CoinGecko  # noqa: E402
 
 
-class CoinGecko(Incorporator):
-    """Source A — CoinGecko USD market prices (top N by market cap)."""
+async def main() -> None:
+    # Refresh + export daemons are ON by default — no need for boilerplate
+    # `refresh_params={}` on each source.  Pass `refresh_params=None` to
+    # opt OUT of refresh on a specific source.  Top-level intervals can be
+    # a scalar (applies to every source) OR a dict keyed by class name for
+    # different cadences per source.
+    async for wave in Incorporator.fjord(
+        stream_params=[
+            {
+                "cls": CoinGecko,
+                "incorp_params": {
+                    "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
+                    "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
+                    "inc_code": "id",
+                },
+            },
+            {
+                "cls": BinancePair,
+                "incorp_params": {
+                    # api.binance.com is geo-blocked in many regions (US, UK, Singapore).
+                    # api.binance.us is the US-licensed mirror with the same v3 endpoint
+                    # shape; swap back to api.binance.com if you're outside those regions.
+                    "inc_url": "https://api.binance.us/api/v3/ticker/price",
+                    "inc_code": "symbol",
+                },
+            },
+        ],
+        outflow=str(HERE / "crypto_spread.py"),
+        export_params={"file_path": str(OUT / "crypto_spread.ndjson")},
+        refresh_interval={                                  # per-source cadences
+            "CoinGecko": 60,                                # CoinGecko's free tier is rate-limited
+            "BinancePair": 30,                              # Binance is faster
+        },
+        export_interval=60.0,                               # fused output: every 60 s
+    ):
+        op = wave.operation                                 # e.g. "fjord_refresh:CoinGecko"
+        if wave.failed_sources:
+            # Surface the reason fjord might abort — empty seeds (geo-blocks,
+            # rate limits, transient outages) cause the engine to bail early.
+            print(f"⚠️  {op:40s} chunk {wave.chunk_index}: {wave.failed_sources}")
+        else:
+            print(f"✅ {op:40s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
 
 
-class BinancePair(Incorporator):
-    """Source B — Binance current USDT-quoted prices for every pair."""
-
-
-def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Join CoinGecko USD vs Binance USDT for overlapping symbols.
-
-    For each CoinGecko coin where a matching ``{SYMBOL}USDT`` pair
-    exists in Binance, emit a row containing the symbol, both prices,
-    and the basis-point spread.
-
-    ``state`` is a snapshot of each source by class name, taken under
-    the engine's shared lock. Return ``List[dict]``; fjord handles the
-    export.
-    """
-    coins = state["CoinGecko"] or []
-    pairs = state["BinancePair"]
-    if pairs is None:
-        return []
-
-    rows: List[Dict[str, Any]] = []
-    now = datetime.now(timezone.utc).isoformat()
-
-    for coin in coins:
-        symbol = getattr(coin, "symbol", "").upper()
-        if not symbol:
-            continue
-
-        binance_key = f"{symbol}USDT"
-        pair = pairs.inc_dict.get(binance_key)
-        if pair is None:
-            continue                                            # CoinGecko coin not traded on Binance
-
-        try:
-            gecko_usd = float(getattr(coin, "current_price", 0) or 0)
-            binance_usdt = float(getattr(pair, "price", 0) or 0)
-        except (TypeError, ValueError):
-            continue
-
-        if gecko_usd <= 0 or binance_usdt <= 0:
-            continue
-
-        # Basis points: 1 bp = 0.01%.  Positive = Binance higher than CoinGecko.
-        spread_bps = round(((binance_usdt - gecko_usd) / gecko_usd) * 10_000, 2)
-
-        rows.append({
-            "symbol": symbol,
-            "coingecko_usd": gecko_usd,
-            "binance_usdt": binance_usdt,
-            "spread_bps": spread_bps,
-            "fused_at": now,
-        })
-
-    return rows
+if __name__ == "__main__":
+    asyncio.run(main())

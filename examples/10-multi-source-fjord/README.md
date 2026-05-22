@@ -51,11 +51,11 @@ NDJSON tail. T11 generalises this same shape to N exchanges in a windowed graph.
 
 Notice: no output class is declared. `fjord()` builds it dynamically
 from the rows your `outflow()` returns, named after the code-file
-stem (`crypto_spread.py` → `CryptoSpread`).
+stem (`outflow.py` → `Outflow`).
 
 ---
 
-## Step 1: `crypto_spread.py` — The Outflow Sidecar
+## Step 1: `outflow.py` — The Outflow Sidecar
 
 `fjord()` needs Python code (class definitions + the join logic), so
 it lives in a sidecar file.
@@ -70,7 +70,7 @@ of dicts for the output class.
 > `outflow(state) -> dict[ClassName, list[dict]]`, the framework builds
 > one dynamic Pydantic class per dict key.  For single-output, it builds
 > one named after the outflow file's stem (PascalCase).  Declaring a
-> bare `class CryptoSpread(Incorporator): pass` would suppress field
+> bare `class Outflow(Incorporator): pass` would suppress field
 > inference and silently drop every row column.  T9 walks the
 > multi-output version of this contract; T10's single-output shape works
 > the same way under the hood.
@@ -82,7 +82,7 @@ of dicts for the output class.
 > spot it in logs the first time it fires.
 
 ```python
-# examples/10-multi-source-fjord/crypto_spread.py
+# examples/10-multi-source-fjord/outflow.py
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
@@ -150,7 +150,7 @@ import asyncio
 from incorporator import Incorporator
 
 # Bring the classes into scope so fjord() can register them.
-from crypto_spread import BinancePair, CoinGecko
+from outflow import BinancePair, CoinGecko
 
 
 async def main():
@@ -172,7 +172,7 @@ async def main():
                 },
             },
         ],
-        outflow="examples/10-multi-source-fjord/crypto_spread.py",
+        outflow="examples/10-multi-source-fjord/outflow.py",
         export_params={"file_path": "data/crypto_spread.ndjson"},
         refresh_interval={"CoinGecko": 60, "BinancePair": 30},   # per-source cadences
         export_interval=60.0,                                    # fused output every 60 s
@@ -248,8 +248,8 @@ if __name__ == "__main__":
    heavy CPU join doesn't block the refresh daemons.
 4. **Dynamic output class.** From the rows `outflow()` returns, the
    engine uses `infer_dynamic_schema()` to build a Pydantic class
-   named after the `crypto_spread.py` stem — `CryptoSpread`. The
-   instances auto-register in `CryptoSpread.inc_dict` for downstream
+   named after the `outflow.py` stem — `Outflow`. The
+   instances auto-register in `Outflow.inc_dict` for downstream
    `link_to(...)` use if you want to keep fused history in memory.
 5. **Export.** Same handler dispatch as `stream()` — file extension
    picks the format.  Use any append-friendly format: `.ndjson` (the
@@ -271,7 +271,7 @@ The same pipeline as a `pipeline.json`:
 
 ```json
 {
-  "outflow": "examples/10-multi-source-fjord/crypto_spread.py",
+  "outflow": "examples/10-multi-source-fjord/outflow.py",
   "stream_params": [
     {
       "cls_name": "CoinGecko",
