@@ -1,5 +1,5 @@
 """
-Outflow sidecar for `examples/10-multi-source-fjord/fjord.py`.
+Outflow sidecar for `examples/10-multi-source-fjord/crypto_spread.py`.
 
 The fjord engine imports this file at runtime, registers the two source
 classes (CoinGecko + BinancePair), and calls `outflow(state)` on each
@@ -8,7 +8,7 @@ spread between CoinGecko USD price and Binance USDT price for every
 overlapping symbol.
 
 Dynamic output class is built from this file's stem —
-`crypto_spread.py` → `CryptoSpread`.
+`outflow.py` → `Outflow`.
 """
 
 from datetime import datetime, timezone

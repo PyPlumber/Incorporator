@@ -13,10 +13,10 @@ snapshots every source under a shared lock and calls `outflow()` in a
 worker thread so a heavy join can't block the refresh daemons.
 
 The dynamic output class is built from the outflow filename stem —
-`crypto_spread.py` → `CryptoSpread`. No output class to declare.
+`outflow.py` → `Outflow`. No output class to declare.
 
 Run with:
-    python examples/10-multi-source-fjord/fjord.py
+    python examples/10-multi-source-fjord/crypto_spread.py
 """
 
 import asyncio
@@ -36,14 +36,14 @@ OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
 
 # Make the sidecar importable when this script is run via ``python -m`` /
-# pytest / any path other than ``python examples/10-multi-source-fjord/fjord.py``
+# pytest / any path other than ``python examples/10-multi-source-fjord/crypto_spread.py``
 # (Python only adds the script's directory to sys.path automatically in the
 # bare-script case).
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 # Bring the source classes into scope so fjord() can register them.
-from crypto_spread import BinancePair, CoinGecko  # noqa: E402
+from outflow import BinancePair, CoinGecko  # noqa: E402
 
 
 async def main() -> None:
@@ -73,7 +73,7 @@ async def main() -> None:
                 },
             },
         ],
-        outflow=str(HERE / "crypto_spread.py"),
+        outflow=str(HERE / "outflow.py"),
         export_params={"file_path": str(OUT / "crypto_spread.ndjson")},
         refresh_interval={                                  # per-source cadences
             "CoinGecko": 60,                                # CoinGecko's free tier is rate-limited
