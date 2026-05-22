@@ -94,6 +94,10 @@ async def parent_child_demo() -> None:
         name = (launch.name or "Unknown")[:32]
         print(f"{name:<32} {rocket_name:<14} {pad_name:<20} {region:<12} {success:>8}")
 
+    # Structured view (preferred): ``rockets.rejects`` / ``pads.rejects``
+    # carry per-source ``error_kind`` / ``retry_after`` / ``wave_index``
+    # (one ``RejectEntry`` per failed source) — see Tutorial 6's "Reading
+    # the structured reject list" section.
     if rockets.failed_sources or pads.failed_sources:
         print(f"\n⚠️  Failed: rockets={rockets.failed_sources}, pads={pads.failed_sources}")
 

@@ -28,12 +28,14 @@ The two are not competitors. Tideweaver fits inside a single Prefect task. Prefe
 | Multiple sources, independent intervals          | ✅ native            | ⚠️ N flows or N scheduled tasks |
 | In-process registries (`cls.inc_dict` reused)    | ✅ native            | ❌ workers don't share memory |
 | Bounded time window (e.g. a 4-hour NASCAR race)  | ✅ native            | ⚠️ requires external stop logic |
-| Cron-style daily / weekly scheduling             | ❌ (no cron)         | ✅ native                    |
+| Per-current fault isolation (`on_error`)         | ✅ native            | ⚠️ task-level retries        |
+| Graceful drain at window close                   | ✅ native            | ⚠️ requires custom hook      |
+| Cron-style daily / weekly scheduling             | ⚠️ wrap in cron/systemd | ✅ native                 |
 | Multi-machine fan-out                            | ❌ (single process)  | ✅ native                    |
 | UI / audit log / observability dashboard         | ❌ (log records only) | ✅ native                    |
 | Multi-team coordination across services          | ❌                   | ✅ native                    |
 
-A useful summary: **Tideweaver is what runs during a window. Prefect is what decides which window to run next.**
+A useful summary: **Tideweaver is what runs during a window. Prefect is what decides which window to run next.** Sub-minute cadence and in-process registries are the dividing line — at hour/day cadence with cross-machine fan-out, Prefect's overhead pays for itself.
 
 ---
 

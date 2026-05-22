@@ -31,6 +31,17 @@ machinery as one-shot `export()`.  The kwargs *are* the pipeline definition.
 > slow-cadence indicators, portfolio NAV snapshots, and time-series warehouses.
 > That's what `stream()` is built for.
 
+> **Vocabulary anchor for the daemon family.**  Three long-running shapes
+> share the same wave queue + LoggedIncorporator plumbing under the hood;
+> the curriculum names them consistently:
+> - **chunking-mode `stream()`** (Part 1 below) — paginated O(1) bulk drain.
+> - **stateful single-source shim** (`stream(stateful_polling=True)`, Part 2) —
+>   one source, live registry, compatibility path over fjord's engine.
+> - **multi-source stateful daemon** ([`fjord()`](../10-multi-source-fjord/README.md), T10) —
+>   N sources, fused `outflow(state)`, the canonical live-registry pattern.
+> - **fjord flush** (Tideweaver `Fjord` current, T11) — the per-tick flush
+>   variant of the daemon, scheduled inside a windowed graph.
+
 ---
 
 ## Part 1 — Chunking-mode bulk drain (the canonical use)
@@ -139,6 +150,10 @@ snapshot to disk on a cadence — say a Binance.us mark-to-market dashboard — 
 that routes through fjord's engine with an identity outflow.  The user-facing
 contract is unchanged: the same `incorp` / `refresh` / `export` waves with the same
 fields.
+
+> **For multi-source live registries, jump to [Tutorial 10](../10-multi-source-fjord/README.md).**
+> `fjord()` is the canonical multi-source stateful daemon; the shim below is
+> documented for single-source compatibility, not for net-new daemons.
 
 ```python
 import asyncio

@@ -123,10 +123,33 @@ Each section is actionable:
   through the same inspector module to suggest diagnostics (auth headers missing, wrong
   content type, etc.).
 
-> **Drill-down:** when the inspector finds nested list-of-dicts inside the top-level
-> record (common in wrapper-shaped APIs that return `{"data": [...]}` or
-> `{"results": {...}}`), it surfaces a copy-pasteable `rec_path='data'` /
-> `rec_path='results'` hint for re-running `test()` against that nested level.
+### Drill-down in practice
+
+When the inspector finds nested list-of-dicts inside the top-level
+record (common in wrapper-shaped APIs that return `{"data": [...]}` or
+`{"results": {...}}`), it prints a copy-pasteable `rec_path=` hint so
+the second `test()` run targets the right level.
+
+```text
+🔎 DRILL-DOWN HINT:
+   Nested list-of-dicts found under 'data' (3 sample records detected).
+   Re-run against that level to profile the inner shape:
+      await YourClass.test(inc_url=..., rec_path='data')
+```
+
+Re-run with the suggested `rec_path`:
+
+```python
+asyncio.run(Coin.test(
+    inc_url="https://api.example.com/v1/wrapped-coins",
+    rec_path="data",                                # ← from the drill-down hint
+))
+```
+
+The second pass profiles the unwrapped record shape — identity mapping,
+ETL hints, pagination, and heavy-field hints all run against the
+actual records instead of the wrapper.  Same `inc_url`; one extra
+kwarg.
 
 ---
 

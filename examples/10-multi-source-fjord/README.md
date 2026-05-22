@@ -31,6 +31,10 @@ NDJSON tail. T11 generalises this same shape to N exchanges in a windowed graph.
 > contract.  If you need bulk chunked drains across multiple sources,
 > reach for parallel `stream(stateful_polling=False, inc_page=...)` calls
 > or T11's Tideweaver currents instead.
+>
+> **`cls.fjord()` (here) is a long-running daemon.**  Tideweaver's `Fjord`
+> current (T11) is a per-tick *flush* that runs the same `outflow(state)`
+> contract on a window scheduler.  Same shape; different scheduling context.
 
 ---
 
@@ -70,6 +74,12 @@ of dicts for the output class.
 > inference and silently drop every row column.  T9 walks the
 > multi-output version of this contract; T10's single-output shape works
 > the same way under the hood.
+>
+> If you *do* pre-declare (e.g. to type the output for a downstream
+> consumer), the subclass must declare every field you intend to keep —
+> Pydantic V2's default `extra='ignore'` silently drops unknown fields.
+> The framework emits a one-time WARNING per bare-class trap so you'll
+> spot it in logs the first time it fires.
 
 ```python
 # examples/10-multi-source-fjord/crypto_spread.py
@@ -89,6 +99,10 @@ class BinancePair(Incorporator):
 
 def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Join CoinGecko USD vs Binance USDT for overlapping symbols."""
+    # Either source can be ``None`` if its initial seed returned no rows
+    # (geo-block, transient outage, etc.).  ``coins`` uses ``or []`` to
+    # iterate as empty; ``pairs`` short-circuits because we need its
+    # ``.inc_dict.get(...)`` later.
     coins = state["CoinGecko"] or []
     pairs = state["BinancePair"]
     if pairs is None:
@@ -188,6 +202,14 @@ if __name__ == "__main__":
 > geo-blocks (`api.binance.com` is blocked in the US — use
 > `api.binance.us`), rate-limit responses, and transient API outages
 > surface visibly.
+>
+> **`KeyError` on a missing peer?**  When `inflow(state)` raises
+> `KeyError` because a peer source hasn't seeded yet, the seed-error
+> formatter rewrites the wave's `failed_sources` to a copy-pasteable
+> diagnostic — `"inflow(state) for source 'Race' raised KeyError on
+> missing peer 'Track' — guard with state.get('Track') or add
+> depends_on=['Track'] to enforce ordering"`.  Either guard the access
+> defensively or declare the ordering on the dependent source's entry.
 
 > **Refresh is on by default.**  Every fjord source automatically
 > spawns a refresh daemon — you don't need `"refresh_params": {}`

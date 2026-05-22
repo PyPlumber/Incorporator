@@ -79,8 +79,12 @@ async def main() -> None:
     print(f"\n🎯 Targeted refresh of {len(my_pairs)} pairs.")
     print(f"   BTCUSDT current price: {Pair.inc_dict['BTCUSDT'].price}")
 
-    # Any failed sources surface on the result list for DLQ retry.
-    # (See docs/debugging.md for the LoggedIncorporator + get_error pattern.)
+    # Any failed sources surface on the result list for reject-retry workflows.
+    # Structured view (preferred): ``pairs.rejects`` carries per-source
+    # ``error_kind`` / ``retry_after`` (one ``RejectEntry`` per failure) —
+    # useful for production retry logic that honours HTTP ``Retry-After``
+    # headers.  (See docs/debugging.md for the LoggedIncorporator + get_error
+    # pattern.)
     if pairs.failed_sources:
         print(f"\n⚠️  Failed sources during initial load: {pairs.failed_sources}")
 

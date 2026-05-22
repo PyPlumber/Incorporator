@@ -233,7 +233,7 @@ class LeagueRoster(Incorporator):
     ``{series_id, driver_id}`` picks."""
 ```
 
-> ⚠️ **Do not pre-declare fields on these classes.**  The framework builds Pydantic schemas dynamically from the incoming JSON; if you stub `track_id: int = None` on `Track`, fjord stops inferring and you lose half your columns to silent drops.  The classes are deliberately bare.
+> ⚠️ **Do not pre-declare fields on these classes.**  The framework builds Pydantic schemas dynamically from the incoming JSON; if you stub `track_id: int = None` on `Track`, fjord stops inferring and you lose half your columns to silent drops.  The classes are deliberately bare.  The framework now emits a one-time WARNING per class when it spots this bare-class trap firing on a pre-declared subclass — watch the logs the first time a new source seeds.
 
 ### 2b. Constants
 
@@ -302,6 +302,8 @@ def inflow(state: Dict[str, Any]) -> Dict[str, Any]:
 ```
 
 Returning `{}` for a source = "no overrides, use the `incorp_params` as-declared".  Returning `{"Race": {"conv_dict": …}}` = "when fjord goes to seed `Race`, merge this `conv_dict` into its `incorp_params`".  The `link_to(state["Track"])` call captures the **live** `Track` registry, so when `Race`'s rows incorporate, every `track_id` integer is swapped for the matching `Track` Pydantic instance.
+
+> **Skip the guard and you'll see it in `wave.failed_sources`.**  If `inflow(state)` raises `KeyError` on a missing peer, fjord's seed-error formatter rewrites the failed-sources entry to a copy-pasteable suggestion — `state.get('Track')` for soft access or `depends_on=['Track']` on the dependent source to enforce ordering.  See [Tutorial 10's seed-empty abort callout](../10-multi-source-fjord/README.md) for the canonical version.
 
 **Foreign-key resolution is one-time, not lazy.**  Once a Race row is incorporated, `race.track_id` is the `Track` instance itself — `race.track_id.inc_name`, `race.track_id.city`, `race.track_id.length` all work directly.  No re-lookup in the outflow.  (The runner does `name_chg=[("track_id", "track")]` purely for readability — the field arrives renamed to `track` in the Race instance.)
 

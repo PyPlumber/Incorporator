@@ -47,6 +47,51 @@ snapshot the upstream currents' registries, run the user-supplied `outflow(state
 build the dynamic output class, export.  It is *not* a call to `cls.fjord()` (which is
 a long-running daemon).
 
+> Three more names for advanced cases (covered in
+> [`docs/api_atlas.md`](../../docs/api_atlas.md)): `FlowObserver` for
+> declarative per-edge telemetry, `CustomCurrent` for tick logic outside
+> the verb taxonomy, and `architect()` for scaffolding a `Watershed`
+> from probe data (see the next section).
+
+---
+
+## Skip the boilerplate: `architect(output="plan")`
+
+When you already know the source URLs but not how to wire them together,
+`architect()` profiles them in parallel and emits a runnable `Watershed`
+scaffold.  Setting `output="plan"` returns an in-memory
+`OrchestrationPlan` you can pass straight into `.to_watershed()` —
+no `watershed.json` disk round-trip:
+
+```python
+from incorporator import Incorporator, Tideweaver
+
+# Probe N sources; architect picks intervals and shape from response signals.
+plan = await Incorporator.architect(
+    inc_url=[
+        "https://api.binance.us/api/v3/depth?symbol=BTCUSDT",
+        "https://api.exchange.coinbase.com/products/BTC-USD/book?level=1",
+        "https://api.kraken.com/0/public/Depth?pair=XBTUSD",
+    ],
+    output="plan",
+)
+
+watershed = plan.to_watershed(
+    window=(start, end),
+    classes={"binance": BinanceBook, "coinbase": CoinbaseTicker, "kraken": KrakenTicker},
+)
+async for tide in Tideweaver(watershed).run():
+    print(tide)
+```
+
+Reach for `architect()` when discovering — hand-construct
+(`Watershed.diamond(...)` below) when you already know the shape and want
+full control over per-current intervals, `on_error` policies, or custom
+`FlowControl` literals.  The four output formats trade off
+inspect-ability for round-trip-ability: `"report"` (terminal review),
+`"python"` (paste-ready module body), `"json"` (round-trippable
+`watershed.json`), `"plan"` (the in-memory handoff shown above).
+
 ---
 
 ## The four shape helpers
@@ -259,8 +304,10 @@ if __name__ == "__main__":
 
 The `BestMarket` Fjord current's tick is a **fjord flush**:
 
-1. Snapshot the three upstream registries (`BinanceBook.inc_dict`,
-   `CoinbaseTicker.inc_dict`, `KrakenTicker.inc_dict`).
+1. Snapshot the three upstream registries — held alive between flushes via
+   the strong-ref `_tideweaver_snapshot` classvar the scheduler parks on
+   each upstream Stream class (so the snapshot survives the chunking
+   engine's weak-ref `inc_dict`).
 2. Hand them to `outflow(state)`, defined in `arb_outflow.py`.
 3. Materialise the returned rows into the dynamic output class.
 4. Export them to `data/arb_signals.ndjson` (append-friendly — every flush adds rows).
@@ -271,6 +318,19 @@ The three exchanges return the same logical asset under different symbol shapes 
 Binance "BTCUSDT", Coinbase "BTC-USD", Kraken "XXBTZUSD" / "XBTUSD".  The outflow
 function normalizes to a canonical key (e.g. `"BTC"`), then computes best bid / best
 ask across venues.
+
+> **Sidecar naming is project convention, not a framework rule.**  The three
+> fjord/Tideweaver tutorials each pick differently — T9 uses `outflow.py`
+> (matches the `incorporator init --type fjord` scaffold); T10 names it
+> after the dynamic output class (`crypto_spread.py` → `CryptoSpread`);
+> T11 (here) names it after the entry verb (`arb_outflow.py`).  All three
+> are valid — pick whichever fits your deployment shape.
+>
+> **Output class is dynamic here.**  `outflow(state)` returns a list of
+> dicts, so fjord builds the output class from the row keys (named after
+> the sidecar stem).  Don't pre-declare a bare `class ArbOutflow(Incorporator):
+> pass` — Pydantic V2's `extra='ignore'` would silently drop every field.
+> The framework emits a one-time WARNING per bare-class trap.
 
 ```python
 # arb_outflow.py
@@ -341,6 +401,12 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 A positive `spread_bps` with `arb_opportunity=True` means *the best bid on one venue is
 higher than the best ask on another* — classic cross-venue arb signal.
+
+> **Missing-peer `KeyError` in `outflow(state)`?**  Same as the fjord verbs (T9, T10):
+> fjord's seed-error formatter rewrites the failed-sources entry to a copy-pasteable
+> diagnostic suggesting `state.get('X')` for soft access.  In Tideweaver, the `Fjord`
+> current's flush respects the same contract — every `state.get(...)` defaults to
+> `[]`, no manual guard needed.
 
 > **Production:** real arb scanners drive symbol normalization off each exchange's
 > `/exchangeInfo` (or equivalent) feed instead of hard-coded dicts.  CCXT does this

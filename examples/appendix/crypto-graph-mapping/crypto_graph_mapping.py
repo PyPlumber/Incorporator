@@ -83,6 +83,11 @@ async def main() -> None:
     # ==========================================
     print("⏳ Fetching CoinGecko assets and building 4 sub-market links per asset...")
 
+    # ``binance_stats`` and ``binance_books`` must stay bound in this
+    # scope — ``inc_dict`` is a ``WeakValueDictionary``, so dropping
+    # either reference would let the registries get GC'd before the
+    # ``link_to`` resolvers below traverse them.  See T1's runtime
+    # contract for the canonical lifecycle treatment.
     assets = await CryptoAsset.incorp(
         inc_url="https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1",
         inc_code="id",

@@ -173,6 +173,28 @@ Run from the repo root so the relative `inc_file` / `outflow` paths resolve.
 
 ---
 
+## Per-edge telemetry via `LoggingObserver`
+
+The `watershed.json` above wires `"observer": {"type": "logging", ...}` on every
+diamond edge.  That's the `LoggingObserver` from the canal toolkit's
+`FlowObserver` hierarchy — declarative per-edge events that route through
+Python `logging` without you wiring callbacks.  Four hooks fire as the
+scheduler runs:
+
+| Hook | Fires when | Default level (configurable) |
+|---|---|---|
+| `on_fire` | Edge consumed an upstream wave and the downstream tick fired | `info` |
+| `on_skip(reason)` | Edge skipped (e.g. `"penstock_limited"`, `"hard_lock"`) | `debug` |
+| `on_spillway(displaced, count)` | Reservoir overflowed and the spillway evicted a wave | `warning` |
+| `on_reservoir_level(used, capacity)` | After each successful consume — useful for capacity tracking | `debug` |
+
+Swap `"type": "logging"` for `"type": "signal"` and add a `callback=` field
+to forward the same four events to a metrics pipeline (Prometheus, StatsD)
+instead.  Hooks must stay synchronous — heavy work should be queued
+off-thread inside the observer.
+
+---
+
 ## Why this domain works well for Tideweaver
 
 * **Bounded race window** — the orchestrator runs for the race duration and exits clean. No daemon to babysit between sessions.

@@ -14,7 +14,7 @@ Your Tideweaver run accumulates 4 hours of arb signals into NDJSON, but downstre
 
 The reason you can't just set `export_params={"file_path": "...parquet"}` on a regular `Stream` or `Fjord`: those currents flush **once per tick**. That's fine for NDJSON (one line per record, append the file), CSV (header once, append rows), or SQLite (transactional `INSERT OR REPLACE`). It is **not fine** for Parquet, Feather, or ORC: those formats write a column-statistics footer at the **end** of the file, recomputed from the full row set. Appending a second chunk requires reading every existing row group back, merging, re-encoding, and rewriting the whole file — a Parquet "append" is really a rebuild.
 
-The framework refuses to silently rebuild because the bigger the file gets, the longer each tick blocks the event loop. Two patterns get you a clean Parquet artifact without per-tick rewrites.
+The framework refuses to silently rebuild because the bigger the file gets, the longer each tick blocks the event loop. The check is `FormatType.is_append_safe` ([api_atlas](../../../docs/api_atlas.md)) — `True` for NDJSON, CSV, TSV, PSV, SQLite, Avro; `False` for Parquet, Feather, ORC, JSON, XML, XLSX, HTML. Two patterns get you a clean Parquet artifact without per-tick rewrites.
 
 ---
 

@@ -122,7 +122,10 @@ async def main() -> None:
             f"{homepage}"
         )
 
-    # Failed sources surface on each result list for DLQ retry.
+    # Failed sources surface on each result list for reject-retry workflows.
+    # Structured view (preferred): ``details.rejects`` carries per-source
+    # ``error_kind`` / ``retry_after`` / ``wave_index`` (one ``RejectEntry``
+    # per failed source).
     if details.failed_sources:
         print(f"\n⚠️  Failed detail drills: {details.failed_sources}")
 

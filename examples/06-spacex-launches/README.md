@@ -102,6 +102,27 @@ TTL-1                            Falcon 9       VAFB SLC 4E          California 
 The dedup story: **18 launches, 36 child references, 5 HTTP requests.**  Compare to a
 naive `for` loop firing 36 sequential requests.
 
+### Reading the structured reject list
+
+Both `rockets` and `pads` come back as `IncorporatorList` instances, each carrying a
+structured `rejects` list (of `RejectEntry`) alongside the legacy bare-string
+`failed_sources` view. ETL practice calls these *rejects* (Incorporator follows the
+ETL convention rather than the messaging-system "dead-letter queue" term). When a
+child drill fails (rate limit, 5xx, timeout) the entry records the URI, error class,
+parsed `Retry-After` header, and the wave index it belonged to:
+
+```python
+for entry in rockets.rejects:
+    retry = f" (retry after {entry.retry_after:.1f}s)" if entry.retry_after else ""
+    print(f"{entry.source} → {entry.error_kind}{retry}")
+# https://api.spacexdata.com/v4/rockets/5e9... → HTTPStatusError (retry after 30.0s)
+# https://api.spacexdata.com/v4/rockets/5e9... → ReadTimeout
+```
+
+`rockets.failed_sources` is the derived view (`[entry.source for entry in
+rockets.rejects]`) — kept for back-compat. Reach for `rejects` whenever production
+retry logic needs per-source error classification or backoff timing.
+
 ### When parent fields are lists
 
 If `inc_child` points to a list field (e.g. each launch has `payloads: List[str]`), the

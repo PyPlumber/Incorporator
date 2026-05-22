@@ -9,19 +9,19 @@
 Your dashboard reads `Pair.inc_dict['BTCUSDT'].lastPrice` every render. You need that
 value to be no more than 30 seconds stale, without rebuilding the whole registry from
 scratch every refresh. That's the `refresh()` verb's job: one call, re-fetches the
-source, replaces the instances in place under the same primary keys.
+source, mutates the existing instances in place under the same primary keys.
 
 Three resolution modes — in-state, re-source, targeted — cover every refresh shape
 you'll need. By the end of this tutorial you'll know which to reach for, plus the
 identity-mapping memory that makes `refresh()` ergonomic and the HTTP-dedup behaviour
 that makes it cheap.
 
-The contract underneath: `refresh()` re-fetches and rebuilds the registry — the
-same `Class.inc_dict` you read from before now points at fresh Pydantic instances
-under the same primary keys. The canonical view is always `Class.inc_dict[<key>]` —
-read from there after every refresh to get the latest values. (Pydantic v2 models are
-validated at construction, so the framework replaces rather than mutates; cached
-local references will read stale data.)
+The contract underneath: `refresh()` re-fetches and updates the registry — each
+existing instance under `Class.inc_dict[<key>]` has its fields mutated in place via
+Pydantic field updates, so a local variable bound before the refresh continues to
+read the new values without reassignment. The canonical view is still
+`Class.inc_dict[<key>]`, but `pair = Pair.inc_dict["BTCUSDT"]` captured once works
+just as well across subsequent refreshes.
 
 This tutorial uses Binance's public `/api/v3/ticker/24hr` endpoint (no auth, ~1,900
 pairs in one HTTP call) — a real live-data feed where the values move every few
@@ -29,14 +29,11 @@ seconds.
 
 ---
 
-> **Runtime contract — bind every `incorp()` return.**
-> `Class.inc_dict` is a `weakref.WeakValueDictionary`. The `IncorporatorList`
-> returned by `incorp()` is the only strong-ref holder for the instances. Always
-> bind it (`pairs = await Pair.incorp(...)`) or the registry empties at the next
-> GC cycle and your refresh has nothing to refresh. Step 1 below follows this
-> pattern; so should every `incorp()` in your code. See the framework docstring
-> on `IncorporatorList.inc_dict` for the deeper treatment of the weak-ref
-> lifecycle.
+> **Runtime contract — bind every `incorp()` return.** Covered in depth
+> in [Tutorial 1](../01-first-steps/README.md#step-3-apply-the-recommendations-with-incorp).
+> For refresh, the same binding is what keeps the registry alive between
+> waves: drop the strong reference and the next `refresh()` has an empty
+> `inc_dict` to refresh.
 
 ---
 
@@ -66,8 +63,9 @@ btc_before = Pair.inc_dict["BTCUSDT"].lastPrice
 await asyncio.sleep(2)
 await Pair.refresh()                              # no args — uses cls.inc_url
 
-# Read the latest value via inc_dict (refresh replaces instances, so
-# any local var you captured pre-refresh now points at a stale model).
+# Refresh mutates the existing instance in place, so reading via
+# inc_dict (or via a local ref captured before the refresh) returns
+# the latest values.
 btc_after = Pair.inc_dict["BTCUSDT"].lastPrice
 assert btc_before != btc_after                    # Binance moved on us
 ```
@@ -200,9 +198,9 @@ async def main():
     #    inc_code, conv_dict (none here), and any headers/params.
     await Pair.refresh()
 
-    # 4. Read the latest value via inc_dict — refresh REPLACES instances
-    #    on every wave (Pydantic v2 validates on construction), so any
-    #    local variable captured pre-refresh now points at a stale model.
+    # 4. Read the latest value via inc_dict — refresh mutates the
+    #    existing instances in place, so a local ref bound before the
+    #    refresh stays live.
     price_after = Pair.inc_dict["BTCUSDT"].lastPrice
     print(f"BTCUSDT lastPrice after:   {price_after}")
 
