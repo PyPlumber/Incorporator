@@ -140,8 +140,18 @@ def test_import_attempt_raises() -> None:
 
 
 def test_lambda_rejected() -> None:
-    with pytest.raises(TokenResolutionError, match="unsupported"):
+    """Lambdas surface a friendly inflow.py pointer, not a generic AST-node error.
+
+    Senior-review pass-2 finding m-CLI1.
+    """
+    with pytest.raises(TokenResolutionError, match="lambda"):
         resolve_tokens({"x": "inc(lambda x: x)"})
+
+
+def test_comprehension_rejected() -> None:
+    """Comprehensions surface a friendly inflow.py pointer."""
+    with pytest.raises(TokenResolutionError, match="comprehension"):
+        resolve_tokens({"x": "inc([i for i in range(3)])"})
 
 
 def test_subscript_passes_through_as_string() -> None:

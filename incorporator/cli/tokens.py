@@ -185,6 +185,22 @@ def _eval_node(node: ast.AST, *, origin: str, allowed: Dict[str, Any]) -> Any:
         if isinstance(value, (int, float)):
             return -value
 
+    # Friendly per-shape rejections for the AST nodes users most commonly
+    # try.  Falls through to the generic message for anything else.
+    if isinstance(node, ast.Lambda):
+        raise TokenResolutionError(
+            f"Token {origin!r} contains a lambda, which is not allowed in the JSON "
+            "token grammar.  Define a named function in your inflow.py sidecar and "
+            'reference it by name from the JSON (e.g. ``"@my_helper"`` or '
+            "``\"calc(my_helper, 'field')\"``)."
+        )
+    if isinstance(node, (ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp)):
+        raise TokenResolutionError(
+            f"Token {origin!r} contains a comprehension, which is not allowed in the "
+            "JSON token grammar.  Move the comprehension into a named function in "
+            "inflow.py and reference it from the JSON."
+        )
+
     raise TokenResolutionError(
         f"Token {origin!r} uses an unsupported AST node ({type(node).__name__}). "
         "Only literals, allow-listed names, and calls on allow-listed names are permitted."

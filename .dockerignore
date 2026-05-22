@@ -7,6 +7,12 @@
 .gitignore
 .github/
 
+# 1b. AI session metadata (worktree dir + private briefing).  Both
+# gitignored, but .dockerignore is a separate list — keeps them out
+# of the build context regardless.
+.claude/
+AGENTS.md
+
 # 2. Python Virtual Environments
 .venv/
 venv/
@@ -51,6 +57,7 @@ local_*.json
 logs/
 data/
 output_data/
+examples/.experiment/
 *.db
 *.sqlite
 *.sqlite3

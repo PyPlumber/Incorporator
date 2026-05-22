@@ -30,6 +30,7 @@ cover.
 from __future__ import annotations
 
 import importlib.util
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple
 
@@ -37,6 +38,8 @@ from pydantic import ValidationError
 
 from ..base import Incorporator
 from ._pipeline_config import parse_pipeline_config
+
+logger = logging.getLogger(__name__)
 
 ConfigType = Literal["stream", "fjord", "tideweaver"]
 
@@ -49,11 +52,30 @@ def autodetect_type(config: Dict[str, Any]) -> ConfigType:
     ``stream_params``.  Stream configs declare ``incorp_params``.  If
     nothing matches we default to 'stream' (the older, simpler shape) and
     let the validator surface the missing keys.
+
+    When the detected type is ``stream`` but fjord-shaped keys are present
+    (``outflow`` and/or ``stream_params``), emit a one-line warning so the
+    user spots the structural confusion before the validator surfaces it
+    as a deep field error.  Same for stream-shaped keys leaking into a
+    Watershed candidate.
     """
     if isinstance(config.get("window"), dict) and isinstance(config.get("shape"), str):
+        if "incorp_params" in config or "stream_params" in config:
+            logger.warning(
+                "Config has Watershed keys (window + shape) AND %s — auto-detecting "
+                "as 'tideweaver'.  Drop the stream/fjord keys or pass --type to silence.",
+                "incorp_params" if "incorp_params" in config else "stream_params",
+            )
         return "tideweaver"
     if "outflow" in config and isinstance(config.get("stream_params"), list):
         return "fjord"
+    if "outflow" in config or isinstance(config.get("stream_params"), list):
+        logger.warning(
+            "Config has fjord-shaped key(s) (%s) but lacks the full pair — "
+            "auto-detecting as 'stream'.  Add the missing 'stream_params' / 'outflow' "
+            "to make it a fjord, or pass --type to silence.",
+            "outflow" if "outflow" in config else "stream_params",
+        )
     return "stream"
 
 

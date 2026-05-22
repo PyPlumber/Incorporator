@@ -31,7 +31,7 @@ STREAM_TEMPLATE_JSON = """{
   "incorp_params": {
     "_comment_": "Required. At least one of inc_url / inc_file / inc_parent / payload_list.",
     "_comment_auth_": "Auth headers can reference env vars: 'Bearer ${API_KEY}'.",
-    "inc_url": "https://api.example.com/items",
+    "inc_url": "https://_TODO_replace_me_.invalid/items",
     "inc_code": "id",
     "inc_name": "name",
     "headers": {

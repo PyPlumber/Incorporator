@@ -78,6 +78,15 @@ def _load_pipeline_config(config_path: Path) -> Dict[str, Any]:
     Env-var and ``${file:...}`` references are resolved at load time so the
     rest of the CLI (and the validators) work against a fully-resolved
     config.  Missing references surface here with a clear error.
+
+    **Validate / run invariant.**  This function is the SINGLE config-loading
+    entry point shared by ``incorporator validate <cfg>`` and every run verb
+    (``stream`` / ``fjord`` / ``tideweaver run``).  Every step performed here
+    — JSON parse, ``${VAR}`` / ``${file:...}`` expansion, inflow sidecar
+    load + token resolution — must execute on BOTH paths so ``validate``
+    never accepts a config that ``run`` would reject.  Do not introduce a
+    "validate-fast" mode that short-circuits any step; surface the same
+    errors at both entry points.
     """
     if not config_path.is_file():
         _err(f"Error: Configuration file not found at {config_path}", fg=_red())
@@ -142,6 +151,13 @@ def _run_validation(config: Dict[str, Any], config_dir: Path, type_override: Opt
 # ---------------------------------------------------------------------------
 
 
+# Per-process counter of heartbeat-file failures, keyed on path.  The first
+# failure for any given path escalates to ERROR (loud enough to surface in
+# production log filters); subsequent failures stay at WARNING so a stuck
+# heartbeat doesn't flood the logs.
+_HEARTBEAT_FAILURE_COUNTS: Dict[str, int] = {}
+
+
 def _emit_wave(wave: Any, *, json_output: bool, heartbeat_file: Optional[Path]) -> None:
     """Per-wave side effects: print line + touch the heartbeat file."""
     if json_output:
@@ -161,8 +177,19 @@ def _emit_wave(wave: Any, *, json_output: bool, heartbeat_file: Optional[Path]) 
         try:
             heartbeat_file.touch()
         except OSError as exc:
-            # Logged once but never fatal — heartbeat is best-effort.
-            logger.warning("Could not update heartbeat file %s: %s", heartbeat_file, exc)
+            # Heartbeat is best-effort, never fatal — but the FIRST failure
+            # for a given path is ERROR-level so prod log filters catch it.
+            # Subsequent failures stay at WARNING to avoid flooding logs.
+            key = str(heartbeat_file)
+            _HEARTBEAT_FAILURE_COUNTS[key] = _HEARTBEAT_FAILURE_COUNTS.get(key, 0) + 1
+            if _HEARTBEAT_FAILURE_COUNTS[key] == 1:
+                logger.error(
+                    "Could not update heartbeat file %s: %s. Healthcheck will report stalled until this is fixed.",
+                    heartbeat_file,
+                    exc,
+                )
+            else:
+                logger.warning("Heartbeat update still failing for %s: %s", heartbeat_file, exc)
 
 
 # ---------------------------------------------------------------------------
