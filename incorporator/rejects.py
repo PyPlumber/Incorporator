@@ -1,13 +1,23 @@
-"""DeadLetterEntry — structured failure record for ``IncorporatorList``.
+"""RejectEntry — structured failure record for ``IncorporatorList``.
 
-Replaces the prior flat ``failed_sources: List[str]`` representation
-while preserving the legacy attribute as a derived ``@property``
-returning ``[entry.source for entry in self._dead_letter_queue]``.
-Users opting into structured access read
-:attr:`IncorporatorList.dead_letter_queue` directly.
+The in-memory counterpart of :attr:`IncorporatorList.failed_sources` —
+a flat ``List[str]`` of URLs / file paths / source identifiers — but
+carrying the exception type, message, ``Retry-After`` hint, and parent
+wave index so retry orchestrators can act on structured data without
+re-parsing strings.
 
-Fields mirror the audit's M6 specification:
-``source``, ``error_kind``, ``message``, ``retry_after``, ``wave_index``.
+ETL vocabulary (Snowflake / Redshift COPY, Informatica, Talend, SSIS)
+calls failed-load rows *rejects* or *rejected rows*.  Incorporator
+follows that idiom: this surface is **not** a messaging-system
+dead-letter queue (no redelivery semantics, no consumer) — the
+framework captures each failure once and hands the structured list to
+the caller.
+
+This surface is **parallel to, not part of**, the disk-based logging
+layer (:class:`LoggedIncorporator` + :meth:`get_error`).  Logging is
+opt-in and retroactive (reads JSONL files via ``asyncio.to_thread``);
+rejects are always-on and immediate (available the moment
+:meth:`Incorporator.incorp` returns, regardless of subclass).
 """
 
 from __future__ import annotations
@@ -17,20 +27,18 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class DeadLetterEntry(BaseModel):
+class RejectEntry(BaseModel):
     """One source's failure record — Pydantic-serialisable for durable logs.
 
     Constructed at the framework's failure points (HTTP errors in
     :mod:`incorporator.io.fetch`, fjord seed errors in
-    :mod:`incorporator.observability.pipeline.fjord`, generic pipeline
-    failures in :mod:`incorporator.observability.pipeline._shared`)
-    and accumulated on the :attr:`IncorporatorList.dead_letter_queue`.
+    :mod:`incorporator.observability.pipeline.fjord`) and accumulated
+    on :attr:`IncorporatorList.rejects`.
 
-    The legacy string list
-    (:attr:`IncorporatorList.failed_sources`) becomes a derived view
-    over the entries' ``source`` fields, fully back-compat for all
-    existing read sites in user code, tests, examples, and durable
-    logs.
+    The legacy string list :attr:`IncorporatorList.failed_sources` is a
+    derived view over the entries' ``source`` fields, fully back-compat
+    for all existing read sites in user code, tests, examples, and
+    durable logs.
 
     Attributes:
         source: URL, file path, or source identifier that failed.  For
@@ -47,8 +55,8 @@ class DeadLetterEntry(BaseModel):
             beyond the kind is available.
         retry_after: Seconds-to-wait hint, populated from the HTTP
             ``Retry-After`` response header when the upstream supplies
-            one.  ``None`` otherwise.  Future retry-loop logic can use
-            this without re-parsing the original exception.
+            one.  ``None`` otherwise.  Retry-loop logic can use this
+            without re-parsing the original exception.
         wave_index: ``chunk_index`` of the parent :class:`Wave`, if any
             (set when the failure was captured during a streaming /
             fjord tick that emitted a wave).  ``None`` for one-shot

@@ -1,8 +1,4 @@
-"""
-Modular Network Engine for the Incorporator Framework.
-Handles HTTPX client generation, dynamic request execution, resilience,
-and asynchronous connection-pooling for maximum throughput.
-"""
+"""HTTP client builder and request dispatcher."""
 
 import asyncio
 import ipaddress
@@ -16,8 +12,8 @@ from urllib.parse import urlparse
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
 
-from ..dead_letter import DeadLetterEntry
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
+from ..rejects import RejectEntry
 from . import handlers as format_parsers
 from .compression import decompress_data, infer_compression
 from .formats import FormatType, infer_format
@@ -46,9 +42,9 @@ def _extract_retry_after(exc: Exception) -> Optional[float]:
     return None
 
 
-def _build_fetch_error_entry(source: str, exc: Exception) -> DeadLetterEntry:
-    """Construct a :class:`DeadLetterEntry` for one source's network failure."""
-    return DeadLetterEntry(
+def _build_reject_entry(source: str, exc: Exception) -> RejectEntry:
+    """Construct a :class:`RejectEntry` for one source's network failure."""
+    return RejectEntry(
         source=source,
         error_kind=type(exc).__name__,
         message=str(exc),
@@ -469,7 +465,7 @@ def _normalize_source_list(
         ``os.fspath``, single-element list.  Without this branch a Path
         argument silently dropped through to ``return []`` — the file was
         never read and ``incorp()`` returned an empty IncorporatorList with
-        no diagnostic.  See the regression test in ``test_io_fetch.py``.
+        no diagnostic.
       * ``list`` of any of the above → str-coerced, ``None``-filtered list.
       * ``None`` with ``payload_list`` set → placeholder list matching
         ``payload_list``'s length (the payload-driven flow doesn't need real
@@ -506,17 +502,17 @@ async def fetch_concurrent_payloads(
     is_file_mode: bool,
     payload_list: Optional[List[Optional[Dict[str, Any]]]] = None,
     **kwargs: Any,
-) -> Tuple[List[Any], List[DeadLetterEntry]]:
+) -> Tuple[List[Any], List[RejectEntry]]:
     """Unified Orchestrator: Exclusively manages sliding windows and concurrent batching.
 
-    Returns ``(all_parsed_data, dead_letter_queue)`` — the second
-    element is a list of structured :class:`DeadLetterEntry` records
-    (one per failed source) with ``error_kind`` populated from the
-    underlying exception type and ``retry_after`` populated from any
-    HTTP ``Retry-After`` header.
+    Returns ``(all_parsed_data, rejects)`` — the second element is a
+    list of structured :class:`RejectEntry` records (one per failed
+    source) with ``error_kind`` populated from the underlying exception
+    type and ``retry_after`` populated from any HTTP ``Retry-After``
+    header.
     """
 
-    dead_letter_queue: List[DeadLetterEntry] = []
+    rejects: List[RejectEntry] = []
 
     limit = kwargs.pop("concurrency_limit", 50)
     delay_between_batches = kwargs.pop("delay_between_batches", 0.0)
@@ -600,16 +596,16 @@ async def fetch_concurrent_payloads(
                     f"Tip: Lower `requests_per_second` (e.g. 0.2 for ~12 req/min); "
                     f"check the host's free-tier docs for the correct ceiling."
                 )
-                dead_letter_queue.append(_build_fetch_error_entry(src, e))
+                rejects.append(_build_reject_entry(src, e))
                 return []
             raise IncorporatorNetworkError(f"HTTP error {e.response.status_code}") from e
         except httpx.RequestError as e:
             logger.warning(f"Network Connection Error for '{src}': {e.__class__.__name__}. Skipping.")
-            dead_letter_queue.append(_build_fetch_error_entry(src, e))
+            rejects.append(_build_reject_entry(src, e))
             return []
         except IncorporatorFormatError as e:
             logger.warning(f"⚠️ PARSE FAILED for '{src}': {e}. Skipping.")
-            dead_letter_queue.append(_build_fetch_error_entry(src, e))
+            rejects.append(_build_reject_entry(src, e))
             return []
 
     try:
@@ -641,7 +637,7 @@ async def fetch_concurrent_payloads(
                         raise res
                     if isinstance(res, Exception):
                         logger.warning(f"⚠️ FETCH ERROR on '{src}': {type(res).__name__}: {res}. Skipping.")
-                        dead_letter_queue.append(_build_fetch_error_entry(str(src), res))
+                        rejects.append(_build_reject_entry(str(src), res))
                     elif res:
                         all_parsed_data.extend(res)
 
@@ -674,7 +670,7 @@ async def fetch_concurrent_payloads(
                         res = await _safe_execute(str(src), p)
                     except Exception as exc:
                         logger.warning(f"⚠️ FETCH ERROR on '{src}': {type(exc).__name__}: {exc}. Skipping.")
-                        dead_letter_queue.append(_build_fetch_error_entry(str(src), exc))
+                        rejects.append(_build_reject_entry(str(src), exc))
                         continue
                     if res:
                         ordered_results[idx] = res
@@ -686,7 +682,7 @@ async def fetch_concurrent_payloads(
             for res in ordered_results:
                 all_parsed_data.extend(res)
 
-        return all_parsed_data, dead_letter_queue
+        return all_parsed_data, rejects
 
     finally:
         if should_close and _client is not None:

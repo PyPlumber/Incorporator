@@ -18,7 +18,6 @@ Key sentinels exported from this package
 __version__ = "1.2.0"
 
 from .base import Incorporator
-from .dead_letter import DeadLetterEntry
 from .exceptions import (
     IncorporatorError,
     IncorporatorFormatError,
@@ -50,6 +49,7 @@ from .observability.tideweaver import (
     Tideweaver,
     Watershed,
 )
+from .rejects import RejectEntry
 from .schema.converters import (
     calc,
     calc_all,
@@ -99,7 +99,7 @@ __all__ = [
     "SQLitePaginator",
     "CSVPaginator",
     "AvroPaginator",
-    "DeadLetterEntry",
+    "RejectEntry",
     "IncorporatorError",
     "IncorporatorFormatError",
     "IncorporatorNetworkError",

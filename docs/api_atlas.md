@@ -199,7 +199,7 @@ This is the cold-start verb — the one you call when a new endpoint hits your r
 - `concurrency_limit`, `requests_per_second`, `timeout`, `headers` — network knobs.
 
 **Yields / returns**
-Returns a single `TIncorporator` for one-record sources, otherwise an `IncorporatorList[TIncorporator]` whose `.failed_sources: List[str]` is the legacy flat DLQ view.  For structured access — exception type, `Retry-After` hints, wave index — read `.dead_letter_queue: List[DeadLetterEntry]` (fields: `source`, `error_kind`, `message`, `retry_after`, `wave_index`).  HTTP error sites populate the structured form; legacy string callers continue to flow through `failed_sources`.
+Returns a single `TIncorporator` for one-record sources, otherwise an `IncorporatorList[TIncorporator]` whose `.failed_sources: List[str]` is the legacy flat reject-list view.  For structured access — exception type, `Retry-After` hints, wave index — read `.rejects: List[RejectEntry]` (fields: `source`, `error_kind`, `message`, `retry_after`, `wave_index`).  HTTP error sites populate the structured form; legacy string callers continue to flow through `failed_sources`.
 
 **See also**
 [Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md) ·
@@ -907,11 +907,11 @@ The class-level counterpart to `log_info` / `log_error` — use these inside `@c
 | `inc_dict` | `Incorporator` (ClassVar) | `WeakValueDictionary[Any, Incorporator]` | per-class O(1) registry — `inc_code → instance`. Auto-populated by `model_post_init()`. |
 | `inc_url` / `inc_file` | `Incorporator` (ClassVar) | `Optional[str]` | origin tracking. `refresh()` falls back to these when called without explicit new sources. |
 | `inc_code` / `inc_name` / `last_rcd` | instance | universal Pydantic fields | identity (auto-counter fallback) + display label + UTC construction timestamp. |
-| `failed_sources` | `IncorporatorList` | `List[str]` | DLQ surface — every URL/file that hit a permanent failure. Read by retry orchestrators. |
+| `failed_sources` | `IncorporatorList` | `List[str]` | legacy flat reject-list surface — every URL/file that hit a permanent failure.  Derived view of `rejects` (`[entry.source for entry in rejects]`). |
 | `Wave.{chunk_index, operation, rows_processed, failed_sources, processing_time_sec, timestamp}` | `Wave` (frozen Pydantic) | model fields | one record per pipeline tick. Yielded by `stream()` and `fjord()`. |
 | `IncorporatorList.inc_dict` | property on the list | shared view of class registry | what `incorp()`'s return value exposes; mutations write through to `cls.inc_dict`. |
-| `IncorporatorList.dead_letter_queue` | property on the list | `List[DeadLetterEntry]` | structured DLQ — entry fields: `source`, `error_kind`, `message`, `retry_after`, `wave_index`.  Read by retry orchestrators that want the exception type or `Retry-After` hint without parsing strings. |
-| `DeadLetterEntry` (top-level export) | frozen Pydantic | failure record | `from incorporator import DeadLetterEntry`.  Populated by HTTP error sites in `io/fetch.py` and fjord seed errors. |
+| `IncorporatorList.rejects` | property on the list | `List[RejectEntry]` | structured reject list — entry fields: `source`, `error_kind`, `message`, `retry_after`, `wave_index`.  Read by retry orchestrators that want the exception type or `Retry-After` hint without parsing strings. |
+| `RejectEntry` (top-level export) | frozen Pydantic | failure record | `from incorporator import RejectEntry`.  Populated by HTTP error sites in `io/fetch.py` and fjord seed errors. |
 | `SourceRef` (`incorporator.io.SourceRef`) | frozen dataclass | source value type | Five factories (`from_url` / `from_file` / `from_parent` / `from_payload` / `from_kwargs`) plus an auto-detect `parse()` classmethod.  Internal scaffolding for `incorp()` / `architect()` source dispatch; opt-in public API for callers wanting explicit source typing. |
 | `CustomCurrent` (`incorporator.observability.tideweaver.CustomCurrent`) | abstract `Current` subclass | escape hatch | Subclass and override `async tick(self, scheduler: Tideweaver) -> None` for non-verb tick logic (cron-style cleanups, custom side-effects, externally-driven publishers). |
 | `GateContext` / `SurgeContext` / `FlowState` | frozen dataclasses | narrow value types | What custom `Gate.gate_reason(ctx)` / `SurgeBarrier.is_tripped(ctx)` / `Penstock.consume_reason(state, flow, now)` overrides read.  Authoring a custom strategy?  Subclass against these — never the scheduler. |

@@ -198,12 +198,10 @@ class Incorporator(BaseModel):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # Per-class isolation of inc_dict / _schema_union / _incorp_kwargs
         # is required so sibling subclasses don't share the base
-        # Incorporator's containers (see the regression test in
-        # ``tests/test_validation.py::test_inc_dict_sibling_class_isolation``).
-        # The fork is deferred to the first write via ``_ensure_X()``
-        # so a subclass that's only ever READ from (or never used at all)
-        # doesn't pay the allocation cost.  The base's empty defaults
-        # cover the read path.
+        # Incorporator's containers.  The fork is deferred to the first
+        # write via ``_ensure_X()`` so a subclass that's only ever READ
+        # from (or never used at all) doesn't pay the allocation cost.
+        # The base's empty defaults cover the read path.
         super().__init_subclass__(**kwargs)
 
     @classmethod
@@ -589,7 +587,7 @@ class Incorporator(BaseModel):
         __capture_into = kwargs.pop("__capture_into", None)
         payload_list = kwargs.pop("payload_list", None)
 
-        parsed_data, dead_letter_queue = await network.fetch_concurrent_payloads(
+        parsed_data, rejects = await network.fetch_concurrent_payloads(
             source_list=source_list,
             is_file_mode=is_file_mode,
             inc_page=inc_page,
@@ -610,7 +608,7 @@ class Incorporator(BaseModel):
             _factory.build_instances,
             cls,
             parsed_data,
-            dead_letter_queue,
+            rejects,
             is_single,
             inc_code=inc_code,
             inc_name=inc_name,
@@ -840,7 +838,7 @@ class Incorporator(BaseModel):
             if not source_list:
                 raise ValueError(f"[{cls.__name__}] Instances contain no origin URLs to refresh from.")
 
-        parsed_data, dead_letter_queue = await network.fetch_concurrent_payloads(
+        parsed_data, rejects = await network.fetch_concurrent_payloads(
             source_list=source_list,
             is_file_mode=bool(target_file) or (not target_url and getattr(inst_list[0], "inc_file", None) is not None),
             inc_page=inc_page,
@@ -852,7 +850,7 @@ class Incorporator(BaseModel):
             _factory.build_instances,
             cls,
             parsed_data,
-            dead_letter_queue,
+            rejects,
             is_single=(len(source_list) <= 1 and inc_page is None),
             target_class=TargetClass,
             inc_code=inc_code,
@@ -1208,9 +1206,8 @@ class Incorporator(BaseModel):
         from .observability.pipeline._dispatch import assert_engine_supported
 
         # Front-door format check — reject impossible combos at call-site
-        # time (was previously a runtime crash on the second chunk write).
-        # The only failure here is chunking + paginator + monolithic format,
-        # which would silently overwrite the prior chunk's output.
+        # time.  The only failure here is chunking + paginator + monolithic
+        # format, which would silently overwrite the prior chunk's output.
         _file_path_for_check = export_params.get("file_path") if export_params else None
         assert_engine_supported(
             file_path=_file_path_for_check,

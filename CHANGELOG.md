@@ -45,23 +45,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`DeadLetterEntry` structured error queue.**  `IncorporatorList`
-  now carries a `dead_letter_queue: List[DeadLetterEntry]` property
-  with structured failure records (`source`, `error_kind`, `message`,
-  `retry_after`, `wave_index`).  HTTP error sites in
-  `incorporator/io/fetch.py` build entries with `error_kind` from the
-  exception type and `retry_after` parsed from any
-  `Retry-After` header.
+- **`RejectEntry` structured reject list.**  `IncorporatorList`
+  now carries a `rejects: List[RejectEntry]` property with structured
+  failure records (`source`, `error_kind`, `message`, `retry_after`,
+  `wave_index`).  HTTP error sites in `incorporator/io/fetch.py`
+  build entries with `error_kind` from the exception type and
+  `retry_after` parsed from any `Retry-After` header.  ETL practice
+  calls failed-load rows *rejects* rather than the messaging-system
+  *dead-letter queue* term — the rename follows that convention.
 
   The legacy `failed_sources: List[str]` attribute remains as a
-  derived view (`[entry.source for entry in dead_letter_queue]`) so
-  existing user code, tests, and tutorials continue to work
-  unchanged.  Reach for `dead_letter_queue` when you need structured
-  access to the exception type or retry hint:
+  derived view (`[entry.source for entry in rejects]`) so existing
+  user code, tests, and tutorials continue to work unchanged.
+  Reach for `rejects` when you need structured access to the
+  exception type or retry hint:
 
   ```python
   result = await Coin.incorp(inc_url=["...", "https://broken/"])
-  for entry in result.dead_letter_queue:
+  for entry in result.rejects:
       if entry.error_kind == "HTTPStatusError" and entry.retry_after:
           schedule_retry(entry.source, after=entry.retry_after)
   ```

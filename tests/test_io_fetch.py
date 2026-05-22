@@ -266,7 +266,7 @@ async def test_fetch_concurrent_non_429_error_does_not_cancel_siblings(
     assert call_count["value"] == 3
     # Good sources returned their data.
     assert {row["src"] for row in parsed} == {"https://good-a.test/", "https://good-b.test/"}
-    # Bad source surfaces in dead_letter_queue rather than aborting the batch.
+    # Bad source surfaces in rejects rather than aborting the batch.
     assert "https://bad.test/" in [entry.source for entry in failed]
 
 

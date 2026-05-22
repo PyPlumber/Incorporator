@@ -247,7 +247,7 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
 
 * **GIL-free hyperthreading** via the `[speedups]` extra. → [Installation](./docs/installation.md)
 * **Invisible decompression** for `.gz`, `.bz2`, `.lzma`, `.zip`, `.tar` — ZIP/TAR paths validated against directory-traversal and a 1 GB bomb cap. → [Formats](./docs/formats_and_compression.md)
-* **Connection pooling + retries + structured DLQ** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity backoff, and `IncorporatorList.dead_letter_queue: List[DeadLetterEntry]` carrying `source` / `error_kind` / `message` / `retry_after` / `wave_index` for every failed source.  The legacy flat `failed_sources: List[str]` is preserved as a derived view.  Opt-in `block_internal_redirects=True` rejects 3xx Locations to RFC1918 / loopback / cloud-metadata IPs.
+* **Connection pooling + retries + structured rejects** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity backoff, and `IncorporatorList.rejects: List[RejectEntry]` carrying `source` / `error_kind` / `message` / `retry_after` / `wave_index` for every failed source.  The legacy flat `failed_sources: List[str]` is preserved as a derived view.  Opt-in `block_internal_redirects=True` rejects 3xx Locations to RFC1918 / loopback / cloud-metadata IPs.
 * **Friendly rate limiting** — the framework ships with **no implicit per-host throttling**.  Opt in once at startup with `register_host_penstock` (one source of truth across every `incorp()` call) or pass `requests_per_second=X` per call.  The same `Penstock` primitive serves both the HTTP layer and Tideweaver edges:
 
   ```python
