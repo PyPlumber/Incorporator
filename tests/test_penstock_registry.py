@@ -198,18 +198,27 @@ def test_known_host_rates_returns_current_registry(monkeypatch: pytest.MonkeyPat
     assert rates["vpic.nhtsa.dot.gov"] == 1.5
 
 
-def test_resolver_returns_fresh_bound_per_call(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_resolver_returns_fresh_bound_per_call(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two calls for the same host return DIFFERENT BoundPenstock instances.
 
     Each fan-out leg needs its own state + lock so siblings don't share
     refill bookkeeping.  The penstock config can be shared, but state
     must not be.
+
+    The lock is constructed eagerly on Python 3.10+ and lazily on 3.9
+    (where ``asyncio.Lock()`` cannot run outside a coroutine).  Either
+    way, after each leg awaits ``acquire()``, the locks must be
+    per-instance — that is the runtime invariant the fan-out path
+    relies on.
     """
     monkeypatch.setitem(_HOST_PENSTOCKS, "api.example.com", SustainedPenstock(rate_per_sec=0.2))
     a = resolve_penstock("https://api.example.com/x")
     b = resolve_penstock("https://api.example.com/x")
     assert a is not b, "resolve_penstock must return a fresh BoundPenstock"
     assert a.state is not b.state
+    await a.acquire()
+    await b.acquire()
     assert a.lock is not b.lock
 
 
