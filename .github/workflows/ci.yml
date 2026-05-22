@@ -66,4 +66,4 @@ jobs:
       - name: Build Docker image
         run: docker build -t incorporator:ci .
       - name: Smoke-test --version inside the image
-        run: docker run --rm incorporator:ci incorporator --version
+        run: docker run --rm incorporator:ci --version
