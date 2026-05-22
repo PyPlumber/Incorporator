@@ -32,8 +32,13 @@ class RejectEntry(BaseModel):
 
     Constructed at the framework's failure points (HTTP errors in
     :mod:`incorporator.io.fetch`, fjord seed errors in
-    :mod:`incorporator.observability.pipeline.fjord`) and accumulated
-    on :attr:`IncorporatorList.rejects`.
+    :mod:`incorporator.observability.pipeline.fjord`, and canal-layer
+    skips in :mod:`incorporator.observability.tideweaver.scheduler`)
+    and accumulated on :attr:`IncorporatorList.rejects` or
+    :attr:`incorporator.observability.tideweaver.Tideweaver.rejects`
+    depending on the surface — verb-layer failures land on the former,
+    scheduler-level skips that never reach a tick body land on the
+    latter.
 
     The legacy string list :attr:`IncorporatorList.failed_sources` is a
     derived view over the entries' ``source`` fields, fully back-compat
@@ -47,9 +52,11 @@ class RejectEntry(BaseModel):
             the error-prefix label (e.g. ``"Outflow Error"``).
         error_kind: Exception type name (e.g.
             ``"HTTPStatusError"``, ``"RequestError"``, ``"KeyError"``,
-            ``"Unknown"``).  Defaults to ``"Unknown"`` when the
-            framework was given only a legacy string and inferred no
-            exception context.
+            ``"Unknown"``), or a canal-layer skip kind
+            (``"PenstockLimited"``, ``"SurgeHalted"``, ``"SkipAhead"``,
+            ``"GateBlocked"``) emitted from the Tideweaver scheduler.
+            Defaults to ``"Unknown"`` when the framework was given only
+            a legacy string and inferred no exception context.
         message: Human-readable error detail.  Typically ``str(exc)``
             of the originating exception.  Empty string when no detail
             beyond the kind is available.

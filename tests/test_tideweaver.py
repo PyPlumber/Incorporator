@@ -618,6 +618,118 @@ async def test_surge_barrier_halt_circuit_breaks_until_upstream_completes() -> N
 
 
 # ---------------------------------------------------------------------------
+# A-F-1: canal-layer skips populate Tideweaver.rejects (structured DLQ view)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_penstock_limited_populates_rejects() -> None:
+    """SustainedPenstock-throttled edge surfaces ``PenstockLimited`` on Tideweaver.rejects.
+
+    A→B with a 0.5 r/s SustainedPenstock — minimum gap 2s.  Inside the
+    0.8s window, B's first attempt is permitted; every subsequent attempt
+    on B's 0.05s interval gets ``penstock_limited``.  Each limited
+    attempt populates Tideweaver.rejects with a structured RejectEntry.
+    """
+    from incorporator.observability.tideweaver import SustainedPenstock
+
+    async def fast_tick(current: Current) -> None:
+        """Zero-work tick — lets the scheduler iterate freely."""
+
+    a = _stream("a", interval=0.05)
+    b = _stream("b", interval=0.05)
+    throttled_flow = FlowControl(
+        gate=HardLock(),
+        penstock=SustainedPenstock(rate_per_sec=0.5),
+    )
+    ws = Watershed(
+        window=_short_window(0.8),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=throttled_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fast_tick, pass_interval=0.05)
+    await _collect_tides(tw)
+
+    pl_rejects = [r for r in tw.rejects if r.error_kind == "PenstockLimited"]
+    assert pl_rejects, f"expected at least one PenstockLimited reject; got rejects={tw.rejects}"
+    pl = pl_rejects[0]
+    assert pl.source == "_B", f"source should be downstream class name; got {pl.source!r}"
+    assert "edge a→b" in pl.message, f"message should name the edge; got {pl.message!r}"
+    assert "penstock_limited" in pl.message
+    assert pl.wave_index is not None
+
+
+@pytest.mark.asyncio
+async def test_surge_halted_populates_rejects() -> None:
+    """SurgeBarrier(action='halt') surfaces ``SurgeHalted`` on Tideweaver.rejects.
+
+    Mirror of :func:`test_surge_barrier_halt_circuit_breaks_until_upstream_completes`
+    but asserting on the structured DLQ rather than the Tide telemetry.
+    """
+
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.6)
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.1)
+    halt_flow = FlowControl(
+        gate=HardLock(),
+        surge_barrier=SurgeBarrier(threshold_multiple=2.0, action="halt"),
+    )
+    ws = Watershed(
+        window=_short_window(0.7),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=halt_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
+    await _collect_tides(tw)
+
+    sh_rejects = [r for r in tw.rejects if r.error_kind == "SurgeHalted"]
+    assert sh_rejects, f"expected at least one SurgeHalted reject; got rejects={tw.rejects}"
+    sh = sh_rejects[0]
+    assert sh.source == "_B"
+    assert "edge a→b" in sh.message
+    assert "surge halted" in sh.message
+
+
+@pytest.mark.asyncio
+async def test_awaiting_upstream_does_not_populate_rejects() -> None:
+    """``awaiting_upstream`` is a normal transient — it must NOT populate Tideweaver.rejects.
+
+    A weir chain A→B with A taking 0.3s to complete its first tick;
+    during those 0.3s, B fires ``awaiting_upstream`` skips many times
+    (B's interval=0.05s, the gate-skip telemetry surfaces every
+    attempt).  But those are normal pre-first-wave events and should
+    NOT pollute the structured DLQ.
+    """
+
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.3)
+
+    a = _stream("a", interval=0.8)
+    b = _stream("b", interval=0.05)
+    ws = Watershed.chain(window=_short_window(0.4), currents=[a, b], gate_mode="weir")
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
+    tides = await _collect_tides(tw)
+
+    # Test prerequisite: confirm awaiting_upstream skips were observed
+    # in the telemetry stream (otherwise this test trivially passes).
+    awaiting_skips = [
+        reason for tide in tides for _name, reason in tide.skipped if reason == "awaiting_upstream"
+    ]
+    assert awaiting_skips, "test prerequisite: must observe at least one 'awaiting_upstream' skip"
+
+    # No canal-layer reject should have been recorded — awaiting_upstream
+    # is a normal pre-first-wave state, not a failure mode.
+    assert not tw.rejects, (
+        f"'awaiting_upstream' is a normal transient and must NOT populate "
+        f"Tideweaver.rejects; got {tw.rejects}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # QOL: JSON-ready discriminators + Edge gate_mode shorthand
 # ---------------------------------------------------------------------------
 

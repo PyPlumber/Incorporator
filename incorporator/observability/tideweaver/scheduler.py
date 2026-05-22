@@ -42,6 +42,7 @@ from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_
 
 from ...io.fetch import HTTPClientBuilder
 from ...io.penstock import FlowState
+from ...rejects import RejectEntry
 from ..pipeline._outflow import flush
 from .current import Current, CustomCurrent, Export, Fjord, Stream
 from .flow import FlowControl, GateContext, SurgeContext
@@ -166,6 +167,13 @@ class Tideweaver:
         # a standalone dict instead of a field on ``_CurrentState``.
         self._last_consumed: Dict[Tuple[str, str], datetime] = {}
         self._tide_number = 0
+        # Canal-layer skip records accumulated across the run.  Populated at
+        # the four ``_gate_reason`` skip-emit sites (penstock-limited,
+        # surge-halted, surge skip-ahead, gate-blocked); exposed via the
+        # ``rejects`` property.  Parallel to ``IncorporatorList.rejects``
+        # at the verb layer — gives callers a structured DLQ view of every
+        # canal skip that never reached a tick body.
+        self._canal_rejects: List[RejectEntry] = []
         self._currents_by_name: Dict[str, Current] = {c.name: c for c in watershed.currents}
         self._topo: List[str] = watershed.toposort()
         self._upstream: Dict[str, List[Tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
@@ -187,6 +195,32 @@ class Tideweaver:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def rejects(self) -> List[RejectEntry]:
+        """Canal-layer skips accumulated during the run, as structured records.
+
+        Parallel to :attr:`incorporator.IncorporatorList.rejects` at the
+        verb layer — same shape (``RejectEntry`` with ``source``,
+        ``error_kind``, ``message``, ``wave_index``), different origin.
+        Where ``IncorporatorList.rejects`` tracks HTTP failures + fjord
+        seed errors, ``Tideweaver.rejects`` tracks **scheduler-level
+        skips** that never reached a tick body:
+
+        * ``"PenstockLimited"`` — edge penstock blocked consumption
+          (e.g. SustainedPenstock at-rate-ceiling, BurstPenstock empty).
+        * ``"SurgeHalted"`` — :class:`SurgeBarrier` with ``action="halt"``
+          tripped while upstream was over the threshold.
+        * ``"SkipAhead"`` — :class:`SurgeBarrier` with ``action="skip"``
+          tripped, deferring this pass.
+        * ``"GateBlocked"`` — gate returned a non-transient block reason
+          (e.g. ``"awaiting_upstream"`` is *excluded* as a normal
+          pre-first-wave state; only post-startup gate blocks land here).
+
+        Returns a defensive copy — callers can mutate the list without
+        affecting the scheduler's accumulator.
+        """
+        return list(self._canal_rejects)
 
     async def run(self) -> AsyncIterator[Tide]:
         """Enter the orchestration loop — one async iteration per scheduler pass until the window closes.
@@ -387,9 +421,25 @@ class Tideweaver:
                 if surge.is_tripped(surge_ctx):
                     if surge.action == "skip":
                         flow.observer.on_skip(self, edge, "skip_ahead")
+                        self._canal_rejects.append(
+                            RejectEntry(
+                                source=current.cls.__name__,
+                                error_kind="SkipAhead",
+                                message=f"edge {edge[0]}→{edge[1]}: surge skip-ahead",
+                                wave_index=self._tide_number,
+                            )
+                        )
                         return "skip_ahead", frozenset()
                     if surge.action == "halt":
                         flow.observer.on_skip(self, edge, "surge_halted")
+                        self._canal_rejects.append(
+                            RejectEntry(
+                                source=current.cls.__name__,
+                                error_kind="SurgeHalted",
+                                message=f"edge {edge[0]}→{edge[1]}: surge halted",
+                                wave_index=self._tide_number,
+                            )
+                        )
                         return "surge_halted", frozenset()
                     # action == "bypass" — fire ignoring this edge's gate AND penstock.
                     bypassed.add(up_name)
@@ -404,6 +454,23 @@ class Tideweaver:
             gate_reason = flow.gate.gate_reason(gate_ctx)
             if gate_reason is not None:
                 flow.observer.on_skip(self, edge, gate_reason)
+                # ``awaiting_upstream`` is the normal pre-first-wave state for
+                # a HardLock or Weir edge — every fresh window starts with at
+                # least one of these per dependent, and a long-running daemon
+                # accumulates one per re-tick while upstream is in-flight.
+                # Recording each as a reject would pollute the structured DLQ
+                # with non-failure events.  All other gate reasons (currently
+                # none from the in-tree Gate hierarchy, but custom Gate
+                # subclasses may emit new ones) DO populate rejects.
+                if gate_reason != "awaiting_upstream":
+                    self._canal_rejects.append(
+                        RejectEntry(
+                            source=current.cls.__name__,
+                            error_kind="GateBlocked",
+                            message=f"edge {edge[0]}→{edge[1]}: {gate_reason}",
+                            wave_index=self._tide_number,
+                        )
+                    )
                 return gate_reason, frozenset()
             # Penstock — edge-layer flow-rate strategy.  Delegates to the
             # strategy class (SustainedPenstock / BurstPenstock /
@@ -416,6 +483,14 @@ class Tideweaver:
                     penstock_reason = flow.penstock.consume_reason(edge_state, flow, now)
                     if penstock_reason is not None:
                         flow.observer.on_skip(self, edge, penstock_reason)
+                        self._canal_rejects.append(
+                            RejectEntry(
+                                source=current.cls.__name__,
+                                error_kind="PenstockLimited",
+                                message=f"edge {edge[0]}→{edge[1]}: {penstock_reason}",
+                                wave_index=self._tide_number,
+                            )
+                        )
                         return penstock_reason, frozenset()
         return None, frozenset(bypassed)
 
