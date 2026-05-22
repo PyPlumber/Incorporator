@@ -34,13 +34,10 @@ def _require_optional(module_name: str, install_extra: Union[str, None] = None) 
     """Lazy-import an optional dep, raising a uniform install-message on miss.
 
     Centralises the ~20 ``try: import X; except ImportError: raise
-    IncorporatorFormatError("X not installed. Run: pip install ...")`` blocks
-    that previously lived in every handler.  Two upsides:
-
-    1. The install-extra → message mapping lives in
-       ``_OPTIONAL_INSTALL_EXTRAS`` (a single dict).  Renaming an extra is
-       a one-line change instead of 5 file-touches.
-    2. Handlers shrink to one-liner imports — ``pa = _require_optional("pyarrow")``.
+    IncorporatorFormatError("X not installed. Run: pip install ...")``
+    blocks so the install-extra → message mapping lives in one dict
+    (``_OPTIONAL_INSTALL_EXTRAS``).  Handlers shrink to one-liner
+    imports — ``pa = _require_optional("pyarrow")``.
     """
     # Call ``__import__`` directly (not ``importlib.import_module``) so test
     # fixtures that monkeypatch ``builtins.__import__`` reach this code path

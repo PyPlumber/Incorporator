@@ -119,7 +119,6 @@ atexit.register(_cleanup_listeners)
 
 def _safe_log_filename(prefix: str, suffix: str) -> str:
     """Sanitizes strings and routes all files to a dedicated 'logs/' directory."""
-    # Ensure logs directory exists (Works seamlessly with Pytest monkeypatch.chdir)
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
 

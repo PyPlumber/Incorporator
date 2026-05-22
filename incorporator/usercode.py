@@ -129,10 +129,6 @@ def _extract_user_callable(
 ) -> Optional[Callable[..., Any]]:
     """Pull a top-level callable off a sidecar module and validate its arity.
 
-    Single source of truth for the "is the function there, callable, and
-    one-arg?" check used by every sidecar-loading entry point in this module
-    (``apply_code_transform``, ``load_outflow_module``, ``load_inflow_callable``).
-
     Args:
         module: The already-loaded sidecar module.
         name: The top-level symbol to extract (``"transform"`` / ``"outflow"``
@@ -254,9 +250,8 @@ def load_outflow_module(outflow: Union[str, Path]) -> Tuple[Callable[[Any], Any]
     :func:`infer_dynamic_schema`.
 
     Reuses :func:`load_user_module`'s ``sys.modules`` cache so repeated
-    loads of the same path cost one file-read total — and the arity check
-    delegates to :func:`_extract_user_callable` so every sidecar loader in
-    this module shares one source of truth for the error message.
+    loads of the same path cost one file-read total; the arity check
+    delegates to :func:`_extract_user_callable`.
 
     Raises:
         FileNotFoundError: ``outflow`` does not exist.

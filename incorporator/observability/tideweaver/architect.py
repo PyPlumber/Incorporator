@@ -11,11 +11,6 @@ paste-ready scaffold in one of three formats:
 * ``"json"`` — complete ``watershed.json`` body, round-trippable through
   :func:`incorporator.observability.tideweaver.config.build_watershed`.
 
-The architect lives in ``observability/tideweaver/`` rather than ``tools/``
-because the renderers emit Tideweaver/Watershed/FlowControl shapes — keeping
-this module next to :mod:`incorporator.observability.tideweaver.config` (the
-JSON loader) makes the round-trip guarantee easy to maintain.
-
 Detection is shared with :func:`incorporator.Incorporator.test` via the
 inspector module's :func:`incorporator.tools.inspector.capture_signals`
 sidechannel: ``test()`` prints the per-source report, ``architect`` captures

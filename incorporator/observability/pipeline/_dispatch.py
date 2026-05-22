@@ -1,12 +1,11 @@
 """Front-door engine dispatcher for ``stream()`` and ``fjord()``.
 
-Today the only configuration that loses data is **chunking + paginator +
+The only configuration that loses data is **chunking + paginator +
 monolithic export format**: every chunk would overwrite the previous file
 because the format (Parquet / Feather / ORC / Excel / XML / JSON / HTML)
-cannot append.  Previously that failure was reactive — the pipeline would
-seed, yield one chunk, then crash on the second write.  This module hoists
-the check to engine-selection time so the traceback points at the user's
-call site, not at the async generator mid-stream.
+cannot append.  This module hoists the check to engine-selection time so
+the traceback points at the user's call site, not at the async generator
+mid-stream.
 
 Stateful + monolithic is intentionally NOT rejected: stateful semantics
 ("file always holds the latest registry snapshot") map cleanly onto

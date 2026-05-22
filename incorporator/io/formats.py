@@ -36,12 +36,9 @@ class FormatType(str, Enum):
     def is_append_safe(self) -> bool:
         """``True`` for formats whose write handler accepts ``if_exists="append"``.
 
-        Single source of truth for the "can this format accumulate chunks
-        without rewriting the file" question.  Chunked-streaming /
-        stateful-polling / fjord engines all consult this property to
-        decide whether to inject append semantics on subsequent ticks
-        or fall back to ``"replace"`` so monolithic formats stay
-        readable.
+        Consulted by chunked-streaming, stateful-polling, and fjord engines
+        to decide whether to inject append semantics on subsequent ticks
+        or fall back to ``"replace"`` so monolithic formats stay readable.
 
         Append-friendly: NDJSON, CSV, TSV, PSV, SQLite, Avro.
         Monolithic:      JSON, XML, SQLITE-bulk, XLSX, Parquet,
@@ -272,10 +269,10 @@ def ensure_bytes(source: Union[str, bytes, Path]) -> bytes:
     """Coerce any accepted parse-source shape into ``bytes``.
 
     Mirror of :func:`ensure_string` for handlers whose parser accepts raw
-    bytes natively (orjson, lxml, pyarrow).  Centralises the same
-    ``isinstance(source, Path | str | bytes)`` ladder that every handler
-    previously open-coded — a single edit point for adding new source
-    shapes (e.g. ``memoryview``, ``BytesIO``) in the future.
+    bytes natively (orjson, lxml, pyarrow).  Centralises the
+    ``isinstance(source, Path | str | bytes)`` ladder so handlers don't
+    repeat it — one edit point for adding new source shapes
+    (e.g. ``memoryview``, ``BytesIO``).
     """
     if isinstance(source, Path):
         return source.read_bytes()

@@ -86,10 +86,10 @@ async def stream_stateful_via_fjord(
     """
     cls_name = receiver_cls.__name__
 
-    # Seed-only short-circuit: legacy stateful engine returned after the
-    # seed wave when no daemons were requested.  Preserve that behaviour
-    # here so callers that just want "load the registry once and exit"
-    # don't pay for an outflow-daemon tick (and see an extra phantom wave).
+    # Seed-only short-circuit: when no daemons are requested, return after
+    # the seed wave so callers that just want "load the registry once and
+    # exit" don't pay for an outflow-daemon tick (and see an extra phantom
+    # wave).
     if refresh_params is None and export_params is None:
         seed_start = time.perf_counter()
         try:

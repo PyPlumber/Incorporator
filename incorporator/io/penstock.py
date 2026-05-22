@@ -93,11 +93,9 @@ class Penstock(BaseModel):
       ``"penstock_limited"`` if blocked, ``None`` if permitted; the
       scheduler defers instead of sleeping.
 
-    The ``flow`` (edge layer) / unused (HTTP layer) third argument to
-    ``consume_reason`` is plumbed through to :meth:`evaluate` as
-    ``context=`` so :class:`Backpressure
-    <incorporator.observability.tideweaver.flow.BackpressurePenstock>`
-    can read reservoir depth.  All other penstocks ignore it.
+    The third arg to ``consume_reason`` (``flow``) is plumbed through to
+    :meth:`evaluate` as ``context=``; only ``BackpressurePenstock`` reads
+    it, the rest ignore it.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -467,11 +465,9 @@ def register_host_penstock(host: str, penstock: Union[Penstock, Callable[[], Pen
 
     Args:
         host: Lowercase hostname (e.g. ``"api.internal.acme.com"``).
-        penstock: Either a :class:`Penstock` instance (the canonical
-            form) or a zero-arg callable returning a fresh
-            :class:`Penstock` (the legacy factory form — accepted for
-            back-compat with v1.2.0 ``register_host_throttle`` calls
-            that pass ``lambda: FixedIntervalThrottle(rate)``).
+        penstock: Either a :class:`Penstock` instance (preferred) or a
+            zero-arg callable returning a fresh :class:`Penstock`
+            (alternative form, e.g. ``lambda: BurstPenstock(rate_per_sec=50.0, burst=200)``).
 
     Example::
 

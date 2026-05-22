@@ -8,7 +8,7 @@ matching :class:`Watershed` constructor.
 Class strings (``"class": "LapData"``) resolve against the outflow sidecar
 module — the same convention used by ``fjord()``'s CLI runner.  If no outflow
 path is set, ``"class"`` strings must reference Incorporator subclasses
-imported directly (rare; mostly an escape hatch for tests).
+imported directly (rare escape hatch for non-standard configurations).
 """
 
 from __future__ import annotations

@@ -107,9 +107,8 @@ def _normalise_outflow_return(
       * ``dict`` of ``str → list[dict]`` → multi-output (one derived class per key)
       * ``dict`` of ``str → IncorporatorList`` → multi-output, values preserved
         verbatim for the pass-through fast path
-      * ``dict`` of ``str → str`` (NOT list-valued) → ambiguous; treat as a
-        single legacy row (wrap in list).  Backwards-compat for users who
-        previously returned a single dict per tick.
+      * ``dict`` of ``str → str`` (NOT list-valued) → treated as a single
+        flat row (wrapped in a list).
       * ``None`` / falsy → empty single-output (zero-row tick).
     """
     if result is None:

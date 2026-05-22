@@ -1,21 +1,9 @@
-"""SourceRef — the canonical value type for ``incorp()`` source kwargs.
+"""SourceRef — tagged value type for ``incorp()`` source kwargs.
 
 Unifies URL / file / Incorporator-parent / payload-list / kwargs-dict
-source forms into one tagged value type.  Used internally by
-:func:`incorporator.io.fetch._normalize_source_list` and
-:func:`incorporator.observability.tideweaver.architect._resolve_sources`
-so the codebase has ONE place for "what kind of source is this?"
-dispatch.
-
-Public verbs (:meth:`Incorporator.incorp`, :meth:`Incorporator.refresh`,
-:meth:`Incorporator.stream`, :meth:`Incorporator.fjord`,
-:meth:`Incorporator.architect`) keep their existing kwarg signatures
-for back-compat; :class:`SourceRef` is internal scaffolding plus an
-opt-in public type for callers that want explicit source typing.
-
-Designed to accept future source kinds (``"s3"``, ``"gcs"``, …) as
-additional factory methods + ``kind`` literals without touching any
-existing entry point.
+source forms into one shape.  Public verbs keep their existing kwarg
+signatures; :class:`SourceRef` is an opt-in type for callers that want
+explicit source typing.
 """
 
 from __future__ import annotations
@@ -70,13 +58,9 @@ class SourceRef:
     def from_file(cls, path: Union[str, "os.PathLike[str]"]) -> "SourceRef":
         """Construct a file source reference.
 
-        The ``path`` argument is stored verbatim — strings stay strings,
-        :class:`Path` instances stay Paths.  This preserves the
-        caller's literal text (important on Windows where
-        ``Path("./x").as_posix()`` differs from ``str(Path("./x"))``
-        and the difference can surface in user-visible error messages
-        or back-compat assertions).  Use :meth:`as_str` to flatten when
-        you need the OS-fspath form.
+        The ``path`` is stored verbatim (strings stay strings, ``Path``
+        instances stay Paths) so Windows-vs-POSIX formatting survives
+        round-trips through error messages.  Use :meth:`as_str` to flatten.
         """
         return cls(kind="file", value=path)
 
