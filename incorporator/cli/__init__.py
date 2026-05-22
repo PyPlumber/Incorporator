@@ -23,7 +23,7 @@ try:
 except ImportError:
     typer = None  # type: ignore[assignment]
 
-from .. import Incorporator, LoggedIncorporator  # re-exports preserved for test patching
+from .. import Incorporator, LoggedIncorporator, __version__  # re-exports preserved for test patching
 from .runners import (
     _JSON_OUTPUT_MODE,
     _emit_wave,
@@ -68,9 +68,25 @@ if typer:
         no_args_is_help=True,
     )
 
+    def _version_callback(value: bool) -> None:
+        """Print ``incorporator.__version__`` and exit cleanly when ``--version`` is passed."""
+        if value:
+            typer.echo(f"incorporator {__version__}")
+            raise typer.Exit()
+
     @app.callback()  # type: ignore[untyped-decorator]
-    def main_callback() -> None:
-        pass
+    def main_callback(
+        version: Optional[bool] = typer.Option(  # noqa: B008
+            None,
+            "--version",
+            "-V",
+            callback=_version_callback,
+            is_eager=True,
+            help="Show the installed Incorporator version and exit.",
+        ),
+    ) -> None:
+        """Top-level callback — only hosts the ``--version`` flag for now."""
+        return None
 
     _tideweaver_app = _build_tideweaver_app()
     if _tideweaver_app is not None:

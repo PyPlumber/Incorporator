@@ -225,20 +225,30 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
 # ---------------------------------------------------------------------------
 
 
+_VALUE_ERROR_PREFIX = "Value error, "
+
+
 def _format_pydantic_errors(error: ValidationError) -> List[str]:
     """Convert a :class:`pydantic.ValidationError` into one error string per failure.
 
     The substring contract callers (and tests) depend on — e.g. a field name
     like ``"incorp_params"`` or ``"refresh_interval"`` appearing in the
     error text — is preserved by including the field path before the
-    message.  ``model_validator``-raised ``ValueError``s come through as
-    ``"Value error, <original msg>"``; the original message text is intact
-    so substring matches still work.
+    message.
+
+    ``model_validator``-raised ``ValueError`` come through Pydantic V2 with
+    a literal ``"Value error, "`` prefix on the message that adds noise
+    without information (the field path already discriminates kind, the
+    "Value error" label is redundant in CLI output).  Strip it so users
+    see a clean ``"stream_params[0]: missing 'cls'"`` instead of
+    ``"stream_params[0]: Value error, missing 'cls'"``.
     """
     out: List[str] = []
     for item in error.errors():
         loc = item.get("loc", ())
         msg = item.get("msg", "")
+        if msg.startswith(_VALUE_ERROR_PREFIX):
+            msg = msg[len(_VALUE_ERROR_PREFIX) :]
         path = ".".join(str(p) for p in loc) if loc else ""
         out.append(f"{path}: {msg}" if path else str(msg))
     return out

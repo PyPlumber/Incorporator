@@ -44,6 +44,21 @@ def test_cli_missing_config() -> None:
     assert "Error: Configuration file not found" in result.stdout
 
 
+def test_cli_version_flag_prints_version_and_exits_clean() -> None:
+    """``incorporator --version`` prints the package version and exits 0.
+
+    Senior-review pass-2 finding M-CLI2 — CI and ops scripts need a way to
+    pin the running binary's version.  ``--version`` is the standard CLI
+    hygiene affordance; the callback is registered on the root Typer app
+    via ``is_eager=True`` so it short-circuits subcommand dispatch.
+    """
+    from incorporator import __version__
+
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert f"incorporator {__version__}" in result.stdout
+
+
 def test_cli_stream_success(tmp_path: Path) -> None:
     """Ensures the CLI correctly parses JSON and executes the stream bridge."""
     config_file = tmp_path / "pipeline.json"

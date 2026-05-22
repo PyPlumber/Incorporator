@@ -99,6 +99,13 @@ def _expand_string(s: str) -> str:
 
 
 def _lookup_env(name: str, op: str | None, arg: str | None) -> str:
+    # NB: this conflates "unset" with "set-to-empty-string" — both fall through
+    # to the default / required path.  Diverges from POSIX ``${VAR-default}``
+    # (only unset uses default) but matches the more-common
+    # ``${VAR:-default}`` shell form (which Incorporator's grammar exposes).
+    # Users who genuinely want an empty string to bypass the default have no
+    # workaround in this grammar; supply a single space as the env value if
+    # the surrounding context can tolerate it.
     value = os.environ.get(name)
     if value is not None and value != "":
         return value
