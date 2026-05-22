@@ -340,6 +340,22 @@ class FlowObserver(BaseModel):
     :class:`LoggingObserver` (per-event ``logging`` emission with
     configurable levels), and :class:`SignalObserver` (user callable for
     metric pipelines).
+
+    **Stability contract for subclassers.**  The four hook signatures
+    are stable: the **positional** arguments (``scheduler``, ``edge``,
+    plus each hook's payload positionals) will not change in
+    backward-incompatible ways within a major version.  Future context
+    arrives as **keyword-only** extensions, so existing subclasses
+    keep working without signature updates.  When overriding a hook,
+    accept ``**kwargs`` to ignore future fields you don't read:
+
+    .. code-block:: python
+
+        class MyObserver(FlowObserver):
+            type: Literal["mine"] = "mine"
+
+            def on_fire(self, scheduler, edge, wave_number, **_kwargs):
+                metrics.incr(f"tideweaver.fire.{edge[1]}")
     """
 
     model_config = ConfigDict(frozen=True)

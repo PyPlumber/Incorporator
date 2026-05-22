@@ -1596,6 +1596,18 @@ class Incorporator(BaseModel):
             or an empty list when the fetch raises.  Either way, the
             inspector's tree-view and suggestions have already been
             printed to stdout by the time this returns.
+
+        .. note::
+            The returned list is a **view** into the live class
+            registry, not a snapshot.  ``test()`` populates
+            ``cls.inc_dict`` like :meth:`incorp` does and the returned
+            ``IncorporatorList`` shares it.  A subsequent
+            :meth:`refresh` call mutates the instances in this list in
+            place (the same way ``refresh()`` mutates instances held
+            anywhere else).  This is the framework's identity
+            contract; ``test()`` doesn't deep-copy.  If you need an
+            immutable snapshot of the probe sample, ``model_copy`` /
+            ``model_dump`` each record before refreshing.
         """
         kwargs["__inspect"] = True
 
