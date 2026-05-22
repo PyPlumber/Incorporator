@@ -37,7 +37,15 @@ from .io.pagination import (
     PageNumberPaginator,
     SQLitePaginator,
 )
-from .io.penstock import register_host_penstock
+from .io.penstock import (
+    BurstPenstock,
+    NullPenstock,
+    Penstock,
+    SignalPenstock,
+    SustainedPenstock,
+    WindowPenstock,
+    register_host_penstock,
+)
 from .list import IncorporatorList
 from .observability.logger import LoggedIncorporator, LoggingMixin, Wave, setup_class_logger
 from .observability.tideweaver import (
@@ -77,6 +85,13 @@ __all__ = [
     "FormatType",
     "CompressionType",
     "register_host_penstock",
+    # Penstock hierarchy (paginator-level + host-level throttling)
+    "Penstock",
+    "NullPenstock",
+    "SustainedPenstock",
+    "BurstPenstock",
+    "WindowPenstock",
+    "SignalPenstock",
     "Wave",
     "inc",
     "calc",

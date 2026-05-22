@@ -8,6 +8,7 @@ from urllib.parse import urljoin
 import httpx
 
 from ...exceptions import IncorporatorFormatError
+from ..penstock import Penstock
 from .base import AsyncPaginator
 
 logger = logging.getLogger(__name__)
@@ -68,8 +69,8 @@ class LinkHeaderPaginator(AsyncPaginator):
     downstream and the paginator never materialises the full page list.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, *, penstock: Optional[Penstock] = None) -> None:
+        super().__init__(penstock=penstock)
         self.current_url: Optional[str] = None
         self.is_first_call: bool = True
 
@@ -108,6 +109,11 @@ class LinkHeaderPaginator(AsyncPaginator):
             if self.call_lim and calls >= self.call_lim:
                 break
 
+            # Per-paginator throttle (A-F-9) — runs BEFORE _fetch so it
+            # composes additively with any host-level penstock registered
+            # via register_host_penstock (host acquire runs inside
+            # execute_request).  Both must permit before a page fires.
+            await self._acquire_penstock()
             try:
                 response = await self._fetch(self.current_url)
                 yield response.read()  # Yield raw bytes!
@@ -174,8 +180,8 @@ class CursorPaginator(AsyncPaginator):
             (default ``"cursor"``). Set to ``"page_token"`` for Google APIs.
     """
 
-    def __init__(self, cursor_param: str = "cursor") -> None:
-        super().__init__()
+    def __init__(self, cursor_param: str = "cursor", *, penstock: Optional[Penstock] = None) -> None:
+        super().__init__(penstock=penstock)
         self.cursor_param = cursor_param
         self.current_cursor: Optional[str] = None
         self.seen_cursors: Set[str] = set()
@@ -216,6 +222,9 @@ class CursorPaginator(AsyncPaginator):
 
             params = {self.cursor_param: self.current_cursor} if self.current_cursor else {}
 
+            # Per-paginator throttle (A-F-9) — runs BEFORE _fetch so it
+            # composes additively with any host-level penstock.
+            await self._acquire_penstock()
             try:
                 response = await self._fetch(start_url, params=params)
                 yield response.read()
@@ -287,8 +296,10 @@ class OffsetPaginator(AsyncPaginator):
         offset_param: str = "offset",
         limit_param: str = "limit",
         result_key: Optional[str] = None,
+        *,
+        penstock: Optional[Penstock] = None,
     ) -> None:
-        super().__init__()
+        super().__init__(penstock=penstock)
         self.limit = limit
         self.offset_param = offset_param
         self.limit_param = limit_param
@@ -330,6 +341,9 @@ class OffsetPaginator(AsyncPaginator):
 
             params = {self.offset_param: self.current_offset, self.limit_param: self.limit}
 
+            # Per-paginator throttle (A-F-9) — runs BEFORE _fetch so it
+            # composes additively with any host-level penstock.
+            await self._acquire_penstock()
             try:
                 response = await self._fetch(start_url, params=params)
                 yield response.read()
@@ -395,8 +409,10 @@ class PageNumberPaginator(AsyncPaginator):
         page_param: str = "page",
         start_page: int = 1,
         result_key: Optional[str] = None,
+        *,
+        penstock: Optional[Penstock] = None,
     ) -> None:
-        super().__init__()
+        super().__init__(penstock=penstock)
         self.page_param = page_param
         self.start_page = start_page
         self.current_page = start_page
@@ -436,6 +452,9 @@ class PageNumberPaginator(AsyncPaginator):
 
             params = {self.page_param: self.current_page}
 
+            # Per-paginator throttle (A-F-9) — runs BEFORE _fetch so it
+            # composes additively with any host-level penstock.
+            await self._acquire_penstock()
             try:
                 response = await self._fetch(start_url, params=params)
                 yield response.read()
@@ -494,8 +513,8 @@ class NextUrlPaginator(AsyncPaginator):
             Defaults to ``("next",)`` if none provided.
     """
 
-    def __init__(self, *path_keys: str) -> None:
-        super().__init__()
+    def __init__(self, *path_keys: str, penstock: Optional[Penstock] = None) -> None:
+        super().__init__(penstock=penstock)
         self.path_keys = path_keys if path_keys else ("next",)
         self.current_url: Optional[str] = None
         self.is_first_call = True
@@ -538,6 +557,11 @@ class NextUrlPaginator(AsyncPaginator):
             if self.call_lim and calls >= self.call_lim:
                 break
 
+            # Per-paginator throttle (A-F-9) — runs BEFORE _fetch so it
+            # composes additively with any host-level penstock registered
+            # via register_host_penstock (host acquire runs inside
+            # execute_request).  Both must permit before a page fires.
+            await self._acquire_penstock()
             try:
                 response = await self._fetch(self.current_url)
                 yield response.read()

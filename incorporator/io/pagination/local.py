@@ -7,6 +7,7 @@ import logging
 import sqlite3
 from typing import IO, Any, AsyncGenerator, ClassVar, Dict, List, Optional, Tuple, Union
 
+from ..penstock import Penstock
 from .base import AsyncPaginator, _deserialize_row
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,12 @@ class _LocalChunkedPaginator(AsyncPaginator):
                         setattr(self, attr, None)
                 break
 
+            # Per-paginator throttle (A-F-9).  Local paginators don't go
+            # through ``execute_request``, so the host-level penstock
+            # registered via ``register_host_penstock`` cannot reach them
+            # — this is the only throttle path.  Cheap no-op when the
+            # default :class:`NullPenstock` is in place.
+            await self._acquire_penstock()
             yield chunk_data
             calls += 1
 
@@ -156,8 +163,15 @@ class SQLitePaginator(_LocalChunkedPaginator):
     _closeable_attrs: ClassVar[Tuple[str, ...]] = ("_conn",)
     _companion_attrs: ClassVar[Tuple[str, ...]] = ("_cursor",)
 
-    def __init__(self, db_path: str, sql_query: str, chunk_size: int = 10000) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        db_path: str,
+        sql_query: str,
+        chunk_size: int = 10000,
+        *,
+        penstock: Optional[Penstock] = None,
+    ) -> None:
+        super().__init__(penstock=penstock)
         self.db_path = db_path
         self.sql_query = sql_query
         self.chunk_size = chunk_size
@@ -218,8 +232,15 @@ class CSVPaginator(_LocalChunkedPaginator):
     _closeable_attrs: ClassVar[Tuple[str, ...]] = ("_file",)
     _companion_attrs: ClassVar[Tuple[str, ...]] = ("_reader",)
 
-    def __init__(self, file_path: str, chunk_size: int = 10000, delimiter: str = ",") -> None:
-        super().__init__()
+    def __init__(
+        self,
+        file_path: str,
+        chunk_size: int = 10000,
+        delimiter: str = ",",
+        *,
+        penstock: Optional[Penstock] = None,
+    ) -> None:
+        super().__init__(penstock=penstock)
         self.file_path = file_path
         self.chunk_size = chunk_size
         self.delimiter = delimiter
@@ -278,8 +299,14 @@ class AvroPaginator(_LocalChunkedPaginator):
     _closeable_attrs: ClassVar[Tuple[str, ...]] = ("_file",)
     _companion_attrs: ClassVar[Tuple[str, ...]] = ("_reader",)
 
-    def __init__(self, file_path: str, chunk_size: int = 10000) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        file_path: str,
+        chunk_size: int = 10000,
+        *,
+        penstock: Optional[Penstock] = None,
+    ) -> None:
+        super().__init__(penstock=penstock)
         self.file_path = file_path
         self.chunk_size = chunk_size
         self._file: Optional[IO[Any]] = None

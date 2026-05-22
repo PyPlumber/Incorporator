@@ -220,7 +220,79 @@ of the CLI guide for the JSON schema and a worked example, or the
 
 ---
 
-## 6. Performance Characteristics
+## 6. Throttling paginators
+
+Every paginator — web or local — accepts an optional `penstock=` keyword
+argument that gates each page (web) or chunk (local) yield. The penstock
+is the same canal-toolkit primitive used by `register_host_penstock` and
+the Tideweaver edge layer; one vocabulary, three surfaces.
+
+### Web paginator — per-instance override
+
+```python
+from incorporator import NextUrlPaginator, SustainedPenstock
+
+# This paginator will never exceed 0.5 requests/sec, regardless of
+# whatever host-level throttle is registered for the API.
+slow_scraper = NextUrlPaginator(
+    "next",
+    penstock=SustainedPenstock(rate_per_sec=0.5),
+)
+```
+
+The paginator-level penstock **composes additively** with any host-level
+throttle registered via `register_host_penstock` — both must permit
+before a page fetch fires. The slower one wins. This is the conservative
+semantics: a user-supplied per-instance cap can only *reduce* the rate,
+never increase it past a registered host limit (so server-side limits
+aren't surprised).
+
+### Local paginator — the only throttle path
+
+Local paginators (`SQLitePaginator`, `CSVPaginator`, `AvroPaginator`)
+read from disk, not HTTP — so the host-level penstock cannot reach
+them. The paginator-level `penstock=` is the only way to bound their
+chunk-yield rate.
+
+```python
+from incorporator import SQLitePaginator, SustainedPenstock
+
+# Drain a 10GB SQLite at a steady 2 chunks/sec — gives downstream
+# consumers time to keep up without back-pressuring the producer.
+db_streamer = SQLitePaginator(
+    db_path="warehouse.db",
+    sql_query="SELECT * FROM events",
+    chunk_size=10000,
+    penstock=SustainedPenstock(rate_per_sec=2.0),
+)
+```
+
+Without `penstock=`, local paginators iterate at disk speed — chunks
+yield as fast as `sqlite3.fetchmany()` / `csv.reader` / `fastavro` can
+produce them. For most pipelines that's the right behaviour; reach for
+`penstock=` only when downstream cadence matters or the host bandwidth
+needs to be share-fairly across multiple streams.
+
+### Default behaviour: no throttle
+
+Paginators constructed without the `penstock=` kwarg get a
+`NullPenstock` default — the `acquire()` call is a zero-cost
+early-return. Pipelines written before this feature landed are
+unaffected.
+
+### Picking a `Penstock` shape
+
+| Penstock | Use when |
+|---|---|
+| `SustainedPenstock(rate_per_sec=N)` | Constant ceiling: "max N pages/sec, full stop." Simplest and most common. |
+| `BurstPenstock(rate_per_sec=N, burst=K)` | API publishes a documented burst (e.g. "100 reqs then 10/min"). Bucket starts full. |
+| `WindowPenstock(window_sec=W, cap=N)` | Hard quota over a fixed rolling window ("60 reqs per minute"). |
+| `SignalPenstock(rate_fn=...)` | Rate computed dynamically (e.g. from a config file or external metrics). |
+| `NullPenstock()` | The default — never blocks, zero overhead. |
+
+---
+
+## 7. Performance Characteristics
 
 Streaming pipelines benefit from several recent engine optimisations — they
 apply automatically, no code changes required:

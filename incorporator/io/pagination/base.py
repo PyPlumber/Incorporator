@@ -1,11 +1,13 @@
 """Base paginator class and shared utilities for the pagination engine."""
 
+import asyncio
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Union
 
 import httpx
 
 from ..formats import deserialize_nested, infer_format
 from ..handlers import parse_source_data
+from ..penstock import FlowState, NullPenstock, Penstock
 
 
 def _deserialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -49,11 +51,29 @@ class AsyncPaginator:
     swallowing transport errors.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, penstock: Optional[Penstock] = None) -> None:
         self.call_lim: Optional[int] = None
         self.fetch_func: Optional[Callable[..., Awaitable[httpx.Response]]] = None
         self.strict_mode: bool = False
         self.is_exhausted: bool = False
+        # Per-paginator throttle (A-F-9).  Composes additively with any
+        # host-level penstock registered via ``register_host_penstock``:
+        # for web paginators, both must permit before a page fires
+        # (paginator acquire runs first, host acquire runs inside
+        # ``execute_request``).  For local paginators this is the only
+        # throttle path — they don't go through ``execute_request``.
+        # :class:`NullPenstock` default is zero-cost (acquire returns
+        # immediately), so paginators constructed without the kwarg
+        # behave exactly as they did pre-A-F-9.
+        self.penstock: Penstock = penstock if penstock is not None else NullPenstock()
+        self._penstock_state: FlowState = FlowState()
+        # Lazy-init in async context — Python 3.9's ``asyncio.Lock.__init__``
+        # eagerly called ``get_event_loop()``, which raises when no loop is
+        # running (e.g. when the paginator is constructed in sync code at
+        # module import).  Construct on first ``_acquire_penstock`` call,
+        # where a running loop is guaranteed.  3.10+ is lazy and would let
+        # us construct here, but the lazy path costs nothing on 3.10+.
+        self._penstock_lock: Optional[asyncio.Lock] = None
 
     def reset(self) -> None:
         """Reset paginator state to allow another full pagination pass.
@@ -69,6 +89,23 @@ class AsyncPaginator:
         if not self.fetch_func:
             raise RuntimeError("Paginator must be bound to a network client before use.")
         return await self.fetch_func(url=url, request_params=params, **kwargs)
+
+    async def _acquire_penstock(self) -> None:
+        """Wait for this paginator's :class:`Penstock` to permit the next yield/fetch.
+
+        Cheap no-op when ``penstock`` is :class:`NullPenstock` (the
+        default for paginators constructed without the kwarg).
+        Lazy-inits the lock on first call so ``__init__`` stays sync-safe.
+
+        Web paginators call this BEFORE ``self._fetch`` (so the
+        paginator-level throttle composes additively with the host-level
+        throttle inside ``execute_request``).  Local paginators call it
+        BEFORE ``yield chunk_data`` (the only throttle path — local
+        paginators don't go through ``execute_request``).
+        """
+        if self._penstock_lock is None:
+            self._penstock_lock = asyncio.Lock()
+        await self.penstock.acquire(self._penstock_state, self._penstock_lock)
 
     async def _parse_response(self, response: httpx.Response) -> Any:
         fmt = infer_format(str(response.url))
