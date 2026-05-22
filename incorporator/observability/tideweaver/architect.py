@@ -123,13 +123,20 @@ class OrchestrationPlan:
         Args:
             window: ``(start, end)`` UTC datetimes.  Defaults to ``(now,
                 now + 1h)``.  Pass an explicit window for production.
-            classes: Optional ``name -> Incorporator subclass`` mapping.
-                Used when the caller already has the classes the
-                ``CurrentSpec``\\s point at (typical when ``architect``
-                was invoked on a user's own subclass tree).  Names
-                missing from the mapping get an anonymous subclass of
-                :class:`Incorporator` whose ``__name__`` matches
-                :attr:`CurrentSpec.class_name`.
+            classes: Optional ``name -> class`` mapping.  Overloaded by
+                verb:
+
+                * For verb-typed specs (``"stream"`` / ``"fjord"`` /
+                  ``"export"``), the value is the :class:`Incorporator`
+                  subclass to use.  Names missing from the mapping get
+                  an anonymous subclass of :class:`Incorporator` whose
+                  ``__name__`` matches :attr:`CurrentSpec.class_name`.
+                * For ``verb="custom"`` (or any other non-verb-typed
+                  spec), the value is the :class:`CustomCurrent`
+                  subclass itself — the framework can't fabricate one
+                  because :meth:`CustomCurrent.tick` is abstract.
+                  Missing entries raise ``ValueError`` at materialise
+                  time with the subclass-skeleton hint.
 
         Returns:
             A validated :class:`~incorporator.observability.tideweaver.Watershed`
@@ -138,8 +145,9 @@ class OrchestrationPlan:
         Raises:
             ValueError: when :attr:`needs_tail_current` is ``True`` and
                 the caller hasn't nominated a tail Current via the
-                ``classes`` mapping — the diamond shape requires a Fjord
-                to fuse the merging upstreams.
+                ``classes`` mapping; or when a non-verb-typed spec
+                doesn't have a :class:`Current`-subclass entry in
+                ``classes``.
         """
         from datetime import datetime, timedelta, timezone
 
@@ -160,22 +168,44 @@ class OrchestrationPlan:
                 "names to a Fjord-typed class."
             )
 
-        verb_to_class = {"stream": Stream, "fjord": Fjord, "export": Export}
+        verb_to_class: Dict[str, Type[Current]] = {"stream": Stream, "fjord": Fjord, "export": Export}
 
         # Resolve user-supplied or fabricate per-spec Incorporator subclasses.
+        # ``classes`` is overloaded: for verb-typed specs the value is the
+        # :class:`Incorporator` subclass to use; for ``verb="custom"`` (or any
+        # future verb the framework doesn't know about) the value is the
+        # :class:`CustomCurrent` subclass itself — CustomCurrent's ``tick``
+        # is abstract, so the framework can't fabricate a working one.
         resolved_classes: Dict[str, Any] = dict(classes) if classes else {}
         built_currents: Dict[str, Current] = {}
         for spec in self.currents:
-            inc_cls = resolved_classes.get(spec.name)
-            if inc_cls is None:
-                inc_cls = type(spec.class_name, (Incorporator,), {})
-            current_cls = verb_to_class[spec.verb]
-            built_currents[spec.name] = current_cls(
-                name=spec.name,
-                cls=inc_cls,
-                interval=spec.interval_hint,
-                incorp_params=dict(spec.incorp_params),
-            )
+            current_kwargs: Dict[str, Any] = {
+                "name": spec.name,
+                "interval": spec.interval_hint,
+            }
+            if spec.verb in verb_to_class:
+                current_cls = verb_to_class[spec.verb]
+                inc_cls = resolved_classes.get(spec.name)
+                if inc_cls is None:
+                    inc_cls = type(spec.class_name, (Incorporator,), {})
+                current_kwargs["cls"] = inc_cls
+                # Stream / Fjord / Export accept incorp_params; CustomCurrent does not
+                # (Pydantic ``extra="forbid"`` on Current's config).
+                current_kwargs["incorp_params"] = dict(spec.incorp_params)
+            else:
+                custom_entry = resolved_classes.get(spec.name)
+                if not (isinstance(custom_entry, type) and issubclass(custom_entry, Current)):
+                    raise ValueError(
+                        f"OrchestrationPlan.to_watershed: current {spec.name!r} has "
+                        f"verb={spec.verb!r}, which requires a Current subclass passed "
+                        f"via classes={{...}}.  Subclass CustomCurrent with your tick() "
+                        f"body, then pass classes={{{spec.name!r}: YourCustomCurrent}}.  "
+                        f"Verb-typed specs accept {sorted(verb_to_class)}; everything "
+                        f"else is treated as a CustomCurrent."
+                    )
+                current_cls = custom_entry
+                current_kwargs["cls"] = type(spec.class_name, (Incorporator,), {})
+            built_currents[spec.name] = current_cls(**current_kwargs)
 
         # Materialise edges with the recommended FlowControl shape.  ``Edge``
         # accepts ``gate_mode=`` (shorthand) XOR ``flow=`` (full dict); pick

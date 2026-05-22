@@ -633,3 +633,88 @@ def test_plan_to_watershed_carries_penstock_when_recommended() -> None:
             _HOST_PENSTOCKS.pop("api.fixture.example", None)
         else:
             _HOST_PENSTOCKS["api.fixture.example"] = original
+
+
+def test_plan_to_watershed_supports_custom_current_via_classes() -> None:
+    """``verb='custom'`` CurrentSpec materialises when ``classes`` carries a CustomCurrent subclass.
+
+    Closes senior-review finding M2.  Previously the verb dispatch did
+    ``verb_to_class[spec.verb]`` which raised ``KeyError`` for any verb
+    outside ``{"stream", "fjord", "export"}``, blocking
+    :class:`CustomCurrent`-based plans from materialising via
+    :meth:`OrchestrationPlan.to_watershed`.
+    """
+    from incorporator.observability.tideweaver import CustomCurrent
+    from incorporator.observability.tideweaver.architect import CurrentSpec, OrchestrationPlan
+
+    class HealthcheckPing(CustomCurrent):
+        async def tick(self, scheduler: Any) -> None:
+            # No-op body — the test only needs construction to succeed.
+            return None
+
+    plan = OrchestrationPlan(
+        shape="parallel",
+        currents=[
+            CurrentSpec(
+                name="ping",
+                verb="custom",
+                incorp_params={},
+                pk_field=None,
+                name_field=None,
+                conv_dict_template={},
+                excl_lst=[],
+                inc_page_suggestion=None,
+                interval_hint=30,
+                class_name="PingResult",
+            ),
+        ],
+        edges=[],
+        shape_rationale="single custom current",
+    )
+
+    watershed = plan.to_watershed(classes={"ping": HealthcheckPing})
+    assert len(watershed.currents) == 1
+    assert isinstance(watershed.currents[0], HealthcheckPing)
+    assert watershed.currents[0].name == "ping"
+    assert watershed.currents[0].interval == 30
+
+
+def test_plan_to_watershed_custom_verb_without_subclass_raises_actionable() -> None:
+    """``verb='custom'`` without a Current subclass in ``classes`` raises with a skeleton hint.
+
+    The error message must point users at subclassing CustomCurrent and
+    passing the subclass via ``classes={name: YourSubclass}`` — not a
+    cryptic KeyError.
+    """
+    from incorporator.observability.tideweaver.architect import CurrentSpec, OrchestrationPlan
+
+    plan = OrchestrationPlan(
+        shape="parallel",
+        currents=[
+            CurrentSpec(
+                name="ping",
+                verb="custom",
+                incorp_params={},
+                pk_field=None,
+                name_field=None,
+                conv_dict_template={},
+                excl_lst=[],
+                inc_page_suggestion=None,
+                interval_hint=30,
+                class_name="PingResult",
+            ),
+        ],
+        edges=[],
+        shape_rationale="single custom current",
+    )
+
+    with pytest.raises(ValueError, match="CustomCurrent"):
+        plan.to_watershed()  # no classes={...} → must raise
+
+    # Same shape: passing an Incorporator subclass (not a Current subclass)
+    # under "classes" still raises — the spec needs a Current subclass.
+    class JustAnIncorporator(Incorporator):
+        pass
+
+    with pytest.raises(ValueError, match="CustomCurrent"):
+        plan.to_watershed(classes={"ping": JustAnIncorporator})
