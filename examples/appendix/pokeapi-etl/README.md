@@ -27,14 +27,59 @@ Build a "Gen 1 Power Ranking" table:
 3. **Declarative ETL:** use `calc()` to intercept the massive `stats` and `types` JSON arrays, sum them up, format them, and drop the raw JSON to save memory.
 
 > **Rate-limit note.** PokéAPI [documents a 100 req/min ceiling](https://pokeapi.co/docs/v2#fairuse).
-> The default Incorporator rate (15 req/sec = 900 req/min) is 9× too fast and
-> would 429 most of the 150 child drills. Two safeguards are in play:
+> The framework default is 15 req/sec (900 req/min) — 9× too fast and would
+> 429 most of the 150 child drills.  The companion script opts in to
+> host-level throttling at module load:
 >
-> 1. **Host-aware default.** When you don't pass `requests_per_second`, the
->    framework auto-throttles calls to `pokeapi.co` to 1.5 req/sec (90/min).
-> 2. **Explicit throttle in the script.** The example passes
->    `requests_per_second=1.5` on both `incorp()` calls so the kwarg is
->    visible to readers. Total wall-clock: ~100 s for 150 drills.
+> ```python
+> from incorporator import register_host_penstock
+> from incorporator.io.penstock import SustainedPenstock
+>
+> register_host_penstock("pokeapi.co", SustainedPenstock(rate_per_sec=1.5))
+> ```
+>
+> Register once at startup; every subsequent `incorp()` against `pokeapi.co`
+> respects the 1.5 req/sec pace (90 req/min — under the 100/min ceiling).
+> The script also passes `requests_per_second=1.5` on each `incorp()` call so
+> the per-call knob is visible at the call site.  Total wall-clock: ~100 s
+> for 150 drills.
+
+---
+
+## Optional: Probe with `test()` first
+
+PokéAPI's deep `/pokemon/{id}` response is a textbook case for the JIT API
+Profiler (introduced in [Tutorial 1](../../01-first-steps/README.md)) — nested
+arrays, heavy fields, and a sub-structure worth flattening with `calc()`.
+A single `test()` call surfaces every kwarg the Complete Code below uses:
+
+```python
+import asyncio
+from incorporator import Incorporator
+
+
+class Pokemon(Incorporator):
+    pass
+
+
+asyncio.run(Pokemon.test(inc_url="https://pokeapi.co/api/v2/pokemon/1/"))
+```
+
+What the inspector prints, abbreviated:
+
+```text
+🗑️  5. HEAVY-FIELD HINTS:
+   💡 Fields likely to bloat the payload — consider excluding:
+      excl_lst=['sprites', 'moves', 'game_indices', 'held_items']
+
+🛠️  3. ETL / TYPE CASTING SUGGESTIONS:
+   💡 Nested list-of-dicts found — consider reducing with `calc()`:
+      conv_dict={'stats': calc(<reducer>, "stats", ...)}
+```
+
+The heavy-field hint produces the exact `excl_lst` the Complete Code uses;
+the ETL section flags `stats` as a reduction candidate.  Copy the
+suggestions verbatim, swap `test()` for `incorp()`, paste the kwargs.
 
 ---
 

@@ -56,10 +56,11 @@ async def main() -> None:
     # 1. PHASE 1: SHALLOW DISCOVERY
     # ==========================================
     print("⏳ Running Phase 1: Shallow Discovery (Fetching 150 records)...")
-    # PokeAPI's free tier documents a 100 req/min ceiling.  The 3-page parent
-    # discovery is well under that; the host-aware registry in fetch.py would
-    # auto-throttle anyway (1.5 req/sec = 90/min).  The explicit kwarg here
-    # documents the throttle so readers can see the knob.
+    # PokeAPI's free tier documents a 100 req/min ceiling.  The
+    # ``register_host_penstock`` call at module top throttles every
+    # ``pokeapi.co`` request to 1.5 req/sec (90/min); the explicit
+    # ``requests_per_second=1.5`` kwarg below keeps the per-call knob
+    # visible at the call site even with host-level registration in place.
     pokemon_nav = await Nav.incorp(
         inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
         rec_path="results",
@@ -79,9 +80,11 @@ async def main() -> None:
     # ("url") directly off the `pokemon_nav` list wrapper and concurrently fetches
     # all 150 URLs seamlessly without throwing the Deprecation Warning!
     #
-    # ``requests_per_second=1.5`` paces the 150 child drills so they all land
-    # inside PokeAPI's per-minute budget — without it the burst would 429
-    # most of the later requests.  Total wall-clock: ~100 s.
+    # The host-level ``register_host_penstock`` at module top paces the 150
+    # child drills inside PokeAPI's 100 req/min budget — without it, the
+    # default 15 req/sec would 429 most of them.  The per-call
+    # ``requests_per_second=1.5`` mirrors the host registration at the
+    # call site.  Total wall-clock: ~100 s.
     enriched_pokemon = await Pokemon.incorp(
         inc_parent=pokemon_nav,
         inc_code="id",
