@@ -260,6 +260,24 @@ Honest about the limits:
   fundamentally row-bound; ~13k rows/sec is close to the library
   ceiling on commodity hardware. For analytics, pick Parquet, Feather,
   or ORC instead.
+- **Sustained ingest above ~10k rows/sec hits a `WeakValueDictionary`
+  ceiling.** `Incorporator.inc_dict` is a `WeakValueDictionary` (the
+  chunking-mode lifetime model lets instances die naturally when the
+  caller stops holding a reference, so long-running daemons don't
+  leak). Insertion costs ~100-200 ns per row beyond a plain `dict`,
+  driven by Python's `weakref` proxy + callback registration. Under
+  sustained ingest above ~10k rows/sec the weakref machinery becomes
+  measurable in the per-row hot path.
+
+  If you need higher sustained throughput, hold strong references at
+  the call site. Inside a Tideweaver, read `cls._tideweaver_snapshot`
+  (which the scheduler parks after each Stream tick) instead of
+  iterating `cls.inc_dict.values()`. Outside a Tideweaver, accumulate
+  into a plain `list` yourself if the lifetime model permits. The
+  `WeakValueDictionary` insert is the dominant per-row cost above
+  this threshold; everything else (Pydantic validation,
+  `conv_dict` ops, `is_garbage_value` checks) is amortised by
+  Pydantic's Rust core.
 
 For the architectural rationale behind these trade-offs, see
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) and the relevant docstrings
