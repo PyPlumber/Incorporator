@@ -72,7 +72,7 @@ wave shape, same kwarg vocabulary — but the underlying execution differs:
 *   **Under the hood:** Routes through the fjord engine as a single-source pipeline
     with a synthesised identity outflow.  The `IncorporatorList` pass-through fast
     path in `flush()` preserves Python-object identity in `cls.inc_dict` across
-    waves, so the contract is identical to the legacy stateful engine.
+    waves, so object identity is preserved between refresh cycles.
 
 ---
 

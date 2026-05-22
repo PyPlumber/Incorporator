@@ -129,6 +129,32 @@ CMD ["stream", "/app/config/pipeline.json", \
      "--heartbeat-file", "/tmp/incorporator.heartbeat"]
 ```
 
+### Production HTTP throttling — `register_host_penstock`
+
+The framework ships with **no implicit per-host throttling**;
+unregistered hosts fall back to the 15 req/sec default.  For any
+production API with a tighter rate ceiling (CoinGecko's 5–15 r/min,
+Binance's 1200 r/min, your in-house service's bespoke limit),
+register the throttle once at process start and every subsequent
+`incorp()` / `stream()` / `fjord()` against that host respects it:
+
+```python
+from incorporator import register_host_penstock
+from incorporator.io.penstock import SustainedPenstock, BurstPenstock
+
+# Pace api.coingecko.com at 0.2 r/s (12 r/min — under the free-tier ceiling).
+register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+
+# Token-bucket for an in-house API that allows bursts of 200 at 50 r/s sustained.
+register_host_penstock("api.internal.acme.com", BurstPenstock(rate_per_sec=50.0, burst=200))
+```
+
+Put these calls in a module that's imported before any pipeline
+runs — the top of your container's entrypoint script, the top of
+your `outflow.py`, or a dedicated `throttle.py` imported by both.
+The registration is process-global, so registering twice is safe
+(the second call replaces the first).
+
 ### Graceful Shutdown
 
 The CLI installs a SIGTERM handler that triggers the same shutdown
@@ -200,7 +226,7 @@ When you run this script, the Incorporator Engine bypasses its internal disk-log
 |---|---|
 | Pick the right CLI command for your pipeline shape | [CLI & Configuration Guide](./cli_and_configuration.md) |
 | Coordinate multiple pipelines on independent cadences | [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) |
-| Decide between in-process and cloud orchestration | [Appendix — Tideweaver vs. Prefect](./appendix/tideweaver_vs_prefect.md) |
+| Decide between in-process and cloud orchestration | [Appendix — Tideweaver vs. Prefect](../examples/appendix/tideweaver-vs-prefect/README.md) |
 | Get structured error logs flowing to a log aggregator | [Production Debugging](./debugging.md) |
 | Tune performance per format / payload size | [Performance Guide](./performance.md) |
 

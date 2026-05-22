@@ -165,6 +165,14 @@ Each is opt-in or opt-out via a kwarg you'll see in the handler docs:
   (``csv_safe_formulas`` and ``xlsx_safe_formulas`` both default to
   ``True``).  Set either to ``False`` for raw passthrough when the
   consumer is known to be a non-spreadsheet tool.
+* **Append-safety predicate** — ``FormatType.is_append_safe`` is the
+  canonical public check for whether a format's write handler accepts
+  ``if_exists="append"``.  Returns ``True`` for NDJSON / CSV / TSV /
+  PSV / SQLite / Avro (record-oriented); ``False`` for JSON / XML /
+  XLSX / Parquet / Feather / ORC / HTML (monolithic — writing one
+  chunk overwrites the prior file).  ``stream()`` / ``fjord()`` /
+  Tideweaver consult this automatically and reject impossible combos
+  at engine-selection time.
 
 ### Adding a New Format
 

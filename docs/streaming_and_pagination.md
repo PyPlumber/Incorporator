@@ -4,6 +4,12 @@ When dealing with massive datasets (10M+ rows) or heavily paginated REST APIs, l
 
 Incorporator solves this natively using **Stateful Paginators**. By passing a paginator to the `inc_page` parameter, the framework shifts into a strict **O(1) Memory Chunking** mode. It fetches a chunk, processes it, saves it to disk, and triggers Python's Garbage Collector before moving to the next chunk.
 
+> **Three daemon shapes share this engine — pick the one that matches your data:**
+>
+> - **chunking-mode `stream()`** (default, `stateful_polling=False`) — paginated bulk drain at O(1) memory.  The canonical use covered by this guide and [Tutorial 8](../examples/08-streaming-daemon/README.md).
+> - **stateful single-source shim** (`stream(stateful_polling=True)`) — one source, live registry, compatibility path over fjord's engine.  Documented for single-source migrations; new multi-source work should reach for `fjord()` directly.
+> - **multi-source stateful daemon** (`fjord()`, [Tutorial 10](../examples/10-multi-source-fjord/README.md)) — N sources, fused `outflow(state)`, the canonical live-registry pattern.
+
 ---
 
 ## 1. Local Data Streaming (Databases & Massive Files)

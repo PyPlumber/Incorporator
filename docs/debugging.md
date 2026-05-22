@@ -141,8 +141,77 @@ async def retry_failed_webhooks():
     return await Webhook.incorp(inc_url=dlq_urls, inc_code="id", enable_logging=True)
 ```
 
-That's the entire DLQ retry shape. No external queue service, no log
+That's the entire reject-retry shape. No external queue service, no log
 parsing scripts — just two `await`s.
+
+---
+
+## Three structured diagnostics worth knowing
+
+Three diagnostics fire automatically — no config required.  Two land
+on the wave's `failed_sources`; the third emits a one-time log
+warning.
+
+### 1. Structured rejects (`entry.error_kind`, `entry.retry_after`)
+
+`failed_sources: List[str]` is the legacy bare-string view; the
+structured equivalent is `result.rejects: List[RejectEntry]`. Each
+entry carries `source` + `error_kind` (the exception class name) +
+`message` + `retry_after` (parsed from any HTTP `Retry-After`
+header) + `wave_index`. Reach for it when retry orchestration
+needs to honour the server's backoff hints:
+
+```python
+from incorporator import Incorporator, RejectEntry
+
+result = await Webhook.incorp(inc_url=urls, enable_logging=True)
+for entry in result.rejects:
+    if entry.error_kind == "HTTPStatusError" and entry.retry_after:
+        schedule_retry(entry.source, after=entry.retry_after)
+    else:
+        dlq_queue.put(entry.source)
+```
+
+`failed_sources` stays as a derived view (`[entry.source for entry in
+result.rejects]`) — existing code keeps working unchanged.
+
+### 2. Seed-error formatter — missing-peer `KeyError`
+
+When a fjord pipeline's `inflow(state)` raises `KeyError` because a
+peer source hasn't seeded yet, the framework rewrites the
+corresponding `failed_sources` entry to a copy-pasteable suggestion:
+
+```text
+inflow(state) for source 'Race' raised KeyError on missing peer
+'Track' — guard inflow(state) against missing keys (e.g.
+state.get('Track')) or add depends_on=['Track'] to enforce ordering.
+```
+
+Either guard the access (`state.get('X')` returns `None` instead of
+raising) or declare the ordering on the dependent source's
+`stream_params` entry (`depends_on=["X"]` makes fjord wait for X
+before seeding this source).  T9 and T10 walk both patterns.
+
+### 3. Bare-class data-loss warning
+
+When a sidecar `outflow.py` pre-declares an `Incorporator` subclass
+with no fields beyond the base three (`inc_code`, `inc_name`,
+`last_rcd`), Pydantic V2's default `extra='ignore'` silently drops
+every row field on `model_validate`.  The framework emits a one-time
+`WARNING` per class identity so the failure mode is visible:
+
+```text
+WARNING: Pre-declared subclass `FantasyTeam` has no declared fields
+beyond the base three; Pydantic V2 will silently drop every row
+column. Either declare the fields explicitly or remove the class
+declaration to let infer_dynamic_schema take over.
+```
+
+If you see this in production logs, either flesh out the subclass
+with the fields you intend to keep, or remove the pre-declaration
+entirely (the engine will build a dynamic class from the row keys
+at first emit — T10 documents this path under "Don't pre-declare
+the output class").
 
 ---
 

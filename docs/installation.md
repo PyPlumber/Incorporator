@@ -88,6 +88,6 @@ Now that Incorporator is installed, head over to [**Tutorial 1 — First Steps**
 ---
 
 **Have a suggestion or hitting a snag?**
-[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/performance.md) ·
+[Edit this page on GitHub](https://github.com/PyPlumber/incorporator/edit/main/docs/installation.md) ·
 [Report an issue](https://github.com/PyPlumber/incorporator/issues/new/choose) ·
 [Browse open issues](https://github.com/PyPlumber/incorporator/issues)

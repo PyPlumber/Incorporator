@@ -7,9 +7,8 @@
 > point it at.
 
 The canonical reference for Incorporator is **auto-generated from the
-Google-style docstrings** that live alongside the source code. Because
-the docstrings are the single source of truth, this reference never
-drifts from the implementation.
+Google-style docstrings** that live alongside the source code, so this
+page never drifts from the implementation.
 
 We use [**pdoc**](https://pdoc.dev) to render those docstrings as a
 searchable HTML site.
