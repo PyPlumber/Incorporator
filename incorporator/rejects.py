@@ -63,6 +63,17 @@ class RejectEntry(BaseModel):
             ``incorp()`` calls.
 
     Frozen — assigning to any field after construction raises.
+
+    **Durability.**  Only the ``source`` field survives an
+    :meth:`Incorporator.export` → :meth:`Incorporator.incorp`
+    round-trip (via the derived :attr:`IncorporatorList.failed_sources`
+    string view).  ``error_kind`` / ``message`` / ``retry_after`` /
+    ``wave_index`` are **in-memory only** — they're populated at the
+    HTTP / parse failure points and consumed by the caller before the
+    next ``export``.  Retry orchestrators that need durable structured
+    rejects should serialise the queue themselves
+    (``json.dumps([e.model_dump() for e in lst.rejects])``) before
+    discarding the :class:`IncorporatorList`.
     """
 
     model_config = ConfigDict(frozen=True)

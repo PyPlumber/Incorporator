@@ -273,6 +273,16 @@ class CustomCurrent(Current):
 
     Subclasses MUST override :meth:`tick`; the base raises
     ``NotImplementedError`` at call time.
+
+    **Immutability contract.**  ``tick()`` must NOT register new
+    :class:`Current`\\s or :class:`Edge`\\s, nor mutate
+    ``scheduler.watershed.currents`` / ``scheduler.watershed.edges``,
+    after :meth:`Tideweaver.run` has started.  The scheduler memoises
+    transitive-upstream lookups once per instance for O(1) gate
+    evaluation; runtime topology mutations would silently invalidate
+    that cache and produce wrong gating decisions.  If you need to
+    add a current mid-run, stop the current watershed and start a new
+    :class:`Tideweaver` instance.
     """
 
     async def tick(self, scheduler: Any) -> None:

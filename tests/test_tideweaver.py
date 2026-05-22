@@ -1415,6 +1415,32 @@ def test_null_observer_is_the_flow_default() -> None:
     assert isinstance(fc.observer, NullObserver)
 
 
+def test_flow_control_dump_omits_default_observer() -> None:
+    """``FlowControl().model_dump()`` drops the default ``observer`` for minimal JSON.
+
+    Senior-review m1: ``observer`` carries a default factory so user
+    code can call ``.on_fire(...)`` without a None-check, but emitting
+    ``"observer": {"type": "null"}`` into every serialised FlowControl
+    bloated ``watershed.json``.  The ``@model_serializer`` drops the
+    field when it's the default :class:`NullObserver`; round-trip is
+    lossless because :meth:`model_validate` rebuilds the default.
+    """
+    from incorporator.observability.tideweaver import FlowControl, LoggingObserver, NullObserver
+
+    # Default-NullObserver path → observer key absent.
+    dumped = FlowControl().model_dump()
+    assert "observer" not in dumped
+
+    # Explicit non-default observer → key present, round-trips losslessly.
+    fc = FlowControl(observer=LoggingObserver(fire_level="info"))
+    dumped_explicit = fc.model_dump()
+    assert dumped_explicit.get("observer", {}).get("type") == "logging"
+
+    # Round-trip: a JSON dict without observer rebuilds NullObserver via the factory.
+    rebuilt = FlowControl.model_validate({})
+    assert isinstance(rebuilt.observer, NullObserver)
+
+
 def test_logging_observer_round_trips_via_json() -> None:
     """``observer: {type: logging, ...}`` deserialises via the discriminated union."""
     from incorporator.observability.tideweaver import FlowControl, LoggingObserver

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Dict, List, Literal, Optional, Tuple, Type, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from ...io.penstock import (
     BurstPenstock,
@@ -202,8 +202,9 @@ class BackpressurePenstock(Penstock):
         # ``consume_reason`` so unit tests passing a bare FlowState-shaped
         # mock still work.
         state = getattr(edge_state, "flow_state", edge_state)
-        depth = max(1, flow.reservoir.depth)
-        fullness = min(1.0, len(edge_state.waves) / depth)
+        # ``Reservoir.depth`` has ``ge=1`` Pydantic validation, so depth is
+        # always >= 1 here; no defensive clamp needed.
+        fullness = min(1.0, len(edge_state.waves) / flow.reservoir.depth)
         effective_rate = self.max_rate - (self.max_rate - self.min_rate) * fullness
         if effective_rate <= 0.0:
             return "penstock_limited"
@@ -608,6 +609,26 @@ class FlowControl(BaseModel):
     spillway: _SpillwayUnion = Field(default_factory=DropOldest)
     surge_barrier: Optional[SurgeBarrier] = None
     observer: _ObserverUnion = Field(default_factory=NullObserver)
+
+    @model_serializer(mode="wrap")
+    def _drop_default_observer(self, handler: Any) -> Dict[str, Any]:
+        """Drop the default :class:`NullObserver` from serialised output.
+
+        ``observer`` carries a default factory so user code can read
+        ``flow.observer.on_fire(...)`` without a None-check, but emitting
+        ``"observer": {"type": "null"}`` into every serialised
+        ``FlowControl`` clutters ``watershed.json``.  Round-trip is
+        lossless: when ``observer`` is absent from incoming JSON,
+        :meth:`model_validate` rebuilds ``NullObserver()`` via the
+        default factory.  Explicit non-default observers
+        (:class:`LoggingObserver`, :class:`SignalObserver`, or a
+        user-supplied :class:`NullObserver` indistinguishable from the
+        default) still serialise normally.
+        """
+        data: Dict[str, Any] = handler(self)
+        if isinstance(self.observer, NullObserver) and "observer" in data:
+            data.pop("observer")
+        return data
 
 
 # ---------------------------------------------------------------------------

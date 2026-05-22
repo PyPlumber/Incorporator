@@ -187,7 +187,14 @@ class Penstock(BaseModel):
             flow: The parent :class:`FlowControl` for this edge.  Passed
                 to :meth:`evaluate` as ``context``; ignored by every
                 penstock except backpressure.
-            now: Monotonic time.
+            now: Monotonic time.  Convention: the Tideweaver edge layer
+                passes ``time.monotonic()``; the HTTP layer passes
+                ``asyncio.get_running_loop().time()`` (identical on
+                CPython + uvloop, but a custom event loop could
+                diverge).  Penstock subclasses must not mix the two
+                clocks within a single ``FlowState`` — pick the layer's
+                convention and stick to it for the lifetime of the
+                state object.
 
         Returns:
             ``"penstock_limited"`` to skip this tick, or ``None`` to

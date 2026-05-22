@@ -102,6 +102,20 @@ class Incorporator(BaseModel):
     - :meth:`display` — REPL identity print for ad-hoc Jupyter
       spot-checks.
 
+    **Kwarg forwarding contract.**  Every verb accepts ``**kwargs:
+    Any`` so caller-supplied keys like ``params``, ``headers``,
+    ``timeout``, ``rec_path``, ``concurrency_limit``,
+    ``requests_per_second``, and handler-specific kwargs
+    (``delimiter``, ``sql_table``, ``xml_root``, etc.) flow through
+    to ``httpx`` or the format writer unchanged.  The trade-off is
+    that **typos pass silently** — ``await Coin.incorp(...,
+    tiemout=5)`` will not raise; ``tiemout`` is forwarded to the HTTP
+    client which ignores it.  Use ``incorporator validate
+    pipeline.json`` (CLI) or load via :class:`StreamConfig` /
+    :class:`FjordConfig` (Pydantic) when you want kwarg-key
+    validation; both surfaces reject unknown keys before the pipeline
+    runs.
+
     Implementation note: subclassing (not instantiation) is the
     primary user interaction.  Each subclass gets its own dynamically
     generated Pydantic V2 model and its own instance registry, so
