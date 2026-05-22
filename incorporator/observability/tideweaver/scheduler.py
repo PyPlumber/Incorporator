@@ -215,7 +215,9 @@ class Tideweaver:
           tripped, deferring this pass.
         * ``"GateBlocked"`` — gate returned a non-transient block reason
           (e.g. ``"awaiting_upstream"`` is *excluded* as a normal
-          pre-first-wave state; only post-startup gate blocks land here).
+          transient state — upstream not yet emitted, in-flight, or
+          already consumed this wave; only post-startup gate blocks
+          land here).
 
         Returns a defensive copy — callers can mutate the list without
         affecting the scheduler's accumulator.

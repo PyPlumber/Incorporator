@@ -87,8 +87,8 @@ def _target_type_from_schema_info(schema_info: Mapping[str, Any]) -> Optional[ty
 def _effective_conv_cache_key(
     conv_dict: Optional[Dict[str, Any]],
     schema_union: Mapping[str, Any],
-    declared_field_names: Optional[frozenset[str]],
-) -> Tuple[int, int, Optional[frozenset[str]]]:
+    declared_field_names: frozenset[str],
+) -> Tuple[int, int, frozenset[str]]:
     """Cheap cache key for the per-class ``_cached_effective_conv`` slot.
 
     Captures the three inputs to :func:`_expand_conv_dict_with_schema_union`
@@ -293,13 +293,25 @@ def build_instances(
     # overrides always win, and fields declared on the base class (e.g.
     # ``last_rcd: datetime`` on ``Incorporator``) are left to Pydantic.
     #
-    # A-F-4: cache the expansion on the class.  Long-running daemons
+    # Cache the expansion on the class.  Long-running daemons
     # (chunked ``stream()``, ``fjord()``, Tideweaver) reuse the same
     # ``conv_dict`` and the schema union stabilises after a few waves,
     # so the cache hits every tick after warm-up.  Invalidates correctly
     # when (a) schema_union grows (new field appears) or (b) caller
     # passes a different ``conv_dict`` instance.  See
     # ``_effective_conv_cache_key`` above for the key shape.
+    #
+    # Asyncio-safety invariant: the cache read (``getattr`` at the
+    # ``cached =`` line) and the expansion call below execute without a
+    # yield point between them — ``_effective_conv_cache_key`` snapshots
+    # ``len(schema_union)``, then ``_expand_conv_dict_with_schema_union``
+    # consumes ``schema_union`` by reference.  Under CPython's
+    # single-threaded asyncio event loop, two concurrent ``incorp()``
+    # calls dispatched via ``asyncio.gather()`` cannot interleave this
+    # pair: no ``await`` separates the snapshot from the expansion.  The
+    # concurrent path is exercised by
+    # ``tests/test_validation.py::test_schema_union_concurrent_gather_safety``.
+    # (Not thread-safe in the GIL-free sense — yield-point-safe only.)
     schema_union = getattr(cls, "_schema_union", {})
     declared_field_names = frozenset(cls.model_fields.keys())
     cache_key = _effective_conv_cache_key(conv_dict, schema_union, declared_field_names)
@@ -351,14 +363,25 @@ def build_instances(
                 if k not in cls._schema_union:
                     cls._schema_union[k] = declared.get(k, {"type": "string"})
 
-        # A-F-4: batch-validate the full payload through a per-class-cached
-        # ``TypeAdapter(List[Cls])``.  A-F-3 (see
+        # Batch-validate the full payload through a per-class-cached
+        # ``TypeAdapter(List[Cls])``.  Benchmarking (see
         # ``tests/benchmarks/test_validate_batch_vs_per_row.py``) measured
         # this at 1.3-2.0× faster than the per-row ``model_validate`` loop
         # across realistic shapes (10k × 20 mixed: 1.34× worst-case).  The
         # cache mirrors ``_cached_json_properties`` above — built once per
         # dynamic-class lifetime so the schema-binding work doesn't repeat
         # on every ``incorp()`` call.
+        #
+        # Cache-lifetime invariant: the adapter is bound to ``ActualClass``'s
+        # identity, and invalidation happens automatically via
+        # ``infer_dynamic_schema``'s fresh-class-per-shape contract.  The
+        # SCHEMA_REGISTRY key (currently ``(name, frozenset(field_name_type_pairs), depth)``;
+        # see ``incorporator/schema/builder.py``) carries field-type info,
+        # so a structurally-different payload resolves to a fresh
+        # ``ActualClass`` with no ``_cached_type_adapter`` attribute set.
+        # A future refactor that drops type info from the registry key
+        # (e.g. to save memory) would silently reuse a stale adapter —
+        # this comment serves as the tripwire.
         #
         # Trade-off vs. the old per-row 1000-chunk loop: peak memory per
         # ``incorp()`` call is now O(N) instead of O(1000).  High-row-count
