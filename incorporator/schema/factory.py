@@ -13,6 +13,8 @@ import warnings
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Type, Union, cast
 
+from pydantic import TypeAdapter
+
 from ..list import IncorporatorList, _deduplicate_extracted
 from . import builder as schema_builder
 from . import converters, router
@@ -80,6 +82,35 @@ def _target_type_from_schema_info(schema_info: Mapping[str, Any]) -> Optional[ty
             if target is not None:
                 return target
     return None
+
+
+def _effective_conv_cache_key(
+    conv_dict: Optional[Dict[str, Any]],
+    schema_union: Mapping[str, Any],
+    declared_field_names: Optional[frozenset[str]],
+) -> Tuple[int, int, Optional[frozenset[str]]]:
+    """Cheap cache key for the per-class ``_cached_effective_conv`` slot.
+
+    Captures the three inputs to :func:`_expand_conv_dict_with_schema_union`
+    that can change between ``incorp()`` calls:
+
+    * ``id(conv_dict)`` — caller-supplied identity.  Long-running daemons
+      (chunked ``stream()``, ``fjord()``, Tideweaver) reuse the same
+      ``conv_dict`` instance per-tick — cache hits.  Callers passing a
+      fresh dict each call will see misses (cache check is O(1)).
+    * ``len(schema_union)`` — captures growth.  Every new field bumps
+      the union; when stable, the size doesn't change.  Stable steady
+      state on a long-running daemon → cache hits.
+    * ``declared_field_names`` — stable per class identity.  Included
+      defensively so subclass-with-different-fields cases don't collide.
+
+    Returns a tuple to feed an ``==`` comparison against a stored key.
+    """
+    return (
+        id(conv_dict) if conv_dict is not None else 0,
+        len(schema_union),
+        declared_field_names,
+    )
 
 
 def _expand_conv_dict_with_schema_union(
@@ -261,11 +292,29 @@ def build_instances(
     # SQLite / Parquet / Avro) has populated ``_schema_union``.  Caller
     # overrides always win, and fields declared on the base class (e.g.
     # ``last_rcd: datetime`` on ``Incorporator``) are left to Pydantic.
-    effective_conv = _expand_conv_dict_with_schema_union(
-        conv_dict,
-        getattr(cls, "_schema_union", {}),
-        declared_field_names=frozenset(cls.model_fields.keys()),
-    )
+    #
+    # A-F-4: cache the expansion on the class.  Long-running daemons
+    # (chunked ``stream()``, ``fjord()``, Tideweaver) reuse the same
+    # ``conv_dict`` and the schema union stabilises after a few waves,
+    # so the cache hits every tick after warm-up.  Invalidates correctly
+    # when (a) schema_union grows (new field appears) or (b) caller
+    # passes a different ``conv_dict`` instance.  See
+    # ``_effective_conv_cache_key`` above for the key shape.
+    schema_union = getattr(cls, "_schema_union", {})
+    declared_field_names = frozenset(cls.model_fields.keys())
+    cache_key = _effective_conv_cache_key(conv_dict, schema_union, declared_field_names)
+    cached = getattr(cls, "_cached_effective_conv", None)
+    if cached is not None and cached[0] == cache_key:
+        effective_conv = cached[1]
+    else:
+        effective_conv = _expand_conv_dict_with_schema_union(
+            conv_dict,
+            schema_union,
+            declared_field_names=declared_field_names,
+        )
+        # setattr keeps mypy strict happy — ``_cached_effective_conv`` is a
+        # dynamic cache attribute, not a declared class field.
+        setattr(cls, "_cached_effective_conv", (cache_key, effective_conv))  # noqa: B010
 
     transformed_data = schema_builder.apply_etl_transformations(
         parsed_data=parsed_data,
@@ -302,14 +351,30 @@ def build_instances(
                 if k not in cls._schema_union:
                     cls._schema_union[k] = declared.get(k, {"type": "string"})
 
-        # model_validate avoids a redundant **kwargs unpack per row and allows
-        # Pydantic's Rust core to amortise field-offset lookups across calls.
-        # Batching in 1000-row chunks keeps peak memory predictable and gives
-        # Pydantic's internal schema cache the best hit rate.
-        _BATCH = 1000
-        instances: List[Any] = []
-        for i in range(0, len(transformed_data), _BATCH):
-            instances.extend(ActualClass.model_validate(row) for row in transformed_data[i : i + _BATCH])
+        # A-F-4: batch-validate the full payload through a per-class-cached
+        # ``TypeAdapter(List[Cls])``.  A-F-3 (see
+        # ``tests/benchmarks/test_validate_batch_vs_per_row.py``) measured
+        # this at 1.3-2.0× faster than the per-row ``model_validate`` loop
+        # across realistic shapes (10k × 20 mixed: 1.34× worst-case).  The
+        # cache mirrors ``_cached_json_properties`` above — built once per
+        # dynamic-class lifetime so the schema-binding work doesn't repeat
+        # on every ``incorp()`` call.
+        #
+        # Trade-off vs. the old per-row 1000-chunk loop: peak memory per
+        # ``incorp()`` call is now O(N) instead of O(1000).  High-row-count
+        # callers who need O(chunk_size) memory should use chunking-mode
+        # ``stream(stateful_polling=False)`` which preserves the bound at
+        # the stream layer regardless of ``incorp()``'s internal shape.
+        # Error semantics changed too: validation errors now accumulate
+        # across all rows in a single ``ValidationError`` rather than
+        # raising on the first bad row.
+        adapter = getattr(ActualClass, "_cached_type_adapter", None)
+        if adapter is None:
+            adapter = TypeAdapter(List[ActualClass])  # type: ignore[valid-type]
+            # setattr keeps mypy strict happy — ``_cached_type_adapter`` is a
+            # dynamic cache attribute, not a declared class field.
+            setattr(ActualClass, "_cached_type_adapter", adapter)  # noqa: B010
+        instances: List[Any] = adapter.validate_python(transformed_data)
         return IncorporatorList(ActualClass, instances, rejects=rejects)
 
     return ActualClass(**transformed_data)

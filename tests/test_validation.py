@@ -325,3 +325,81 @@ async def test_dynamic_model_in_state_export(tmp_path: Path) -> None:
     content = out_path.read_text(encoding="utf-8")
     assert "Alice" in content
     assert "Bob" in content
+
+
+# ==========================================
+# 5. A-F-4: effective_conv cache invalidation
+# ==========================================
+
+
+@pytest.mark.asyncio
+async def test_effective_conv_cache_attaches_after_first_incorp(tmp_path: Path) -> None:
+    """A-F-4: the per-class ``_cached_effective_conv`` slot is populated after ``incorp()``.
+
+    Smoke test that the cache wiring lands at the call site in
+    ``incorporator/schema/factory.py``.  Detailed invalidation
+    behaviour is exercised indirectly by the existing schema_union
+    tests above (a stale cache would break auto-coercion on a new
+    field's second wave).
+    """
+    json_file = tmp_path / "cache_test.json"
+    json_file.write_text(json.dumps([{"id": 1, "name": "x"}, {"id": 2, "name": "y"}]), encoding="utf-8")
+
+    class CacheTestModel(Incorporator):
+        pass
+
+    # Cache slot does not exist before first incorp.
+    assert getattr(CacheTestModel, "_cached_effective_conv", None) is None
+
+    await CacheTestModel.incorp(inc_file=str(json_file), inc_code="id", inc_name="name")
+
+    # Cache attached on the class after the call.
+    cached = getattr(CacheTestModel, "_cached_effective_conv", None)
+    assert cached is not None, "expected _cached_effective_conv to be set after incorp()"
+    key, effective_conv = cached
+    # Cache key is a 3-tuple of (id(conv_dict), len(schema_union), declared_field_names).
+    assert isinstance(key, tuple) and len(key) == 3
+
+
+@pytest.mark.asyncio
+async def test_effective_conv_cache_invalidates_on_schema_union_growth(tmp_path: Path) -> None:
+    """A-F-4: schema_union growth (new field appearing) invalidates the cache.
+
+    The cache key embeds ``len(schema_union)``, so a wave that introduces
+    a previously-unseen field bumps the cache key and forces a rebuild
+    of ``effective_conv``.  This test asserts the cache KEY changes
+    between two waves where the second adds a new field.
+
+    A stale cache here would mean the new field gets no auto-coercion
+    on the second wave — its value would land as a string instead of
+    being coerced by the freshly-synthesised ``inc()`` entry.
+    """
+    json_v1 = tmp_path / "v1.json"
+    json_v2 = tmp_path / "v2.json"
+    # Both files have ≥ 2 rows so the schema_union path runs (single-row
+    # files take the is_single fast path that skips _schema_union).
+    json_v1.write_text(json.dumps([{"id": 1, "name": "x"}, {"id": 2, "name": "y"}]), encoding="utf-8")
+    json_v2.write_text(
+        json.dumps([{"id": 3, "name": "z", "extra": 42}, {"id": 4, "name": "w", "extra": 43}]),
+        encoding="utf-8",
+    )
+
+    class GrowingModel(Incorporator):
+        pass
+
+    await GrowingModel.incorp(inc_file=str(json_v1), inc_code="id", inc_name="name")
+    cached_after_v1 = getattr(GrowingModel, "_cached_effective_conv", None)
+    assert cached_after_v1 is not None
+    key_v1 = cached_after_v1[0]
+
+    await GrowingModel.incorp(inc_file=str(json_v2), inc_code="id", inc_name="name")
+    cached_after_v2 = getattr(GrowingModel, "_cached_effective_conv", None)
+    assert cached_after_v2 is not None
+    key_v2 = cached_after_v2[0]
+
+    # Key embeds len(schema_union); v2 added the "extra" field so the
+    # union grew → key differs → cache rebuilt.
+    assert key_v1 != key_v2, (
+        f"cache key should change when schema_union grows; "
+        f"got identical keys {key_v1} == {key_v2}"
+    )

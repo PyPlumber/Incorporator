@@ -278,6 +278,19 @@ Honest about the limits:
   this threshold; everything else (Pydantic validation,
   `conv_dict` ops, `is_garbage_value` checks) is amortised by
   Pydantic's Rust core.
+- **`incorp()` peak memory is O(N), not O(chunk_size).** As of v1.3
+  (A-F-4), `incorp()` validates the full payload in a single
+  `TypeAdapter(List[Cls]).validate_python(rows)` call — measured
+  1.3-2.0× faster than the prior row-by-row loop, but it materialises
+  all N instances simultaneously. For payloads larger than ~100k rows
+  where peak memory matters, use chunking-mode `Cls.stream(...)`
+  instead: the paginator-driven `stream()` invokes `incorp()` once
+  per page-sized chunk, preserving the per-call O(chunk_size) memory
+  bound at the stream layer regardless of `incorp()`'s internal shape.
+  Validation-error reporting also changed: errors now accumulate
+  across all rows in a single `ValidationError` rather than raising on
+  the first bad row — more informative messages, larger error
+  surfaces under pathological input.
 
 For the architectural rationale behind these trade-offs, see
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) and the relevant docstrings
