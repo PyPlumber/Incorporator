@@ -20,11 +20,8 @@ version: "3.9"
 
 services:
   incorporator:
-    # Default image: the pre-built GHCR release.  Comment this out and
-    # uncomment ``build: .`` below if you want a local build from this
-    # repo (useful for testing in-flight changes).
-    image: ghcr.io/pyplumber/incorporator:latest
-    # build: .
+    build: .
+    image: incorporator:latest
     restart: unless-stopped
     env_file: .env
     environment:
