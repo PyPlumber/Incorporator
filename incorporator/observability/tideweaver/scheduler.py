@@ -477,7 +477,9 @@ class Tideweaver:
             now_mono = time.monotonic()
 
             # Single pass over upstream edges — does four jobs that all key
-            # on the same (current.name, up_name) tuple:
+            # on the canonical ``(from_name, to_name)`` = ``(up_name, current.name)``
+            # edge tuple (matches ``_edge_state`` initialisation at line 177
+            # and the read site in ``_gate_reason``).
             #
             # 1. Bump ``_last_consumed`` to the pre-tick snapshot value (so
             #    the next gate cycle knows this edge's consumption watermark)
@@ -491,7 +493,7 @@ class Tideweaver:
             # 4. Fire ``FlowObserver.on_fire`` for every non-bypassed edge
             #    that contributed to this tick.
             for up_name, edge_flow in self._upstream[current.name]:
-                edge_key = (current.name, up_name)
+                edge_key = (up_name, current.name)
                 snapshot_value = consumed_snapshot.get(up_name)
                 if snapshot_value is not None:
                     self._last_consumed[edge_key] = snapshot_value
@@ -499,14 +501,14 @@ class Tideweaver:
                 if latest is not None:
                     self._last_consumed[edge_key] = latest
 
-                edge_state = self._edge_state.get((up_name, current.name))
+                edge_state = self._edge_state.get(edge_key)
                 bypassed = up_name in bypassed_upstreams
                 if edge_state is not None:
                     edge_state.flow_state.last_consumed_at = now_mono
                     if edge_flow.penstock is not None and not bypassed:
                         edge_flow.penstock.post_consume(edge_state, now_mono)
                 if not bypassed:
-                    edge_flow.observer.on_fire(self, (up_name, current.name), self._tide_number)
+                    edge_flow.observer.on_fire(self, edge_key, self._tide_number)
             state.started_at = None
             # Push this tick's wave content into every outgoing edge's
             # reservoir.  Reads the strong-ref ``_tideweaver_snapshot`` the
