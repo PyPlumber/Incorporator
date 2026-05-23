@@ -256,6 +256,39 @@ they do for `stream` / `fjord`.
 See [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) for the watershed.json
 shape.
 
+### Production logging for Tideweaver — `LoggedTideweaver`
+
+`LoggedTideweaver` is the orchestration-side equivalent of
+`LoggedIncorporator`: a drop-in for `Tideweaver` that routes every
+yielded `Tide` and every accumulated `RejectEntry` through the same
+`QueueHandler` pipeline that backs `LoggedIncorporator`, so disk I/O
+never blocks the event loop.  Import path matters — it is **not**
+top-level exported:
+
+```python
+from incorporator.observability.tideweaver import LoggedTideweaver
+
+tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="ArbSession")
+async for tide in tw.run():
+    ...
+# Post-run, replay from disk in any other process:
+tides   = await LoggedTideweaver.get_tides(logger_name="ArbSession")
+rejects = await LoggedTideweaver.get_rejects(logger_name="ArbSession")
+```
+
+In containers, prefer `LoggedTideweaver` over inline `print(tide)`
+loops so stdout stays clean for `--json-output` and the structured
+records still hit `/app/logs/` for the log shipper.
+
+### Backlog short-circuit — `backlog_backoff_factor`
+
+When a Tideweaver scheduler is consistently saturated (every pass runs
+over `pass_interval` because in-flight ticks haven't completed), set
+`backlog_backoff_factor=2.0` on the constructor to multiplicatively
+extend the next-pass wait until the heap drains.  Default is `1.0`
+(disabled — identical behaviour to v1.2.0).  Pair with
+`tide.next_due_in_sec` and `tide.heap_depth` for diagnosis.
+
 ---
 
 ## 2. Cloud Orchestration (Prefect)
