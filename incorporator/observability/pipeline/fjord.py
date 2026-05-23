@@ -307,7 +307,7 @@ async def _run_fjord_engine(
                 *[_seed_one_source(entry, state, inflow_callable) for entry in tier],
                 return_exceptions=True,
             )
-            for entry, result in zip(tier, tier_results):
+            for entry, result in zip(tier, tier_results, strict=False):
                 orig_idx = idx_by_id[id(entry)]
                 results_by_idx[orig_idx] = result
                 if not isinstance(result, Exception):

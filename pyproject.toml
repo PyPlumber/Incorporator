@@ -7,7 +7,7 @@ name = "incorporator"
 version = "1.2.0"
 description = "Schema-free ETL mapper with in-process graph orchestration: turn any REST API, CSV, Parquet, or XML into typed Python objects, then coordinate multi-source pipelines in a bounded time window with Tideweaver."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
     { name = "Incorporator Maintainers" }
@@ -35,7 +35,7 @@ classifiers =[
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
@@ -125,7 +125,7 @@ check_untyped_defs = true
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 exclude = [
     ".git",
     ".venv",
@@ -159,7 +159,7 @@ indent-style = "space"
 # in one of the two formatters rather than a style disagreement.
 [tool.black]
 line-length = 120
-target-version = ["py39", "py310", "py311", "py312", "py313"]
+target-version = ["py310", "py311", "py312", "py313"]
 extend-exclude = '''
 /(
     examples

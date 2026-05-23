@@ -374,7 +374,7 @@ async def _outflow_daemon(
 
         # Stage 1: snapshot under lock.
         async with lock:
-            state = dict(zip(state_keys, [ref[0] for ref in source_refs]))
+            state = dict(zip(state_keys, [ref[0] for ref in source_refs], strict=False))
 
         # Stage 2: delegate the outflow + per-class build/export to flush().
         # outflow_fn-level exceptions propagate out of the async-for and land

@@ -78,12 +78,14 @@ async def _run_tideweaver(
         watershed.drain_timeout = drain_timeout_override
     tw = Tideweaver(watershed)
     async for tide in tw.run():
-        _emit_tide(tide, json_output=json_output)
-        if heartbeat_file is not None:
-            try:
-                heartbeat_file.touch()
-            except OSError as exc:
-                logger.warning("Could not update heartbeat file %s: %s", heartbeat_file, exc)
+        try:
+            _emit_tide(tide, json_output=json_output)
+        finally:
+            if heartbeat_file is not None:
+                try:
+                    heartbeat_file.touch()
+                except OSError as exc:
+                    logger.warning("Could not update heartbeat file %s: %s", heartbeat_file, exc)
 
 
 def _emit_tide(tide: Tide, *, json_output: bool) -> None:

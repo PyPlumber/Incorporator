@@ -84,7 +84,7 @@ class ExcelHandler(BaseFormatHandler):
                     if all(cell is None for cell in raw_row):
                         continue
                     parsed: Dict[str, Any] = {}
-                    for header, cell in zip(headers, raw_row):
+                    for header, cell in zip(headers, raw_row, strict=False):
                         parsed[header] = deserialize_nested(cell)
                     rows.append(parsed)
                 return rows

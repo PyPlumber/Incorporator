@@ -736,10 +736,10 @@ async def fetch_concurrent_payloads(
                 # _safe_execute (e.g. the non-429 IncorporatorNetworkError
                 # re-raise at line 519) must not cancel sibling tasks.
                 # Failures surface in failed_sources just like the 429 path.
-                tasks = [_safe_execute(str(s), p) for s, p in zip(s_batch, p_batch)]
+                tasks = [_safe_execute(str(s), p) for s, p in zip(s_batch, p_batch, strict=False)]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                for src, res in zip(s_batch, results):
+                for src, res in zip(s_batch, results, strict=False):
                     if isinstance(res, BaseException) and not isinstance(res, Exception):
                         # CancelledError / SystemExit / KeyboardInterrupt — propagate.
                         raise res
@@ -754,7 +754,7 @@ async def fetch_concurrent_payloads(
         # ========================================================
         else:
             # Add enumerate to track the exact index
-            task_iterator = iter(enumerate(zip(source_list, p_list)))
+            task_iterator = iter(enumerate(zip(source_list, p_list, strict=False)))
 
             # Pre-allocate an empty array to maintain strict ordering
             ordered_results: List[List[Any]] = [[] for _ in range(len(source_list))]

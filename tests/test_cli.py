@@ -408,6 +408,50 @@ def test_cli_stream_json_output_emits_ndjson(tmp_path: Path) -> None:
         assert "rows_processed" in record
         assert "chunk_index" in record
         assert "operation" in record
+        # New Wave fields from session schema enrichments (commits c77d60d, 0bc9e9a)
+        assert "source_url" in record
+        assert "bytes_processed" in record
+        assert "http_retry_count" in record
+        assert "validation_error_count" in record
+        assert "schema_cache_hit" in record
+        assert "conv_dict_time_sec" in record
+        # Type checks (defaults: None or 0)
+        assert isinstance(record["http_retry_count"], int)
+        assert isinstance(record["validation_error_count"], int)
+        assert isinstance(record["schema_cache_hit"], bool)
+
+
+def test_cli_fjord_json_output_emits_ndjson(tmp_path: Path) -> None:
+    """--json-output emits one NDJSON Wave line per fjord wave, including new enrichment fields.
+
+    Parallel to test_cli_stream_json_output_emits_ndjson but exercises the
+    fjord subcommand path.  All Wave fields added in the schema enrichment
+    commits (source_url, bytes_processed, http_retry_count,
+    validation_error_count, schema_cache_hit, conv_dict_time_sec) must be
+    present in the serialised NDJSON output.
+    """
+    config, _ = _write_fjord_fixture(tmp_path)
+
+    with patch("incorporator.cli.LoggedIncorporator.fjord", new=mock_fjord):
+        result = runner.invoke(app, ["fjord", str(config), "--json-output"])
+
+    assert result.exit_code == 0, result.stdout
+    json_lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
+    assert json_lines, f"expected at least one NDJSON wave line, got: {result.stdout!r}"
+    for line in json_lines:
+        record = json.loads(line)
+        assert "rows_processed" in record
+        assert "chunk_index" in record
+        assert "operation" in record
+        assert "source_url" in record
+        assert "bytes_processed" in record
+        assert "http_retry_count" in record
+        assert "validation_error_count" in record
+        assert "schema_cache_hit" in record
+        assert "conv_dict_time_sec" in record
+        assert isinstance(record["http_retry_count"], int)
+        assert isinstance(record["validation_error_count"], int)
+        assert isinstance(record["schema_cache_hit"], bool)
 
 
 # ==========================================

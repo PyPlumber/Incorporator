@@ -152,26 +152,32 @@ def _run_validation(config: Dict[str, Any], config_dir: Path, type_override: Opt
 
 
 def _emit_wave(wave: Any, *, json_output: bool, heartbeat_file: Optional[Path]) -> None:
-    """Per-wave side effects: print line + touch the heartbeat file."""
-    if json_output:
-        # NDJSON on stdout for CI / log shippers.
-        print(wave.model_dump_json(), flush=True)
-    else:
-        if _typer:
-            status = (
-                f"Chunk {wave.chunk_index} | {wave.operation} | "
-                f"{wave.rows_processed} rows | {wave.processing_time_sec:.2f}s"
-            )
-            _typer.secho(status, fg=_typer.colors.CYAN)
-            if wave.failed_sources:
-                _typer.secho(f"Failures: {wave.failed_sources}", fg=_yellow())
+    """Per-wave side effects: print line + touch the heartbeat file.
 
-    if heartbeat_file is not None:
-        try:
-            heartbeat_file.touch()
-        except OSError as exc:
-            # Logged once but never fatal — heartbeat is best-effort.
-            logger.warning("Could not update heartbeat file %s: %s", heartbeat_file, exc)
+    The heartbeat touch runs in a ``finally`` block so it fires even when
+    serialization of the wave raises — the healthcheck must not be gated
+    on the emitter succeeding.
+    """
+    try:
+        if json_output:
+            # NDJSON on stdout for CI / log shippers.
+            print(wave.model_dump_json(), flush=True)
+        else:
+            if _typer:
+                status = (
+                    f"Chunk {wave.chunk_index} | {wave.operation} | "
+                    f"{wave.rows_processed} rows | {wave.processing_time_sec:.2f}s"
+                )
+                _typer.secho(status, fg=_typer.colors.CYAN)
+                if wave.failed_sources:
+                    _typer.secho(f"Failures: {wave.failed_sources}", fg=_yellow())
+    finally:
+        if heartbeat_file is not None:
+            try:
+                heartbeat_file.touch()
+            except OSError as exc:
+                # Logged once but never fatal — heartbeat is best-effort.
+                logger.warning("Could not update heartbeat file %s: %s", heartbeat_file, exc)
 
 
 # ---------------------------------------------------------------------------
