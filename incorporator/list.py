@@ -137,7 +137,7 @@ class IncorporatorList(list[T]):
             )
 
     @property
-    def inc_dict(self) -> "weakref.WeakValueDictionary[Any, Any]":
+    def inc_dict(self) -> weakref.WeakValueDictionary[Any, Any]:
         """The O(1) registry mapping primary key → instance — no list-scanning, no manual dict-building.
 
         Reach for it whenever a list-walk would be quadratic: parent-child

@@ -14,7 +14,7 @@ from ..logger import Wave
 
 @asynccontextmanager
 async def _daemon_tick(
-    wave_queue: "asyncio.Queue[Wave | None]",
+    wave_queue: asyncio.Queue[Wave | None],
     *,
     chunk_index: int,
     operation: str,

@@ -252,7 +252,7 @@ class CSVPaginator(_LocalChunkedPaginator):
 
     def _fetch_chunk(self) -> list[dict[str, Any]]:
         if not self._file:
-            self._file = open(self.file_path, "rt", encoding="utf-8")
+            self._file = open(self.file_path, encoding="utf-8")
             self._reader = csv.DictReader(self._file, delimiter=self.delimiter)
         if self._reader is None:
             return []

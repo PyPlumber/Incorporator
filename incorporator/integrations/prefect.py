@@ -102,7 +102,7 @@ async def run_incorporator_flow(config_path: str, poll_interval: float | None = 
     if not path.is_file():
         raise FileNotFoundError(f"Configuration file not found at {path}")
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         config = cast(dict[str, Any], json.load(f))
 
     incorp_params = config.get("incorp_params", {})

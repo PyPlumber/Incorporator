@@ -138,7 +138,7 @@ class Incorporator(BaseModel):
     #: when the holding list goes out of scope — this is what prevents OOM
     #: crashes on 10M+ row ingestion. Sibling subclasses get isolated
     #: registries to prevent cross-contamination during graph drilling.
-    inc_dict: ClassVar[weakref.WeakValueDictionary[Any, "Incorporator"]] = weakref.WeakValueDictionary()
+    inc_dict: ClassVar[weakref.WeakValueDictionary[Any, Incorporator]] = weakref.WeakValueDictionary()
 
     #: Module-scoped auto-increment counter used to synthesise unique
     #: ``inc_code`` values when the API omits an identity field. Guarded by
@@ -1154,7 +1154,7 @@ class Incorporator(BaseModel):
         chunk_size_max: int = 100_000,
         target_min_sec: float = 0.030,
         target_max_sec: float = 0.100,
-    ) -> AsyncGenerator["Wave", None]:
+    ) -> AsyncGenerator[Wave, None]:
         """Overnight unattended drain of a paginated source — one chunk in memory at a time.
 
         Reach for ``stream()`` when you have a paginated source big
@@ -1397,7 +1397,7 @@ class Incorporator(BaseModel):
         refresh_interval: float | None = None,
         export_interval: float | None = None,
         inflow: str | Path | None = None,
-    ) -> AsyncGenerator["Wave", None]:
+    ) -> AsyncGenerator[Wave, None]:
         """The stateful live-daemon verb — concurrent source refresh fused through your ``outflow``.
 
         Reach for ``fjord()`` when you need an unattended daemon that

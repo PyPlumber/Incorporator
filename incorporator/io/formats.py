@@ -49,7 +49,7 @@ class FormatType(str, Enum):
         return self in _APPEND_FRIENDLY
 
 
-_APPEND_FRIENDLY: set["FormatType"] = {
+_APPEND_FRIENDLY: set[FormatType] = {
     FormatType.NDJSON,
     FormatType.CSV,
     FormatType.TSV,

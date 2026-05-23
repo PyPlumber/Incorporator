@@ -243,7 +243,7 @@ class Tideweaver:
         *,
         tides: list[Tide] | None = None,
         waves: list[Wave] | None = None,
-    ) -> "TuningReport":
+    ) -> TuningReport:
         """End-of-run convenience: feed accumulated rejects, tides, and waves to :func:`architect.tune`.
 
         Collects :attr:`rejects` from the scheduler and passes them to

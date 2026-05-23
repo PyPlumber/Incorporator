@@ -173,7 +173,7 @@ def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Call
     """
 
     # 1. Primary Cache: OOM-Safe for production Incorporator/Pydantic objects
-    registry: "weakref.WeakValueDictionary[Any, Any]" = weakref.WeakValueDictionary()
+    registry: weakref.WeakValueDictionary[Any, Any] = weakref.WeakValueDictionary()
 
     # 2. Fallback Cache: Strong references for tests (SimpleNamespace) or non-weakref classes
     fallback_registry: dict[Any, Any] = {}

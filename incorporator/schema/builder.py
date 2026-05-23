@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # LRU cache keyed by (model_name, frozenset(field_types), id(base_class)).
 # OrderedDict + move_to_end on hit gives O(1) LRU eviction — older entries
 # fall off the front while hot schemas stay at the end.
-SCHEMA_REGISTRY: "OrderedDict[tuple[str, frozenset[Any], int], type[BaseModel]]" = OrderedDict()
+SCHEMA_REGISTRY: OrderedDict[tuple[str, frozenset[Any], int], type[BaseModel]] = OrderedDict()
 MAX_REGISTRY_SIZE = 1000  # Hard boundary to prevent OOM leaks
 
 PYDANTIC_RESERVED = {

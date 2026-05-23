@@ -77,14 +77,14 @@ class StreamConfig(BaseModel):
     outflow: str | None = None
 
     @model_validator(mode="after")
-    def _require_source_key(self) -> "StreamConfig":
+    def _require_source_key(self) -> StreamConfig:
         """``incorp_params`` must contain at least one recognised source key."""
         if not (_STREAM_SOURCE_KEYS & set(self.incorp_params)):
             raise ValueError(f"'incorp_params' must contain at least one source key: {sorted(_STREAM_SOURCE_KEYS)}.")
         return self
 
     @model_validator(mode="after")
-    def _outflow_requires_stateful_polling(self) -> "StreamConfig":
+    def _outflow_requires_stateful_polling(self) -> StreamConfig:
         """``outflow`` on stream requires opting into stateful polling."""
         if self.outflow and not self.stateful_polling:
             raise ValueError(

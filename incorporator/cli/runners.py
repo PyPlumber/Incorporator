@@ -92,7 +92,7 @@ def _load_pipeline_config(config_path: Path) -> dict[str, Any]:
         sys.exit(1)
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             parsed = cast(dict[str, Any], json.load(f))
     except json.JSONDecodeError as e:
         _err(f"Error: Invalid JSON in {config_path}: {e}", fg=_red())

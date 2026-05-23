@@ -145,6 +145,7 @@ select =[
     "C4", # flake8-comprehensions
     "B",  # flake8-bugbear
     "S",  # flake8-bandit (SECURITY RULES)
+    "UP", # pyupgrade — locks in PEP 585 / PEP 604 modernization (Groups B + C)
 ]
 
 ignore = []

@@ -212,7 +212,7 @@ class NDJSONHandler(BaseFormatHandler):
         the single-pass JSON parse (was 8× slower with stdlib ``json``).
         """
         if isinstance(source, Path):
-            with open(source, "rt", encoding="utf-8") as f:
+            with open(source, encoding="utf-8") as f:
                 return self._parse_stream(f)
         else:
             raw_data = ensure_string(source)

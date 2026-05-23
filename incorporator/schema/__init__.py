@@ -20,9 +20,9 @@ class JsonSchemaProperty(TypedDict, total=False):
 
     type: str
     format: str
-    anyOf: list["JsonSchemaProperty"]
-    items: "JsonSchemaProperty"
-    properties: dict[str, "JsonSchemaProperty"]
+    anyOf: list[JsonSchemaProperty]
+    items: JsonSchemaProperty
+    properties: dict[str, JsonSchemaProperty]
     description: str
     title: str
     default: Any

@@ -306,7 +306,7 @@ async def _outflow_daemon(
     outflow_fn: Any,
     export_params: dict[str, Any],
     lock: asyncio.Lock,
-    wave_queue: "asyncio.Queue[Wave | None]",
+    wave_queue: asyncio.Queue[Wave | None],
     shutdown_event: asyncio.Event,
     e_interval: float | None,
     outflow_module: ModuleType | None = None,

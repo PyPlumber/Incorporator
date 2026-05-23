@@ -47,7 +47,7 @@ class SourceRef:
     value: Any
 
     @classmethod
-    def from_url(cls, url: str) -> "SourceRef":
+    def from_url(cls, url: str) -> SourceRef:
         """Construct a URL source reference.
 
         Args:
@@ -56,7 +56,7 @@ class SourceRef:
         return cls(kind="url", value=url)
 
     @classmethod
-    def from_file(cls, path: str | os.PathLike[str]) -> "SourceRef":
+    def from_file(cls, path: str | os.PathLike[str]) -> SourceRef:
         """Construct a file source reference.
 
         The ``path`` is stored verbatim (strings stay strings, ``Path``
@@ -66,7 +66,7 @@ class SourceRef:
         return cls(kind="file", value=path)
 
     @classmethod
-    def from_parent(cls, parent: Any) -> "SourceRef":
+    def from_parent(cls, parent: Any) -> SourceRef:
         """Construct a parent source reference (Incorporator or IncorporatorList).
 
         Args:
@@ -78,7 +78,7 @@ class SourceRef:
         return cls(kind="parent", value=parent)
 
     @classmethod
-    def from_payload(cls, payload: list[dict[str, Any]]) -> "SourceRef":
+    def from_payload(cls, payload: list[dict[str, Any]]) -> SourceRef:
         """Construct a payload-list source reference (bulk POST dispatch).
 
         Args:
@@ -89,7 +89,7 @@ class SourceRef:
         return cls(kind="payload", value=list(payload))
 
     @classmethod
-    def from_kwargs(cls, kwargs: Mapping[str, Any]) -> "SourceRef":
+    def from_kwargs(cls, kwargs: Mapping[str, Any]) -> SourceRef:
         """Construct a raw-kwargs source reference (architect's dispatch path).
 
         Args:
@@ -99,7 +99,7 @@ class SourceRef:
         return cls(kind="kwargs", value=dict(kwargs))
 
     @classmethod
-    def parse(cls, value: Any) -> "SourceRef":
+    def parse(cls, value: Any) -> SourceRef:
         """Auto-detect kind from the shape of ``value``.
 
         Recognises:

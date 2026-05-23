@@ -62,7 +62,7 @@ class CSVHandler(BaseFormatHandler):
         native Python types.
         """
         if isinstance(source, Path):
-            with open(source, "rt", encoding="utf-8") as f:
+            with open(source, encoding="utf-8") as f:
                 return self._parse_stream(f, **kwargs)
         else:
             raw_data = ensure_string(source)

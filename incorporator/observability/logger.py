@@ -61,7 +61,7 @@ def _redact(text: str) -> str:
     return _REDACT_QS_PATTERN.sub(r"\1=***REDACTED***", text)
 
 
-def _route_wave_to_log(cls: type[Any], wave: "Wave") -> None:
+def _route_wave_to_log(cls: type[Any], wave: Wave) -> None:
     """Route a single Wave to the appropriate log level based on its outcome.
 
     Shared adapter used by :meth:`LoggedIncorporator.stream` and ``fjord``. The
@@ -102,7 +102,7 @@ def _route_wave_to_log(cls: type[Any], wave: "Wave") -> None:
             cls_logger.info(msg, extra=extra)
 
 
-def _route_tide_to_log(cls_name: str, tide: "Tide") -> None:
+def _route_tide_to_log(cls_name: str, tide: Tide) -> None:
     """Route one Tide record to info/error/debug based on its outcomes.
 
     Mirrors the routing shape of :func:`_route_wave_to_log` but operates on
@@ -144,7 +144,7 @@ def _route_tide_to_log(cls_name: str, tide: "Tide") -> None:
             logger.debug(msg, extra=extra)
 
 
-def _route_reject_to_log(cls_name: str, reject: "RejectEntry") -> None:
+def _route_reject_to_log(cls_name: str, reject: RejectEntry) -> None:
     """Route one RejectEntry to error log with structured edge and HTTP metadata.
 
     Always logs at ERROR level — every :class:`RejectEntry` represents a
@@ -236,7 +236,7 @@ def _read_filtered(filename: str, key: str) -> list[dict[str, Any]]:
         return []
     records: list[dict[str, Any]] = []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     try:
@@ -476,7 +476,7 @@ class LoggingMixin:
 
             errors: list[dict[str, Any]] = []
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     for line in f:
                         if line.strip():
                             try:

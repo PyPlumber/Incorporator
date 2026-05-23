@@ -176,7 +176,7 @@ def _expand_conv_dict_with_schema_union(
 
 
 async def child_incorp(
-    cls: "type[Incorporator]",
+    cls: type[Incorporator],
     inc_parent: Any,
     **kwargs: Any,
 ) -> Incorporator | IncorporatorList[Any]:
@@ -224,9 +224,9 @@ async def child_incorp(
 
 
 def build_instances(
-    cls: "type[Incorporator]",
+    cls: type[Incorporator],
     parsed_data: list[Any],
-    rejects: list["RejectEntry"],
+    rejects: list[RejectEntry],
     is_single: bool,
     target_class: type[Incorporator] | None = None,
     inc_code: str | None = None,

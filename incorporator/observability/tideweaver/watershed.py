@@ -180,7 +180,7 @@ class Watershed(BaseModel):
     drain_timeout: float = Field(30.0, ge=0.0)
 
     @model_validator(mode="after")
-    def _validate_graph(self) -> "Watershed":
+    def _validate_graph(self) -> Watershed:
         """Enforce: unique names, window order, edge endpoints exist, no cycles.
 
         Also folds any ``Current.depends_on`` declarations into ``edges``
@@ -238,7 +238,7 @@ class Watershed(BaseModel):
         outflow: Path | None = None,
         drain_timeout: float = 30.0,
         **kwargs: Any,
-    ) -> "Watershed":
+    ) -> Watershed:
         """Sequential pipeline where each current waits for its upstream's data.
 
         Use it for ETL stages where stage N depends on stage N-1 —
@@ -285,7 +285,7 @@ class Watershed(BaseModel):
         outflow: Path | None = None,
         drain_timeout: float = 30.0,
         **kwargs: Any,
-    ) -> "Watershed":
+    ) -> Watershed:
         """The canonical multi-source fusion shape — one head feeds N middle stages that all converge into one tail.
 
         Use it for cross-exchange arbitrage scanners (Binance +
@@ -340,7 +340,7 @@ class Watershed(BaseModel):
         outflow: Path | None = None,
         drain_timeout: float = 30.0,
         **kwargs: Any,
-    ) -> "Watershed":
+    ) -> Watershed:
         """Broadcast a single source to multiple downstream consumers, each on its own interval.
 
         Use it for one upstream feed with N output formats — raw
@@ -385,7 +385,7 @@ class Watershed(BaseModel):
         outflow: Path | None = None,
         drain_timeout: float = 30.0,
         **kwargs: Any,
-    ) -> "Watershed":
+    ) -> Watershed:
         """Run N independent pipelines concurrently in the same orchestration window, with no edges between them.
 
         Use it when you want an overnight chunked drain across

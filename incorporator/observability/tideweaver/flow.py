@@ -176,7 +176,7 @@ class BackpressurePenstock(Penstock):
     max_rate: float = Field(gt=0.0, description="Effective rate when reservoir is empty.")
 
     @model_validator(mode="after")
-    def _check_rate_ordering(self) -> "BackpressurePenstock":
+    def _check_rate_ordering(self) -> BackpressurePenstock:
         """Reject inverted ``min_rate``/``max_rate`` — the formula assumes ``min_rate < max_rate``.
 
         ``effective_rate = max_rate - (max_rate - min_rate) * fullness`` only
@@ -194,7 +194,7 @@ class BackpressurePenstock(Penstock):
             )
         return self
 
-    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> str | None:
+    def consume_reason(self, edge_state: Any, flow: FlowControl, now: float) -> str | None:
         # Backpressure needs BOTH the wave count (scheduler-owned on
         # ``_EdgeState.waves``) AND the rate-limit watermark
         # (Penstock-owned on ``_EdgeState.flow_state``).  Uses the same
@@ -363,7 +363,7 @@ class FlowObserver(BaseModel):
 
     def on_fire(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         wave_number: int,
     ) -> None:
@@ -372,7 +372,7 @@ class FlowObserver(BaseModel):
 
     def on_skip(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         reason: str,
     ) -> None:
@@ -381,7 +381,7 @@ class FlowObserver(BaseModel):
 
     def on_spillway(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
@@ -391,7 +391,7 @@ class FlowObserver(BaseModel):
 
     def on_reservoir_level(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         used: int,
         capacity: int,
@@ -440,7 +440,7 @@ class LoggingObserver(FlowObserver):
 
     def on_fire(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         wave_number: int,
     ) -> None:
@@ -454,7 +454,7 @@ class LoggingObserver(FlowObserver):
 
     def on_skip(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         reason: str,
     ) -> None:
@@ -468,7 +468,7 @@ class LoggingObserver(FlowObserver):
 
     def on_spillway(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
@@ -483,7 +483,7 @@ class LoggingObserver(FlowObserver):
 
     def on_reservoir_level(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         used: int,
         capacity: int,
@@ -527,7 +527,7 @@ class SignalObserver(FlowObserver):
 
     def on_fire(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         wave_number: int,
     ) -> None:
@@ -535,7 +535,7 @@ class SignalObserver(FlowObserver):
 
     def on_skip(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         reason: str,
     ) -> None:
@@ -543,7 +543,7 @@ class SignalObserver(FlowObserver):
 
     def on_spillway(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
@@ -556,7 +556,7 @@ class SignalObserver(FlowObserver):
 
     def on_reservoir_level(
         self,
-        scheduler: "Tideweaver",
+        scheduler: Tideweaver,
         edge: tuple[str, str],
         used: int,
         capacity: int,
