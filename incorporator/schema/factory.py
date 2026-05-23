@@ -397,7 +397,24 @@ def build_instances(
             # setattr keeps mypy strict happy — ``_cached_type_adapter`` is a
             # dynamic cache attribute, not a declared class field.
             setattr(ActualClass, "_cached_type_adapter", adapter)  # noqa: B010
-        instances: List[Any] = adapter.validate_python(transformed_data)
+        # Yield-point-safe: no ``await`` between the flag set and validate_python,
+        # so two concurrent incorp() calls in asyncio.gather() cannot interleave
+        # this pair.  If a future refactor wraps validate_python in
+        # asyncio.to_thread, this gate becomes unsafe -- revisit then.
+        ActualClass._BATCH_INSERT_MODE = True
+        try:
+            instances: List[Any] = adapter.validate_python(transformed_data)
+        finally:
+            ActualClass._BATCH_INSERT_MODE = False
+        ActualClass._ensure_inc_dict()
+        ActualClass.inc_dict.update({inst.inc_code: inst for inst in instances})
+        from ..base import Incorporator as _Incorporator
+
+        if ActualClass.__bases__ and ActualClass.__bases__[0] is not _Incorporator:
+            for base in ActualClass.__bases__:
+                if issubclass(base, _Incorporator) and base is not _Incorporator:
+                    base._ensure_inc_dict()
+                    base.inc_dict.update({inst.inc_code: inst for inst in instances})
         return IncorporatorList(ActualClass, instances, rejects=rejects)
 
     return ActualClass(**transformed_data)

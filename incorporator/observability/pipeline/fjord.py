@@ -111,7 +111,9 @@ def _build_seed_reject(cls_name: str, exc: Exception, inflow_active: bool) -> Re
         )
     else:
         message = f"Seed Error in source {cls_name!r}: {exc_type}: {exc}"
-    return RejectEntry(source=cls_name, error_kind=exc_type, message=message)
+    return RejectEntry.model_construct(
+        source=cls_name, error_kind=exc_type, message=message, retry_after=None, wave_index=None
+    )
 
 
 def _format_seed_error(cls_name: str, exc: Exception, inflow_active: bool) -> str:

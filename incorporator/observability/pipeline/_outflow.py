@@ -250,12 +250,28 @@ async def flush(
                 # model_validate skips the ``**kwargs`` unpack per row and lets
                 # Pydantic's Rust core amortise field-offset lookups across the
                 # whole list — matches the build_instances:300 fast path.
-                instances = [derived_cls.model_validate(row) for row in rows]
+                # Yield-point-safe: no ``await`` between the flag set and the
+                # list comprehension, so concurrent ticks cannot interleave
+                # this pair.  If a future refactor awaits inside the loop,
+                # this gate becomes unsafe -- revisit then.
+                derived_cls._BATCH_INSERT_MODE = True
+                try:
+                    instances = [derived_cls.model_validate(row) for row in rows]
+                finally:
+                    derived_cls._BATCH_INSERT_MODE = False
+                from ...base import Incorporator as _Incorporator
+
+                derived_cls.inc_dict.update({inst.inc_code: inst for inst in instances})
+                if derived_cls.__bases__ and derived_cls.__bases__[0] is not _Incorporator:
+                    for base in derived_cls.__bases__:
+                        if issubclass(base, _Incorporator) and base is not _Incorporator:
+                            base._ensure_inc_dict()
+                            base.inc_dict.update({inst.inc_code: inst for inst in instances})
             # Strong-ref bridge: pins instances on the class object so
             # ``inc_dict`` (a ``WeakValueDictionary``) keeps them alive
             # AND so downstream ticks reading ``getattr(dep.cls,
             # "_tideweaver_snapshot", None)`` find them.  Same attribute
-            # ``_tick_stream`` parks on Stream classes — unified name.
+            # ``_tick_stream`` parks on Stream classes -- unified name.
             derived_cls._tideweaver_snapshot = instances
 
             class_export = _resolve_export_params_for(derived_name, export_params, is_multi)

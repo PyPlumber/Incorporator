@@ -424,10 +424,11 @@ class Tideweaver:
                     if surge.action == "skip":
                         flow.observer.on_skip(self, edge, "skip_ahead")
                         self._canal_rejects.append(
-                            RejectEntry(
+                            RejectEntry.model_construct(
                                 source=current.cls.__name__,
                                 error_kind="SkipAhead",
                                 message=f"edge {edge[0]}→{edge[1]}: surge skip-ahead",
+                                retry_after=None,
                                 wave_index=self._tide_number,
                             )
                         )
@@ -435,10 +436,11 @@ class Tideweaver:
                     if surge.action == "halt":
                         flow.observer.on_skip(self, edge, "surge_halted")
                         self._canal_rejects.append(
-                            RejectEntry(
+                            RejectEntry.model_construct(
                                 source=current.cls.__name__,
                                 error_kind="SurgeHalted",
                                 message=f"edge {edge[0]}→{edge[1]}: surge halted",
+                                retry_after=None,
                                 wave_index=self._tide_number,
                             )
                         )
@@ -466,10 +468,11 @@ class Tideweaver:
                 # subclasses may emit new ones) DO populate rejects.
                 if gate_reason != "awaiting_upstream":
                     self._canal_rejects.append(
-                        RejectEntry(
+                        RejectEntry.model_construct(
                             source=current.cls.__name__,
                             error_kind="GateBlocked",
                             message=f"edge {edge[0]}→{edge[1]}: {gate_reason}",
+                            retry_after=None,
                             wave_index=self._tide_number,
                         )
                     )
@@ -486,10 +489,11 @@ class Tideweaver:
                     if penstock_reason is not None:
                         flow.observer.on_skip(self, edge, penstock_reason)
                         self._canal_rejects.append(
-                            RejectEntry(
+                            RejectEntry.model_construct(
                                 source=current.cls.__name__,
                                 error_kind="PenstockLimited",
                                 message=f"edge {edge[0]}→{edge[1]}: {penstock_reason}",
+                                retry_after=None,
                                 wave_index=self._tide_number,
                             )
                         )

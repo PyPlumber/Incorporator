@@ -209,6 +209,14 @@ class Incorporator(BaseModel):
     #: zero rows").
     _tideweaver_snapshot: ClassVar[Optional[List[Any]]] = None
 
+    #: Bulk-insert gate set by :func:`~incorporator.schema.factory.build_instances`
+    #: and :func:`~incorporator.observability.pipeline._outflow.flush` around their
+    #: batch-validate calls so ``model_post_init`` skips per-instance ``inc_dict``
+    #: writes during the loop; the caller does a single ``inc_dict.update()`` after
+    #: the loop completes.  Class-level so subclass inheritance is intentional --
+    #: the bulk caller sets and clears it on the concrete class only.
+    _BATCH_INSERT_MODE: ClassVar[bool] = False
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # Per-class isolation of inc_dict / _schema_union / _incorp_kwargs
         # is required so sibling subclasses don't share the base
@@ -308,16 +316,17 @@ class Incorporator(BaseModel):
                 self.inc_code = cls._auto_counter
                 cls._auto_counter += 1
 
-        cls._ensure_inc_dict()
-        cls.inc_dict[self.inc_code] = self
+        if not cls._BATCH_INSERT_MODE:
+            cls._ensure_inc_dict()
+            cls.inc_dict[self.inc_code] = self
 
-        # DSA OPTIMIZATION: Fast-path C-tuple evaluation.
-        # Only iterate bases if this is a deeply nested dynamic subclass.
-        if cls.__bases__ and cls.__bases__[0] is not Incorporator:
-            for base in cls.__bases__:
-                if issubclass(base, Incorporator) and base is not Incorporator:
-                    base._ensure_inc_dict()
-                    base.inc_dict[self.inc_code] = self
+            # DSA OPTIMIZATION: Fast-path C-tuple evaluation.
+            # Only iterate bases if this is a deeply nested dynamic subclass.
+            if cls.__bases__ and cls.__bases__[0] is not Incorporator:
+                for base in cls.__bases__:
+                    if issubclass(base, Incorporator) and base is not Incorporator:
+                        base._ensure_inc_dict()
+                        base.inc_dict[self.inc_code] = self
 
     @classmethod
     async def incorp(
