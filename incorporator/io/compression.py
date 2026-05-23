@@ -192,7 +192,7 @@ def _decompress_native_stream(
             else:
                 raise IncorporatorFormatError(f"Unsupported native stream type: {comp_type}")
             _enforce_size_cap(
-                len(decompressed) if isinstance(decompressed, (bytes, str)) else 0,
+                len(decompressed) if isinstance(decompressed, bytes | str) else 0,
                 comp_type,
             )
             return decompressed

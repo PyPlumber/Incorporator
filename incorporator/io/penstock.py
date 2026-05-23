@@ -583,6 +583,6 @@ def known_host_rates() -> Dict[str, float]:
     rates: Dict[str, float] = {}
     for host, penstock in _HOST_PENSTOCKS.items():
         rate = getattr(penstock, "rate_per_sec", None)
-        if isinstance(rate, (int, float)):
+        if isinstance(rate, int | float):
             rates[host] = float(rate)
     return rates

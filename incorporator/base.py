@@ -836,7 +836,7 @@ class Incorporator(BaseModel):
 
         if instance is None:
             inst_list = cast(List[TIncorporator], list(cls.inc_dict.values()))
-        elif isinstance(instance, (str, Path)):
+        elif isinstance(instance, str | Path):
             inst_list = cast(List[TIncorporator], list(cls.inc_dict.values()))
             target_str = str(instance)
             if target_str.startswith("http"):

@@ -175,14 +175,14 @@ def _eval_node(node: ast.AST, *, origin: str, allowed: Dict[str, Any]) -> Any:
         kwargs = {kw.arg: _eval_node(kw.value, origin=origin, allowed=allowed) for kw in node.keywords if kw.arg}
         return func(*args, **kwargs)
 
-    if isinstance(node, (ast.List, ast.Tuple)):
+    if isinstance(node, ast.List | ast.Tuple):
         elts = [_eval_node(e, origin=origin, allowed=allowed) for e in node.elts]
         return list(elts) if isinstance(node, ast.List) else tuple(elts)
 
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant):
         # Allow negative number literals: -1, -3.14.  Not arbitrary unary ops.
         value = node.operand.value
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             return -value
 
     # Friendly per-shape rejections for the AST nodes users most commonly
@@ -194,7 +194,7 @@ def _eval_node(node: ast.AST, *, origin: str, allowed: Dict[str, Any]) -> Any:
             'reference it by name from the JSON (e.g. ``"@my_helper"`` or '
             "``\"calc(my_helper, 'field')\"``)."
         )
-    if isinstance(node, (ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp)):
+    if isinstance(node, ast.ListComp | ast.DictComp | ast.SetComp | ast.GeneratorExp):
         raise TokenResolutionError(
             f"Token {origin!r} contains a comprehension, which is not allowed in the "
             "JSON token grammar.  Move the comprehension into a named function in "

@@ -288,7 +288,7 @@ def infer_dynamic_schema(
             for k, v in item.items():
                 current_val = sample_dict.get(k)
 
-                if current_val is None or (isinstance(current_val, (list, dict)) and not current_val):
+                if current_val is None or (isinstance(current_val, list | dict) and not current_val):
                     # Shallow copy prevents mutating the original data via reference.
                     if isinstance(v, list):
                         sample_dict[k] = list(v)

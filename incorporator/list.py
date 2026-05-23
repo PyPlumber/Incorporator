@@ -28,8 +28,8 @@ def _deduplicate_extracted(data: List[Any]) -> List[Any]:
     try:
         return list(dict.fromkeys(data))
     except TypeError:
-        hashable = [x for x in data if isinstance(x, (str, int, float, bool))]
-        non_hashable = [x for x in data if not isinstance(x, (str, int, float, bool))]
+        hashable = [x for x in data if isinstance(x, str | int | float | bool)]
+        non_hashable = [x for x in data if not isinstance(x, str | int | float | bool)]
         if non_hashable:
             logger.warning(
                 "extracted_data contains %d non-hashable item(s) that cannot be "

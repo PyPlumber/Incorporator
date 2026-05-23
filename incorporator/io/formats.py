@@ -283,7 +283,7 @@ def ensure_bytes(source: Union[str, bytes, Path]) -> bytes:
 
 def serialize_nested(val: Any) -> Any:
     """Safely serializes nested lists/dicts to JSON strings for flat format exports."""
-    if isinstance(val, (dict, list)):
+    if isinstance(val, dict | list):
         return json.dumps(val)
     return val
 

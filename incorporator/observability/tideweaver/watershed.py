@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
@@ -258,10 +259,7 @@ class Watershed(BaseModel):
         """
         resolved = _resolve_flow(gate_mode, flow)
         currents = list(currents)
-        edges = [
-            Edge(from_name=a.name, to_name=b.name, flow=resolved)
-            for a, b in zip(currents[:-1], currents[1:], strict=False)
-        ]
+        edges = [Edge(from_name=a.name, to_name=b.name, flow=resolved) for a, b in pairwise(currents)]
         return cls(
             window=window,
             currents=currents,
