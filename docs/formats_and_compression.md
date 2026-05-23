@@ -40,9 +40,9 @@ If a URL or File ends with a recognized compression extension, Incorporator will
 | :--- | :--- | :--- | :--- |
 | **Gzip** | `.gz` | *Native* | Streamed decompressed securely in RAM. |
 | **Bzip2** | `.bz2` | *Native* | Highly compressed, native standard library support. |
-| **LZMA / XZ** | `.lzma`, `.xz` | *Native* | Modern compression natively supported by Python. |
+| **LZMA / XZ** | `.lzma`, `.xz` | *Native* | Higher compression ratio than gzip/bz2; native standard library support. |
 | **ZIP** | `.zip` | *Native* | Directory archive. Automatically searches for the valid data file (see below). |
-| **Tarball** | `.tar`, `.tgz` | *Native* | Directory archive. Uses $O(1)$ linear iteration for lightning-fast extraction. |
+| **Tarball** | `.tar`, `.tgz` | *Native* | Directory archive. Uses $O(1)$ linear iteration on extraction. |
 | **Zstandard** | `.zst` | `[speedups]` | Requires `pip install incorporator[speedups]`. Ultra-fast Rust bindings via `cramjam`. |
 | **LZ4** | `.lz4` | `[speedups]` | Requires `pip install incorporator[speedups]`. Ultra-fast Rust bindings via `cramjam`. |
 | **Snappy** | `.snappy` | `[speedups]` | Requires `pip install incorporator[speedups]`. Standard for Hadoop environments. |
