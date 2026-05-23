@@ -1,4 +1,11 @@
-# Benchmark Results — v1.1.3 (2026-05-17)
+# Benchmark Results — v1.1.3 (2026-05-17) · historical
+
+> Captures v1.1.3-era performance for historical reference.  Current
+> v1.2.1+ headline numbers and tuning guidance live in
+> [`performance.md`](./performance.md).  The TypeAdapter batch-validation
+> refactor in v1.2.1 shifted `incorp()` peak-memory shape; the throughput
+> numbers below remain a useful comparison point but are no longer the
+> measured-on-HEAD reference.
 
 This file captures one point-in-time benchmark run of the full
 `tests/benchmarks/` suite on `workflow` HEAD (commit `76beabf`), with
