@@ -2,7 +2,9 @@
 
 # 🚀 Incorporator
 
-**A schema-free data mapper that turns JSON, XML, or CSV into a unified Python object graph with dot-notation and access-at-runtime — plus an in-process orchestrator (Tideweaver) for multi-source pipelines.**
+**Schema-free ingestion for APIs you don't control — and an orchestrator that tells you how to tune it.**
+
+Both halves share the same primitives — Penstock throttling at the HTTP and edge layers, Wave / Tide / RejectEntry outcome records, FlowControl — so the parser and the orchestrator compose, but you can adopt either without the other. Local paginators (`SQLitePaginator`, `CSVPaginator`, `AvroPaginator`) accept the same `penstock=` kwarg as the HTTP layer — one rate-limit primitive across both.
 
 <!-- DISTRIBUTION -->
 [![PyPI version](https://img.shields.io/pypi/v/incorporator?color=blue)](https://pypi.org/project/incorporator/)
@@ -24,9 +26,9 @@
 [![GitHub stars](https://img.shields.io/github/stars/PyPlumber/incorporator?color=yellow&label=stars)](https://github.com/PyPlumber/incorporator/stargazers)
 
 ### ✨ Highlights
-* **Works with unpredictable JSON APIs** — and digests XML, CSV, NDJSON, SQLite, Parquet without a line of schema. Native Python objects instantly, no manual model definitions.
-* **Handles changing structures at runtime** — missing keys and mutating types absorbed without validation errors.
-* **Pydantic + HTTPX under the hood** — no data classes, connection poolers, or pagination loops to write.
+* **Works with unpredictable JSON APIs** — digests XML, CSV, NDJSON, SQLite, Parquet, Avro without a line of schema; missing keys and mutating types absorbed without validation errors.
+* **The pipeline tells you what to tune** — after a Tideweaver run, `architect.tune()` consumes the accumulated rejects, tides, and waves and emits a `TuningReport` of severity-sorted hints.
+* **Disk-backed observability for orchestration** — `LoggedTideweaver` routes every `Tide` and `RejectEntry` through a `QueueHandler` pipeline, replayable with `get_tides()` / `get_rejects()`.
 
 ---
 
@@ -69,7 +71,7 @@ The format is inferred from the URL or file extension. The syntax **never change
 
 ## 📦 Installation
 
-Built on Pydantic V2 metaprogramming, HTTPX, and Tenacity. No system dependencies.
+Built on Pydantic V2 metaprogramming, HTTPX, and Tenacity. No system dependencies. Requires Python 3.10+. CI runs against 3.10 / 3.11 / 3.13 on Ubuntu and Windows.
 
 ```bash
 pip install incorporator                  # core
@@ -132,7 +134,7 @@ async for wave in Launch.stream(
     if wave.failed_sources: print(wave)
 ```
 
-Use an append-friendly format (`.ndjson` / `.csv` / `.sqlite` / `.avro`) — Parquet, Feather, ORC, and Excel rebuild the whole file every wave and aren't safe for per-tick streams. For live dashboards keeping a registry hot across many sources, reach for `fjord()` instead.
+Use an append-friendly format (`.ndjson` / `.csv` / `.sqlite` / `.avro`) — Parquet, Feather, ORC, and Excel rebuild the whole file every wave and aren't safe for per-tick streams. For live dashboards keeping a registry hot across many sources, reach for `fjord()` instead. Pass `adapt_chunk_size=True` to let `stream()` resize `paginator.chunk_size` between chunks via AIMD — bounded by `chunk_size_min` / `chunk_size_max` and a target latency window of `target_min_sec` / `target_max_sec`.
 
 → [Streaming & pagination](./docs/streaming_and_pagination.md) · [Tutorial 8](./examples/08-streaming-daemon/README.md)
 
@@ -172,7 +174,7 @@ watershed = Watershed.diamond(
 async for tide in Tideweaver(watershed).run():
     print(tide.tide_number, tide.fired, tide.skipped)
 ```
-Four shape helpers (`parallel`, `chain`, `fanout`, `diamond`) plus `custom` with explicit `edges`. Declarative `watershed.json` config + `incorporator tideweaver run / validate` CLI mirror the `stream` / `fjord` workflow.
+Four shape helpers (`parallel`, `chain`, `fanout`, `diamond`) plus `custom` with explicit `edges`. Declarative `watershed.json` config + `incorporator tideweaver run / validate` CLI mirror the `stream` / `fjord` workflow. After the run, `Tideweaver.summary(tides=tides)` returns a `TuningReport` (see Resilience).
 
 **Probe → plan → run, no disk round-trip.** When you have N unknown endpoints, `architect()` profiles each one and emits a runnable plan you can tune in-memory before handing it to `Tideweaver`:
 
@@ -187,7 +189,7 @@ async for tide in Tideweaver(watershed).run():
     ...
 ```
 
-`architect(output=...)` also emits `"report"` (pretty-printed), `"python"` (paste-ready module), or `"json"` (paste-ready `watershed.json`).
+`architect(output=...)` also emits `"report"` (pretty-printed), `"python"` (paste-ready module), or `"json"` (paste-ready `watershed.json`). After a run, `architect.tune()` consumes the accumulated rejects + tides + waves and emits a `TuningReport` of structured recommendations — see Resilience below.
 
 **Per-edge flow control.** Each edge composes six orthogonal primitives — `Gate` (HardLock / SoftPass / Weir), `SurgeBarrier`, `Penstock` (Sustained / Burst / Window / Backpressure / Signal), `Reservoir`, `Spillway` (DropOldest / RaiseOverflow / ExportToArchive), and a declarative `FlowObserver` (Null / Logging / Signal) for telemetry. The shape constructors accept a top-level `flow=` or `gate_mode=` shorthand; explicit `Edge(...)` carries its own:
 
@@ -253,10 +255,8 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
   ```python
   from incorporator import register_host_penstock
   from incorporator.io.penstock import SustainedPenstock
-
   register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))   # ~12 r/min
   register_host_penstock("pokeapi.co",        SustainedPenstock(rate_per_sec=1.5))   # ~90 r/min
-  register_host_penstock("vpic.nhtsa.dot.gov", SustainedPenstock(rate_per_sec=1.5))
   ```
 
   `architect()` surfaces 429 / `Retry-After` hints during probing and recommends a `Penstock` on the matching edge.  See [`register_host_penstock` in the API Atlas](./docs/api_atlas.md#register_host_penstock).
@@ -272,7 +272,17 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
 
   See `incorporator.io.SourceRef` for the opt-in typed source value (URL / file / parent / payload / kwargs) when you need explicit source dispatch.
 * **Atomic writes + spreadsheet-injection guard** — Parquet / Feather / ORC / JSON / XML / XLSX build via tempfile + `os.replace()` (no half-written files); CSV / XLSX cells starting with `=` / `@` / `+` / `-` are quoted on export (OWASP).
-* **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop.
+* **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. For orchestration runs, `LoggedTideweaver` (from `incorporator.observability.tideweaver`) is the parallel drop-in for `Tideweaver` — routes every yielded `Tide` and every accumulated `RejectEntry` to disk via the same `QueueHandler` pipeline; replay with `get_tides()` / `get_rejects()`.
+* **The pipeline tells you what to tune.** After a Tideweaver run, `architect.tune()` reads the accumulated rejects, tides, and pass interval and returns a `TuningReport` of severity-sorted hints — per-edge `Penstock` rates, backlog backoff, surge thresholds. For an existing `Tideweaver` instance, `tw.summary(tides=tides)` returns the same report.
+
+  ```python
+  from incorporator.observability.tideweaver import LoggedTideweaver, tune
+  tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="PriceSession")
+  tides = [tide async for tide in tw.run()]
+  report = tune(rejects=tw.rejects, tides=tides, pass_interval=tw.pass_interval)
+  print(report.render())   # hint blocks, sorted by severity
+  ```
+* **Keyed reject audit + backlog short-circuit.** `Tideweaver.rejects` returns a `list[RejectEntry]` whose `error_kind` is one of `"PenstockLimited"`, `"SurgeHalted"`, `"SkipAhead"`, `"GateBlocked"` — every canal-layer skip that never reached a tick body lands here, with `from_name` / `to_name` / `cooldown_sec` populated for keyed analysis. Set `backlog_backoff_factor=2.0` on the `Tideweaver` constructor to extend the next-pass wait when the scheduler is consistently saturated; the default `1.0` is disabled.
 * **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML. → [Tutorial 3](./examples/03-universal-formats/README.md)
 
 ---
@@ -300,7 +310,7 @@ The eleven-tutorial curriculum.  Each slot introduces one new verb or technique,
 * [🩺 **Production Debugging with `get_error()`**](./docs/debugging.md) — `LoggedIncorporator` + structured error logs + DLQ retry.
 * [📦 **Formats & Compression**](./docs/formats_and_compression.md) + [🌊 **Streaming & Pagination**](./docs/streaming_and_pagination.md) — every format kwarg, compression rules, and the paginator family for endpoints / files too big for RAM.
 * [🐳 **CLI & Configuration**](./docs/cli_and_configuration.md) — running pipelines from `pipeline.json` / `watershed.json`.
-* [⚡ **Performance**](./docs/performance.md) — measured throughput per format, memory profile, tuning knobs.
+* [⚡ **Performance**](./docs/performance.md) — measured throughput per format, memory profile, tuning knobs. Per-chunk validation uses `TypeAdapter(list[Cls]).validate_python(rows)` and is 1.3-2.0× faster than per-row `model_validate` (`tests/benchmarks/test_validate_batch_vs_per_row.py`). Trade-off: within a single `incorp()` call, peak memory is O(N); `stream()` still keeps RSS flat by releasing each chunk. Outcome records — `Wave`, `Tide`, `RejectEntry`, and slotted dataclass `CurrentOutcome` (per-current outcomes inside `Tide`) — carry structured fields (HTTP retry counts, schema-cache hits, source URLs, per-edge identity, status codes, cooldown hints) for keyed audit.
 
 ## 📎 Appendices — optional side-quests
 
