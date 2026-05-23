@@ -29,9 +29,11 @@ every public callable.
   - [`display`](#display)
 - [Orchestration](#orchestration)
   - [`Tideweaver orchestration surface`](#tideweaver-orchestration-surface)
+  - [`Tideweaver.summary` / `tune` / `TuningReport`](#tideweaversummary--tune--tuningreport)
 - [Telemetry](#telemetry)
   - [`Wave.log_meta`](#wavelog_meta)
-- [Observability layer (`LoggedIncorporator`)](#observability-layer-loggedincorporator)
+- [Observability layer (`LoggedIncorporator` + `LoggedTideweaver`)](#observability-layer-loggedincorporator)
+  - [`LoggedTideweaver`](#loggedtideweaver)
   - [`LoggedIncorporator` — shared `enable_logging=` note](#loggedincorporator--shared-enable_logging-note)
   - [`get_error`](#loggedincorporator-get_error)
   - [`log_debug` / `log_info` / `log_error`](#loggedincorporator-log_debug--log_info--log_error)
@@ -376,6 +378,12 @@ async def stream(
     export_interval: Optional[float] = None,
     inflow: Optional[Union[str, Path]] = None,
     outflow: Optional[Union[str, Path]] = None,
+    # Adaptive chunk sizing (v1.2.1+):
+    adapt_chunk_size: bool = False,
+    chunk_size_min: int = 100,
+    chunk_size_max: int = 100_000,
+    target_min_sec: float = 0.030,
+    target_max_sec: float = 0.100,
 ) -> AsyncGenerator["Wave", None]:
 ```
 
@@ -398,6 +406,7 @@ The chunking daemon — unattended overnight drain of a paginated source, one pa
 - `poll_interval` / `refresh_interval` / `export_interval` — interval cascade; refresh and export each fall back to `poll_interval`.
 - `inflow=` — sidecar for token-resolver helpers plus an optional `inflow(state)` hook (stateful only).
 - `outflow=` — user-defined subclass for the receiver; **stateful only** (raises `ValueError` in chunking mode).
+- `adapt_chunk_size=` (v1.2.1+) — `True` to let the engine resize `paginator.chunk_size` between chunks via AIMD.  Companions: `chunk_size_min` / `chunk_size_max` clamp the range, `target_min_sec` / `target_max_sec` define the latency window the engine tries to settle inside.  See [Streaming & Pagination — Adaptive chunk sizing](./streaming_and_pagination.md#adaptive-chunk-sizing-v121).
 
 **Yields / returns**
 `AsyncGenerator[Wave, None]` — one `Wave` per chunk or per daemon iteration. `wave.operation` is `"chunk"`, `"incorp"`, `"refresh"`, or `"export"`.
@@ -530,8 +539,16 @@ class Tideweaver:
         *,
         tick_factory: Optional[TickFactory] = None,
         pass_interval: Optional[float] = None,
+        backlog_backoff_factor: float = 1.0,        # v1.2.1+, opt-in 2.0
     ) -> None: ...
     async def run(self) -> AsyncIterator[Tide]: ...
+    def summary(
+        self,
+        *,
+        tides: Optional[List[Tide]] = None,
+        waves: Optional[List[Wave]] = None,
+    ) -> "TuningReport": ...                         # v1.2.1+
+    rejects: List[RejectEntry]                       # canal-layer + verb-layer
 
 class Watershed(BaseModel):
     @classmethod
@@ -572,14 +589,85 @@ The windowed orchestration verb — when one source's `stream()` isn't enough, w
 - `flow` (shape constructors) — full `FlowControl(...)` shared across every edge produced by the shape. Mutually exclusive with `gate_mode=`.
 - `drain_timeout` — seconds the scheduler waits for in-flight ticks at window close.
 - `pass_interval` (`Tideweaver`) — override the auto-derived scheduler tick.
+- `backlog_backoff_factor` (`Tideweaver`, v1.2.1+) — multiplicatively extend the next-pass wait when the scheduler is consistently saturated.  Default `1.0` is disabled; set to `2.0` (or larger) to opt in.  See [Post-run tuning](#tideweaversummary--tune--tuningreport) for the diagnostic side.
 
 **Yields / returns**
-`Tideweaver.run()` yields one `Tide` per scheduler pass, carrying `tide_number`, `fired`, `skipped: List[(name, reason)]`, `duration_sec`.
+`Tideweaver.run()` yields one `Tide` per scheduler pass, carrying `tide_number`, `fired`, `skipped: List[(name, reason)]`, `duration_sec`, plus the v1.2.1 outcome-record fields: `wake_reason`, `heap_depth`, `current_outcomes: List[CurrentOutcome]`, `in_flight_count_at_start`, `canal_rejects_added`, `next_due_in_sec`.
 
 **See also**
 [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) ·
 [Appendix — NASCAR Tideweaver](../examples/appendix/nascar-tideweaver/README.md) ·
 [Library Reference](./library_reference.md)
+
+---
+
+### Tideweaver.summary / tune / TuningReport
+
+**Signatures** *(v1.2.1+)*
+```python
+# Functional form — module-level callable.
+def tune(
+    *,
+    rejects: Optional[List[RejectEntry]] = None,
+    tides: Optional[List[Tide]] = None,
+    waves: Optional[List[Wave]] = None,
+    pass_interval: Optional[float] = None,
+) -> TuningReport: ...
+
+# Instance-method convenience — same return.
+class Tideweaver:
+    def summary(
+        self,
+        *,
+        tides: Optional[List[Tide]] = None,
+        waves: Optional[List[Wave]] = None,
+    ) -> TuningReport: ...
+
+class TuningReport(BaseModel):                 # frozen
+    hints: List[TuningHint]
+    summary: Dict[str, Any]
+    analyzed_at: datetime
+    def render(self) -> str: ...               # human-readable, severity-sorted
+
+class TuningHint(BaseModel):
+    severity: Literal["high", "med", "low", "info"]
+    knob: str                                  # which Tideweaver knob to move
+    scope: Dict[str, str]                      # current name / edge / host etc.
+    current_value: Any
+    recommended_value: Any
+    signal: str                                # which metric triggered the hint
+    rationale: str                             # one-sentence explanation
+    sample_size: int
+```
+
+All call paths are **keyword-only**.  All inputs default to `None` — pass whatever subset of `rejects` / `tides` / `waves` you have on hand; the heuristics scale down gracefully.
+
+**Import path** *(load-bearing — not top-level)*
+```python
+from incorporator.observability.tideweaver import tune, TuningReport, TuningHint
+```
+
+**What it does (pseudocode)**
+1. Aggregate the supplied records by current, edge, and host.
+2. For each known knob (`chunk_size`, `pass_interval`, penstock rate, surge threshold, retry policy, ...), evaluate the signals.
+3. Emit a `TuningHint` per recommended adjustment with severity, current value, recommended value, sample size, and rationale.
+4. Return the structured `TuningReport`; `.render()` formats severity-sorted hint blocks for console review.
+
+**When to reach for it**
+The post-window feedback loop.  After a Tideweaver run, feed the accumulated `tw.rejects` (canal + verb layer) and the per-pass `Tide` records back in — the report tells you what knob to move next window, with the signal that drove the recommendation.  Pair with `LoggedTideweaver.get_tides()` / `get_rejects()` for cross-process replay.
+
+**Common kwargs**
+- `rejects` — the `Tideweaver.rejects` list at run end.  Drives Penstock-rate and SurgeBarrier recommendations.
+- `tides` — the list collected from `async for tide in tw.run()`.  Drives `pass_interval` and `chunk_size` recommendations.
+- `waves` — optional per-source `Wave` records (from a side-channel `Stream.run()` collect); enables row-throughput hints.
+- `pass_interval` — the value used at runtime; lets the analyzer compare against the recommendation.
+
+**Yields / returns**
+`TuningReport` — frozen Pydantic model; iterate `.hints` for programmatic use, `print(report.render())` for human review.
+
+**See also**
+[Tutorial 11 — Post-run tuning](../examples/11-tideweaver/README.md#post-run-tuning) ·
+[Production Debugging — Orchestration debugging](./debugging.md#orchestration-debugging--loggedtideweaver--architecttune)
 
 ---
 
@@ -889,6 +977,58 @@ The class-level counterpart to `log_info` / `log_error` — use these inside `@c
 
 ---
 
+### LoggedTideweaver
+
+**Signatures** *(v1.2.1+)*
+```python
+class LoggedTideweaver(Tideweaver, LoggingMixin):
+    def __init__(
+        self,
+        watershed: Watershed,
+        *,
+        enable_logging: bool = False,
+        logger_name: Optional[str] = None,
+        pass_interval: Optional[float] = None,
+        backlog_backoff_factor: float = 1.0,
+        # ...plus every Tideweaver kwarg.
+    ) -> None: ...
+
+    @classmethod
+    async def get_tides(cls, *, logger_name: str) -> List[Tide]: ...
+    @classmethod
+    async def get_rejects(cls, *, logger_name: str) -> List[RejectEntry]: ...
+```
+
+**Import path** *(load-bearing — not top-level)*
+```python
+from incorporator.observability.tideweaver import LoggedTideweaver
+```
+
+**What it does (pseudocode)**
+1. Construct exactly like `Tideweaver(...)`; layer in `LoggingMixin` so disk I/O routes through the same `QueueHandler` pipeline as `LoggedIncorporator`.
+2. On every yielded `Tide`, emit a JSON-line record under `logs/<logger_name>_api.log` (full Pydantic dump of the Tide, including v1.2.1 fields).
+3. On every accumulated `RejectEntry`, emit a JSON-line record under `logs/<logger_name>_error.log`.
+4. `get_tides()` / `get_rejects()` tail the matching log file in a worker thread and return the parsed records.
+
+**When to reach for it**
+The orchestration-side `LoggedIncorporator` — for Tideweaver pipelines that need disk-readable Tide + RejectEntry capture without inline `print(tide)`.  Pair with `tune()` for the post-run feedback loop; pair with `LoggedTideweaver.get_tides()` / `get_rejects()` for cross-process replay (a separate analysis worker reading the log files).
+
+**Common kwargs**
+- `watershed` — same as `Tideweaver`.
+- `enable_logging=` — `True` to wire up the `QueueHandler` pipeline.
+- `logger_name=` — namespace for the log files; required when `enable_logging=True`.
+- `backlog_backoff_factor=` — same v1.2.1 opt-in as `Tideweaver`.
+
+**Yields / returns**
+Inherits `run()` from `Tideweaver` — `AsyncIterator[Tide]`.  Class methods `get_tides()` / `get_rejects()` return parsed records from disk.
+
+**See also**
+[Tutorial 11 — Post-run tuning](../examples/11-tideweaver/README.md#post-run-tuning) ·
+[Production Debugging — Orchestration debugging](./debugging.md#orchestration-debugging--loggedtideweaver--architecttune) ·
+[Deployment — Production logging for Tideweaver](./deployment.md#production-logging-for-tideweaver--loggedtideweaver)
+
+---
+
 ### Shared kwargs glossary
 
 - `inflow=` — sidecar `.py` exposing public symbols for `conv_dict` token resolution; in fjord, may also define `inflow(state)` for sequential dependent seeding (see [the `inflow(state)` contract](#fjord) under the fjord entry for call cadence, guard requirements, and return shape).
@@ -908,10 +1048,15 @@ The class-level counterpart to `log_info` / `log_error` — use these inside `@c
 | `inc_url` / `inc_file` | `Incorporator` (ClassVar) | `Optional[str]` | origin tracking. `refresh()` falls back to these when called without explicit new sources. |
 | `inc_code` / `inc_name` / `last_rcd` | instance | universal Pydantic fields | identity (auto-counter fallback) + display label + UTC construction timestamp. |
 | `failed_sources` | `IncorporatorList` | `List[str]` | legacy flat reject-list surface — every URL/file that hit a permanent failure.  Derived view of `rejects` (`[entry.source for entry in rejects]`). |
-| `Wave.{chunk_index, operation, rows_processed, failed_sources, processing_time_sec, timestamp}` | `Wave` (frozen Pydantic) | model fields | one record per pipeline tick. Yielded by `stream()` and `fjord()`. |
+| `Wave.{chunk_index, operation, rows_processed, failed_sources, processing_time_sec, timestamp}` | `Wave` (frozen Pydantic) | core model fields | one record per pipeline tick. Yielded by `stream()` and `fjord()`. |
+| `Wave.{source_url, bytes_processed, http_retry_count, validation_error_count, schema_cache_hit, conv_dict_time_sec}` | `Wave` (frozen Pydantic) | v1.2.1 outcome-record fields | per-wave telemetry surface: source URL the wave drained, byte volume, HTTP retry count, validation error count, schema-cache hit flag, `conv_dict` execution time. |
+| `Tide.{tide_number, fired, skipped, duration_sec, timestamp}` | `Tide` (frozen Pydantic) | core model fields | one record per `Tideweaver` scheduler pass. Yielded by `Tideweaver.run()`. |
+| `Tide.{current_outcomes, wake_reason, heap_depth, in_flight_count_at_start, canal_rejects_added, next_due_in_sec}` | `Tide` (frozen Pydantic) | v1.2.1 outcome-record fields | per-pass scheduler telemetry: list of per-current outcomes, wake reason (Literal), heap depth, in-flight tick count at start, new canal rejects this pass, seconds until next due tick. |
+| `CurrentOutcome` (`incorporator.observability.tideweaver.current_outcome`) | `@dataclass(frozen=True, slots=True)` | per-current outcome record | Fields: `name: str`, `status: str` (`"fired"` / `"skipped"` / `"still_running"`), `reason: Optional[str]`, `bypassed_edges: tuple[str, ...]`, `in_flight_sec: Optional[float]`, `last_wave_at: Optional[datetime]`. Surfaced via `tide.current_outcomes`. |
 | `IncorporatorList.inc_dict` | property on the list | shared view of class registry | what `incorp()`'s return value exposes; mutations write through to `cls.inc_dict`. |
 | `IncorporatorList.rejects` | property on the list | `List[RejectEntry]` | structured reject list — entry fields: `source`, `error_kind`, `message`, `retry_after`, `wave_index`.  Read by retry orchestrators that want the exception type or `Retry-After` hint without parsing strings. |
-| `RejectEntry` (top-level export) | frozen Pydantic | failure record | `from incorporator import RejectEntry`.  Populated by HTTP error sites in `io/fetch.py` and fjord seed errors. |
+| `Tideweaver.rejects` | attribute on the instance | `List[RejectEntry]` | structured canal-layer reject list — same `RejectEntry` type, but `error_kind` can be one of four canal-layer literals (`"PenstockLimited"` / `"SurgeHalted"` / `"SkipAhead"` / `"GateBlocked"`) for scheduler-level skips that never reached a tick body.  `from_name` / `to_name` / `cooldown_sec` populated for per-edge attribution. |
+| `RejectEntry` (top-level export) | frozen Pydantic | failure record | `from incorporator import RejectEntry`.  Populated by HTTP error sites in `io/fetch.py`, fjord seed errors, and the `Tideweaver` scheduler (canal-layer skips). v1.2.1 added `from_name`, `to_name`, `host`, `status_code`, `attempt_number`, `duration_sec`, `cooldown_sec` for edge / HTTP / cooldown attribution. |
 | `SourceRef` (`incorporator.io.SourceRef`) | frozen dataclass | source value type | Five factories (`from_url` / `from_file` / `from_parent` / `from_payload` / `from_kwargs`) plus an auto-detect `parse()` classmethod.  Internal scaffolding for `incorp()` / `architect()` source dispatch; opt-in public API for callers wanting explicit source typing. |
 | `CustomCurrent` (`incorporator.observability.tideweaver.CustomCurrent`) | abstract `Current` subclass | escape hatch | Subclass and override `async tick(self, scheduler: Tideweaver) -> None` for non-verb tick logic (cron-style cleanups, custom side-effects, externally-driven publishers). |
 | `GateContext` / `SurgeContext` / `FlowState` | frozen dataclasses | narrow value types | What custom `Gate.gate_reason(ctx)` / `SurgeBarrier.is_tripped(ctx)` / `Penstock.consume_reason(state, flow, now)` overrides read.  Authoring a custom strategy?  Subclass against these — never the scheduler. |
