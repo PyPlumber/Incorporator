@@ -60,7 +60,7 @@ asyncio.run(run_massive_export())
 
 ## 2. Web API Pagination (REST APIs)
 
-Web APIs use wildly different pagination strategies. Incorporator provides out-of-the-box support for the 5 most common patterns. They feature built-in infinite loop protection and seamlessly integrate with the framework's concurrency engine.
+Web APIs use wildly different pagination strategies. Incorporator provides out-of-the-box support for the 5 most common patterns. They have built-in infinite-loop protection and compose with the framework's concurrency engine.
 
 ### Available Web Paginators:
 *   **`CursorPaginator(cursor_param="cursor")`**: Extracts the next token from the payload and appends it to the query string (e.g., Twitter/X API).
@@ -141,6 +141,35 @@ async def run_infinite_scraper():
 if __name__ == "__main__":
     asyncio.run(run_infinite_scraper())
 ```
+
+---
+
+## Adaptive chunk sizing (v1.2.1+)
+
+When per-chunk processing time drifts outside a target window, `stream()`
+can resize `paginator.chunk_size` between chunks instead of forcing the
+caller to pick a fixed value up front.  Opt in with `adapt_chunk_size=True`
+and the four companion bounds:
+
+```python
+async for wave in Cls.stream(
+    incorp_params={..., "inc_page": paginator},
+    adapt_chunk_size=True,
+    chunk_size_min=100, chunk_size_max=100_000,
+    target_min_sec=0.030, target_max_sec=0.100,
+):
+    ...
+```
+
+The starting `chunk_size` comes from the paginator; the engine applies
+AIMD (additive-increase / multiplicative-decrease) between chunks —
+growing when the observed time falls below `target_min_sec`, shrinking
+when it exceeds `target_max_sec`, clamped to `[chunk_size_min,
+chunk_size_max]`.  There is no single `target_window` kwarg — the pair
+of bounds is the window.
+
+Useful when per-chunk cost is dominated by something the caller can't
+predict (slow upstream, variable row size, GC pressure on the host).
 
 ---
 
