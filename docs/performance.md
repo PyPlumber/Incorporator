@@ -11,7 +11,7 @@ This page answers two questions:
 
 Numbers below are measured locally on Windows 10, Python 3.13, 500k-row
 synthetic datasets — captured on the v1.1.3 release run
-([`docs/benchmark_results_v1.1.3.md`](./benchmark_results_v1.1.3.md)
+([`docs/benchmark_results_v1.1.3_historical.md`](./benchmark_results_v1.1.3_historical.md)
 has the full per-test trace).  Every line is reproducible via
 [`pytest -m benchmark`](#reproducing-the-numbers) and enforced by
 conservative CI floors so regressions are caught on every PR.
@@ -178,7 +178,44 @@ depends on row size:
 The default `chunk_size=1_000` is conservative — bump it up if your
 profile shows the HTTP/parse work is dominating per-chunk overhead.
 
-### 5. Write efficient `conv_dict` reducers
+### 5. Let `stream()` tune its own `chunk_size` (v1.2.1+)
+
+Set `adapt_chunk_size=True` and the chunked engine resizes
+`paginator.chunk_size` between chunks via AIMD (additive-increase /
+multiplicative-decrease).  The bounds and latency window are explicit:
+
+```python
+async for wave in Cls.stream(
+    incorp_params={...},
+    adapt_chunk_size=True,
+    chunk_size_min=100, chunk_size_max=100_000,
+    target_min_sec=0.030, target_max_sec=0.100,
+):
+    ...
+```
+
+Each chunk's observed processing time decides the next chunk: below
+`target_min_sec` the engine grows `chunk_size` additively; above
+`target_max_sec` it shrinks multiplicatively.  Useful when the
+per-chunk cost is dominated by something the caller can't predict
+(slow upstream, variable row size, GC pressure).
+
+### 6. Extend the next-pass wait under Tideweaver backlog (v1.2.1+)
+
+When a `Tideweaver` scheduler is consistently saturated (every pass
+runs over `pass_interval` because in-flight ticks haven't completed),
+pass `backlog_backoff_factor=2.0` on the constructor to multiplicatively
+extend the wait until the heap drains.  The default `1.0` is disabled —
+behaviour identical to v1.2.0.
+
+```python
+Tideweaver(watershed, backlog_backoff_factor=2.0).run()
+```
+
+Reach for it when `tide.next_due_in_sec` is consistently negative;
+leave it at `1.0` when passes finish well inside their interval.
+
+### 7. Write efficient `conv_dict` reducers
 
 Per-row converters run inside the validation hot loop. From fastest
 to slowest:
@@ -278,15 +315,17 @@ Honest about the limits:
   this threshold; everything else (Pydantic validation,
   `conv_dict` ops, `is_garbage_value` checks) is amortised by
   Pydantic's Rust core.
-- **`incorp()` peak memory is O(N), not O(chunk_size).** As of v1.3
+- **`incorp()` peak memory is O(N), not O(chunk_size).** As of v1.2.1
   (A-F-4), `incorp()` validates the full payload in a single
   `TypeAdapter(List[Cls]).validate_python(rows)` call — measured
-  1.3-2.0× faster than the prior row-by-row loop, but it materialises
-  all N instances simultaneously. For payloads larger than ~100k rows
-  where peak memory matters, use chunking-mode `Cls.stream(...)`
-  instead: the paginator-driven `stream()` invokes `incorp()` once
-  per page-sized chunk, preserving the per-call O(chunk_size) memory
-  bound at the stream layer regardless of `incorp()`'s internal shape.
+  1.3-2.0× faster than the prior row-by-row loop (per
+  [`tests/benchmarks/test_validate_batch_vs_per_row.py`](../tests/benchmarks/test_validate_batch_vs_per_row.py)),
+  but it materialises all N instances simultaneously. For payloads
+  larger than ~100k rows where peak memory matters, use chunking-mode
+  `Cls.stream(...)` instead: the paginator-driven `stream()` invokes
+  `incorp()` once per page-sized chunk, preserving the per-call
+  O(chunk_size) memory bound at the stream layer regardless of
+  `incorp()`'s internal shape.
   Validation-error reporting also changed: errors now accumulate
   across all rows in a single `ValidationError` rather than raising on
   the first bad row — more informative messages, larger error
