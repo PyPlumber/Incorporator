@@ -328,7 +328,7 @@ failure.
 
 ## 6. Observability & Telemetry (`--logs`)
 
-When running Incorporator as a background daemon (especially inside a Docker container), you need robust observability without blocking the async event loop.
+When running Incorporator as a background daemon (especially inside a Docker container), you need structured observability without blocking the async event loop.
 
 By appending the `--logs` flag, you activate Incorporator's **Multiplex Disk Logging**:
 ```bash
@@ -650,6 +650,54 @@ The Tide record captures which currents `fired` this pass and which
 `skip_ahead` / `surge_halted` (`SurgeBarrier`), `penstock_limited`
 (`Penstock`), `phase_offset` (`Current.phase_offset_sec`)).  Use it for
 cadence audits without parsing per-current Waves.
+
+#### Tide record fields (v1.2.1)
+
+In addition to `tide_number`, `fired`, `skipped`, `duration_sec`, and
+`timestamp` (carried over from v1.2.0), the `Tide` record surfaced on
+`--json-output` carries these fields:
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `wake_reason` | `Literal["startup", "timer", "wake_event", "pass_interval", "shutdown"]` | Why the scheduler woke for this pass |
+| `heap_depth` | `int` | Pending tick count on the heap at pass start |
+| `in_flight_count_at_start` | `int` | Tick functions still running when the pass began |
+| `current_outcomes` | `list[CurrentOutcome]` | Per-current outcome (`name`, `status`, `reason`, `bypassed_edges`, `in_flight_sec`, `last_wave_at`) |
+| `canal_rejects_added` | `int` | New `RejectEntry` records this pass appended to `tw.rejects` |
+| `next_due_in_sec` | `float \| None` | Seconds until the next scheduled tick (negative means the scheduler is behind) |
+
+#### Canal-layer rejects on `--json-output`
+
+Beyond per-Tide records, the run accumulates a `list[RejectEntry]` on
+`tw.rejects`.  Verb-layer entries carry exception-typed `error_kind`
+strings (`"HTTPStatusError"`, `"RequestError"`, ...), as they have
+since v1.2.0.  Canal-layer entries — every scheduler-level skip that
+never reached a tick body — carry one of four literal strings:
+
+| `error_kind` | Emitted when |
+| :--- | :--- |
+| `"PenstockLimited"` | The edge's `Penstock` denied consume on this pass |
+| `"SurgeHalted"` | The edge's `SurgeBarrier` action fired with `"halt"` |
+| `"SkipAhead"` | The edge's `SurgeBarrier` action fired with `"skip"` |
+| `"GateBlocked"` | The edge's `Gate` returned hold for this pass |
+
+Every canal-layer entry has `from_name` and `to_name` populated so
+per-edge attribution is grep-able; `cooldown_sec` carries the
+back-off hint when relevant.
+
+#### Backlog short-circuit — `backlog_backoff_factor` (v1.2.1+)
+
+Beyond the per-edge `FlowControl`, the `Tideweaver` constructor itself
+accepts an opt-in `backlog_backoff_factor: float = 1.0` kwarg.  Set
+it to `2.0` (or larger) to multiplicatively extend the next-pass wait
+when the scheduler is consistently saturated — the heap stays full,
+`tide.next_due_in_sec` keeps coming back negative.  Default `1.0` is
+disabled (identical behaviour to v1.2.0).  Configure via the Python
+API; no `watershed.json` key is wired up yet.
+
+```python
+Tideweaver(watershed, backlog_backoff_factor=2.0).run()
+```
 
 For the full method-level signature of `fjord()`, see the pdoc-built
 [Library reference](./library_reference.md).
