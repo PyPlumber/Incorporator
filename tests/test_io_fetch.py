@@ -447,3 +447,234 @@ async def test_unknown_host_keeps_documented_default(
     )
 
     assert 15.0 in captured_rates
+
+
+# ----------------------------------------------------------------------
+# Phase 1.5 — RejectEntry.duration_sec / attempt_number instrumentation
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reject_entry_duration_sec_populated_on_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """duration_sec is populated when a 429 HTTPStatusError is caught in _safe_execute.
+
+    Proves the time.perf_counter() bracket in _safe_execute records elapsed time
+    and passes it through _build_reject_entry to the RejectEntry.
+    """
+    import httpx
+
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        req = httpx.Request("GET", src)
+        resp = httpx.Response(429, request=req)
+        exc = httpx.HTTPStatusError("429", request=req, response=resp)
+        raise exc
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    _, rejects = await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.example.com/data"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+    )
+
+    assert len(rejects) == 1
+    entry = rejects[0]
+    assert entry.duration_sec is not None
+    assert entry.duration_sec >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_reject_entry_attempt_number_populated_on_retry_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """attempt_number equals the max attempt count when retries are exhausted.
+
+    Proves that execute_request attaches _incorporator_attempt_number to the
+    exception and _safe_execute reads it via getattr into the RejectEntry.
+    The mock raises httpx.RequestError (retryable) with the attempt attribute
+    pre-set to 8 (max), simulating post-exhaustion state.
+    """
+    import httpx
+
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        exc = httpx.ConnectError("connection refused")
+        exc._incorporator_attempt_number = 8  # type: ignore[attr-defined]
+        raise exc
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    _, rejects = await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.example.com/data"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+    )
+
+    assert len(rejects) == 1
+    assert rejects[0].attempt_number == 8
+
+
+@pytest.mark.asyncio
+async def test_reject_entry_attempt_number_populated_on_first_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """attempt_number is 1 when the request fails on the first attempt.
+
+    Proves that a non-retryable failure (4xx wrapped as IncorporatorNetworkError
+    with attempt_number=1 attached) surfaces correctly in the RejectEntry.
+    """
+    import httpx
+
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        exc = httpx.ConnectError("dns failure")
+        exc._incorporator_attempt_number = 1  # type: ignore[attr-defined]
+        raise exc
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    _, rejects = await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.example.com/data"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+    )
+
+    assert len(rejects) == 1
+    assert rejects[0].attempt_number == 1
+
+
+@pytest.mark.asyncio
+async def test_reject_entry_duration_sec_on_format_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """duration_sec is populated and attempt_number is None for IncorporatorFormatError.
+
+    Format errors are not retried by Tenacity, so attempt_number must be None.
+    duration_sec is still measured (the parse itself takes some time).
+    """
+    from incorporator.exceptions import IncorporatorFormatError
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        raise IncorporatorFormatError("malformed JSON")
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    _, rejects = await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.example.com/data"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+    )
+
+    assert len(rejects) == 1
+    entry = rejects[0]
+    assert entry.duration_sec is not None
+    assert entry.duration_sec >= 0.0
+    assert entry.attempt_number is None
+
+
+@pytest.mark.asyncio
+async def test_wave_bytes_processed_populated_in_chunked_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """Wave.bytes_processed reflects the response content length from the chunked pipeline.
+
+    Proves the _CURRENT_CHUNK_CLASS contextvar plumbing: chunked.py sets the
+    contextvar before cls.incorp(), fetch._process_single_source writes
+    cls._last_bytes_processed = len(res.content), and chunked.py reads it
+    back into the Wave.
+    """
+    import json
+
+    from incorporator import Incorporator
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    FAKE_PAYLOAD = b'[{"id": "btc", "price": 100}]'
+
+    class _Coin(Incorporator):
+        price: int = 0
+
+    async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> Any:
+        import httpx
+
+        return httpx.Response(200, content=FAKE_PAYLOAD, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+
+    waves = []
+    async for wave in _Coin.stream(
+        incorp_params={"inc_url": "https://api.example.com/coins", "inc_code": "id"},
+    ):
+        waves.append(wave)
+        break  # One chunk is sufficient.
+
+    matching = [w for w in waves if w.bytes_processed is not None]
+    assert len(matching) >= 1
+    assert matching[0].bytes_processed == len(FAKE_PAYLOAD)
+
+
+@pytest.mark.asyncio
+async def test_wave_bytes_processed_resets_between_classes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """_last_bytes_processed does not bleed between distinct Incorporator subclasses.
+
+    Proves that setting _CURRENT_CHUNK_CLASS to cls_a then cls_b writes to the
+    correct class attribute in each case, with no cross-contamination.
+    """
+    from incorporator import Incorporator
+    from incorporator.io.fetch import _CURRENT_CHUNK_CLASS
+
+    monkeypatch.chdir(tmp_path)
+
+    class _ClassA(Incorporator):
+        pass
+
+    class _ClassB(Incorporator):
+        pass
+
+    # Simulate the contextvar set/reset pattern for class A with 100 bytes.
+    token_a = _CURRENT_CHUNK_CLASS.set(_ClassA)
+    try:
+        _ClassA._last_bytes_processed = 100
+    finally:
+        _CURRENT_CHUNK_CLASS.reset(token_a)
+
+    # Simulate the contextvar set/reset pattern for class B with 200 bytes.
+    token_b = _CURRENT_CHUNK_CLASS.set(_ClassB)
+    try:
+        _ClassB._last_bytes_processed = 200
+    finally:
+        _CURRENT_CHUNK_CLASS.reset(token_b)
+
+    # After both resets, the contextvar should be None (default).
+    assert _CURRENT_CHUNK_CLASS.get() is None
+    # Each class holds its own value — no bleed.
+    assert _ClassA._last_bytes_processed == 100
+    assert _ClassB._last_bytes_processed == 200

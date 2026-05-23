@@ -7,7 +7,7 @@ from typing import Any, AsyncGenerator, Dict, Optional
 
 import httpx
 
-from ...io.fetch import HTTPClientBuilder
+from ...io.fetch import _CURRENT_CHUNK_CLASS, HTTPClientBuilder
 from ..logger import Wave
 from ._shared import _enrich_and_load, _row_count
 
@@ -67,7 +67,11 @@ async def _run_chunking_engine(
 
                 try:
                     conv_start = time.perf_counter()
-                    dataset = await cls.incorp(**params)
+                    token = _CURRENT_CHUNK_CLASS.set(cls)
+                    try:
+                        dataset = await cls.incorp(**params)
+                    finally:
+                        _CURRENT_CHUNK_CLASS.reset(token)
                     conv_elapsed = time.perf_counter() - conv_start
 
                     if not dataset and not paginator:

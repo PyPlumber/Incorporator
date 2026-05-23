@@ -5,12 +5,14 @@ import ipaddress
 import logging
 import re
 import socket
+import time
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 from urllib.parse import urlparse
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_random_exponential
 
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from ..rejects import RejectEntry
@@ -23,6 +25,14 @@ from .penstock import (
     resolve_penstock,
 )
 from .source_ref import SourceRef
+
+# Scoped to the chunked-pipeline call so the fetch path can attribute
+# response.content size back to the originating Incorporator subclass
+# without threading a class reference through every helper signature.
+# Set by ``observability/pipeline/chunked.py`` before ``cls.incorp(...)``
+# and reset by the same try/finally afterward.  Default ``None`` covers
+# all non-chunked call sites (incorp(), refresh(), inspector probes).
+_CURRENT_CHUNK_CLASS: ContextVar[Optional[Type[Any]]] = ContextVar("_CURRENT_CHUNK_CLASS", default=None)
 
 
 def _extract_retry_after(exc: Exception) -> Optional[float]:
@@ -42,8 +52,26 @@ def _extract_retry_after(exc: Exception) -> Optional[float]:
     return None
 
 
-def _build_reject_entry(source: str, exc: Exception) -> RejectEntry:
-    """Construct a :class:`RejectEntry` for one source's network failure."""
+def _build_reject_entry(
+    source: str,
+    exc: Exception,
+    *,
+    attempt_number: Optional[int] = None,
+    duration_sec: Optional[float] = None,
+) -> RejectEntry:
+    """Construct a :class:`RejectEntry` for one source's network failure.
+
+    Args:
+        source: URL, file path, or source identifier that failed.
+        exc: The originating exception.
+        attempt_number: Tenacity retry attempt count at final failure, when
+            available.  ``None`` for format errors and other non-retried paths.
+        duration_sec: Wall-clock seconds from call start to exception, when a
+            timing bracket is in scope.  ``None`` at call sites without one.
+
+    Returns:
+        A frozen :class:`RejectEntry` ready for ``IncorporatorList.rejects``.
+    """
     retry_after = _extract_retry_after(exc)
     return RejectEntry.model_construct(
         source=source,
@@ -54,6 +82,8 @@ def _build_reject_entry(source: str, exc: Exception) -> RejectEntry:
         host=urlparse(source).netloc if source else None,
         status_code=getattr(getattr(exc, "response", None), "status_code", None),
         cooldown_sec=retry_after,
+        attempt_number=attempt_number,
+        duration_sec=duration_sec,
     )
 
 
@@ -240,12 +270,6 @@ async def _block_internal_redirect_hook(response: httpx.Response) -> None:
 # ==========================================
 # 3. CORE HTTP EXECUTION WORKERS
 # ==========================================
-@retry(
-    stop=stop_after_attempt(8),
-    wait=wait_random_exponential(multiplier=1.5, min=2, max=30),
-    retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
-    reraise=True,
-)
 async def execute_request(
     url: str,
     client: httpx.AsyncClient,
@@ -255,41 +279,85 @@ async def execute_request(
     form_payload: Optional[Dict[str, Any]] = None,
     rate_limiter: Optional[BoundPenstock] = None,
 ) -> httpx.Response:
-    """Executes a resilient, jittered HTTP request supporting GET/POST and query strings."""
-    _validate_url(url)
-    if rate_limiter is not None:
-        await rate_limiter.acquire()
+    """Execute a resilient, jittered HTTP request supporting GET/POST and query strings.
 
-    req_kwargs: Dict[str, Any] = {}
-    if params:
-        req_kwargs["params"] = params
-    if json_payload:
-        req_kwargs["json"] = json_payload
-    if form_payload:
-        req_kwargs["data"] = form_payload
+    Uses an explicit ``AsyncRetrying`` loop (identical stop/wait/predicate to the
+    former ``@retry`` decorator) so that ``retrying.statistics["attempt_number"]``
+    is readable after the loop, enabling downstream consumers to populate
+    ``RejectEntry.attempt_number`` without re-instrumenting Tenacity.
 
-    # method.upper() natively supports 'POST', 'PUT', etc.
-    response = await client.request(method.upper(), url, **req_kwargs)
+    Args:
+        url: Absolute HTTP/HTTPS URL.
+        client: Shared ``httpx.AsyncClient`` managed by the caller.
+        method: HTTP verb (``"GET"``, ``"POST"``, etc.).  Case-insensitive.
+        params: URL query parameters forwarded verbatim to httpx.
+        json_payload: Body serialised as JSON (``Content-Type: application/json``).
+        form_payload: Body serialised as form data (``Content-Type: application/x-www-form-urlencoded``).
+        rate_limiter: Optional per-host :class:`BoundPenstock`; acquired once per attempt.
 
-    # Intercept Post-to-Get Downgrades
-    if response.history and method.upper() in ["POST", "PUT", "PATCH"]:
-        logger.warning(
-            f"⚠️ NETWORK REDIRECT DETECTED: Your {method.upper()} request to '{url}' "
-            f"was redirected (HTTP {response.history[0].status_code}). "
-            f"Most servers drop the payload and downgrade to GET during a redirect. "
-            f"If you receive empty data, verify your URL exactness (e.g., check for a missing trailing slash '/' !)."
-        )
+    Returns:
+        The successful ``httpx.Response``.
 
+    Raises:
+        IncorporatorNetworkError: For permanent 4xx client errors (excluding 429).
+        httpx.HTTPStatusError: For 429 / 5xx errors after all retries are exhausted.
+        httpx.RequestError: For network-layer failures after all retries are exhausted.
+    """
+    retrying = AsyncRetrying(
+        stop=stop_after_attempt(8),
+        wait=wait_random_exponential(multiplier=1.5, min=2, max=30),
+        retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
+        reraise=True,
+    )
     try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        status = e.response.status_code
-        # Immediately break Tenacity retry loop for permanent Client Errors (except 429 Throttling)
-        if status < 500 and status != 429:
-            raise IncorporatorNetworkError(f"Fatal client error {status} for URL {url}: {e}") from e
-        raise e
+        async for attempt in retrying:
+            with attempt:
+                _validate_url(url)
+                if rate_limiter is not None:
+                    await rate_limiter.acquire()
 
-    return response
+                req_kwargs: Dict[str, Any] = {}
+                if params:
+                    req_kwargs["params"] = params
+                if json_payload:
+                    req_kwargs["json"] = json_payload
+                if form_payload:
+                    req_kwargs["data"] = form_payload
+
+                # method.upper() natively supports 'POST', 'PUT', etc.
+                response = await client.request(method.upper(), url, **req_kwargs)
+
+                # Intercept Post-to-Get Downgrades
+                if response.history and method.upper() in ["POST", "PUT", "PATCH"]:
+                    logger.warning(
+                        f"⚠️ NETWORK REDIRECT DETECTED: Your {method.upper()} request to '{url}' "
+                        f"was redirected (HTTP {response.history[0].status_code}). "
+                        f"Most servers drop the payload and downgrade to GET during a redirect. "
+                        f"If you receive empty data, verify your URL exactness "
+                        f"(e.g., check for a missing trailing slash '/' !)."
+                    )
+
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    status = e.response.status_code
+                    # Immediately break Tenacity retry loop for permanent Client Errors (except 429 Throttling)
+                    if status < 500 and status != 429:
+                        raise IncorporatorNetworkError(f"Fatal client error {status} for URL {url}: {e}") from e
+                    raise e
+
+                return response
+        # Unreachable: AsyncRetrying with reraise=True exits via exception or return.
+        raise RuntimeError("execute_request: AsyncRetrying loop terminated without return or exception")
+    except Exception as e:
+        # Attach the final attempt count so _safe_execute / _build_reject_entry
+        # can populate RejectEntry.attempt_number without re-instrumenting Tenacity.
+        attempt_number = retrying.statistics.get("attempt_number", 1)
+        try:
+            e._incorporator_attempt_number = attempt_number  # type: ignore[attr-defined]
+        except AttributeError:
+            pass  # Built-in exception types may not allow arbitrary attribute assignment.
+        raise
 
 
 # ==========================================
@@ -428,6 +496,13 @@ async def _process_single_source(
 
     else:
         res = await bound_fetch(source_val)
+        # Attribute response size to the originating class for Wave.bytes_processed.
+        chunk_cls = _CURRENT_CHUNK_CLASS.get()
+        if chunk_cls is not None:
+            try:
+                chunk_cls._last_bytes_processed = len(res.content)
+            except (AttributeError, TypeError):
+                pass  # Class doesn't carry the ClassVar (non-Incorporator caller); ignore.
         payload = await resolve_source_payload(
             source_val,
             is_file_mode=False,
@@ -600,27 +675,34 @@ async def fetch_concurrent_payloads(
         should_close = True
 
     async def _safe_execute(src: str, payload: Any) -> List[Any]:
+        start = time.perf_counter()
         try:
             return await _process_single_source(
                 src, is_file_mode, _client, throttle_for_source[src], dynamic_payload=payload, **dict(kwargs)
             )
         except httpx.HTTPStatusError as e:
+            duration = time.perf_counter() - start
+            attempt = getattr(e, "_incorporator_attempt_number", None)
             if e.response.status_code == 429:
                 logger.warning(
                     f"🚦 RATE LIMITED (HTTP 429) on '{src}'. Skipping. "
                     f"Tip: Lower `requests_per_second` (e.g. 0.2 for ~12 req/min); "
                     f"check the host's free-tier docs for the correct ceiling."
                 )
-                rejects.append(_build_reject_entry(src, e))
+                rejects.append(_build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration))
                 return []
             raise IncorporatorNetworkError(f"HTTP error {e.response.status_code}") from e
         except httpx.RequestError as e:
+            duration = time.perf_counter() - start
+            attempt = getattr(e, "_incorporator_attempt_number", None)
             logger.warning(f"Network Connection Error for '{src}': {e.__class__.__name__}. Skipping.")
-            rejects.append(_build_reject_entry(src, e))
+            rejects.append(_build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration))
             return []
         except IncorporatorFormatError as e:
+            duration = time.perf_counter() - start
+            # Format errors are not retried by Tenacity, so attempt_number is unavailable.
             logger.warning(f"⚠️ PARSE FAILED for '{src}': {e}. Skipping.")
-            rejects.append(_build_reject_entry(src, e))
+            rejects.append(_build_reject_entry(src, e, duration_sec=duration))
             return []
 
     try:

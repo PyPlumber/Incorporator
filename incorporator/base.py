@@ -231,14 +231,14 @@ class Incorporator(BaseModel):
     _last_schema_cache_hit: ClassVar[bool] = True
 
     #: Byte count of the most recent HTTP response body processed by this
-    #: class's fetch path.  **Reserved for future fetch-layer plumbing** —
-    #: ``incorporator/observability/pipeline/chunked.py`` already reads this
-    #: ClassVar at the chunk boundary into the Wave's ``bytes_processed``
-    #: field, so wiring up ``cls._last_bytes_processed = len(response.content)``
-    #: at the fetch site in ``io/fetch.py`` is a one-line follow-up that
-    #: lights up the field for HTTP sources.  Until that lands, the
-    #: corresponding Wave field stays ``None`` (file-mode sources stay
-    #: ``None`` permanently — they don't go through the fetch path).
+    #: class's fetch path.  Written by ``io/fetch.py::_process_single_source``
+    #: at the network-mode branch via a ``contextvars.ContextVar`` set by
+    #: ``observability/pipeline/chunked.py`` before each ``cls.incorp(...)``
+    #: call.  Read at the chunk boundary in
+    #: ``observability/pipeline/chunked.py`` into the Wave's ``bytes_processed``
+    #: field.  ``None`` for file-mode sources (they don't go through the
+    #: network fetch path) and for non-chunked ``incorp()`` / ``refresh()``
+    #: call sites where the contextvar is unset.
     #:
     #: Yield-point-safe, not thread-safe (same caveat as
     #: :attr:`_last_schema_cache_hit`).
