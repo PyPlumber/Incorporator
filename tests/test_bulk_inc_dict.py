@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import types
 import weakref
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -39,9 +39,6 @@ _VALIDATOR_SNAPSHOTS: List[int] = []
 class _SnapshotDuringValidation(Incorporator):
     """Captures inc_dict length at model_post_init time to assert on batch isolation."""
 
-    # ClassVar prevents Pydantic V2 from treating this as a ModelPrivateAttr.
-    _snapshots: ClassVar[List[int]] = []
-
     def model_post_init(self, __context: Any) -> None:
         # super() runs auto-counter and (when not gated) writes inc_dict.
         super().model_post_init(__context)
@@ -50,9 +47,7 @@ class _SnapshotDuringValidation(Incorporator):
 
 
 @pytest.mark.asyncio
-async def test_inc_dict_empty_during_validation_full_after(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_inc_dict_empty_during_validation_full_after(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """inc_dict must be empty for every instance during validate_python; fully populated after.
 
     Proves that _BATCH_INSERT_MODE gates model_post_init's inc_dict write so
@@ -152,9 +147,7 @@ async def test_bubble_up_parent_inc_dict_populated(tmp_path: Any, monkeypatch: p
 
     # Value-identity: same instance objects in both dicts.
     for key in dynamic_keys:
-        assert dynamic_cls.inc_dict[key] is _ChildEntity.inc_dict[key], (
-            f"Instance identity mismatch for key {key!r}"
-        )
+        assert dynamic_cls.inc_dict[key] is _ChildEntity.inc_dict[key], f"Instance identity mismatch for key {key!r}"
 
 
 # ---------------------------------------------------------------------------
