@@ -1,4 +1,4 @@
-"""Multi-source orchestration probe — the engine behind ``cls.architect()``.
+"""Multi-source orchestration probe + post-run tuning — the engine behind ``cls.architect()`` and :func:`tune`.
 
 Probes N sources (URLs / files / dict-form incorp kwargs), runs cross-source
 analysis on the captured :class:`SourceProfile` bundles, and emits a
@@ -16,6 +16,14 @@ inspector module's :func:`incorporator.tools.inspector.capture_signals`
 sidechannel: ``test()`` prints the per-source report, ``architect`` captures
 the same :class:`~incorporator.tools.inspector.SourceProfile` and runs
 cross-source analysis on top.
+
+After a :class:`Tideweaver` run, :func:`tune` closes the feedback loop —
+consume the accumulated :class:`~incorporator.RejectEntry` records and
+the per-pass :class:`Tide` records and receive a structured
+:class:`TuningReport` of severity-sorted :class:`TuningHint` recommendations
+across ``chunk_size``, penstock rate, surge threshold, ``pass_interval``,
+and retry policy.  :class:`Tideweaver` and :class:`LoggedTideweaver` also
+expose ``summary()`` as an instance-method shortcut to the same report.
 """
 
 from __future__ import annotations
