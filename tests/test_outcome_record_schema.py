@@ -12,7 +12,7 @@ Uses in-memory construction to avoid live I/O.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import pytest
 
@@ -458,3 +458,141 @@ class TestSchemaCacheHitFlag:
         build_instances(_RefreshPathTest, data, [], is_single=False, target_class=_RefreshPathTest)
         # target_class bypasses registry → treated as cache hit.
         assert _RefreshPathTest._last_schema_cache_hit is True
+
+
+# ---------------------------------------------------------------------------
+# http_retry_count + validation_error_count plumbing (Items 1 & 2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wave_http_retry_count_populated_from_tenacity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """Wave.http_retry_count reflects the retry count written into cls._last_http_retry_count.
+
+    Proves the ContextVar plumbing end-to-end: the mock execute_request writes
+    cls._last_http_retry_count = 2 (simulating two Tenacity retries) via the
+    _CURRENT_CHUNK_CLASS ContextVar, and chunked.py reads it into the Wave.
+    """
+    import httpx
+
+    from incorporator import Incorporator
+    from incorporator.io import fetch
+    from incorporator.io.fetch import _CURRENT_CHUNK_CLASS
+
+    monkeypatch.chdir(tmp_path)
+
+    FAKE_PAYLOAD = b'[{"id": "btc", "price": 100}]'
+
+    class _RetryTest(Incorporator):
+        price: int = 0
+
+    async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> Any:
+        # Simulate two Tenacity retries by writing the ClassVar directly,
+        # mirroring what execute_request does after a successful response.
+        chunk_cls = _CURRENT_CHUNK_CLASS.get()
+        if chunk_cls is not None:
+            try:
+                chunk_cls._last_http_retry_count = 2
+            except (AttributeError, TypeError):
+                pass
+        return httpx.Response(200, content=FAKE_PAYLOAD, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+
+    waves = []
+    async for wave in _RetryTest.stream(
+        incorp_params={"inc_url": "https://api.example.com/coins", "inc_code": "id"},
+    ):
+        waves.append(wave)
+        break
+
+    success_waves = [w for w in waves if not w.failed_sources]
+    assert len(success_waves) >= 1, "Expected at least one success wave"
+    assert success_waves[0].http_retry_count == 2
+
+
+@pytest.mark.asyncio
+async def test_wave_validation_error_count_populated_on_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """Wave.validation_error_count equals ValidationError.error_count() on the error path.
+
+    Proves the except-path narrowing: feed a payload where rows carry a price
+    value that Pydantic cannot coerce to int, so validate_python raises a
+    ValidationError; the error Wave reports validation_error_count > 0.
+    """
+    import httpx
+
+    from incorporator import Incorporator
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    # "not_a_number" cannot coerce to int → ValidationError from TypeAdapter.
+    FAKE_PAYLOAD = b'[{"id": "btc", "price": "not_a_number"}]'
+
+    class _ValidationTest(Incorporator):
+        price: int = 0
+
+    async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> Any:
+        return httpx.Response(200, content=FAKE_PAYLOAD, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+
+    waves = []
+    async for wave in _ValidationTest.stream(
+        incorp_params={"inc_url": "https://api.example.com/coins", "inc_code": "id"},
+    ):
+        waves.append(wave)
+        break
+
+    error_waves = [w for w in waves if w.failed_sources]
+    assert len(error_waves) >= 1, "Expected at least one error wave"
+    assert error_waves[0].validation_error_count > 0
+
+
+@pytest.mark.asyncio
+async def test_wave_validation_error_count_zero_for_non_validation_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """Wave.validation_error_count is 0 when a non-validation error reaches the except block.
+
+    Proves that non-ValidationError exceptions (e.g. RuntimeError) leave
+    validation_error_count at 0 — they are not per-row data-quality failures.
+    Patches cls.incorp() directly so the exception propagates to the chunked
+    engine's except handler rather than being swallowed by _safe_execute.
+    """
+    from incorporator import Incorporator
+    from incorporator.observability.pipeline import chunked
+
+    monkeypatch.chdir(tmp_path)
+
+    class _FormatErrorTest(Incorporator):
+        price: int = 0
+
+    async def mock_incorp(**kwargs: Any) -> Any:
+        raise RuntimeError("simulated non-validation failure")
+
+    monkeypatch.setattr(_FormatErrorTest, "incorp", mock_incorp)
+
+    waves = []
+    async for wave in chunked._run_chunking_engine(
+        cls=_FormatErrorTest,
+        incorp_params={"inc_url": "https://api.example.com/coins"},
+        refresh_params=None,
+        export_params=None,
+        poll_interval=None,
+        paginator=None,
+    ):
+        waves.append(wave)
+        break
+
+    assert len(waves) >= 1, "Expected at least one wave"
+    error_waves = [w for w in waves if w.failed_sources]
+    assert len(error_waves) >= 1, "Expected at least one error wave"
+    assert error_waves[0].validation_error_count == 0

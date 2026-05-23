@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, Optional
 
 import httpx
+from pydantic import ValidationError
 
 from ...io.fetch import _CURRENT_CHUNK_CLASS, HTTPClientBuilder
 from ..logger import Wave
@@ -112,7 +113,7 @@ async def _run_chunking_engine(
                         processing_time_sec=time.perf_counter() - start_time,
                         source_url=getattr(cls, "inc_url", None) or getattr(cls, "inc_file", None),
                         bytes_processed=cls._last_bytes_processed,
-                        http_retry_count=0,
+                        http_retry_count=cls._last_http_retry_count,
                         validation_error_count=0,
                         schema_cache_hit=cls._last_schema_cache_hit,
                         conv_dict_time_sec=conv_elapsed,
@@ -141,6 +142,7 @@ async def _run_chunking_engine(
                     if not paginator:
                         break
                 except Exception as e:
+                    val_errors = e.error_count() if isinstance(e, ValidationError) else 0
                     yield Wave.model_construct(
                         chunk_index=chunk_idx,
                         operation="chunk",
@@ -149,8 +151,8 @@ async def _run_chunking_engine(
                         processing_time_sec=time.perf_counter() - start_time,
                         source_url=getattr(cls, "inc_url", None) or getattr(cls, "inc_file", None),
                         bytes_processed=None,
-                        http_retry_count=0,
-                        validation_error_count=0,
+                        http_retry_count=cls._last_http_retry_count,
+                        validation_error_count=val_errors,
                         schema_cache_hit=True,
                         conv_dict_time_sec=None,
                         timestamp=datetime.now(timezone.utc),

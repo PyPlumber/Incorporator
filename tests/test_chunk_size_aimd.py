@@ -47,6 +47,7 @@ class _MockCls:
     inc_file: Optional[str] = None
     _last_bytes_processed: Optional[int] = None
     _last_schema_cache_hit: bool = True
+    _last_http_retry_count: int = 0
 
     @classmethod
     async def incorp(cls, **kwargs: Any) -> List[dict]:

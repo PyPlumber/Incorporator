@@ -346,6 +346,17 @@ async def execute_request(
                         raise IncorporatorNetworkError(f"Fatal client error {status} for URL {url}: {e}") from e
                     raise e
 
+                # Capture retry count for Wave.http_retry_count on the success
+                # path (mirrors the exception-attribute pattern below for
+                # RejectEntry.attempt_number).  Gated on the chunked-pipeline
+                # contextvar so non-chunked callers don't clobber unrelated
+                # class-level state.
+                chunk_cls = _CURRENT_CHUNK_CLASS.get()
+                if chunk_cls is not None:
+                    try:
+                        chunk_cls._last_http_retry_count = retrying.statistics.get("attempt_number", 1) - 1
+                    except (AttributeError, TypeError):
+                        pass  # Class doesn't have the ClassVar (non-Incorporator); ignore.
                 return response
         # Unreachable: AsyncRetrying with reraise=True exits via exception or return.
         raise RuntimeError("execute_request: AsyncRetrying loop terminated without return or exception")

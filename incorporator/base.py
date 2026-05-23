@@ -244,6 +244,22 @@ class Incorporator(BaseModel):
     #: :attr:`_last_schema_cache_hit`).
     _last_bytes_processed: ClassVar[Optional[int]] = None
 
+    #: Tenacity retry attempts beyond the first for the most recent
+    #: successful HTTP fetch by this class's chunked-pipeline call.
+    #: Computed as ``retrying.statistics["attempt_number"] - 1`` (since
+    #: ``attempt_number`` is 1-indexed: one attempt = zero retries).
+    #:
+    #: Written by ``execute_request`` after a successful response, gated
+    #: on the ``_CURRENT_CHUNK_CLASS`` ContextVar.  Read at the chunk
+    #: boundary in ``observability/pipeline/chunked.py``.  Stays at the
+    #: previous chunk's value for chunks that don't make an HTTP call
+    #: (file-mode sources) — an edge case for the HTTP-driven paginator
+    #: engine.
+    #:
+    #: Yield-point-safe, not thread-safe (same caveat as
+    #: :attr:`_last_schema_cache_hit`).
+    _last_http_retry_count: ClassVar[int] = 0
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # Per-class isolation of inc_dict / _schema_union / _incorp_kwargs
         # is required so sibling subclasses don't share the base

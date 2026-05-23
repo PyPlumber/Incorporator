@@ -66,7 +66,7 @@ from ..pipeline._outflow import flush
 from .current import Current, CustomCurrent, Export, Fjord, Stream
 from .current_outcome import CurrentOutcome
 from .flow import FlowControl, GateContext, SurgeContext
-from .tide import Tide
+from .tide import Tide, WakeReason
 from .watershed import Watershed
 
 logger = logging.getLogger(__name__)
@@ -301,7 +301,7 @@ class Tideweaver:
                 self._push_due(c.name, self._run_started_at + c.phase_offset_sec)
         shutdown_event = asyncio.Event()
         stopper = asyncio.create_task(self._shutdown_at_window_end(shutdown_event))
-        wake_reason = "startup"
+        wake_reason: WakeReason = "startup"
         try:
             while not shutdown_event.is_set():
                 tide = await self._run_pass(shutdown_event, wake_reason)
@@ -325,7 +325,7 @@ class Tideweaver:
                 await client.aclose()
             self._client_pool.clear()
 
-    async def _wait_for_next_event(self, shutdown_event: asyncio.Event) -> str:
+    async def _wait_for_next_event(self, shutdown_event: asyncio.Event) -> WakeReason:
         """Adaptive sleep until the next interesting moment.
 
         Wakes on the earliest of:
@@ -351,7 +351,7 @@ class Tideweaver:
         now = time.monotonic()
         if next_due is None:
             timeout: float = self.pass_interval
-            fallback_reason = "pass_interval"
+            fallback_reason: WakeReason = "pass_interval"
         else:
             timeout = max(0.0, next_due - now)
             fallback_reason = "timer"
@@ -425,7 +425,7 @@ class Tideweaver:
     # Pass-level scheduling
     # ------------------------------------------------------------------
 
-    async def _run_pass(self, shutdown_event: asyncio.Event, wake_reason: str) -> Tide:
+    async def _run_pass(self, shutdown_event: asyncio.Event, wake_reason: WakeReason) -> Tide:
         self._tide_number += 1
         started = time.monotonic()
         fired: List[str] = []

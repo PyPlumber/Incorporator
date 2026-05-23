@@ -241,3 +241,39 @@ def test_tide_dataclass_asdict_round_trip() -> None:
         "in_flight_sec": None,
         "last_wave_at": ts,
     }
+
+
+# ---------------------------------------------------------------------------
+# WakeReason Literal narrowing (Item 3)
+# ---------------------------------------------------------------------------
+
+
+def test_tide_wake_reason_literal_accepts_valid_values() -> None:
+    """Tide.model_construct accepts each of the five WakeReason literal strings without error."""
+    from incorporator.observability.tideweaver.tide import WakeReason
+
+    valid: List[WakeReason] = ["startup", "timer", "wake_event", "pass_interval", "shutdown"]
+    for reason in valid:
+        tide = Tide.model_construct(
+            tide_number=1,
+            fired=[],
+            skipped=[],
+            current_outcomes=[],
+            duration_sec=0.01,
+            wake_reason=reason,
+            heap_depth=0,
+            in_flight_count_at_start=0,
+            canal_rejects_added=0,
+            next_due_in_sec=None,
+            timestamp=datetime.now(timezone.utc),
+        )
+        assert tide.wake_reason == reason
+
+
+def test_tide_wake_reason_serialises_to_string() -> None:
+    """model_dump(mode='json')['wake_reason'] returns the exact literal string value."""
+    for reason in ("startup", "timer", "wake_event", "pass_interval", "shutdown"):
+        tide = Tide(tide_number=1, duration_sec=0.0, wake_reason=reason)  # type: ignore[arg-type]
+        dumped = tide.model_dump(mode="json")
+        assert dumped["wake_reason"] == reason
+        assert isinstance(dumped["wake_reason"], str)
