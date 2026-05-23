@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from typing import Any, Optional, Union
+from typing import Any
 
 import httpx
 
@@ -54,9 +54,9 @@ class AsyncPaginator:
     swallowing transport errors.
     """
 
-    def __init__(self, *, penstock: Optional[Penstock] = None) -> None:
-        self.call_lim: Optional[int] = None
-        self.fetch_func: Optional[Callable[..., Awaitable[httpx.Response]]] = None
+    def __init__(self, *, penstock: Penstock | None = None) -> None:
+        self.call_lim: int | None = None
+        self.fetch_func: Callable[..., Awaitable[httpx.Response]] | None = None
         self.strict_mode: bool = False
         self.is_exhausted: bool = False
         # Per-paginator throttle (A-F-9).  Composes additively with any
@@ -76,7 +76,7 @@ class AsyncPaginator:
         # module import).  Construct on first ``_acquire_penstock`` call,
         # where a running loop is guaranteed.  3.10+ is lazy and would let
         # us construct here, but the lazy path costs nothing on 3.10+.
-        self._penstock_lock: Optional[asyncio.Lock] = None
+        self._penstock_lock: asyncio.Lock | None = None
 
     def reset(self) -> None:
         """Reset paginator state to allow another full pagination pass.
@@ -88,7 +88,7 @@ class AsyncPaginator:
         """
         self.is_exhausted = False
 
-    async def _fetch(self, url: str, params: Optional[dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+    async def _fetch(self, url: str, params: dict[str, Any] | None = None, **kwargs: Any) -> httpx.Response:
         if not self.fetch_func:
             raise RuntimeError("Paginator must be bound to a network client before use.")
         return await self.fetch_func(url=url, request_params=params, **kwargs)
@@ -114,7 +114,7 @@ class AsyncPaginator:
         fmt = infer_format(str(response.url))
         return await parse_source_data(response.read(), fmt)
 
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, list[Any], dict[str, Any]], None]:
+    async def paginate(self, start_url: str) -> AsyncGenerator[str | bytes | list[Any] | dict[str, Any], None]:
         """Async-generate one chunk per yield until the source is exhausted.
 
         Subclasses implement source-specific traversal — Link headers,

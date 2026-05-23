@@ -15,7 +15,7 @@ coerces to.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Union
+from typing import Any
 
 from ...exceptions import IncorporatorFormatError
 from ...io.formats import infer_format
@@ -25,7 +25,7 @@ __all__ = ["assert_engine_supported"]
 
 def assert_engine_supported(
     *,
-    file_path: Optional[Union[str, Any]],
+    file_path: str | Any | None,
     stateful_polling: bool,
     has_paginator: bool,
 ) -> None:

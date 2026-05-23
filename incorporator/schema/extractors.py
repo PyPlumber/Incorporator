@@ -12,7 +12,7 @@ import collections.abc
 import logging
 import weakref
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from .converters import _EachSentinel, is_garbage_value
 
@@ -63,7 +63,7 @@ def sum_attributes(*args: Any) -> float:
 
 
 def split_and_get(
-    delimiter: str = "/", index: int = -1, cast_type: Optional[Callable[[Any], Any]] = None
+    delimiter: str = "/", index: int = -1, cast_type: Callable[[Any], Any] | None = None
 ) -> Callable[[Any], Any]:
     """Extract an ID from a delimited string — the HATEOAS URL-tail / colon-separated-key one-liner.
 
@@ -120,7 +120,7 @@ def split_and_get(
 # ==========================================
 
 
-def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
+def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Callable[[Any], Any]:
     """SQL-style JOIN as a one-liner — replace a foreign-key value with the actual instance.
 
     Reach for it whenever the row has an FK and the related dataset is
@@ -247,7 +247,7 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
     return _mapper
 
 
-def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], list[Any]]:
+def link_to_list(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Callable[[Any], list[Any]]:
     """1-to-N JOIN — resolve a list of foreign-key IDs to the corresponding instances.
 
     Reach for it whenever the source field is itself a list of IDs:
@@ -299,7 +299,7 @@ def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None)
     return _mapper
 
 
-def pluck(key: str, chain: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], Any]:
+def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Callable[[Any], Any]:
     """Lift a deeply-nested field to a top-level attribute using a dot-notation path.
 
     Reach for it whenever the API buries the value you actually want

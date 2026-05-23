@@ -8,7 +8,7 @@ import itertools
 import logging
 import sqlite3
 from collections.abc import AsyncGenerator
-from typing import IO, Any, ClassVar, Optional, Union
+from typing import IO, Any, ClassVar
 
 from ..penstock import Penstock
 from .base import AsyncPaginator, _deserialize_row
@@ -74,7 +74,7 @@ class _LocalChunkedPaginator(AsyncPaginator):
         """
         raise NotImplementedError
 
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, list[Any], dict[str, Any]], None]:
+    async def paginate(self, start_url: str) -> AsyncGenerator[str | bytes | list[Any] | dict[str, Any], None]:
         """Yield ``chunk_size`` rows per iteration from the local source.
 
         ``start_url`` is unused — local paginators carry their own
@@ -172,14 +172,14 @@ class SQLitePaginator(_LocalChunkedPaginator):
         sql_query: str,
         chunk_size: int = 10000,
         *,
-        penstock: Optional[Penstock] = None,
+        penstock: Penstock | None = None,
     ) -> None:
         super().__init__(penstock=penstock)
         self.db_path = db_path
         self.sql_query = sql_query
         self.chunk_size = chunk_size
-        self._conn: Optional[sqlite3.Connection] = None
-        self._cursor: Optional[sqlite3.Cursor] = None
+        self._conn: sqlite3.Connection | None = None
+        self._cursor: sqlite3.Cursor | None = None
 
     def _fetch_chunk(self) -> list[dict[str, Any]]:
         if not self._conn:
@@ -241,14 +241,14 @@ class CSVPaginator(_LocalChunkedPaginator):
         chunk_size: int = 10000,
         delimiter: str = ",",
         *,
-        penstock: Optional[Penstock] = None,
+        penstock: Penstock | None = None,
     ) -> None:
         super().__init__(penstock=penstock)
         self.file_path = file_path
         self.chunk_size = chunk_size
         self.delimiter = delimiter
-        self._file: Optional[IO[Any]] = None
-        self._reader: Optional[Any] = None
+        self._file: IO[Any] | None = None
+        self._reader: Any | None = None
 
     def _fetch_chunk(self) -> list[dict[str, Any]]:
         if not self._file:
@@ -307,13 +307,13 @@ class AvroPaginator(_LocalChunkedPaginator):
         file_path: str,
         chunk_size: int = 10000,
         *,
-        penstock: Optional[Penstock] = None,
+        penstock: Penstock | None = None,
     ) -> None:
         super().__init__(penstock=penstock)
         self.file_path = file_path
         self.chunk_size = chunk_size
-        self._file: Optional[IO[Any]] = None
-        self._reader: Optional[Any] = None
+        self._file: IO[Any] | None = None
+        self._reader: Any | None = None
 
     def _fetch_chunk(self) -> list[dict[str, Any]]:
         try:

@@ -19,7 +19,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from ...base import Incorporator
 from ...usercode import load_user_module
@@ -85,7 +85,7 @@ def build_watershed(raw: dict[str, Any], base_dir: Path) -> Watershed:
     # The v1.2.0 ``dependency_mode`` alias is removed as of v1.3.0; passing it
     # raises a ValueError with migration guidance so users see the break
     # immediately instead of silently dropping their intended config.
-    def _top_level_flow(raw_obj: dict[str, Any]) -> tuple[Optional[GateMode], Optional[FlowControl]]:
+    def _top_level_flow(raw_obj: dict[str, Any]) -> tuple[GateMode | None, FlowControl | None]:
         if "dependency_mode" in raw_obj:
             raise ValueError(
                 "watershed.json: 'dependency_mode' was removed in v1.3.0.  "
@@ -183,7 +183,7 @@ def _parse_dt(value: Any) -> datetime:
     raise ValueError(f"window timestamps must be ISO-8601 strings; got {type(value).__name__}.")
 
 
-def _resolve_sidecar(value: Any, base_dir: Path) -> Optional[Path]:
+def _resolve_sidecar(value: Any, base_dir: Path) -> Path | None:
     if value is None:
         return None
     p = Path(value)
@@ -192,16 +192,16 @@ def _resolve_sidecar(value: Any, base_dir: Path) -> Optional[Path]:
 
 def _build_currents(
     entries: list[dict[str, Any]],
-    outflow_module: Optional[ModuleType],
-    inflow_module: Optional[ModuleType],
+    outflow_module: ModuleType | None,
+    inflow_module: ModuleType | None,
 ) -> list[Current]:
     return [_build_current(e, outflow_module, inflow_module) for e in entries]
 
 
 def _build_current(
     entry: dict[str, Any],
-    outflow_module: Optional[ModuleType],
-    inflow_module: Optional[ModuleType],
+    outflow_module: ModuleType | None,
+    inflow_module: ModuleType | None,
 ) -> Current:
     verb = entry.get("verb", "stream")
     cls = _resolve_class(entry["class"], outflow_module, inflow_module)
@@ -238,7 +238,7 @@ def _build_current(
 
 def _lookup_sidecar_symbol(
     name: str,
-    modules: tuple[Optional[ModuleType], ...],
+    modules: tuple[ModuleType | None, ...],
     predicate: Callable[[Any], bool],
     not_found_message: str,
 ) -> Any:
@@ -262,8 +262,8 @@ def _lookup_sidecar_symbol(
 
 def _resolve_class(
     class_name: str,
-    outflow_module: Optional[ModuleType],
-    inflow_module: Optional[ModuleType],
+    outflow_module: ModuleType | None,
+    inflow_module: ModuleType | None,
 ) -> type:
     return cast(
         type,
@@ -282,8 +282,8 @@ def _resolve_class(
 
 def _resolve_archive_class(
     class_name: str,
-    outflow_module: Optional[ModuleType],
-    inflow_module: Optional[ModuleType],
+    outflow_module: ModuleType | None,
+    inflow_module: ModuleType | None,
 ) -> type:
     """Look up an archive class by name on the sidecar modules.  Need not be an Incorporator subclass."""
     return cast(
@@ -304,8 +304,8 @@ def _resolve_archive_class(
 
 def _resolve_callable(
     ref: str,
-    outflow_module: Optional[ModuleType],
-    inflow_module: Optional[ModuleType],
+    outflow_module: ModuleType | None,
+    inflow_module: ModuleType | None,
 ) -> Callable[..., Any]:
     """Resolve a callable from a string reference.
 
@@ -359,8 +359,8 @@ def _resolve_callable(
 
 def _build_flow(
     raw_flow: dict[str, Any],
-    outflow_module: Optional[ModuleType],
-    inflow_module: Optional[ModuleType],
+    outflow_module: ModuleType | None,
+    inflow_module: ModuleType | None,
 ) -> FlowControl:
     """Inflate a :class:`FlowControl` from a JSON dict.
 

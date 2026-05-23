@@ -18,7 +18,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 try:
     import typer
@@ -77,7 +77,7 @@ if typer:
 
     @app.callback()  # type: ignore[untyped-decorator]
     def main_callback(
-        version: Optional[bool] = typer.Option(  # noqa: B008
+        version: bool | None = typer.Option(  # noqa: B008
             None,
             "--version",
             "-V",
@@ -106,7 +106,7 @@ if typer:
     @app.command()  # type: ignore[untyped-decorator]
     def stream(
         config: Path = typer.Argument(..., help="Path to the pipeline.json configuration file."),  # noqa: B008
-        poll: Optional[float] = typer.Option(  # noqa: B008
+        poll: float | None = typer.Option(  # noqa: B008
             None, "--poll", help="Interval in seconds to keep the pipeline alive as a daemon (e.g., 60.0)."
         ),
         logs: bool = typer.Option(  # noqa: B008
@@ -117,7 +117,7 @@ if typer:
             "--json-output",
             help="Emit one NDJSON Wave per line on stdout (status text goes to stderr). For CI/CD pipelines.",
         ),
-        heartbeat_file: Optional[Path] = typer.Option(  # noqa: B008
+        heartbeat_file: Path | None = typer.Option(  # noqa: B008
             None,
             "--heartbeat-file",
             help="Touch this path after every wave; pairs with the Docker HEALTHCHECK.",
@@ -155,7 +155,7 @@ if typer:
             "--json-output",
             help="Emit one NDJSON Wave per line on stdout (status text goes to stderr). For CI/CD pipelines.",
         ),
-        heartbeat_file: Optional[Path] = typer.Option(  # noqa: B008
+        heartbeat_file: Path | None = typer.Option(  # noqa: B008
             None,
             "--heartbeat-file",
             help="Touch this path after every wave; pairs with the Docker HEALTHCHECK.",
@@ -196,7 +196,7 @@ if typer:
     @app.command()  # type: ignore[untyped-decorator]
     def validate(
         config: Path = typer.Argument(..., help="Path to a pipeline.json or watershed.json file."),  # noqa: B008
-        type_: Optional[str] = typer.Option(  # noqa: B008
+        type_: str | None = typer.Option(  # noqa: B008
             None,
             "--type",
             help="Force 'stream', 'fjord', or 'tideweaver' validation. Defaults to auto-detect.",

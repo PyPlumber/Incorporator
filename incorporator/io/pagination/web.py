@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import AsyncGenerator
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
 from urllib.parse import urljoin
 
 import httpx
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _RESULT_KEY_CONVENTIONS = ("results", "data", "items", "docs", "records")
 
 
-def _extract_results_array(data: Any, result_key: Optional[str]) -> list[Any]:
+def _extract_results_array(data: Any, result_key: str | None) -> list[Any]:
     """Pull the results array out of a paginated response body.
 
     Honours an explicit ``result_key`` when set; otherwise walks
@@ -72,9 +72,9 @@ class LinkHeaderPaginator(AsyncPaginator):
     downstream and the paginator never materialises the full page list.
     """
 
-    def __init__(self, *, penstock: Optional[Penstock] = None) -> None:
+    def __init__(self, *, penstock: Penstock | None = None) -> None:
         super().__init__(penstock=penstock)
-        self.current_url: Optional[str] = None
+        self.current_url: str | None = None
         self.is_first_call: bool = True
 
     def reset(self) -> None:
@@ -83,7 +83,7 @@ class LinkHeaderPaginator(AsyncPaginator):
         self.current_url = None
         self.is_first_call = True
 
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
+    async def paginate(self, start_url: str) -> AsyncGenerator[str | bytes, None]:
         """Yield one raw response body per page, following RFC 5988 ``Link: rel="next"`` headers.
 
         Stops when the response has no ``rel="next"`` entry.  Honours
@@ -183,10 +183,10 @@ class CursorPaginator(AsyncPaginator):
             (default ``"cursor"``). Set to ``"page_token"`` for Google APIs.
     """
 
-    def __init__(self, cursor_param: str = "cursor", *, penstock: Optional[Penstock] = None) -> None:
+    def __init__(self, cursor_param: str = "cursor", *, penstock: Penstock | None = None) -> None:
         super().__init__(penstock=penstock)
         self.cursor_param = cursor_param
-        self.current_cursor: Optional[str] = None
+        self.current_cursor: str | None = None
         self.seen_cursors: set[str] = set()
 
     def reset(self) -> None:
@@ -199,7 +199,7 @@ class CursorPaginator(AsyncPaginator):
         self.current_cursor = None
         self.seen_cursors.clear()
 
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
+    async def paginate(self, start_url: str) -> AsyncGenerator[str | bytes, None]:
         """Yield one raw response body per page, advancing via the cursor token.
 
         Reads the next cursor from ``meta.next_token``, ``next_cursor``, or
@@ -298,9 +298,9 @@ class OffsetPaginator(AsyncPaginator):
         limit: int = 50,
         offset_param: str = "offset",
         limit_param: str = "limit",
-        result_key: Optional[str] = None,
+        result_key: str | None = None,
         *,
-        penstock: Optional[Penstock] = None,
+        penstock: Penstock | None = None,
     ) -> None:
         super().__init__(penstock=penstock)
         self.limit = limit
@@ -318,7 +318,7 @@ class OffsetPaginator(AsyncPaginator):
         self.is_exhausted = False
         self.current_offset = 0
 
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
+    async def paginate(self, start_url: str) -> AsyncGenerator[str | bytes, None]:
         """Yield one raw response body per page, advancing the offset by ``limit``.
 
         Stops when the results list is empty (auto-detected from common
@@ -411,9 +411,9 @@ class PageNumberPaginator(AsyncPaginator):
         self,
         page_param: str = "page",
         start_page: int = 1,
-        result_key: Optional[str] = None,
+        result_key: str | None = None,
         *,
-        penstock: Optional[Penstock] = None,
+        penstock: Penstock | None = None,
     ) -> None:
         super().__init__(penstock=penstock)
         self.page_param = page_param
@@ -430,7 +430,7 @@ class PageNumberPaginator(AsyncPaginator):
         self.is_exhausted = False
         self.current_page = self.start_page
 
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
+    async def paginate(self, start_url: str) -> AsyncGenerator[str | bytes, None]:
         """Yield one raw response body per page, incrementing the page number.
 
         Stops when the results list is empty (same auto-detection as
@@ -516,10 +516,10 @@ class NextUrlPaginator(AsyncPaginator):
             Defaults to ``("next",)`` if none provided.
     """
 
-    def __init__(self, *path_keys: str, penstock: Optional[Penstock] = None) -> None:
+    def __init__(self, *path_keys: str, penstock: Penstock | None = None) -> None:
         super().__init__(penstock=penstock)
         self.path_keys = path_keys if path_keys else ("next",)
-        self.current_url: Optional[str] = None
+        self.current_url: str | None = None
         self.is_first_call = True
 
     def reset(self) -> None:
@@ -532,7 +532,7 @@ class NextUrlPaginator(AsyncPaginator):
         self.current_url = None
         self.is_first_call = True
 
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes], None]:
+    async def paginate(self, start_url: str) -> AsyncGenerator[str | bytes, None]:
         """Yield one raw response body per page, following the next-URL embedded in the JSON.
 
         Drills into the response body via ``path_keys`` to extract the URL of

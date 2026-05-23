@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import ensure_string
@@ -83,7 +83,7 @@ def _extract_rows_from_table(table_el: Any) -> list[dict[str, Any]]:
 class HTMLHandler(BaseFormatHandler):
     """Parse-only HTML table handler. Requires lxml (ships in ``[speedups]``)."""
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> list[dict[str, Any]]:
         """Extract ``<table>`` rows from an HTML payload and return them as dicts.
 
         By default returns the first table on the page. Pass ``table_index=N``
@@ -124,7 +124,7 @@ class HTMLHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"HTML Parse Error: {e}") from e
 
-    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: str | Path, **kwargs: Any) -> None:
         """Always raises — HTML write is intentionally out of scope.
 
         See the module docstring for the design rationale. Export to JSON,

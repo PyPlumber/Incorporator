@@ -7,7 +7,7 @@ import io
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, TextIO, Union
+from typing import Any, TextIO
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import deserialize_nested, ensure_string, serialize_nested
@@ -30,9 +30,9 @@ class CSVHandler(BaseFormatHandler):
     def __init__(self, delimiter: str = ",") -> None:
         self.delimiter = delimiter
 
-    def _parse_stream(self, stream: Union[TextIO, io.StringIO], **kwargs: Any) -> list[dict[str, Any]]:
+    def _parse_stream(self, stream: TextIO | io.StringIO, **kwargs: Any) -> list[dict[str, Any]]:
         # csv.DictReader yields empty strings ("") for empty cells.  By default
-        # we coerce those to None so Pydantic's Optional[T] semantics work the
+        # we coerce those to None so Pydantic's T | None semantics work the
         # way users expect — a blank cell in a CSV is semantically *missing*
         # data, not the empty-string sentinel.  Opt out with
         # ``csv_empty_as_none=False`` when "" is genuinely meaningful.
@@ -54,7 +54,7 @@ class CSVHandler(BaseFormatHandler):
         except csv.Error as e:
             raise IncorporatorFormatError(f"Invalid Delimited Format: {e}") from e
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[dict[str, Any], list[dict[str, Any]]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> dict[str, Any] | list[dict[str, Any]]:
         """Read a delimited file or byte buffer and yield rows as dicts.
 
         Cells are passed through ``deserialize_nested`` so any JSON-encoded
@@ -68,7 +68,7 @@ class CSVHandler(BaseFormatHandler):
             raw_data = ensure_string(source)
             return self._parse_stream(io.StringIO(raw_data), **kwargs)
 
-    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: str | Path, **kwargs: Any) -> None:
         """Stream rows to a delimited file using a generator pipeline.
 
         Honours ``all_field_names`` (column order) and ``if_exists="append"``

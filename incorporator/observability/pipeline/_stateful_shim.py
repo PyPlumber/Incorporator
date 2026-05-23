@@ -33,7 +33,7 @@ import time
 import types
 from collections.abc import AsyncGenerator, Callable
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from ..logger import Wave
 from . import DEFAULT_EXPORT_INTERVAL_SEC, DEFAULT_REFRESH_INTERVAL_SEC
@@ -48,13 +48,13 @@ async def stream_stateful_via_fjord(
     receiver_cls: type[Any],
     base_class: type[Any],
     incorp_params: dict[str, Any],
-    refresh_params: Optional[dict[str, Any]],
-    export_params: Optional[dict[str, Any]],
-    poll_interval: Optional[float],
-    refresh_interval: Optional[float],
-    export_interval: Optional[float],
-    outflow_user_module: Optional[Any],
-    inflow_callable: Optional[Callable[[dict[str, Any]], Any]] = None,
+    refresh_params: dict[str, Any] | None,
+    export_params: dict[str, Any] | None,
+    poll_interval: float | None,
+    refresh_interval: float | None,
+    export_interval: float | None,
+    outflow_user_module: Any | None,
+    inflow_callable: Callable[[dict[str, Any]], Any] | None = None,
 ) -> AsyncGenerator[Wave, None]:
     """Run ``stream(stateful_polling=True)`` semantics by adapting to fjord.
 
@@ -154,7 +154,7 @@ async def stream_stateful_via_fjord(
         return {cls_name: state[cls_name]}
 
     outflow_fn: Any = _identity_outflow
-    outflow_module: Optional[Any] = outflow_user_module
+    outflow_module: Any | None = outflow_user_module
     if outflow_user_module is not None:
         candidate_fn = getattr(outflow_user_module, "outflow", None)
         if callable(candidate_fn):
@@ -204,7 +204,7 @@ async def stream_stateful_via_fjord(
     ):
         op = wave.operation
         if op.startswith("fjord_incorp:"):
-            new_op: Optional[str] = "incorp"
+            new_op: str | None = "incorp"
         elif op.startswith("fjord_refresh:"):
             new_op = "refresh"
         elif op.startswith("outflow:"):

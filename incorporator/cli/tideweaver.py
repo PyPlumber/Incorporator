@@ -15,7 +15,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 try:
     import typer as _typer
@@ -28,7 +28,7 @@ from ..observability.tideweaver.config import build_watershed
 logger = logging.getLogger(__name__)
 
 
-def _resolve_drain_timeout(cli_override: Optional[float]) -> Optional[float]:
+def _resolve_drain_timeout(cli_override: float | None) -> float | None:
     """Compose the drain-timeout from CLI flag → env-var → watershed.json fallback.
 
     Precedence (highest first):
@@ -62,8 +62,8 @@ async def _run_tideweaver(
     config_path: Path,
     *,
     json_output: bool,
-    heartbeat_file: Optional[Path],
-    drain_timeout_override: Optional[float] = None,
+    heartbeat_file: Path | None,
+    drain_timeout_override: float | None = None,
 ) -> None:
     """Async runner — pre-flight validate, build the Watershed, emit Tides."""
     # Lazy imports to avoid cli/__init__.py circular load when this module is
@@ -123,12 +123,12 @@ def build_app() -> Any:
         json_output: bool = _typer.Option(  # noqa: B008
             False, "--json-output", help="Emit one NDJSON Tide per line on stdout."
         ),
-        heartbeat_file: Optional[Path] = _typer.Option(  # noqa: B008
+        heartbeat_file: Path | None = _typer.Option(  # noqa: B008
             None,
             "--heartbeat-file",
             help="Touch this path after every tide; pairs with Docker HEALTHCHECK.",
         ),
-        drain_timeout: Optional[float] = _typer.Option(  # noqa: B008
+        drain_timeout: float | None = _typer.Option(  # noqa: B008
             None,
             "--drain-timeout",
             help=(

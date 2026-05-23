@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType
@@ -33,7 +33,7 @@ _OPTIONAL_INSTALL_EXTRAS: dict[str, str] = {
 }
 
 
-def _require_optional(module_name: str, install_extra: Union[str, None] = None) -> Any:
+def _require_optional(module_name: str, install_extra: str | None = None) -> Any:
     """Lazy-import an optional dep, raising a uniform install-message on miss.
 
     Centralises the ~20 ``try: import X; except ImportError: raise
@@ -58,7 +58,7 @@ def _require_optional(module_name: str, install_extra: Union[str, None] = None) 
 
 
 @contextmanager
-def atomic_write_path(target: Union[str, Path]) -> Iterator[Path]:
+def atomic_write_path(target: str | Path) -> Iterator[Path]:
     """Yield a sibling tempfile path; rename atomically on success.
 
     Use for monolithic formats that write a single bulk file (Parquet,
@@ -152,7 +152,7 @@ class BaseFormatHandler(ABC):
     """Abstract Strategy for parsing and writing different data formats."""
 
     @abstractmethod
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[dict[str, Any], list[dict[str, Any]]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> dict[str, Any] | list[dict[str, Any]]:
         """Parse a byte buffer, string, or Path into a dict or list of dicts.
 
         Each subclass implements its own format-specific parsing (JSON, XML,
@@ -162,7 +162,7 @@ class BaseFormatHandler(ABC):
         pass
 
     @abstractmethod
-    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: str | Path, **kwargs: Any) -> None:
         """Stream rows from an iterable to a file in the subclass's format.
 
         Subclasses honour standard kwargs where applicable: ``if_exists``

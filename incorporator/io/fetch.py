@@ -10,7 +10,7 @@ import socket
 import time
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -34,10 +34,10 @@ from .source_ref import SourceRef
 # Set by ``observability/pipeline/chunked.py`` before ``cls.incorp(...)``
 # and reset by the same try/finally afterward.  Default ``None`` covers
 # all non-chunked call sites (incorp(), refresh(), inspector probes).
-_CURRENT_CHUNK_CLASS: ContextVar[Optional[type[Any]]] = ContextVar("_CURRENT_CHUNK_CLASS", default=None)
+_CURRENT_CHUNK_CLASS: ContextVar[type[Any] | None] = ContextVar("_CURRENT_CHUNK_CLASS", default=None)
 
 
-def _extract_retry_after(exc: Exception) -> Optional[float]:
+def _extract_retry_after(exc: Exception) -> float | None:
     """Pull a ``Retry-After`` hint from an HTTPStatusError if the server sent one.
 
     The header value is interpreted as seconds (the HTTP/1.1 spec also
@@ -58,8 +58,8 @@ def _build_reject_entry(
     source: str,
     exc: Exception,
     *,
-    attempt_number: Optional[int] = None,
-    duration_sec: Optional[float] = None,
+    attempt_number: int | None = None,
+    duration_sec: float | None = None,
 ) -> RejectEntry:
     """Construct a :class:`RejectEntry` for one source's network failure.
 
@@ -107,7 +107,7 @@ class HTTPClientBuilder:
         concurrency_limit: int = 50,
         ignore_ssl: bool = False,
         timeout: float = 15.0,
-        headers: Optional[dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         block_internal_redirects: bool = False,
     ) -> httpx.AsyncClient:
         """Construct the shared ``httpx.AsyncClient`` used by every fetch.
@@ -164,7 +164,7 @@ _METADATA_HOSTS = frozenset(
 )
 
 
-def _host_is_internal_fast(host: str) -> Optional[bool]:
+def _host_is_internal_fast(host: str) -> bool | None:
     """Cheap pre-DNS check.
 
     Returns:
@@ -275,10 +275,10 @@ async def execute_request(
     url: str,
     client: httpx.AsyncClient,
     method: str = "GET",
-    params: Optional[dict[str, Any]] = None,
-    json_payload: Optional[dict[str, Any]] = None,
-    form_payload: Optional[dict[str, Any]] = None,
-    rate_limiter: Optional[BoundPenstock] = None,
+    params: dict[str, Any] | None = None,
+    json_payload: dict[str, Any] | None = None,
+    form_payload: dict[str, Any] | None = None,
+    rate_limiter: BoundPenstock | None = None,
 ) -> httpx.Response:
     """Execute a resilient, jittered HTTP request supporting GET/POST and query strings.
 
@@ -379,9 +379,9 @@ async def resolve_source_payload(
     source_val: str,
     is_file_mode: bool,
     active_format: FormatType,
-    response: Optional[httpx.Response] = None,
-    archive_target: Optional[str] = None,
-) -> Union[str, bytes, Path]:
+    response: httpx.Response | None = None,
+    archive_target: str | None = None,
+) -> str | bytes | Path:
     """Decoupled helper to resolve text, bytes, or physical paths."""
 
     # 1. LOCAL FILE MODE: Return Path directly to preserve O(1) memory streaming
@@ -420,14 +420,14 @@ async def resolve_source_payload(
 async def _process_single_source(
     source_val: str,
     is_file_mode: bool,
-    client: Optional[httpx.AsyncClient],
-    rate_limiter: Optional[BoundPenstock],
-    dynamic_payload: Optional[dict[str, Any]] = None,
+    client: httpx.AsyncClient | None,
+    rate_limiter: BoundPenstock | None,
+    dynamic_payload: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> list[Any]:
     """Isolates stream processing, dynamic Paginator routing, and rec_path drill-down."""
     format_type = kwargs.pop("format_type", None)
-    inc_page: Optional[AsyncPaginator] = kwargs.pop("inc_page", None)
+    inc_page: AsyncPaginator | None = kwargs.pop("inc_page", None)
     call_lim = kwargs.pop("call_lim", None)
     rec_path = kwargs.pop("rec_path", None)
     archive_target = kwargs.pop("archive_target", None)
@@ -440,7 +440,7 @@ async def _process_single_source(
 
     # 1. Setup the Injection Wrapper
     async def bound_fetch(
-        url: str, request_params: Optional[dict[str, Any]] = None, **kwargs_override: Any
+        url: str, request_params: dict[str, Any] | None = None, **kwargs_override: Any
     ) -> httpx.Response:
 
         if client is None:
@@ -470,7 +470,7 @@ async def _process_single_source(
         )
 
     # 2. Pure Data Processing (Accepts Polymorphic Inputs)
-    async def _process_payload(raw_payload: Union[str, bytes, Path, list[Any], dict[str, Any]]) -> None:
+    async def _process_payload(raw_payload: str | bytes | Path | list[Any] | dict[str, Any]) -> None:
         # Pass **kwargs down so 'sql_query' reaches the database handler!
         parsed_chunk = await format_parsers.parse_source_data(raw_payload, active_format, **kwargs)
 
@@ -547,7 +547,7 @@ def _inject_sqlite_query(source: Any, table_name: str, kwargs: dict[str, Any]) -
 
 def _normalize_source_list(
     source: Any,
-    payload_list: Optional[list[Any]],
+    payload_list: list[Any] | None,
 ) -> list[str]:
     """Normalises any single-source-or-list input into a flat ``List[str]``.
 
@@ -602,7 +602,7 @@ def _normalize_source_list(
 async def fetch_concurrent_payloads(
     source_list: list[str],
     is_file_mode: bool,
-    payload_list: Optional[list[Optional[dict[str, Any]]]] = None,
+    payload_list: list[dict[str, Any] | None] | None = None,
     **kwargs: Any,
 ) -> tuple[list[Any], list[RejectEntry]]:
     """Unified Orchestrator: Exclusively manages sliding windows and concurrent batching.
@@ -627,8 +627,8 @@ async def fetch_concurrent_payloads(
     # Detect whether the caller passed an explicit rate — explicit always
     # wins over the per-host registry default below.
     _user_provided_rps = "requests_per_second" in kwargs
-    _requests_per_second: Optional[float] = kwargs.pop("requests_per_second", None)
-    _user_burst: Optional[int] = kwargs.pop("burst", None)
+    _requests_per_second: float | None = kwargs.pop("requests_per_second", None)
+    _user_burst: int | None = kwargs.pop("burst", None)
     # SSRF defence: opt-in.  When True, redirects whose Location header
     # resolves to a private / loopback / link-local / metadata IP are
     # rejected before httpx follows them.  Pipelines that legitimately

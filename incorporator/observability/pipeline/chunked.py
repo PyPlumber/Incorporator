@@ -9,7 +9,7 @@ import time
 from collections import deque
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from pydantic import ValidationError
@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 async def _run_chunking_engine(
     cls: Any,
     incorp_params: dict[str, Any],
-    refresh_params: Optional[dict[str, Any]],
-    export_params: Optional[dict[str, Any]],
-    poll_interval: Optional[float],
+    refresh_params: dict[str, Any] | None,
+    export_params: dict[str, Any] | None,
+    poll_interval: float | None,
     paginator: Any,
     adapt_chunk_size: bool = False,
     chunk_size_min: int = 100,
@@ -52,7 +52,7 @@ async def _run_chunking_engine(
     # unused) or when the caller supplied one (we don't own its lifetime).
     is_file_mode = bool(incorp_params.get("inc_file"))
     caller_supplied_client = "_client" in incorp_params
-    shared_client: Optional[httpx.AsyncClient] = None
+    shared_client: httpx.AsyncClient | None = None
     if not is_file_mode and not caller_supplied_client:
         shared_client = HTTPClientBuilder.build_client(
             concurrency_limit=incorp_params.get("concurrency_limit", 50),

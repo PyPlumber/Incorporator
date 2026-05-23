@@ -14,7 +14,7 @@ import logging
 import warnings
 from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import TypeAdapter
 
@@ -41,11 +41,11 @@ _JSON_SCHEMA_TYPE_TO_PYTHON: dict[str, type] = {
 }
 
 
-def _target_type_from_schema_info(schema_info: Mapping[str, Any]) -> Optional[type]:
+def _target_type_from_schema_info(schema_info: Mapping[str, Any]) -> type | None:
     """Pick a Python coercion target from a JSON-Schema dict.
 
     Handles both flat-schema shapes (``{"type": "integer"}``) and the
-    ``anyOf`` shape Pydantic emits for ``Optional[...]`` / ``Union[...]``
+    ``anyOf`` shape Pydantic emits for ``... | None`` / ``...``
     fields (``{"anyOf": [{"type": "integer"}, {"type": "null"}]}``).
 
     Returns ``None`` for:
@@ -58,7 +58,7 @@ def _target_type_from_schema_info(schema_info: Mapping[str, Any]) -> Optional[ty
     union resolution order.
     """
 
-    def _from_member(member: Mapping[str, Any]) -> Optional[type]:
+    def _from_member(member: Mapping[str, Any]) -> type | None:
         mt = member.get("type")
         # Datetime carries ``{"type": "string", "format": "date-time"}``.
         if mt == "string" and member.get("format") == "date-time":
@@ -87,7 +87,7 @@ def _target_type_from_schema_info(schema_info: Mapping[str, Any]) -> Optional[ty
 
 
 def _effective_conv_cache_key(
-    conv_dict: Optional[dict[str, Any]],
+    conv_dict: dict[str, Any] | None,
     schema_union: Mapping[str, Any],
     declared_field_names: frozenset[str],
 ) -> tuple[int, int, frozenset[str]]:
@@ -116,10 +116,10 @@ def _effective_conv_cache_key(
 
 
 def _expand_conv_dict_with_schema_union(
-    conv_dict: Optional[dict[str, Any]],
+    conv_dict: dict[str, Any] | None,
     schema_union: Mapping[str, Any],
-    declared_field_names: Optional[frozenset[str]] = None,
-) -> Optional[dict[str, Any]]:
+    declared_field_names: frozenset[str] | None = None,
+) -> dict[str, Any] | None:
     """Backfill ``inc()`` converters for fields the caller didn't name.
 
     Bridges the gap between ``_schema_union`` (which records the JSON-Schema
@@ -179,7 +179,7 @@ async def child_incorp(
     cls: "type[Incorporator]",
     inc_parent: Any,
     **kwargs: Any,
-) -> Union["Incorporator", "IncorporatorList[Any]"]:
+) -> Incorporator | IncorporatorList[Any]:
     """Drive a parent-to-child ``incorp()`` call for deeply nested RESTful graphs.
 
     Resolves ``inc_child`` paths via BFS drill-down on the parent dataset,
@@ -228,13 +228,13 @@ def build_instances(
     parsed_data: list[Any],
     rejects: list["RejectEntry"],
     is_single: bool,
-    target_class: Optional["type[Incorporator]"] = None,
-    inc_code: Optional[str] = None,
-    inc_name: Optional[str] = None,
-    excl_lst: Optional[list[str]] = None,
-    conv_dict: Optional[dict[str, Any]] = None,
-    name_chg: Optional[list[tuple[str, str]]] = None,
-) -> Union["Incorporator", "IncorporatorList[Any]"]:
+    target_class: type[Incorporator] | None = None,
+    inc_code: str | None = None,
+    inc_name: str | None = None,
+    excl_lst: list[str] | None = None,
+    conv_dict: dict[str, Any] | None = None,
+    name_chg: list[tuple[str, str]] | None = None,
+) -> Incorporator | IncorporatorList[Any]:
     """Transform, compile, and instantiate the parsed payload into Incorporator objects.
 
     Three sequential phases:

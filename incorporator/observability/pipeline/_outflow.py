@@ -19,7 +19,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from types import ModuleType
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from ...list import IncorporatorList
 from ..logger import Wave  # re-export for callers
@@ -39,7 +39,7 @@ _BARE_CLASS_WARNED: set[int] = set()
 def _warn_on_bare_user_class(
     user_cls: Any,
     base_class: Any,
-    sample_row: Optional[dict[str, Any]],
+    sample_row: dict[str, Any] | None,
 ) -> None:
     """Warn once when a bare user class declaration suppresses field inference.
 
@@ -180,8 +180,8 @@ async def flush(
     default_output_class_name: str,
     base_class: Any,
     export_params: dict[str, Any],
-    outflow_module: Optional[ModuleType] = None,
-) -> AsyncIterator[tuple[str, int, Optional[Exception]]]:
+    outflow_module: ModuleType | None = None,
+) -> AsyncIterator[tuple[str, int, Exception | None]]:
     """Run one outflow flush; yield one ``(derived_name, row_count, error)`` per class.
 
     Calls ``outflow_fn(state)`` in :func:`asyncio.to_thread`, normalises the
@@ -306,10 +306,10 @@ async def _outflow_daemon(
     outflow_fn: Any,
     export_params: dict[str, Any],
     lock: asyncio.Lock,
-    wave_queue: "asyncio.Queue[Optional[Wave]]",
+    wave_queue: "asyncio.Queue[Wave | None]",
     shutdown_event: asyncio.Event,
-    e_interval: Optional[float],
-    outflow_module: Optional[ModuleType] = None,
+    e_interval: float | None,
+    outflow_module: ModuleType | None = None,
 ) -> None:
     """Periodic outflow-and-export daemon for the fjord engine.
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import deserialize_nested, serialize_nested
@@ -44,7 +44,7 @@ class ExcelHandler(BaseFormatHandler):
     missing.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> list[dict[str, Any]]:
         """Read an ``.xlsx`` file and yield rows as dicts.
 
         Opens the workbook in ``read_only=True`` + ``data_only=True`` mode so
@@ -98,7 +98,7 @@ class ExcelHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"Excel Read Error: {e}") from e
 
-    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: str | Path, **kwargs: Any) -> None:
         """Stream rows to an ``.xlsx`` file using openpyxl's write-only mode.
 
         Uses ``Workbook(write_only=True)`` so only the current row is held

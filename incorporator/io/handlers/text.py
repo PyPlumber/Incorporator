@@ -6,7 +6,7 @@ import json as _stdlib_json
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, TextIO, Union, cast
+from typing import Any, TextIO, cast
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import check_xml_security, ensure_bytes, ensure_string, serialize_nested, xml_to_dict
@@ -50,7 +50,7 @@ def _dumps_json_bytes(item: Any, *, indent: int) -> bytes:
     return _stdlib_json.dumps(item, indent=indent or None).encode("utf-8")
 
 
-def _loads_json(raw: Union[bytes, str]) -> Any:
+def _loads_json(raw: bytes | str) -> Any:
     """Decode a JSON document, preferring orjson when available."""
     orjson = _try_import_orjson()
     if orjson is not None:
@@ -101,7 +101,7 @@ def _xml_parse_error_types() -> tuple[type, ...]:
     return tuple(types)
 
 
-def _resolved_path(file_path: Union[str, Path]) -> Path:
+def _resolved_path(file_path: str | Path) -> Path:
     """Trust the dispatcher's pre-resolution; coerce to Path without a syscall."""
     return file_path if isinstance(file_path, Path) else Path(file_path)
 
@@ -115,14 +115,14 @@ class JSONHandler(BaseFormatHandler):
     monolithic format with no safe O(1) append. Use NDJSON for streaming.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[dict[str, Any], list[dict[str, Any]]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> dict[str, Any] | list[dict[str, Any]]:
         """Read a JSON file or byte buffer and return the decoded structure."""
         try:
-            return cast(Union[dict[str, Any], list[dict[str, Any]]], _loads_json(ensure_bytes(source)))
+            return cast(dict[str, Any] | list[dict[str, Any]], _loads_json(ensure_bytes(source)))
         except Exception as exc:
             raise IncorporatorFormatError(f"Invalid JSON: {exc}") from exc
 
-    def write(self, data: Iterable[Any], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[Any], file_path: str | Path, **kwargs: Any) -> None:
         """Stream rows into a JSON array file one record at a time.
 
         Writes ``[\\n``, then yields each record's serialised bytes, then
@@ -177,7 +177,7 @@ class NDJSONHandler(BaseFormatHandler):
     Append mode is supported natively.
     """
 
-    def _parse_stream(self, stream: Union[TextIO, list[str]]) -> list[dict[str, Any]]:
+    def _parse_stream(self, stream: TextIO | list[str]) -> list[dict[str, Any]]:
         """Decode an iterable of JSON-encoded lines.
 
         Uses the same ``_loads_json`` helper as :class:`JSONHandler` so
@@ -201,7 +201,7 @@ class NDJSONHandler(BaseFormatHandler):
                 raise IncorporatorFormatError(f"Invalid NDJSON on line {line_num}: {exc}") from exc
         return rows
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[dict[str, Any], list[dict[str, Any]]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> dict[str, Any] | list[dict[str, Any]]:
         """Read an NDJSON file or byte buffer line-by-line and return parsed rows.
 
         Empty / whitespace-only lines are skipped. Invalid JSON on any line
@@ -218,7 +218,7 @@ class NDJSONHandler(BaseFormatHandler):
             raw_data = ensure_string(source)
             return self._parse_stream(raw_data.splitlines())
 
-    def write(self, data: Iterable[Any], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[Any], file_path: str | Path, **kwargs: Any) -> None:
         """Stream rows to an NDJSON file, one JSON object per line.
 
         Append mode is supported natively — set ``if_exists="append"`` to
@@ -293,7 +293,7 @@ class XMLHandler(BaseFormatHandler):
     DOM in memory for safe writes.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[dict[str, Any], list[dict[str, Any]]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> dict[str, Any] | list[dict[str, Any]]:
         """Read an XML file or byte buffer and return its tree as nested dicts.
 
         Always runs ``check_xml_security`` first — even with lxml's
@@ -338,7 +338,7 @@ class XMLHandler(BaseFormatHandler):
             raise IncorporatorFormatError(f"Invalid XML: {e}") from e
         return xml_to_dict(root, force_list=force_list_set)
 
-    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: str | Path, **kwargs: Any) -> None:
         """Build an XML DOM from the row iterable and write it to disk.
 
         XML cannot be streamed safely — ElementTree has no incremental

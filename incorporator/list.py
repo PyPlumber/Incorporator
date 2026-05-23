@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import weakref
-from typing import Any, Optional, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from .rejects import RejectEntry
 
@@ -73,8 +73,8 @@ class IncorporatorList(list[T]):
         self,
         model_class: type[Any],
         items: list[Any],
-        failed_sources: Optional[list[str]] = None,
-        rejects: Optional[list[RejectEntry]] = None,
+        failed_sources: list[str] | None = None,
+        rejects: list[RejectEntry] | None = None,
     ):
         super().__init__(items)
         self._model_class = model_class
@@ -95,7 +95,7 @@ class IncorporatorList(list[T]):
             self._rejects = []
 
         # Per-list cache slot for graph-drilling routes (set by incorp()).
-        self.inc_child_path: Optional[str] = None
+        self.inc_child_path: str | None = None
 
     @property
     def rejects(self) -> list[RejectEntry]:

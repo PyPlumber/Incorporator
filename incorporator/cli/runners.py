@@ -14,7 +14,7 @@ import logging
 import signal
 import sys
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 try:
     import typer as _typer
@@ -133,7 +133,7 @@ def _load_pipeline_config(config_path: Path) -> dict[str, Any]:
         sys.exit(1)
 
 
-def _run_validation(config: dict[str, Any], config_dir: Path, type_override: Optional[str]) -> str:
+def _run_validation(config: dict[str, Any], config_dir: Path, type_override: str | None) -> str:
     """Run validators, print results, and return the detected type. Exits on error."""
     requested_type = cast(Any, type_override) if type_override else None
     detected, errors = validate_config(config, config_dir, requested_type)
@@ -150,7 +150,7 @@ def _run_validation(config: dict[str, Any], config_dir: Path, type_override: Opt
 # ---------------------------------------------------------------------------
 
 
-def _emit_wave(wave: Any, *, json_output: bool, heartbeat_file: Optional[Path]) -> None:
+def _emit_wave(wave: Any, *, json_output: bool, heartbeat_file: Path | None) -> None:
     """Per-wave side effects: print line + touch the heartbeat file.
 
     The heartbeat touch runs in a ``finally`` block so it fires even when
@@ -202,10 +202,10 @@ def _install_sigterm_handler(shutdown_signal: asyncio.Event) -> None:
 
 async def _run_stream(
     config: dict[str, Any],
-    poll_interval: Optional[float],
+    poll_interval: float | None,
     enable_logging: bool,
     json_output: bool,
-    heartbeat_file: Optional[Path],
+    heartbeat_file: Path | None,
 ) -> None:
     # Gate: enforce the Pydantic schema before the async pipeline boots.
     # Errors surface here instead of mid-pipeline.  D2a-only — the legacy
@@ -291,7 +291,7 @@ async def _run_fjord(
     config_dir: Path,
     enable_logging: bool,
     json_output: bool,
-    heartbeat_file: Optional[Path],
+    heartbeat_file: Path | None,
 ) -> None:
     """Resolve source classes from the outflow file, then drive Incorporator.fjord().
 

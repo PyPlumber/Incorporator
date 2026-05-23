@@ -19,7 +19,7 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
@@ -112,8 +112,8 @@ def _toposort(currents: Sequence[Current], edges: Sequence[Edge]) -> list[str]:
 
 
 def _resolve_flow(
-    gate_mode: Optional[GateMode],
-    flow: Optional[FlowControl],
+    gate_mode: GateMode | None,
+    flow: FlowControl | None,
     default_mode: GateMode = "hard",
 ) -> FlowControl:
     """Resolve a (gate_mode, flow) pair into a single :class:`FlowControl`.
@@ -175,8 +175,8 @@ class Watershed(BaseModel):
     window: tuple[datetime, datetime] = Field(..., description="Inclusive start, exclusive end.")
     currents: list[Current] = Field(..., min_length=1)
     edges: list[Edge] = Field(default_factory=list)
-    inflow: Optional[Path] = None
-    outflow: Optional[Path] = None
+    inflow: Path | None = None
+    outflow: Path | None = None
     drain_timeout: float = Field(30.0, ge=0.0)
 
     @model_validator(mode="after")
@@ -232,10 +232,10 @@ class Watershed(BaseModel):
         *,
         window: tuple[datetime, datetime],
         currents: Sequence[Current],
-        gate_mode: Optional[GateMode] = None,
-        flow: Optional[FlowControl] = None,
-        inflow: Optional[Path] = None,
-        outflow: Optional[Path] = None,
+        gate_mode: GateMode | None = None,
+        flow: FlowControl | None = None,
+        inflow: Path | None = None,
+        outflow: Path | None = None,
         drain_timeout: float = 30.0,
         **kwargs: Any,
     ) -> "Watershed":
@@ -279,10 +279,10 @@ class Watershed(BaseModel):
         head: Current,
         middle: Sequence[Current],
         tail: Current,
-        gate_mode: Optional[GateMode] = None,
-        flow: Optional[FlowControl] = None,
-        inflow: Optional[Path] = None,
-        outflow: Optional[Path] = None,
+        gate_mode: GateMode | None = None,
+        flow: FlowControl | None = None,
+        inflow: Path | None = None,
+        outflow: Path | None = None,
         drain_timeout: float = 30.0,
         **kwargs: Any,
     ) -> "Watershed":
@@ -334,10 +334,10 @@ class Watershed(BaseModel):
         window: tuple[datetime, datetime],
         source: Current,
         sinks: Sequence[Current],
-        gate_mode: Optional[GateMode] = None,
-        flow: Optional[FlowControl] = None,
-        inflow: Optional[Path] = None,
-        outflow: Optional[Path] = None,
+        gate_mode: GateMode | None = None,
+        flow: FlowControl | None = None,
+        inflow: Path | None = None,
+        outflow: Path | None = None,
         drain_timeout: float = 30.0,
         **kwargs: Any,
     ) -> "Watershed":
@@ -381,8 +381,8 @@ class Watershed(BaseModel):
         *,
         window: tuple[datetime, datetime],
         currents: Iterable[Current],
-        inflow: Optional[Path] = None,
-        outflow: Optional[Path] = None,
+        inflow: Path | None = None,
+        outflow: Path | None = None,
         drain_timeout: float = 30.0,
         **kwargs: Any,
     ) -> "Watershed":

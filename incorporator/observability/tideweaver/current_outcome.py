@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,10 +40,10 @@ class CurrentOutcome:
 
     name: str
     status: str
-    reason: Optional[str] = None
+    reason: str | None = None
     bypassed_edges: tuple[str, ...] = ()
-    in_flight_sec: Optional[float] = None
-    last_wave_at: Optional[datetime] = None
+    in_flight_sec: float | None = None
+    last_wave_at: datetime | None = None
 
     def __str__(self) -> str:
         """Compact log-friendly representation.

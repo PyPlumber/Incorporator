@@ -12,7 +12,7 @@ import re
 from collections.abc import AsyncGenerator
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from ..base import _UNSET, Incorporator
 from ..list import IncorporatorList
@@ -308,7 +308,7 @@ class StandardFilter(logging.Filter):
         return not bool(getattr(record, "is_api", False))
 
 
-def setup_class_logger(cls: Union[str, type[Any]]) -> None:
+def setup_class_logger(cls: str | type[Any]) -> None:
     """Configures JSON-formatted, non-blocking logging for a dynamic subclass or named logger.
 
     Accepts either a class (the typical case — ``setup_class_logger(MyClass)``)
@@ -751,7 +751,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     @classmethod
     async def incorp(
         cls: type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
-    ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
+    ) -> TLoggedIncorporator | IncorporatorList[TLoggedIncorporator]:
         """Production-observable variant of :meth:`Incorporator.incorp`.
 
         Fetch + parse + register, with an ``enable_logging=True`` opt-in for
@@ -804,7 +804,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     @classmethod
     async def refresh(
         cls: type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
-    ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
+    ) -> TLoggedIncorporator | IncorporatorList[TLoggedIncorporator]:
         """Production-observable variant of :meth:`Incorporator.refresh`.
 
         Re-fetch live data into existing instances, with an
@@ -892,14 +892,14 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     async def stream(  # type: ignore[override]
         cls: type[TLoggedIncorporator],
         incorp_params: dict[str, Any],
-        refresh_params: Optional[dict[str, Any]] = _UNSET,
-        export_params: Optional[dict[str, Any]] = None,
-        poll_interval: Optional[float] = None,
+        refresh_params: dict[str, Any] | None = _UNSET,
+        export_params: dict[str, Any] | None = None,
+        poll_interval: float | None = None,
         stateful_polling: bool = False,
-        refresh_interval: Optional[float] = None,
-        export_interval: Optional[float] = None,
-        inflow: Optional[Union[str, Path]] = None,
-        outflow: Optional[Union[str, Path]] = None,
+        refresh_interval: float | None = None,
+        export_interval: float | None = None,
+        inflow: str | Path | None = None,
+        outflow: str | Path | None = None,
         enable_logging: bool = False,
         adapt_chunk_size: bool = False,
         chunk_size_min: int = 100,
@@ -990,9 +990,9 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         stream_params: list[dict[str, Any]],
         outflow: Any,
         export_params: dict[str, Any],
-        refresh_interval: Optional[float] = None,
-        export_interval: Optional[float] = None,
-        inflow: Optional[Any] = None,
+        refresh_interval: float | None = None,
+        export_interval: float | None = None,
+        inflow: Any | None = None,
         enable_logging: bool = False,
     ) -> AsyncGenerator[Wave, None]:
         """Production-observable variant of :meth:`Incorporator.fjord`.

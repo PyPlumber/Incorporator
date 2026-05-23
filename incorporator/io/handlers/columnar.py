@@ -38,7 +38,7 @@ import json
 import logging
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType, convert_type, serialize_nested
@@ -54,7 +54,7 @@ _WRITE_BATCH_ROWS = 1024
 
 def _stream_columnar_write(
     data: Iterable[dict[str, Any]],
-    file_path: Union[str, Path],
+    file_path: str | Path,
     kwargs: dict[str, Any],
     *,
     format_label: str,
@@ -166,12 +166,12 @@ def _arrow_type_for(
     name: str,
     properties: dict[str, Any],
     *,
-    decimal_columns: Optional[set[str]] = None,
+    decimal_columns: set[str] | None = None,
     decimal_precision: int = 38,
     decimal_scale: int = 18,
-    timestamp_columns: Optional[set[str]] = None,
+    timestamp_columns: set[str] | None = None,
     timestamp_unit: str = "us",
-    timestamp_tz: Optional[str] = "UTC",
+    timestamp_tz: str | None = "UTC",
 ) -> Any:
     """Map a Pydantic JSON-schema property to a pyarrow DataType.
 
@@ -209,7 +209,7 @@ def _arrow_type_for(
     prop = properties.get(name, {})
     json_type = prop.get("type")
 
-    # Pydantic encodes Optional[X] as anyOf: [{type: X}, {type: null}]. Walk it.
+    # Pydantic encodes X | None as anyOf: [{type: X}, {type: null}]. Walk it.
     if not json_type and "anyOf" in prop:
         for sub in prop["anyOf"]:
             if sub.get("type") and sub.get("type") != "null":
@@ -314,7 +314,7 @@ def _build_columnar_schema(
     explicit_keys: list[str],
     properties: dict[str, Any],
     kwargs: dict[str, Any],
-) -> Optional[Any]:
+) -> Any | None:
     """Build an explicit pyarrow schema from the Pydantic JSON-schema properties.
 
     Returns ``None`` when no JSON-schema hint is available — callers fall
@@ -465,7 +465,7 @@ class ParquetHandler(BaseFormatHandler):
     missing.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> list[dict[str, Any]]:
         """Read a Parquet file or byte buffer and yield rows as dicts.
 
         Uses ``pq.read_table().to_pylist()`` for the single-shot read path,
@@ -488,7 +488,7 @@ class ParquetHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"Parquet Read Error: {e}") from e
 
-    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: str | Path, **kwargs: Any) -> None:
         """Stream rows to a Parquet file in 1024-row Arrow batches.
 
         Uses ``ParquetWriter`` so memory holds at most one row group at a
@@ -531,7 +531,7 @@ class FeatherHandler(BaseFormatHandler):
     Compression defaults to LZ4 (Feather V2's native default).
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> list[dict[str, Any]]:
         """Read a Feather V2 file or byte buffer and yield rows as dicts.
 
         Uses memory-mapped reads where possible (Feather's headline feature).
@@ -549,7 +549,7 @@ class FeatherHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"Feather Read Error: {e}") from e
 
-    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: str | Path, **kwargs: Any) -> None:
         """Stream rows into a Feather V2 (Arrow IPC) file in 1024-row batches.
 
         Feather V2 is Arrow IPC file format under the hood — pyarrow exposes a
@@ -599,7 +599,7 @@ class OrcHandler(BaseFormatHandler):
     even though pyarrow itself loaded successfully.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> list[dict[str, Any]]:
         """Read an ORC file or byte buffer and yield rows as dicts.
 
         Routes through the same ``_table_to_dicts`` helper as Parquet/Feather
@@ -623,7 +623,7 @@ class OrcHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"ORC Read Error: {e}") from e
 
-    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: str | Path, **kwargs: Any) -> None:
         """Stream rows into an ORC file in 1024-row batches.
 
         pyarrow's ``ORCWriter`` accepts incremental ``write_table`` calls,

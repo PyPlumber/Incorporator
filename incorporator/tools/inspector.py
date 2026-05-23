@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from ..schema.converters import parses_as_datetime, parses_as_float, parses_as_int
@@ -62,12 +62,12 @@ class ResponseMeta:
     observed during probe / Retry-After parsing).
     """
 
-    host: Optional[str] = None
-    status_code: Optional[int] = None
+    host: str | None = None
+    status_code: int | None = None
     rate_limited: bool = False
-    retry_after_sec: Optional[float] = None
-    response_time_ms: Optional[float] = None
-    content_type: Optional[str] = None
+    retry_after_sec: float | None = None
+    response_time_ms: float | None = None
+    content_type: str | None = None
 
 
 @dataclass
@@ -90,7 +90,7 @@ class SourceProfile:
 
     parsed_data: list[Any]
     provided_kwargs: dict[str, Any]
-    response_meta: Optional[ResponseMeta] = None
+    response_meta: ResponseMeta | None = None
 
     sample: Any = None
     target_obj: Any = None
@@ -98,18 +98,18 @@ class SourceProfile:
     rec_path_candidates: list[tuple[str, int]] = field(default_factory=list)
     top_level_fields: set[str] = field(default_factory=set)
 
-    primary_key_field: Optional[str] = None
+    primary_key_field: str | None = None
     primary_key_score: int = 0
-    display_name_field: Optional[str] = None
+    display_name_field: str | None = None
     display_name_score: int = 0
 
     datetime_fields: list[str] = field(default_factory=list)
     int_fields: list[str] = field(default_factory=list)
     float_fields: list[str] = field(default_factory=list)
 
-    pagination_kind: Optional[str] = None
-    pagination_suggestion: Optional[str] = None
-    pagination_description: Optional[str] = None
+    pagination_kind: str | None = None
+    pagination_suggestion: str | None = None
+    pagination_description: str | None = None
     pagination_meta_keys_present: list[str] = field(default_factory=list)
 
     heavy_fields: list[str] = field(default_factory=list)
@@ -157,7 +157,7 @@ def _print_tree(data: Any, prefix: str = "", depth: int = 0, max_depth: int = 3)
 def capture_signals(
     parsed_data: list[Any],
     provided_kwargs: dict[str, Any],
-    response_meta: Optional[ResponseMeta] = None,
+    response_meta: ResponseMeta | None = None,
 ) -> SourceProfile:
     """Detect every inspector signal as a structured :class:`SourceProfile`.
 
@@ -226,9 +226,9 @@ def capture_signals(
 def _detect_identity_mapping(profile: SourceProfile) -> None:
     """Score inc_code / inc_name candidates on ``profile.target_obj``."""
     target_obj: dict[str, Any] = profile.target_obj
-    best_code: Optional[str] = None
+    best_code: str | None = None
     best_code_score: int = -1
-    best_name: Optional[str] = None
+    best_name: str | None = None
     best_name_score: int = -1
 
     for k, v in target_obj.items():

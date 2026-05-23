@@ -11,7 +11,7 @@ class JsonSchemaProperty(TypedDict, total=False):
     Mirrors one entry in ``BaseModel.model_json_schema()["properties"]``.
     All keys are optional (``total=False``) because different Python types
     produce different key combinations (``int`` → ``{"type": "integer"}``,
-    ``Optional[int]`` → ``{"anyOf": [...]}``, etc.).
+    ``int | None`` → ``{"anyOf": [...]}``, etc.).
 
     Used as the value type of
     :attr:`incorporator.Incorporator._schema_union`; readers use defensive

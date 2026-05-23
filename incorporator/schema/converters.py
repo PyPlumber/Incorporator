@@ -14,7 +14,7 @@ import functools
 import logging
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import TypeAdapter
 
@@ -340,10 +340,10 @@ RANKED_CONVERTERS: dict[Any, list[Callable[[Any], Any]]] = {
 # THE INC() FACTORY
 # ==========================================
 @functools.lru_cache(maxsize=4096)
-def _get_cached_adapter(actual_type: Any) -> Optional[TypeAdapter[Any]]:
+def _get_cached_adapter(actual_type: Any) -> TypeAdapter[Any] | None:
     """Per-type ``TypeAdapter`` factory, memoised.
 
-    The cache is keyed by ``actual_type`` (Optional[X], Union[X, Y], List[int],
+    The cache is keyed by ``actual_type`` (X | None, X | Y, List[int],
     custom Pydantic models, etc).  Cardinality is bounded by program
     structure — number of distinct types passed to ``inc()`` across the
     process lifetime — so 4096 comfortably absorbs Tideweaver topologies

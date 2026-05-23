@@ -22,8 +22,6 @@ rejects are always-on and immediate (available the moment
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -116,39 +114,39 @@ class RejectEntry(BaseModel):
     source: str = Field(..., description="URL, file path, or source identifier that failed.")
     error_kind: str = Field(default="Unknown", description="Exception type name.")
     message: str = Field(default="", description="Human-readable error detail.")
-    retry_after: Optional[float] = Field(
+    retry_after: float | None = Field(
         default=None,
         description="Seconds to wait before retry, when supplied by the server.",
     )
-    wave_index: Optional[int] = Field(
+    wave_index: int | None = Field(
         default=None,
         description="``chunk_index`` of the parent :class:`Wave`, if any.",
     )
-    from_name: Optional[str] = Field(
+    from_name: str | None = Field(
         default=None,
         description="Tideweaver upstream current name for canal-layer rejects.",
     )
-    to_name: Optional[str] = Field(
+    to_name: str | None = Field(
         default=None,
         description="Tideweaver downstream current name for canal-layer rejects.",
     )
-    host: Optional[str] = Field(
+    host: str | None = Field(
         default=None,
         description="Network host from ``urlparse(source).netloc``, for HTTP-layer rejects.",
     )
-    status_code: Optional[int] = Field(
+    status_code: int | None = Field(
         default=None,
         description="HTTP response status code (e.g. 429, 500).",
     )
-    attempt_number: Optional[int] = Field(
+    attempt_number: int | None = Field(
         default=None,
         description="Tenacity retry attempt number at final failure.",
     )
-    duration_sec: Optional[float] = Field(
+    duration_sec: float | None = Field(
         default=None,
         description="Wall-clock seconds from call start to exception.",
     )
-    cooldown_sec: Optional[float] = Field(
+    cooldown_sec: float | None = Field(
         default=None,
         description=(
             "Unified try-again hint in seconds — mirrors retry_after at HTTP sites, "

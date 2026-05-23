@@ -15,7 +15,7 @@ import re
 import weakref
 from collections import OrderedDict
 from collections.abc import Callable
-from typing import Any, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -85,13 +85,13 @@ def sanitize_json_key(key: str) -> str:
 
 
 def apply_etl_transformations(
-    parsed_data: Union[dict[str, Any], list[dict[str, Any]]],
-    code_attr: Optional[str] = None,
-    name_attr: Optional[str] = None,
-    excl_lst: Optional[list[str]] = None,
-    conv_dict: Optional[dict[str, Any]] = None,
-    name_chg: Optional[list[tuple[str, str]]] = None,
-) -> Union[dict[str, Any], list[dict[str, Any]]]:
+    parsed_data: dict[str, Any] | list[dict[str, Any]],
+    code_attr: str | None = None,
+    name_attr: str | None = None,
+    excl_lst: list[str] | None = None,
+    conv_dict: dict[str, Any] | None = None,
+    name_chg: list[tuple[str, str]] | None = None,
+) -> dict[str, Any] | list[dict[str, Any]]:
     """Apply exc_lst, conv_dict, name_chg, and PK-binding transforms in-place.
 
     Processes ``parsed_data`` through four ordered columnar passes: drop
@@ -237,7 +237,7 @@ def apply_etl_transformations(
 
 
 def infer_dynamic_schema(
-    model_name: str, data: Union[dict[str, Any], list[dict[str, Any]]], base_class: type[BaseModel]
+    model_name: str, data: dict[str, Any] | list[dict[str, Any]], base_class: type[BaseModel]
 ) -> type[BaseModel]:
     """Recursively build a Pydantic V2 model class from a raw data sample.
 
@@ -260,8 +260,8 @@ def infer_dynamic_schema(
         :func:`pydantic.create_model`, inheriting from ``base_class``.
 
         Tolerance contract — every inferred field is wrapped in
-        ``Optional[...]`` so missing keys never trigger ``ValidationError``,
-        and all numeric fields use ``Union[int, float]`` so APIs that
+        ``... | None`` so missing keys never trigger ``ValidationError``,
+        and all numeric fields use ``int | float`` so APIs that
         sometimes return ``42`` and sometimes ``42.0`` for the same field
         validate cleanly.
 
@@ -338,21 +338,21 @@ def infer_dynamic_schema(
 
         if isinstance(value, dict):
             nested_model: Any = infer_dynamic_schema(f"{model_name}_{safe_key}", value, BaseModel)
-            fields[safe_key] = (Optional[nested_model], Field(alias=raw_key, default=None))
+            fields[safe_key] = (nested_model | None, Field(alias=raw_key, default=None))
 
         elif isinstance(value, list) and value and any(isinstance(x, dict) for x in value):
             # Filter to dicts only — value[0] might be None, which would break recursive inference.
             dict_vals = [x for x in value if isinstance(x, dict)]
             nested_model_list: Any = infer_dynamic_schema(f"{model_name}_{safe_key}Item", dict_vals, BaseModel)
             fields[safe_key] = (
-                Optional[list[nested_model_list]],
+                list[nested_model_list] | None,
                 Field(alias=raw_key, default_factory=list),
             )
         else:
             field_type: Any = type(value) if value is not None else Any
             if field_type is int:
-                field_type = Union[int, float]
-            fields[safe_key] = (Optional[field_type], Field(alias=raw_key, default=None))
+                field_type = int | float
+            fields[safe_key] = (field_type | None, Field(alias=raw_key, default=None))
 
     try:
         DynamicModel = create_model(

@@ -28,7 +28,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Optional, Union, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
@@ -46,7 +46,7 @@ from .tide import Tide
 # Kept as the architect public input alias; internal classification routes
 # through :class:`incorporator.io.source_ref.SourceRef` after the loose union
 # input is narrowed.
-SourceValue = Union[str, Path, Mapping[str, Any]]
+SourceValue = str | Path | Mapping[str, Any]
 
 # ---------------------------------------------------------------------------
 # Plan dataclasses — what _analyze_topology produces and the renderers consume.
@@ -83,11 +83,11 @@ class CurrentSpec:
     name: str
     verb: str  # "stream" | "fjord" | "export"
     incorp_params: dict[str, Any]
-    pk_field: Optional[str]
-    name_field: Optional[str]
+    pk_field: str | None
+    name_field: str | None
     conv_dict_template: dict[str, str]  # field name -> "datetime" | "int" | "float"
     excl_lst: list[str]
-    inc_page_suggestion: Optional[str]  # paginator call expression
+    inc_page_suggestion: str | None  # paginator call expression
     interval_hint: int
     class_name: str  # PascalCase class name for Python emission
 
@@ -99,7 +99,7 @@ class EdgeSpec:
     from_name: str
     to_name: str
     gate_mode: str  # "hard" | "soft" | "weir"
-    penstock: Optional[PenstockSpec]
+    penstock: PenstockSpec | None
 
 
 @dataclass
@@ -122,9 +122,9 @@ class OrchestrationPlan:
 
     def to_watershed(
         self,
-        window: Optional[tuple[Any, Any]] = None,
+        window: tuple[Any, Any] | None = None,
         *,
-        classes: Optional[Mapping[str, Any]] = None,
+        classes: Mapping[str, Any] | None = None,
     ) -> Any:
         """Materialise the plan into a runnable :class:`Watershed`.
 
@@ -254,7 +254,7 @@ class OrchestrationPlan:
 
 def _resolve_sources(
     sources: Mapping[str, SourceValue],
-    shared_kwargs: Optional[Mapping[str, Any]] = None,
+    shared_kwargs: Mapping[str, Any] | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     """Convert the user's source mapping into ``[(name, incorp_kwargs), ...]``.
 
@@ -385,7 +385,7 @@ async def _probe_one(
 # ---------------------------------------------------------------------------
 
 
-def _penstock_for(profile: SourceProfile) -> Optional[PenstockSpec]:
+def _penstock_for(profile: SourceProfile) -> PenstockSpec | None:
     """Return a ``PenstockSpec`` per the three-tier confidence ladder, or ``None``.
 
     Tier 1 reads :func:`incorporator.io.penstock.known_host_rates` — the
@@ -482,7 +482,7 @@ def _analyze_topology(
     # Same-pk-everywhere goes to the diamond branch below, not fanout —
     # parallel views of the same domain (e.g. laps + pits both keyed on
     # user_id) merge in a Fjord rather than fan out from one source.
-    fanout_head: Optional[int] = None
+    fanout_head: int | None = None
     for i, (_name, profile) in enumerate(named_profiles):
         pk = profile.primary_key_field
         if not pk:
@@ -647,7 +647,7 @@ def _python_current_block(spec: CurrentSpec) -> str:
 
 def _python_watershed_block(plan: OrchestrationPlan) -> str:
     """Emit ``Watershed.<shape>(...)`` (or bare ``Watershed(...)`` for custom)."""
-    shared_penstock: Optional[PenstockSpec] = None
+    shared_penstock: PenstockSpec | None = None
     if plan.edges:
         # If every edge has the same penstock spec, lift it to flow=.
         first = plan.edges[0].penstock
@@ -779,12 +779,12 @@ def render_json(named_profiles: list[tuple[str, SourceProfile]], plan: Orchestra
     ``_TODO_`` placeholders.
     """
     # Determine shared flow block from a uniform-penstock edge set.
-    shared_penstock: Optional[PenstockSpec] = None
+    shared_penstock: PenstockSpec | None = None
     if plan.edges:
         first = plan.edges[0].penstock
         if first and all(edge.penstock and edge.penstock.rate_per_sec == first.rate_per_sec for edge in plan.edges):
             shared_penstock = first
-    flow_dict: Optional[dict[str, Any]] = None
+    flow_dict: dict[str, Any] | None = None
     if shared_penstock:
         flow_dict = {
             "gate": {"type": "hard"},
@@ -840,8 +840,8 @@ async def run(
     sources: Mapping[str, SourceValue],
     *,
     output: str = "report",
-    shared_kwargs: Optional[Mapping[str, Any]] = None,
-) -> Optional[Union[str, OrchestrationPlan]]:
+    shared_kwargs: Mapping[str, Any] | None = None,
+) -> str | OrchestrationPlan | None:
     """Probe ``sources``, run cross-source analysis, dispatch to a renderer.
 
     Args:
@@ -945,11 +945,11 @@ class TuningHint(BaseModel):
         default_factory=dict,
         description="Where this hint applies — keys like 'source', 'edge', 'host', 'global'.",
     )
-    current_value: Optional[Any] = PydanticField(
+    current_value: Any | None = PydanticField(
         default=None,
         description="What the knob is set to today (None if not recoverable from records).",
     )
-    recommended_value: Optional[Any] = PydanticField(
+    recommended_value: Any | None = PydanticField(
         default=None,
         description="What to change it to (None if no numeric recommendation).",
     )
@@ -1033,7 +1033,7 @@ def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
         data-insufficient groups.
     """
     # Group by source_url (may be None for file-mode or one-shot sources).
-    groups: dict[Optional[str], list[Wave]] = {}
+    groups: dict[str | None, list[Wave]] = {}
     for w in waves:
         groups.setdefault(w.source_url, []).append(w)
 
@@ -1140,7 +1140,7 @@ def _tune_penstock_rate(rejects: list[RejectEntry], window_sec: float = 600.0) -
 
     # Canal rejects: from_name is not None.
     canal = [r for r in penstock_rejects if r.from_name is not None]
-    canal_groups: dict[tuple[Optional[str], Optional[str]], list[RejectEntry]] = {}
+    canal_groups: dict[tuple[str | None, str | None], list[RejectEntry]] = {}
     for r in canal:
         canal_groups.setdefault((r.from_name, r.to_name), []).append(r)
 
@@ -1256,7 +1256,7 @@ def _tune_surge_threshold(rejects: list[RejectEntry], tides: list[Tide]) -> list
     surge_rejects = [r for r in rejects if r.error_kind in ("SkipAhead", "SurgeHalted") and r.from_name is not None]
 
     # Group by (from_name, to_name).
-    groups: dict[tuple[Optional[str], Optional[str]], list[RejectEntry]] = {}
+    groups: dict[tuple[str | None, str | None], list[RejectEntry]] = {}
     for r in surge_rejects:
         groups.setdefault((r.from_name, r.to_name), []).append(r)
 
@@ -1450,7 +1450,7 @@ def _tune_retry_policy(rejects: list[RejectEntry]) -> list[TuningHint]:
         with_attempt = [r for r in group if r.attempt_number is not None]
         if with_attempt:
             attempt_numbers = [r.attempt_number for r in with_attempt]
-            # attempt_numbers is List[Optional[int]] but filtered to non-None above.
+            # attempt_numbers is List[int | None] but filtered to non-None above.
             non_none_attempts: list[int] = [a for a in attempt_numbers if a is not None]
             if non_none_attempts:
                 max_attempt = max(non_none_attempts)
@@ -1507,10 +1507,10 @@ def _tune_retry_policy(rejects: list[RejectEntry]) -> list[TuningHint]:
 
 def tune(
     *,
-    rejects: Optional[list[RejectEntry]] = None,
-    tides: Optional[list[Tide]] = None,
-    waves: Optional[list[Wave]] = None,
-    pass_interval: Optional[float] = None,
+    rejects: list[RejectEntry] | None = None,
+    tides: list[Tide] | None = None,
+    waves: list[Wave] | None = None,
+    pass_interval: float | None = None,
 ) -> TuningReport:
     """Generate tuning recommendations from accumulated outcome records.
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 SourceKind = Literal["url", "file", "parent", "payload", "kwargs"]
 
@@ -56,7 +56,7 @@ class SourceRef:
         return cls(kind="url", value=url)
 
     @classmethod
-    def from_file(cls, path: Union[str, "os.PathLike[str]"]) -> "SourceRef":
+    def from_file(cls, path: str | os.PathLike[str]) -> "SourceRef":
         """Construct a file source reference.
 
         The ``path`` is stored verbatim (strings stay strings, ``Path``

@@ -50,7 +50,7 @@ import ast
 import logging
 import re
 from datetime import date, datetime, time
-from typing import Any, Optional
+from typing import Any
 
 from ..io.pagination import (
     AvroPaginator,
@@ -249,7 +249,7 @@ def _resolve_string(text: str, *, allowed: dict[str, Any]) -> Any:
     return _eval_node(tree, origin=text, allowed=allowed)
 
 
-def resolve_tokens(obj: Any, extra_names: Optional[dict[str, Any]] = None) -> Any:
+def resolve_tokens(obj: Any, extra_names: dict[str, Any] | None = None) -> Any:
     """Recursively walk ``obj`` and resolve every JSON-text token in place.
 
     ``obj`` is typically the dict returned by :func:`json.load` after

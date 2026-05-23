@@ -18,7 +18,7 @@ public surface settles.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Kept in sync with ``incorporator.cli.validate._STREAM_SOURCE_KEYS``.
 _STREAM_SOURCE_KEYS = {"inc_url", "inc_file", "inc_parent", "payload_list"}
 
-IntervalSpec = Union[float, dict[str, float]]
+IntervalSpec = float | dict[str, float]
 """A refresh / export interval may be a scalar (seconds, applied to
 every source) or a dict keyed by class name with numeric seconds
 values."""
@@ -51,8 +51,8 @@ class FjordStreamEntry(BaseModel):
 
     cls_name: str = Field(..., min_length=1)
     incorp_params: dict[str, Any]
-    refresh_params: Optional[dict[str, Any]] = None
-    export_params: Optional[dict[str, Any]] = None
+    refresh_params: dict[str, Any] | None = None
+    export_params: dict[str, Any] | None = None
 
 
 class StreamConfig(BaseModel):
@@ -67,14 +67,14 @@ class StreamConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="allow")
 
     incorp_params: dict[str, Any]
-    refresh_params: Optional[dict[str, Any]] = None
-    export_params: Optional[dict[str, Any]] = None
-    poll_interval: Optional[float] = None
-    refresh_interval: Optional[IntervalSpec] = None
-    export_interval: Optional[IntervalSpec] = None
+    refresh_params: dict[str, Any] | None = None
+    export_params: dict[str, Any] | None = None
+    poll_interval: float | None = None
+    refresh_interval: IntervalSpec | None = None
+    export_interval: IntervalSpec | None = None
     stateful_polling: bool = False
-    inflow: Optional[str] = None
-    outflow: Optional[str] = None
+    inflow: str | None = None
+    outflow: str | None = None
 
     @model_validator(mode="after")
     def _require_source_key(self) -> "StreamConfig":
@@ -110,9 +110,9 @@ class FjordConfig(BaseModel):
     outflow: str = Field(..., min_length=1)
     stream_params: list[FjordStreamEntry] = Field(..., min_length=1)
     export_params: dict[str, Any]
-    inflow: Optional[str] = None
-    refresh_interval: Optional[IntervalSpec] = None
-    export_interval: Optional[IntervalSpec] = None
+    inflow: str | None = None
+    refresh_interval: IntervalSpec | None = None
+    export_interval: IntervalSpec | None = None
 
 
 PipelineKind = Literal["stream", "fjord"]
@@ -122,7 +122,7 @@ def parse_pipeline_config(
     data: dict[str, Any],
     *,
     kind: PipelineKind,
-) -> Union[StreamConfig, FjordConfig]:
+) -> StreamConfig | FjordConfig:
     """Validate an env-expanded pipeline config dict against the matching model.
 
     Args:

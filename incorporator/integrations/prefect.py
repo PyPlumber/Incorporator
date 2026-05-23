@@ -13,7 +13,7 @@ import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from incorporator import LoggedIncorporator
 from incorporator.observability.logger import Wave
@@ -47,9 +47,9 @@ if not HAS_PREFECT:
 @task(name="incorporator_stream_task", log_prints=True)
 async def run_incorporator_stream(
     incorp_params: dict[str, Any],
-    refresh_params: Optional[dict[str, Any]] = None,
-    export_params: Optional[dict[str, Any]] = None,
-    poll_interval: Optional[float] = None,
+    refresh_params: dict[str, Any] | None = None,
+    export_params: dict[str, Any] | None = None,
+    poll_interval: float | None = None,
     stateful_polling: bool = False,
 ) -> list[Wave]:
     """Prefect task wrapping :meth:`Incorporator.stream` (with optional disk logging via ``enable_logging=True``).
@@ -92,7 +92,7 @@ async def run_incorporator_stream(
 
 
 @flow(name="incorporator_pipeline_flow")
-async def run_incorporator_flow(config_path: str, poll_interval: Optional[float] = None) -> list[Wave]:
+async def run_incorporator_flow(config_path: str, poll_interval: float | None = None) -> list[Wave]:
     """Prefect flow entry point: load ``pipeline.json`` and run the stream task."""
     if not HAS_PREFECT:
         print("❌ Prefect is not installed. Run: pip install incorporator[orchestrate]")

@@ -16,7 +16,7 @@ import zipfile
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
 
 from ..exceptions import IncorporatorFormatError
 from .formats import FormatType
@@ -64,7 +64,7 @@ _CRAMJAM_MODULE_MAP: dict[CompressionType, str] = {
 
 
 @functools.lru_cache(maxsize=4096)
-def infer_compression(path_or_url: str) -> Optional[CompressionType]:
+def infer_compression(path_or_url: str) -> CompressionType | None:
     """Detect the compression type from a file path or URL by its extension.
 
     Returns the matching :class:`CompressionType` member, or ``None`` when the
@@ -85,7 +85,7 @@ def _is_binary(active_format: FormatType) -> bool:
     return active_format in (FormatType.SQLITE, FormatType.AVRO)
 
 
-def _find_target_in_archive(names: list[str], active_format: FormatType, archive_target: Optional[str] = None) -> str:
+def _find_target_in_archive(names: list[str], active_format: FormatType, archive_target: str | None = None) -> str:
     """Finds a target file in an archive safely and predictably."""
     if archive_target:
         if archive_target in names:
@@ -169,11 +169,11 @@ def _enforce_size_cap(decompressed_size: int, comp_type: CompressionType) -> Non
 
 
 def _decompress_native_stream(
-    data: Union[str, bytes],
+    data: str | bytes,
     comp_type: CompressionType,
     active_format: FormatType,
-    archive_target: Optional[str],
-) -> Union[str, bytes]:
+    archive_target: str | None,
+) -> str | bytes:
     """Handles 1-to-1 native Python compression algorithms with Binary Bypass."""
     is_bin = _is_binary(active_format)
     mode = "rb" if is_bin else "rt"
@@ -256,11 +256,11 @@ def _validate_tar_members(members: list[Any]) -> None:
 
 
 def _decompress_archive(
-    data: Union[str, bytes],
+    data: str | bytes,
     comp_type: CompressionType,
     active_format: FormatType,
-    archive_target: Optional[str],
-) -> Union[str, bytes]:
+    archive_target: str | None,
+) -> str | bytes:
     """Handles multi-file archives, seeking out the specific target safely."""
     is_bin = _is_binary(active_format)
 
@@ -299,11 +299,11 @@ def _decompress_archive(
 
 
 def _decompress_cramjam(
-    data: Union[str, bytes],
+    data: str | bytes,
     comp_type: CompressionType,
     active_format: FormatType,
-    archive_target: Optional[str],
-) -> Union[str, bytes]:
+    archive_target: str | None,
+) -> str | bytes:
     """Lazy-loads Cramjam Rust bindings with structural binary bypass."""
     try:
         import cramjam  # type: ignore[import-not-found, import-untyped, unused-ignore]
@@ -410,7 +410,7 @@ def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> 
 
 _DECOMPRESS_ROUTER: dict[
     CompressionType,
-    Callable[[Union[str, bytes], CompressionType, FormatType, Optional[str]], Union[str, bytes]],
+    Callable[[str | bytes, CompressionType, FormatType, str | None], str | bytes],
 ] = {
     CompressionType.GZIP: _decompress_native_stream,
     CompressionType.BZ2: _decompress_native_stream,
@@ -458,11 +458,11 @@ _assert_router_coverage()
 
 
 def decompress_data(
-    data: Union[str, bytes],
+    data: str | bytes,
     path_hint: str,
     active_format: FormatType,
-    archive_target: Optional[str] = None,
-) -> Union[str, bytes]:
+    archive_target: str | None = None,
+) -> str | bytes:
     """Public API to transparently decompress data."""
     comp_type = infer_compression(path_hint)
 
@@ -478,7 +478,7 @@ def decompress_data(
         raise IncorporatorFormatError(f"Failed to decompress {comp_type.value} data: {e}") from e
 
 
-def compress_file(source_path: str, comp_type: Union[str, CompressionType]) -> str:
+def compress_file(source_path: str, comp_type: str | CompressionType) -> str:
     """Public API to compress a local file, automatically removing the uncompressed source."""
     src = Path(source_path).resolve()
     if not src.is_file():

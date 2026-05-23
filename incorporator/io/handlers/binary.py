@@ -7,7 +7,7 @@ import logging
 import sqlite3
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from ...exceptions import IncorporatorFormatError
 from ...schema.builder import sanitize_json_key
@@ -54,7 +54,7 @@ class SQLiteHandler(BaseFormatHandler):
     that need bools should cast explicitly.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> list[dict[str, Any]]:
         """Execute ``sql_query`` against the SQLite file and return rows as dicts.
 
         Iterates the cursor directly (no ``fetchall()`` memory bomb), so the
@@ -100,7 +100,7 @@ class SQLiteHandler(BaseFormatHandler):
         except sqlite3.Error as e:
             raise IncorporatorFormatError(f"SQLite Read Error: {e}") from e
 
-    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: str | Path, **kwargs: Any) -> None:
         """Stream rows into a SQLite table via ``executemany``.
 
         Honours ``sql_table``, ``if_exists`` (``"replace"`` / ``"append"`` /
@@ -200,7 +200,7 @@ class AvroHandler(BaseFormatHandler):
     ``fastavro``'s ``a+b`` writer.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
+    def parse(self, source: str | bytes | Path, **kwargs: Any) -> list[dict[str, Any]]:
         """Read an Avro file or byte buffer and yield rows as dicts.
 
         Iterates the ``fastavro.reader`` block-by-block — no ``list()``
@@ -264,7 +264,7 @@ class AvroHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"Avro Read Error: {e}") from e
 
-    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: str | Path, **kwargs: Any) -> None:
         """Stream rows into an Avro file using the dataset's Pydantic schema.
 
         Builds the Avro record schema from ``pydantic_schema`` via the

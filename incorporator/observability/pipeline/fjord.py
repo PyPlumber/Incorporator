@@ -9,7 +9,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from datetime import datetime, timezone
 from types import ModuleType
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
 
 from ...rejects import RejectEntry
 from ..logger import Wave
@@ -137,7 +137,7 @@ def _format_seed_error(cls_name: str, exc: Exception, inflow_active: bool) -> st
 
 def _resolve_seed_order(
     stream_params: list[dict[str, Any]],
-    refresh_interval: Union[float, dict[Any, float], None],
+    refresh_interval: float | dict[Any, float] | None,
 ) -> list[dict[str, Any]]:
     """Return ``stream_params`` re-ordered for the sequential-seed phase.
 
@@ -172,7 +172,7 @@ def _resolve_seed_order(
 async def _seed_one_source(
     entry: dict[str, Any],
     state: dict[str, Any],
-    inflow_callable: Optional[Callable[[Any], Any]],
+    inflow_callable: Callable[[Any], Any] | None,
 ) -> Any:
     """Run a single source's ``incorp()`` with optional state-aware inflow overrides.
 
@@ -208,10 +208,10 @@ async def _seed_one_source(
 
 
 def _resolve_per_source_interval(
-    top_level: Union[float, dict[Any, float], None],
+    top_level: float | dict[Any, float] | None,
     entry: dict[str, Any],
     key: str,
-) -> Optional[float]:
+) -> float | None:
     """Pick the interval value for one fjord stream entry.
 
     Priority chain:
@@ -228,7 +228,7 @@ def _resolve_per_source_interval(
         # ``entry`` is typed ``Dict[str, Any]`` so the lookup widens to
         # ``Any``; narrow back to the function's declared return type so
         # mypy strict mode stays happy.
-        return cast(Optional[float], entry[key])
+        return cast(float | None, entry[key])
     if isinstance(top_level, dict):
         cls = entry.get("cls")
         if cls is not None and cls in top_level:
@@ -246,10 +246,10 @@ async def _run_fjord_engine(
     stream_params: list[dict[str, Any]],
     outflow_fn: Any,
     export_params: dict[str, Any],
-    r_interval: Optional[float],
-    e_interval: Optional[float],
-    outflow_module: Optional[ModuleType] = None,
-    inflow_callable: Optional[Callable[[Any], Any]] = None,
+    r_interval: float | None,
+    e_interval: float | None,
+    outflow_module: ModuleType | None = None,
+    inflow_callable: Callable[[Any], Any] | None = None,
 ) -> AsyncGenerator[Wave, None]:
     """Multi-source stateful streaming engine for ``Incorporator.fjord()``.
 
@@ -392,7 +392,7 @@ async def _run_fjord_engine(
     # 2. Daemon phase — spawn refresh + per-stream export + outflow tasks.
     # ------------------------------------------------------------------
     lock = asyncio.Lock()
-    wave_queue: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
+    wave_queue: asyncio.Queue[Wave | None] = asyncio.Queue()
     shutdown_event = asyncio.Event()
     tasks: list[asyncio.Task[Any]] = []
 

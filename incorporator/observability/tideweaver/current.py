@@ -17,7 +17,7 @@ models — these models are pure plan, not state.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -71,8 +71,8 @@ class Current(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     on_error: OnErrorPolicy = "restart"
     phase_offset_sec: float = Field(0.0, ge=0.0, description="Delay first tick by N seconds for green-wave alignment.")
-    inflow: Optional[Path] = None
-    outflow: Optional[Path] = None
+    inflow: Path | None = None
+    outflow: Path | None = None
 
 
 class Stream(Current):
@@ -122,8 +122,8 @@ class Stream(Current):
     """
 
     incorp_params: dict[str, Any] = Field(default_factory=dict)
-    refresh_params: Optional[dict[str, Any]] = None
-    export_params: Optional[dict[str, Any]] = None
+    refresh_params: dict[str, Any] | None = None
+    export_params: dict[str, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod

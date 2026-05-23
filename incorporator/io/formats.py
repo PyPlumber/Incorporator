@@ -12,7 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 from ..exceptions import IncorporatorFormatError
 
@@ -257,7 +257,7 @@ def infer_format(path_or_url: str) -> FormatType:
     return FormatType.JSON
 
 
-def ensure_string(source: Union[str, bytes, Path]) -> str:
+def ensure_string(source: str | bytes | Path) -> str:
     """Fallback guard for legacy formatters that haven't been optimized for stream buffers."""
     if isinstance(source, Path):
         return source.read_text(encoding="utf-8")
@@ -266,7 +266,7 @@ def ensure_string(source: Union[str, bytes, Path]) -> str:
     return source
 
 
-def ensure_bytes(source: Union[str, bytes, Path]) -> bytes:
+def ensure_bytes(source: str | bytes | Path) -> bytes:
     """Coerce any accepted parse-source shape into ``bytes``.
 
     Mirror of :func:`ensure_string` for handlers whose parser accepts raw
@@ -300,7 +300,7 @@ def deserialize_nested(val: Any) -> Any:
     return val
 
 
-def xml_to_dict(element: Any, force_list: Optional[set[str]] = None) -> dict[str, Any]:
+def xml_to_dict(element: Any, force_list: set[str] | None = None) -> dict[str, Any]:
     """Recursively converts an XML ElementTree (standard or lxml) into a Python dictionary.
 
     Tag-shape consistency: by default a tag that appears once becomes a

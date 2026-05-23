@@ -8,7 +8,6 @@ logging machinery in ``observability/logger.py``.  ``logger.py`` re-exports
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -84,14 +83,14 @@ class Wave(BaseModel):
     rows_processed: int = Field(..., description="Number of rows successfully processed.")
     failed_sources: list[str] = Field(default_factory=list, description="Failed source URIs.")
     processing_time_sec: float = Field(..., description="Chunk processing duration in seconds.")
-    source_url: Optional[str] = Field(default=None, description="Origin URL or file path for the chunk.")
-    bytes_processed: Optional[int] = Field(default=None, description="Raw byte count of the HTTP response body.")
+    source_url: str | None = Field(default=None, description="Origin URL or file path for the chunk.")
+    bytes_processed: int | None = Field(default=None, description="Raw byte count of the HTTP response body.")
     http_retry_count: int = Field(default=0, description="Tenacity retry attempts beyond the first.")
     validation_error_count: int = Field(default=0, description="Pydantic ValidationError rows caught.")
     schema_cache_hit: bool = Field(
         default=True, description="True when the schema registry reused an existing compiled class."
     )
-    conv_dict_time_sec: Optional[float] = Field(
+    conv_dict_time_sec: float | None = Field(
         default=None,
         description=(
             "Wall-clock seconds spent inside the wrapped ``cls.incorp(...)`` "

@@ -20,7 +20,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Optional, Union
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
@@ -55,8 +55,8 @@ class GateContext:
     """
 
     up_in_flight: bool
-    up_last_wave_at: Optional[datetime]
-    last_consumed: Optional[datetime]
+    up_last_wave_at: datetime | None
+    last_consumed: datetime | None
     now: float
 
 
@@ -65,7 +65,7 @@ class SurgeContext:
     """Facts :class:`SurgeBarrier` reads to decide whether to override the gate."""
 
     up_in_flight: bool
-    up_started_at: Optional[float]
+    up_started_at: float | None
     dependent_interval: float
     now: float
 
@@ -80,7 +80,7 @@ class Gate(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    def gate_reason(self, ctx: GateContext) -> Optional[str]:
+    def gate_reason(self, ctx: GateContext) -> str | None:
         """Return a skip reason, or ``None`` to allow firing."""
         raise NotImplementedError
 
@@ -90,7 +90,7 @@ class HardLock(Gate):
 
     type: Literal["hard"] = "hard"
 
-    def gate_reason(self, ctx: GateContext) -> Optional[str]:
+    def gate_reason(self, ctx: GateContext) -> str | None:
         if ctx.up_in_flight:
             return "awaiting_upstream"
         if ctx.up_last_wave_at is None:
@@ -105,7 +105,7 @@ class SoftPass(Gate):
 
     type: Literal["soft"] = "soft"
 
-    def gate_reason(self, ctx: GateContext) -> Optional[str]:
+    def gate_reason(self, ctx: GateContext) -> str | None:
         return None
 
 
@@ -114,7 +114,7 @@ class Weir(Gate):
 
     type: Literal["weir"] = "weir"
 
-    def gate_reason(self, ctx: GateContext) -> Optional[str]:
+    def gate_reason(self, ctx: GateContext) -> str | None:
         if ctx.up_last_wave_at is None:
             return "awaiting_upstream"
         if ctx.last_consumed is not None and ctx.last_consumed >= ctx.up_last_wave_at:
@@ -194,7 +194,7 @@ class BackpressurePenstock(Penstock):
             )
         return self
 
-    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> Optional[str]:
+    def consume_reason(self, edge_state: Any, flow: "FlowControl", now: float) -> str | None:
         # Backpressure needs BOTH the wave count (scheduler-owned on
         # ``_EdgeState.waves``) AND the rate-limit watermark
         # (Penstock-owned on ``_EdgeState.flow_state``).  Uses the same
@@ -305,7 +305,7 @@ class ExportToArchive(Spillway):
     ) -> None:
         if not isinstance(displaced_wave, list):
             return None
-        backlog: Optional[list[Any]] = getattr(self.archive_cls, "_spillway_backlog", None)
+        backlog: list[Any] | None = getattr(self.archive_cls, "_spillway_backlog", None)
         if backlog is None:
             backlog = []
             self.archive_cls._spillway_backlog = backlog
@@ -569,19 +569,19 @@ class SignalObserver(FlowObserver):
 # ---------------------------------------------------------------------------
 
 _GateUnion = Annotated[
-    Union[HardLock, SoftPass, Weir],
+    HardLock | SoftPass | Weir,
     Field(discriminator="type"),
 ]
 _PenstockUnion = Annotated[
-    Union[SustainedPenstock, BurstPenstock, WindowPenstock, BackpressurePenstock, SignalPenstock],
+    SustainedPenstock | BurstPenstock | WindowPenstock | BackpressurePenstock | SignalPenstock,
     Field(discriminator="type"),
 ]
 _SpillwayUnion = Annotated[
-    Union[DropOldest, RaiseOverflow, ExportToArchive],
+    DropOldest | RaiseOverflow | ExportToArchive,
     Field(discriminator="type"),
 ]
 _ObserverUnion = Annotated[
-    Union[NullObserver, LoggingObserver, SignalObserver],
+    NullObserver | LoggingObserver | SignalObserver,
     Field(discriminator="type"),
 ]
 
@@ -603,10 +603,10 @@ class FlowControl(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     gate: _GateUnion = Field(default_factory=HardLock)
-    penstock: Optional[_PenstockUnion] = None
+    penstock: _PenstockUnion | None = None
     reservoir: Reservoir = Field(default_factory=Reservoir)
     spillway: _SpillwayUnion = Field(default_factory=DropOldest)
-    surge_barrier: Optional[SurgeBarrier] = None
+    surge_barrier: SurgeBarrier | None = None
     observer: _ObserverUnion = Field(default_factory=NullObserver)
 
     @model_serializer(mode="wrap")

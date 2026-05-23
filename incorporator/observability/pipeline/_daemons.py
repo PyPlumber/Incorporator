@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 from ..logger import Wave  # re-exported for callers that still import it from here
 from ._shared import _daemon_tick, _interruptible_sleep, _resolve_if_exists_for_export, _row_count
@@ -16,9 +16,9 @@ async def _refresh_daemon(
     dataset_ref: list[Any],
     refresh_params: dict[str, Any],
     lock: asyncio.Lock,
-    wave_queue: "asyncio.Queue[Optional[Wave]]",
+    wave_queue: "asyncio.Queue[Wave | None]",
     shutdown_event: asyncio.Event,
-    r_interval: Optional[float],
+    r_interval: float | None,
     operation_label: str = "refresh",
 ) -> None:
     """Periodically re-fetch the source and atomically update the in-memory registry.
@@ -62,9 +62,9 @@ async def _export_daemon(
     dataset_ref: list[Any],
     export_params: dict[str, Any],
     lock: asyncio.Lock,
-    wave_queue: "asyncio.Queue[Optional[Wave]]",
+    wave_queue: "asyncio.Queue[Wave | None]",
     shutdown_event: asyncio.Event,
-    e_interval: Optional[float],
+    e_interval: float | None,
     operation_label: str = "export",
 ) -> None:
     """Periodically snapshot the in-memory registry and write it to disk.

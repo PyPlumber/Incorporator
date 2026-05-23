@@ -39,7 +39,6 @@ from datetime import datetime, timezone
 from typing import (
     TYPE_CHECKING,
     Any,
-    Optional,
     cast,
 )
 
@@ -106,17 +105,17 @@ class _CurrentState(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    last_tick_started: Optional[float] = None
+    last_tick_started: float | None = None
     """Monotonic time the current's most recent tick was spawned, or None."""
 
-    last_wave_at: Optional[datetime] = None
+    last_wave_at: datetime | None = None
     """UTC time the current's most recent tick finished, or None."""
 
-    started_at: Optional[float] = None
+    started_at: float | None = None
     """Monotonic time of the CURRENTLY in-flight tick.  Cleared when the
     tick completes — distinguishes "running now" from "ran before"."""
 
-    in_flight: Optional[asyncio.Task[None]] = None
+    in_flight: asyncio.Task[None] | None = None
     """The asyncio Task for the most recent tick.  Persists after the
     task completes (``.done()`` returns True) so the scheduler can
     still inspect the finished task for restart / error-isolation logic."""
@@ -164,8 +163,8 @@ class Tideweaver:
         self,
         watershed: Watershed,
         *,
-        tick_factory: Optional[TickFactory] = None,
-        pass_interval: Optional[float] = None,
+        tick_factory: TickFactory | None = None,
+        pass_interval: float | None = None,
         backlog_backoff_factor: float = 1.0,
     ) -> None:
         self.watershed = watershed
@@ -205,7 +204,7 @@ class Tideweaver:
         self._wake_event: asyncio.Event = asyncio.Event()
         self._due_heap: list[tuple[float, int, str]] = []
         self._heap_counter: int = 0
-        self._run_started_at: Optional[float] = None
+        self._run_started_at: float | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -242,8 +241,8 @@ class Tideweaver:
     def summary(
         self,
         *,
-        tides: Optional[list[Tide]] = None,
-        waves: Optional[list["Wave"]] = None,
+        tides: list[Tide] | None = None,
+        waves: list[Wave] | None = None,
     ) -> "TuningReport":
         """End-of-run convenience: feed accumulated rejects, tides, and waves to :func:`architect.tune`.
 
@@ -506,7 +505,7 @@ class Tideweaver:
             self._recent_pass_metrics.append((tide.duration_sec, tide.in_flight_count_at_start))
         return tide
 
-    def _gate_reason(self, current: Current, now: float) -> tuple[Optional[str], frozenset[str]]:
+    def _gate_reason(self, current: Current, now: float) -> tuple[str | None, frozenset[str]]:
         """Return ``(None, bypassed)`` if ``current`` may fire; else ``(reason, set())``.
 
         Walks each inbound edge's :class:`FlowControl`:

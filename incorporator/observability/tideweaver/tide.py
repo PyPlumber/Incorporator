@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import datetime, timezone
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
@@ -109,7 +109,7 @@ class Tide(BaseModel):
         default=0,
         description="Canal-layer RejectEntry records added to the accumulator during this pass.",
     )
-    next_due_in_sec: Optional[float] = Field(
+    next_due_in_sec: float | None = Field(
         default=None,
         description="Seconds until the nearest heap entry fires; None when the heap is empty.",
     )

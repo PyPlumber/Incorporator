@@ -17,7 +17,7 @@ Per-source daemons (``_refresh_daemon`` / ``_export_daemon``) live in
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from typing import Any, Optional
+from typing import Any
 
 # Re-export every previously top-level symbol so existing imports
 # (`from incorporator.observability.pipeline import _refresh_daemon`,
@@ -57,9 +57,9 @@ DEFAULT_EXPORT_INTERVAL_SEC: float = 300.0
 async def run_pipeline(
     cls: Any,
     incorp_params: dict[str, Any],
-    refresh_params: Optional[dict[str, Any]],
-    export_params: Optional[dict[str, Any]],
-    poll_interval: Optional[float],
+    refresh_params: dict[str, Any] | None,
+    export_params: dict[str, Any] | None,
+    poll_interval: float | None,
     adapt_chunk_size: bool = False,
     chunk_size_min: int = 100,
     chunk_size_max: int = 100_000,

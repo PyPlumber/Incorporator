@@ -35,7 +35,7 @@ import asyncio
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -67,9 +67,9 @@ class FlowState:
             current rolling window.  Used by :class:`WindowPenstock`.
     """
 
-    last_consumed_at: Optional[float] = None
-    bucket_tokens: Optional[float] = None
-    bucket_last_refill_at: Optional[float] = None
+    last_consumed_at: float | None = None
+    bucket_tokens: float | None = None
+    bucket_last_refill_at: float | None = None
     window_log: list[float] = field(default_factory=list)
 
 
@@ -107,7 +107,7 @@ class Penstock(BaseModel):
         now: float,
         *,
         context: Any = None,
-    ) -> Optional[float]:
+    ) -> float | None:
         """Decide whether the next consumption is permitted at ``now``.
 
         Args:
@@ -167,7 +167,7 @@ class Penstock(BaseModel):
         edge_state: Any,
         flow: Any,
         now: float,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Edge-style throttle: return ``"penstock_limited"`` if blocked, ``None`` otherwise.
 
         Default impl reads the edge's :class:`FlowState` — either composed
@@ -235,7 +235,7 @@ class NullPenstock(Penstock):
         now: float,
         *,
         context: Any = None,
-    ) -> Optional[float]:
+    ) -> float | None:
         return None
 
     def record(self, state: Any, now: float) -> None:
@@ -259,7 +259,7 @@ class SustainedPenstock(Penstock):
         now: float,
         *,
         context: Any = None,
-    ) -> Optional[float]:
+    ) -> float | None:
         if state.last_consumed_at is None:
             return None
         min_gap = 1.0 / self.rate_per_sec
@@ -290,7 +290,7 @@ class BurstPenstock(Penstock):
         now: float,
         *,
         context: Any = None,
-    ) -> Optional[float]:
+    ) -> float | None:
         # First-touch initialization: bucket starts full.
         if state.bucket_tokens is None:
             state.bucket_tokens = float(self.burst)
@@ -334,7 +334,7 @@ class WindowPenstock(Penstock):
         now: float,
         *,
         context: Any = None,
-    ) -> Optional[float]:
+    ) -> float | None:
         cutoff = now - self.window_sec
         # Evict entries older than the window.  Mutation here keeps the
         # log bounded as the window slides forward.
@@ -376,7 +376,7 @@ class SignalPenstock(Penstock):
         now: float,
         *,
         context: Any = None,
-    ) -> Optional[float]:
+    ) -> float | None:
         rate = self.rate_fn(state, now)
         if rate <= 0.0:
             return float("inf")
@@ -397,7 +397,7 @@ class SignalPenstock(Penstock):
 # ---------------------------------------------------------------------------
 
 
-def _try_make_lock() -> Optional[asyncio.Lock]:
+def _try_make_lock() -> asyncio.Lock | None:
     # On Python 3.9, asyncio.Lock.__init__ eagerly calls get_event_loop(),
     # which raises RuntimeError when called outside a running loop (e.g. in
     # sync test collection).  3.10+ made this lazy so the call always succeeds.
@@ -430,7 +430,7 @@ class BoundPenstock:
 
     penstock: Penstock
     state: FlowState
-    lock: Optional[asyncio.Lock] = field(default_factory=_try_make_lock)
+    lock: asyncio.Lock | None = field(default_factory=_try_make_lock)
 
     async def acquire(self) -> None:
         """Throttle one consumption — sleeps under the lock until permitted.
@@ -482,7 +482,7 @@ _BYPASS_ENV_VAR: str = "INCORPORATOR_RATE_LIMIT_BYPASS"
 """Set to ``"1"`` to force :class:`NullPenstock` everywhere — test-only."""
 
 
-def register_host_penstock(host: str, penstock: Union[Penstock, Callable[[], Penstock]]) -> None:
+def register_host_penstock(host: str, penstock: Penstock | Callable[[], Penstock]) -> None:
     """Register a per-host penstock for outbound HTTP throttling.
 
     Use this to attach a rate-limit policy to an in-house API or to
@@ -516,8 +516,8 @@ def register_host_penstock(host: str, penstock: Union[Penstock, Callable[[], Pen
 def resolve_penstock(
     source: Any,
     *,
-    requests_per_second: Optional[float] = None,
-    burst: Optional[int] = None,
+    requests_per_second: float | None = None,
+    burst: int | None = None,
 ) -> BoundPenstock:
     """Pick a penstock for one source URL, bound with fresh state + lock.
 
@@ -559,7 +559,7 @@ def resolve_penstock(
         else:
             penstock = SustainedPenstock(rate_per_sec=requests_per_second)
     else:
-        matched: Optional[Penstock] = None
+        matched: Penstock | None = None
         if isinstance(source, str):
             host = urlparse(source).hostname or ""
             matched = _HOST_PENSTOCKS.get(host)

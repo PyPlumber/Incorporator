@@ -21,9 +21,7 @@ from typing import (
     Any,
     ClassVar,
     Literal,
-    Optional,
     TypeVar,
-    Union,
     cast,
 )
 
@@ -164,22 +162,22 @@ class Incorporator(BaseModel):
     #: Origin tracking — the URL the subclass was first populated from.
     #: Populated on the first :meth:`incorp` call; :meth:`refresh` falls back
     #: to this when called without an explicit ``new_url``.
-    inc_url: ClassVar[Optional[str]] = None
+    inc_url: ClassVar[str | None] = None
 
     #: Origin tracking — the local file path the subclass was first populated
     #: from. Same fallback semantics as :attr:`inc_url`.
-    inc_file: ClassVar[Optional[str]] = None
+    inc_file: ClassVar[str | None] = None
 
     #: Identity-mapping memory — the ``inc_code`` field name passed to the
     #: first :meth:`incorp` call.  :meth:`refresh` defaults to this when the
     #: caller doesn't re-pass ``inc_code=`` so the in-state refresh contract
     #: ("re-hit the source and update existing records by their primary key")
     #: actually works on a no-args call.
-    _inc_code_attr: ClassVar[Optional[str]] = None
+    _inc_code_attr: ClassVar[str | None] = None
 
     #: Identity-mapping memory — same as :attr:`_inc_code_attr` but for the
     #: ``inc_name`` display field.
-    _inc_name_attr: ClassVar[Optional[str]] = None
+    _inc_name_attr: ClassVar[str | None] = None
 
     #: Network + format-handler call-context preserved from the first
     #: :meth:`incorp` call so :meth:`refresh` can replay the same fetch
@@ -203,7 +201,7 @@ class Incorporator(BaseModel):
     #: subclass.  ``None`` means "no Tideweaver run has touched this class
     #: yet" — distinct from the empty-list case ("upstream ran, produced
     #: zero rows").
-    _tideweaver_snapshot: ClassVar[Optional[list[Any]]] = None
+    _tideweaver_snapshot: ClassVar[list[Any] | None] = None
 
     #: Bulk-insert gate set by :func:`~incorporator.schema.factory.build_instances`
     #: and :func:`~incorporator.observability.pipeline._outflow.flush` around their
@@ -238,7 +236,7 @@ class Incorporator(BaseModel):
     #:
     #: Yield-point-safe, not thread-safe (same caveat as
     #: :attr:`_last_schema_cache_hit`).
-    _last_bytes_processed: ClassVar[Optional[int]] = None
+    _last_bytes_processed: ClassVar[int | None] = None
 
     #: Tenacity retry attempts beyond the first for the most recent
     #: successful HTTP fetch by this class's chunked-pipeline call.
@@ -300,7 +298,7 @@ class Incorporator(BaseModel):
         "identity field — pass ``inc_code='id'`` (or similar) to incorp() to "
         "use a real field as the key.",
     )
-    inc_name: Optional[str] = Field(
+    inc_name: str | None = Field(
         default=None,
         description="Optional human-readable name. Used by :meth:`display` for "
         "REPL inspection and by some converters as a label.",
@@ -370,19 +368,19 @@ class Incorporator(BaseModel):
     @classmethod
     async def incorp(
         cls: type[TIncorporator],
-        inc_url: Optional[Union[str, list[str]]] = None,
-        inc_file: Optional[Union[str, "os.PathLike[str]", list[Union[str, "os.PathLike[str]"]]]] = None,
-        inc_parent: Optional[Union[TIncorporator, "IncorporatorList[TIncorporator]"]] = None,
-        inc_child: Optional[str] = None,
-        inc_code: Optional[str] = None,
-        inc_name: Optional[str] = None,
-        excl_lst: Optional[list[str]] = None,
-        conv_dict: Optional[dict[str, Any]] = None,
-        name_chg: Optional[list[tuple[str, str]]] = None,
-        inc_page: Optional[AsyncPaginator] = None,
-        inflow: Optional[Union[str, Path]] = None,
+        inc_url: str | list[str] | None = None,
+        inc_file: str | os.PathLike[str] | list[str | os.PathLike[str]] | None = None,
+        inc_parent: TIncorporator | IncorporatorList[TIncorporator] | None = None,
+        inc_child: str | None = None,
+        inc_code: str | None = None,
+        inc_name: str | None = None,
+        excl_lst: list[str] | None = None,
+        conv_dict: dict[str, Any] | None = None,
+        name_chg: list[tuple[str, str]] | None = None,
+        inc_page: AsyncPaginator | None = None,
+        inflow: str | Path | None = None,
         **kwargs: Any,
-    ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
+    ) -> TIncorporator | IncorporatorList[TIncorporator]:
         """The entry-point verb every pipeline starts with — fetch a source into typed objects.
 
         Reach for ``incorp()`` once you know the URL or file path, the
@@ -592,7 +590,7 @@ class Incorporator(BaseModel):
                 }
             )
             return cast(
-                Union[TIncorporator, "IncorporatorList[TIncorporator]"],
+                TIncorporator | IncorporatorList[TIncorporator],
                 await _factory.child_incorp(cls, inc_parent=inc_parent, **kwargs),
             )
 
@@ -683,24 +681,24 @@ class Incorporator(BaseModel):
         if inc_child is not None and isinstance(result, IncorporatorList):
             result.inc_child_path = inc_child
 
-        return cast(Union[TIncorporator, "IncorporatorList[TIncorporator]"], result)
+        return cast(TIncorporator | IncorporatorList[TIncorporator], result)
 
     @classmethod
     async def refresh(
         cls: type[TIncorporator],
-        instance: Optional[Union[str, Path, TIncorporator, list[TIncorporator]]] = None,
-        new_url: Optional[Union[str, list[str]]] = None,
-        new_file: Optional[Union[str, list[str]]] = None,
-        inc_child: Optional[str] = None,
-        inc_code: Optional[str] = None,
-        inc_name: Optional[str] = None,
-        excl_lst: Optional[list[str]] = None,
-        conv_dict: Optional[dict[str, Any]] = None,
-        name_chg: Optional[list[tuple[str, str]]] = None,
-        inc_page: Optional[AsyncPaginator] = None,
-        inflow: Optional[Union[str, Path]] = None,
+        instance: str | Path | TIncorporator | list[TIncorporator] | None = None,
+        new_url: str | list[str] | None = None,
+        new_file: str | list[str] | None = None,
+        inc_child: str | None = None,
+        inc_code: str | None = None,
+        inc_name: str | None = None,
+        excl_lst: list[str] | None = None,
+        conv_dict: dict[str, Any] | None = None,
+        name_chg: list[tuple[str, str]] | None = None,
+        inc_page: AsyncPaginator | None = None,
+        inflow: str | Path | None = None,
         **kwargs: Any,
-    ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]"]:
+    ) -> TIncorporator | IncorporatorList[TIncorporator]:
         """One-shot live mark-to-market re-fetch into the instances you already hold.
 
         Reach for ``refresh()`` from a REPL, a notebook, or your own
@@ -847,7 +845,7 @@ class Incorporator(BaseModel):
         # so subsequent in-state refreshes hit the new source, not the old one.
         # ``target_url`` / ``target_file`` are typed ``str | list[str] | None``
         # to accept the multi-URL refresh shape, but the class attr is a
-        # single ``Optional[str]`` — narrow on assignment.
+        # single ``str | None`` — narrow on assignment.
         if target_url:
             cls.inc_url = target_url if isinstance(target_url, str) else target_url[0]
         elif target_file:
@@ -925,19 +923,19 @@ class Incorporator(BaseModel):
         if inc_child is not None and isinstance(result, IncorporatorList):
             result.inc_child_path = inc_child
 
-        return cast(Union[TIncorporator, "IncorporatorList[TIncorporator]"], result)
+        return cast(TIncorporator | IncorporatorList[TIncorporator], result)
 
     @classmethod
     async def export(
         cls: type[TIncorporator],
         *,
-        instance: Union[str, Path, TIncorporator, list[TIncorporator]],
-        file_path: Optional[Union[str, Path]] = None,
-        format_type: Optional[FormatType] = None,
-        compression: Optional[str] = None,
-        sql_table: Optional[str] = None,
+        instance: str | Path | TIncorporator | list[TIncorporator],
+        file_path: str | Path | None = None,
+        format_type: FormatType | None = None,
+        compression: str | None = None,
+        sql_table: str | None = None,
         if_exists: str = "replace",
-        outflow: Optional[Union[str, Path]] = None,
+        outflow: str | Path | None = None,
         **kwargs: Any,
     ) -> None:
         """Persist an Incorporator graph to disk — backtest snapshot, warehouse stage, hand-off file.
@@ -1080,7 +1078,7 @@ class Incorporator(BaseModel):
 
         # Optional code transform — runs in a thread (user code may be CPU-bound).
         transform_source: Iterable[Any] = instances
-        outflow_field_names: Optional[list[str]] = None
+        outflow_field_names: list[str] | None = None
         if outflow is not None:
             transform_source = await asyncio.to_thread(apply_code_transform, instances, outflow)
             # Peek at the first transformed row so we can rebuild all_field_names from the
@@ -1143,14 +1141,14 @@ class Incorporator(BaseModel):
     async def stream(
         cls: type[TIncorporator],
         incorp_params: dict[str, Any],
-        refresh_params: Optional[dict[str, Any]] = _UNSET,
-        export_params: Optional[dict[str, Any]] = None,
-        poll_interval: Optional[float] = None,
+        refresh_params: dict[str, Any] | None = _UNSET,
+        export_params: dict[str, Any] | None = None,
+        poll_interval: float | None = None,
         stateful_polling: bool = False,
-        refresh_interval: Optional[float] = None,
-        export_interval: Optional[float] = None,
-        inflow: Optional[Union[str, Path]] = None,
-        outflow: Optional[Union[str, Path]] = None,
+        refresh_interval: float | None = None,
+        export_interval: float | None = None,
+        inflow: str | Path | None = None,
+        outflow: str | Path | None = None,
         adapt_chunk_size: bool = False,
         chunk_size_min: int = 100,
         chunk_size_max: int = 100_000,
@@ -1300,7 +1298,7 @@ class Incorporator(BaseModel):
         # if that name is absent the first Incorporator subclass found in
         # the module wins.
         receiver_cls: type[Incorporator] = cast(type[Incorporator], cls)
-        outflow_user_module: Optional[Any] = None
+        outflow_user_module: Any | None = None
         if outflow is not None:
             from .usercode import load_user_module, pascal_case_from_stem
 
@@ -1332,7 +1330,7 @@ class Incorporator(BaseModel):
         # via sys.modules caching) AND returns the top-level ``inflow(state)``
         # callable when one is defined.  That callable is meaningful only on
         # the stateful path — chunking mode ignores it (no state to inject).
-        inflow_callable: Optional[Any] = None
+        inflow_callable: Any | None = None
         if inflow is not None:
             from .usercode import load_inflow_callable
 
@@ -1394,11 +1392,11 @@ class Incorporator(BaseModel):
     async def fjord(
         cls,
         stream_params: list[dict[str, Any]],
-        outflow: Union[str, Path],
+        outflow: str | Path,
         export_params: dict[str, Any],
-        refresh_interval: Optional[float] = None,
-        export_interval: Optional[float] = None,
-        inflow: Optional[Union[str, Path]] = None,
+        refresh_interval: float | None = None,
+        export_interval: float | None = None,
+        inflow: str | Path | None = None,
     ) -> AsyncGenerator["Wave", None]:
         """The stateful live-daemon verb — concurrent source refresh fused through your ``outflow``.
 
@@ -1621,7 +1619,7 @@ class Incorporator(BaseModel):
     async def test(
         cls: type[TIncorporator],
         **kwargs: Any,
-    ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]", list[Any]]:
+    ) -> TIncorporator | IncorporatorList[TIncorporator] | list[Any]:
         """The 30-second Shady Jimmy probe — point it at an unknown URL and read the suggestions.
 
         Reach for ``test()`` when you have a URL, no docs, and no idea
@@ -1712,11 +1710,11 @@ class Incorporator(BaseModel):
     @classmethod
     async def architect(
         cls: type[TIncorporator],
-        sources: Mapping[str, Union[str, Path, Mapping[str, Any]]],
+        sources: Mapping[str, str | Path | Mapping[str, Any]],
         *,
         output: Literal["report", "python", "json", "plan"] = "report",
-        shared_kwargs: Optional[Mapping[str, Any]] = None,
-    ) -> Optional[Any]:
+        shared_kwargs: Mapping[str, Any] | None = None,
+    ) -> Any | None:
         """Probe N sources, recommend a Watershed architecture (paste-ready).
 
         The multi-source counterpart of :meth:`test`.  Where ``test()`` profiles

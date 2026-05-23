@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import Any, Optional
+from typing import Any
 
 from ..logger import _read_filtered, _route_reject_to_log, _route_tide_to_log, _safe_log_filename, setup_class_logger
 from .scheduler import TickFactory, Tideweaver
@@ -94,8 +94,8 @@ class LoggedTideweaver(Tideweaver):
         self,
         watershed: Watershed,
         *,
-        tick_factory: Optional[TickFactory] = None,
-        pass_interval: Optional[float] = None,
+        tick_factory: TickFactory | None = None,
+        pass_interval: float | None = None,
         backlog_backoff_factor: float = 1.0,
         enable_logging: bool = False,
         logger_name: str = "Tideweaver",

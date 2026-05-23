@@ -7,7 +7,7 @@ import itertools
 import logging
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any, Union, cast
+from typing import Any, cast
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType
@@ -41,8 +41,8 @@ _HANDLERS: dict[FormatType, BaseFormatHandler] = {
 
 
 async def parse_source_data(
-    source: Union[str, bytes, Path, list[Any], dict[str, Any]], format_type: FormatType, **kwargs: Any
-) -> Union[dict[str, Any], list[dict[str, Any]]]:
+    source: str | bytes | Path | list[Any] | dict[str, Any], format_type: FormatType, **kwargs: Any
+) -> dict[str, Any] | list[dict[str, Any]]:
     """Central parse dispatcher — routes the payload to the matching format handler.
 
     Pre-parsed ``list`` / ``dict`` sources pass through untouched. File / byte
@@ -93,7 +93,7 @@ def _peek_iterable(data: Iterable[Any]) -> tuple[bool, Iterator[Any]]:
 
 
 async def write_destination_data(
-    data: Iterable[Any], file_path: Union[str, Path], format_type: FormatType, **kwargs: Any
+    data: Iterable[Any], file_path: str | Path, format_type: FormatType, **kwargs: Any
 ) -> None:
     """Central write dispatcher — routes the row stream to the matching format handler.
 

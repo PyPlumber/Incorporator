@@ -47,12 +47,12 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
 
 from .io.pagination.base import AsyncPaginator
 
 
-def load_user_module(path: Union[str, Path], *, name_hint: str = "_inc_user_module") -> ModuleType:
+def load_user_module(path: str | Path, *, name_hint: str = "_inc_user_module") -> ModuleType:
     """Import a path-anchored ``.py`` file and return its module object.
 
     Single-source loader for every sidecar file the framework accepts:
@@ -127,9 +127,9 @@ def _extract_user_callable(
     name: str,
     required: bool,
     param_label: str,
-    source_path: Union[str, Path],
+    source_path: str | Path,
     arity: int = 1,
-) -> Optional[Callable[..., Any]]:
+) -> Callable[..., Any] | None:
     """Pull a top-level callable off a sidecar module and validate its arity.
 
     Args:
@@ -175,10 +175,10 @@ def _extract_user_callable(
 
 
 def apply_inflow_resolution(
-    inflow: Union[str, Path],
-    conv_dict: Optional[dict[str, Any]],
-    inc_page: Optional[AsyncPaginator],
-) -> tuple[Optional[dict[str, Any]], Optional[AsyncPaginator]]:
+    inflow: str | Path,
+    conv_dict: dict[str, Any] | None,
+    inc_page: AsyncPaginator | None,
+) -> tuple[dict[str, Any] | None, AsyncPaginator | None]:
     """Load the inflow module and resolve string-form tokens in trinity kwargs.
 
     Shared by :meth:`Incorporator.incorp` and :meth:`Incorporator.refresh`.
@@ -195,13 +195,13 @@ def apply_inflow_resolution(
     module = load_user_module(inflow, name_hint="_inc_trinity_inflow")
     extra_names = extract_public_names(module)
     resolved_conv = cast(
-        Optional[dict[str, Any]],
+        dict[str, Any] | None,
         resolve_tokens(conv_dict, extra_names=extra_names) if conv_dict else conv_dict,
     )
     resolved_page = inc_page
     if isinstance(inc_page, str):
         resolved_page = cast(
-            Optional[AsyncPaginator],
+            AsyncPaginator | None,
             resolve_tokens(inc_page, extra_names=extra_names),
         )
     return resolved_conv, resolved_page
@@ -209,7 +209,7 @@ def apply_inflow_resolution(
 
 def apply_code_transform(
     instances: list[Any],
-    outflow: Union[str, Path],
+    outflow: str | Path,
 ) -> list[Any]:
     """Load a Python file and call its top-level ``transform(instances)`` function.
 
@@ -243,7 +243,7 @@ def apply_code_transform(
     return result if result is not None else instances
 
 
-def load_outflow_module(outflow: Union[str, Path]) -> tuple[Callable[[Any], Any], ModuleType]:
+def load_outflow_module(outflow: str | Path) -> tuple[Callable[[Any], Any], ModuleType]:
     """Load ``outflow.py``; return both its ``outflow`` callable AND its module.
 
     The engine needs the module object so it can probe for user-pre-declared
@@ -268,7 +268,7 @@ def load_outflow_module(outflow: Union[str, Path]) -> tuple[Callable[[Any], Any]
     return cast(Callable[[Any], Any], outflow_fn), module
 
 
-def load_inflow_callable(inflow: Union[str, Path]) -> Optional[Callable[[Any], Any]]:
+def load_inflow_callable(inflow: str | Path) -> Callable[[Any], Any] | None:
     """Return the optional state-aware ``inflow(state)`` callable from ``inflow.py``.
 
     When ``inflow.py`` defines a top-level callable named ``inflow`` accepting
@@ -297,7 +297,7 @@ def load_inflow_callable(inflow: Union[str, Path]) -> Optional[Callable[[Any], A
     return _extract_user_callable(module, name="inflow", required=False, param_label="state", source_path=inflow)
 
 
-def pascal_case_from_stem(outflow: Union[str, Path]) -> str:
+def pascal_case_from_stem(outflow: str | Path) -> str:
     """Derive a Pydantic-class-friendly name from an outflow file's filename.
 
     ``coin_market.py`` → ``"CoinMarket"``;

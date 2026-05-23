@@ -7,14 +7,14 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from ..logger import Wave
 
 
 @asynccontextmanager
 async def _daemon_tick(
-    wave_queue: "asyncio.Queue[Optional[Wave]]",
+    wave_queue: "asyncio.Queue[Wave | None]",
     *,
     chunk_index: int,
     operation: str,
@@ -79,7 +79,7 @@ async def _daemon_tick(
     )
 
 
-async def _interruptible_sleep(event: asyncio.Event, timeout: Optional[float]) -> bool:
+async def _interruptible_sleep(event: asyncio.Event, timeout: float | None) -> bool:
     """Sleeps for `timeout` seconds, returning True immediately if `event` fires first."""
     try:
         await asyncio.wait_for(event.wait(), timeout=timeout)
@@ -89,10 +89,10 @@ async def _interruptible_sleep(event: asyncio.Event, timeout: Optional[float]) -
 
 
 def _resolve_if_exists_for_export(
-    file_path: Optional[str],
+    file_path: str | None,
     force_append: bool,
-    user_override: Optional[str],
-) -> Optional[str]:
+    user_override: str | None,
+) -> str | None:
     """Decide the ``if_exists`` value for a streaming export tick.
 
     Pipeline behaviour contract:
@@ -139,8 +139,8 @@ def _resolve_if_exists_for_export(
 async def _enrich_and_load(
     cls: Any,
     dataset: Any,
-    refresh_params: Optional[dict[str, Any]],
-    export_params: Optional[dict[str, Any]],
+    refresh_params: dict[str, Any] | None,
+    export_params: dict[str, Any] | None,
     force_append: bool,
 ) -> None:
     """Atomic helper for the Enrich (Refresh) and Load (Export) phases."""
