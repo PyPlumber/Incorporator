@@ -175,6 +175,15 @@ for entry in result.rejects:
 `failed_sources` stays as a derived view (`[entry.source for entry in
 result.rejects]`) — existing code keeps working unchanged.
 
+On the orchestration side, `Tideweaver.rejects` returns the same
+`list[RejectEntry]` type, but `error_kind` can be one of four
+canal-layer string literals — `"PenstockLimited"`, `"SurgeHalted"`,
+`"SkipAhead"`, `"GateBlocked"` — for skips the scheduler made before
+the dependent tick ran.  Each entry carries `from_name` / `to_name` /
+`cooldown_sec` so per-edge attribution is straightforward.  See
+[Orchestration debugging](#orchestration-debugging-loggedtideweaver--architecttune)
+below.
+
 ### 2. Seed-error formatter — missing-peer `KeyError`
 
 When a fjord pipeline's `inflow(state)` raises `KeyError` because a
@@ -241,6 +250,52 @@ subscribes.
 | DLQ retry orchestrator | ✅ Yes — feed `wave.failed_sources` back into `incorp()` |
 | Live observability during a `stream()` | ❌ No — read `wave.failed_sources` off the live wave |
 | Cross-process inspection (separate retry worker) | ✅ Yes — the log file is the contract |
+
+---
+
+## Orchestration debugging — `LoggedTideweaver` + `architect.tune()`
+
+For Tideweaver pipelines, the parallel pair is `LoggedTideweaver` +
+`tune()`.  `LoggedTideweaver` is a drop-in for `Tideweaver` that routes
+every yielded `Tide` and every accumulated `RejectEntry` to disk via
+the same `QueueHandler` pipeline; `tune()` reads those records and
+emits a `TuningReport` of severity-sorted hints.  Both names live in
+the orchestration subpackage, not at the top level:
+
+```python
+from incorporator.observability.tideweaver import LoggedTideweaver, tune
+
+tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="ArbSession")
+tides = [tide async for tide in tw.run()]
+
+# Post-window: surface what the scheduler skipped + why.
+for entry in tw.rejects:
+    if entry.error_kind in {"PenstockLimited", "SurgeHalted",
+                            "SkipAhead", "GateBlocked"}:
+        print(entry.from_name, "→", entry.to_name, entry.error_kind,
+              entry.cooldown_sec)
+
+# Post-window: ask the framework what to adjust.
+report = tune(rejects=tw.rejects, tides=tides, pass_interval=tw.pass_interval)
+print(report.render())            # hint blocks, severity-sorted
+
+# Cross-process replay from disk (separate retry / analysis worker):
+past_tides   = await LoggedTideweaver.get_tides(logger_name="ArbSession")
+past_rejects = await LoggedTideweaver.get_rejects(logger_name="ArbSession")
+```
+
+`tw.summary(tides=tides)` is the instance-method convenience for the
+same `TuningReport`.  Each `tide.current_outcomes` is a
+`list[CurrentOutcome]` carrying per-current `status` / `reason` /
+`in_flight_sec` — read it to see which currents fired and which
+skipped, per pass.
+
+| Situation | Reach for |
+|---|---|
+| Per-pass live monitor | `async for tide in tw.run(): print(tide)` (Tide records carry `wake_reason`, `heap_depth`, `next_due_in_sec`) |
+| Per-edge skip audit | `tw.rejects` filtered by `error_kind` ∈ {canal-layer strings above} |
+| Post-window tuning recommendations | `tune(rejects=..., tides=..., pass_interval=...)` → `TuningReport` |
+| Cross-process replay | `LoggedTideweaver.get_tides(...)` / `get_rejects(...)` |
 
 ---
 
