@@ -57,7 +57,8 @@ from .flow import (
     WindowPenstock,
     flow_from_mode,
 )
-from .scheduler import Tideweaver
+from .logged import LoggedTideweaver
+from .scheduler import TickFactory, Tideweaver
 from .tide import Tide
 from .watershed import Edge, Watershed
 
@@ -76,6 +77,7 @@ __all__ = [
     "Gate",
     "GateMode",
     "HardLock",
+    "LoggedTideweaver",
     "LoggingObserver",
     "NullObserver",
     "Penstock",
@@ -89,6 +91,7 @@ __all__ = [
     "SurgeAction",
     "SurgeBarrier",
     "SustainedPenstock",
+    "TickFactory",
     "Tide",
     "Tideweaver",
     "Watershed",

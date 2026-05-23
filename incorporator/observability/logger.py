@@ -9,11 +9,15 @@ import queue
 import re
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Type, TypeVar, Union
 
 from ..base import _UNSET, Incorporator
 from ..list import IncorporatorList
 from .wave import Wave  # re-exported — ``from .logger import Wave`` keeps working
+
+if TYPE_CHECKING:
+    from ..rejects import RejectEntry
+    from .tideweaver.tide import Tide
 
 TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
 
@@ -96,6 +100,76 @@ def _route_wave_to_log(cls: Type[Any], wave: "Wave") -> None:
             cls_logger.info(msg, extra=extra)
 
 
+def _route_tide_to_log(cls_name: str, tide: "Tide") -> None:
+    """Route one Tide record to info/error/debug based on its outcomes.
+
+    Mirrors the routing shape of :func:`_route_wave_to_log` but operates on
+    scheduler-pass records rather than chunk waves.  Routing rules:
+
+    - Passes with ``canal_rejects_added > 0`` or error-class skip reasons
+      (``"surge_halted"``, ``"skip_ahead"``) → ``error``.
+    - Passes where at least one current fired → ``info``.
+    - No-op passes (nothing fired, no errors) → ``debug``.
+
+    Attaches the structured ``tide`` dump as a record extra so
+    :class:`JSONFormatter` writes it as a top-level JSON key.
+
+    Args:
+        cls_name: Logger name — typically ``LoggedTideweaver._logger_name``.
+        tide: The :class:`Tide` record yielded by :meth:`Tideweaver.run`.
+    """
+    dump = tide.model_dump(mode="json")
+    extra = {"meta": tide.log_meta(), "tide": dump, "is_api": False}
+
+    has_error_skips = any(reason in ("surge_halted", "skip_ahead") for _, reason in tide.skipped)
+    logger = logging.getLogger(cls_name)
+
+    if tide.canal_rejects_added > 0 or has_error_skips:
+        error_reasons = [reason for _, reason in tide.skipped if reason in ("surge_halted", "skip_ahead")]
+        msg = f"tide {tide.tide_number}: {tide.canal_rejects_added} canal reject(s), skipped reasons {error_reasons}"
+        if logger.isEnabledFor(logging.ERROR):
+            logger.error(msg, extra=extra)
+    elif len(tide.fired) > 0:
+        msg = (
+            f"tide {tide.tide_number}: fired {len(tide.fired)}, skipped {len(tide.skipped)}, "
+            f"rejects {tide.canal_rejects_added}, duration {tide.duration_sec:.3f}s"
+        )
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(msg, extra=extra)
+    else:
+        msg = f"tide {tide.tide_number}: no-op pass (nothing fired), duration {tide.duration_sec:.3f}s"
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(msg, extra=extra)
+
+
+def _route_reject_to_log(cls_name: str, reject: "RejectEntry") -> None:
+    """Route one RejectEntry to error log with structured edge and HTTP metadata.
+
+    Always logs at ERROR level — every :class:`RejectEntry` represents a
+    scheduler-level skip or HTTP failure that the caller's retry logic
+    should be able to observe.  The ``reject`` dict is attached as a
+    top-level JSON key so :meth:`LoggingMixin.get_error` consumers can
+    inspect the full structured record without parsing the message string.
+
+    Args:
+        cls_name: Logger name — typically ``LoggedTideweaver._logger_name``.
+        reject: The :class:`RejectEntry` to route.
+    """
+    meta = (
+        f'class:"{cls_name}", source:"{reject.source}", error_kind:"{reject.error_kind}", '
+        f'from:"{reject.from_name}", to:"{reject.to_name}", host:"{reject.host}", '
+        f"status_code:{reject.status_code}"
+    )
+    maybe_edge = f" ({reject.from_name}->{reject.to_name})" if reject.from_name else ""
+    maybe_status = f" [HTTP {reject.status_code}]" if reject.status_code else ""
+    msg = f"{reject.error_kind}: {reject.source}{maybe_edge}{maybe_status}"
+    extra = {"meta": meta, "reject": reject.model_dump(mode="json"), "is_api": False}
+
+    logger = logging.getLogger(cls_name)
+    if logger.isEnabledFor(logging.ERROR):
+        logger.error(msg, extra=extra)
+
+
 def _cleanup_listeners() -> None:
     """Gracefully shuts down all background logging threads on application exit.
 
@@ -162,6 +236,10 @@ class JSONFormatter(logging.Formatter):
         # a top-level JSON key so get_error() consumers can read record["wave"].
         if hasattr(record, "wave"):
             log_obj["wave"] = record.wave
+        if hasattr(record, "tide"):
+            log_obj["tide"] = record.tide
+        if hasattr(record, "reject"):
+            log_obj["reject"] = record.reject
         if record.exc_info:
             log_obj["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(log_obj)
@@ -193,9 +271,22 @@ class StandardFilter(logging.Filter):
         return not bool(getattr(record, "is_api", False))
 
 
-def setup_class_logger(cls: Type[Any]) -> None:
-    """Configures JSON-formatted, non-blocking logging for a dynamic subclass."""
-    cls_name = getattr(cls, "__name__", "UnknownClass")
+def setup_class_logger(cls: Union[str, Type[Any]]) -> None:
+    """Configures JSON-formatted, non-blocking logging for a dynamic subclass or named logger.
+
+    Accepts either a class (the typical case — ``setup_class_logger(MyClass)``)
+    or a plain string name (used by :class:`LoggedTideweaver` to set up a logger
+    with a caller-chosen name rather than a class ``__name__``).
+
+    Args:
+        cls: Either a class whose ``__name__`` is used as the logger key, or a
+            plain string to use directly.  The string path is used by
+            :class:`~incorporator.observability.tideweaver.LoggedTideweaver`.
+    """
+    if isinstance(cls, str):
+        cls_name = cls
+    else:
+        cls_name = getattr(cls, "__name__", "UnknownClass")
     logger = logging.getLogger(cls_name)
 
     # 1. Prevent duplicate listener threads for cached classes
