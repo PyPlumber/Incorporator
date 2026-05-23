@@ -2,7 +2,11 @@
 
 Incorporator is designed with a **"Zero-Bloat"** philosophy. The base package relies purely on the Python Standard Library, Pydantic, and HTTPX. 
 
-However, for enterprise environments processing gigabytes of data, Incorporator supports lazy-loaded **Rust and C extensions** that unlock native hyperthreading and bypass the Python Global Interpreter Lock (GIL).
+**Requires Python 3.10+.**  v1.2.1 dropped 3.9 support (the package
+uses `@dataclass(slots=True)` and PEP 604 union syntax internally).
+CI runs against **3.10 / 3.11 / 3.13** on Ubuntu and Windows.
+
+For environments processing gigabytes of data, Incorporator supports lazy-loaded **Rust and C extensions** that release the Python Global Interpreter Lock (GIL).
 
 ---
 
@@ -13,7 +17,7 @@ Best for general use, IoT devices, API exploration, and standard ETL jobs.
 pip install incorporator
 ```
 **What this installs:**
-* `pydantic (>=2.0)`: For blazing-fast Rust-backed schema validation.
+* `pydantic (>=2.0)`: Rust-backed schema validation via `pydantic-core`.
 * `httpx`: For asynchronous, multiplexed network requests.
 * `tenacity`: For exponential backoff and network resilience.
 
