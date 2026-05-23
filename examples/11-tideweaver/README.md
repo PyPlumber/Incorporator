@@ -90,7 +90,9 @@ full control over per-current intervals, `on_error` policies, or custom
 `FlowControl` literals.  The four output formats trade off
 inspect-ability for round-trip-ability: `"report"` (terminal review),
 `"python"` (paste-ready module body), `"json"` (round-trippable
-`watershed.json`), `"plan"` (the in-memory handoff shown above).
+`watershed.json`), `"plan"` (the in-memory handoff shown above).  After a
+run, `architect.tune()` closes the loop — see [Post-run tuning](#post-run-tuning)
+below.
 
 ---
 
@@ -476,6 +478,27 @@ incorporator tideweaver run watershed.json --json-output
 
 One NDJSON `Tide` record per scheduler pass lands on stdout; status banners go to
 stderr so log shippers can ingest stdout directly.
+
+---
+
+## Post-run tuning
+
+`LoggedTideweaver` is the drop-in that routes every `Tide` + `RejectEntry` to
+disk via the `QueueHandler` pipeline; `tune()` reads those records and returns
+a `TuningReport` of severity-sorted hints:
+
+```python
+from incorporator.observability.tideweaver import LoggedTideweaver, tune
+
+tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="ArbSession")
+tides = [tide async for tide in tw.run()]
+report = tune(rejects=tw.rejects, tides=tides, pass_interval=tw.pass_interval)
+print(report.render())                       # hint blocks, sorted by severity
+```
+
+`tw.summary(tides=tides)` returns the same report via instance method.  Each
+`tide.current_outcomes` is a `list[CurrentOutcome]` with per-current `status`
+/ `reason` / `in_flight_sec` — which currents fired, which skipped, per pass.
 
 ---
 

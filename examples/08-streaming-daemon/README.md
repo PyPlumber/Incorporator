@@ -102,6 +102,23 @@ is **no**.
 > chunks (each wave is a different page).  Passing `None` opts out of per-chunk
 > refresh entirely; the paginator is the source of newness.
 
+### Adaptive chunk sizing
+
+`adapt_chunk_size=True` lets `stream()` resize `paginator.chunk_size` between
+chunks via AIMD (additive-increase / multiplicative-decrease), bounded by
+`chunk_size_min` / `chunk_size_max` and the latency window
+`[target_min_sec, target_max_sec]`:
+
+```python
+async for wave in CoinPage.stream(
+    incorp_params={...},
+    adapt_chunk_size=True,
+    chunk_size_min=100, chunk_size_max=100_000,
+    target_min_sec=0.030, target_max_sec=0.100,
+):
+    ...
+```
+
 ---
 
 ## What `stream()` is doing under the hood

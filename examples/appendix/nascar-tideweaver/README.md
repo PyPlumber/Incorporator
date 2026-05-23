@@ -193,6 +193,12 @@ to forward the same four events to a metrics pipeline (Prometheus, StatsD)
 instead.  Hooks must stay synchronous — heavy work should be queued
 off-thread inside the observer.
 
+When the three feeds drift apart, some passes skip rather than fire.  Read
+`tw.rejects` after the run for a `list[RejectEntry]` whose `error_kind` is
+one of `"PenstockLimited"`, `"SurgeHalted"`, `"SkipAhead"`, `"GateBlocked"`
+— each record carries `from_name` / `to_name` / `cooldown_sec` so you can
+group per-driver / per-edge to see which feed caused the skip.
+
 ---
 
 ## Why this domain works well for Tideweaver

@@ -236,12 +236,14 @@ files larger than RAM, use the **local paginators** in
 
 ```python
 from incorporator.io.pagination import SQLitePaginator
+from incorporator.io.penstock import SustainedPenstock
 
 # Yields one chunk at a time; peak memory is one chunk.
 db_streamer = SQLitePaginator(
     db_path=DATA / "coins_warehouse.sqlite",
     sql_query="SELECT * FROM coin_snapshots",
     chunk_size=10_000,
+    penstock=SustainedPenstock(rate_per_sec=5.0),   # pace chunk reads
 )
 async for wave in Coin.stream(
     incorp_params={"inc_url": "local_warehouse", "inc_page": db_streamer},
@@ -250,9 +252,10 @@ async for wave in Coin.stream(
     print(f"Streamed {wave.rows_processed} rows in chunk {wave.chunk_index}")
 ```
 
-`CSVPaginator` and `AvroPaginator` follow the same shape.  T8 covers `stream()`
-end-to-end — for a paginated source like a 10,000+ coin pull, the same paginator powers
-the chunking-mode pipeline.
+`CSVPaginator` and `AvroPaginator` follow the same shape and accept the same
+keyword-only `penstock=` kwarg as the HTTP layer — one rate-limit primitive
+across both.  T8 covers `stream()` end-to-end — for a paginated source like a
+10,000+ coin pull, the same paginator powers the chunking-mode pipeline.
 
 ---
 
