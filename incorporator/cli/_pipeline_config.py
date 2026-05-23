@@ -1,19 +1,13 @@
 """Pydantic schema models for ``incorporator stream`` / ``fjord`` configs.
 
-These models mirror the field-level rules enforced today by
+These models mirror the field-level rules enforced by
 :mod:`incorporator.cli.validate`'s ``validate_stream_config`` and
-``validate_fjord_config``.  They are the first half of a two-step
-refactor (D2a / D2b) that will eventually let the CLI validator
-delegate its stream / fjord rules to ``model_validate`` and shrink to a
-thin dispatcher.
+``validate_fjord_config``.
 
 Runtime concerns (sidecar import, ``outflow(state)`` arity check, class
 lookup against the loaded user module) deliberately stay OUT of these
 models — they remain on the CLI side where the user-code execution risk
 already lives.
-
-Module-private (leading underscore): D2b will rename / re-export as the
-public surface settles.
 """
 
 from __future__ import annotations
@@ -60,8 +54,7 @@ class StreamConfig(BaseModel):
 
     Field set + cross-field invariants mirror
     :func:`incorporator.cli.validate.validate_stream_config` 1:1.
-    Sidecar-file existence checks are intentionally out of scope — they
-    stay in the CLI validator until D2b.
+    Sidecar-file existence checks are intentionally out of scope.
     """
 
     model_config = ConfigDict(frozen=True, extra="allow")
@@ -102,7 +95,7 @@ class FjordConfig(BaseModel):
     Field set + cross-field invariants mirror
     :func:`incorporator.cli.validate.validate_fjord_config` 1:1.
     Sidecar import, class resolution, and ``outflow(state)`` arity
-    checks remain in the CLI validator until D2b.
+    checks remain on the CLI side.
     """
 
     model_config = ConfigDict(frozen=True, extra="allow")

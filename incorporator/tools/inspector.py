@@ -57,9 +57,8 @@ class ResponseMeta:
     """HTTP response metadata captured during a probe.
 
     ``capture_signals`` tolerates ``response_meta=None`` — file-mode probes
-    and pre-canal code paths simply leave it unset.  Architect uses this
-    for ``Penstock`` recommendations (host rate registry hit / 429
-    observed during probe / Retry-After parsing).
+    leave it unset.  Architect uses this for ``Penstock`` recommendations
+    (host rate registry hit / 429 observed during probe / Retry-After parsing).
     """
 
     host: str | None = None
@@ -447,8 +446,7 @@ def analyze_data(parsed_data: list[Any], provided_kwargs: dict[str, Any]) -> Non
 
     Routes detection through :func:`capture_signals` for parity with
     the cross-source orchestration analyzer in
-    :mod:`incorporator.observability.tideweaver.architect`; observable
-    output is unchanged from the pre-refactor implementation.
+    :mod:`incorporator.observability.tideweaver.architect`.
     """
     if not parsed_data:
         print("\n🔍 INCORPORATOR INSPECTOR: No data returned to inspect.\n")

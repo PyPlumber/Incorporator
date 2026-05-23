@@ -135,10 +135,9 @@ DEFAULT_MAX_DECOMPRESSED_BYTES: int = 1 * 1024 * 1024 * 1024  # 1 GB
 def _max_decompressed_bytes() -> int:
     """Read the bomb-cap ceiling from the env each call.
 
-    Per-call read (not cached) so test fixtures can monkeypatch the env var
-    without re-importing the module.  The check fires only on
-    decompression, which is rare relative to other hot paths — the env
-    lookup cost is negligible there.
+    Per-call read (not cached) so the env var takes effect without a module
+    reload.  The check fires only on decompression — the env lookup cost is
+    negligible there.
     """
     raw = _os.environ.get("INCORPORATOR_MAX_DECOMPRESSED_BYTES")
     if not raw:

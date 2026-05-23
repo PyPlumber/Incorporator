@@ -282,10 +282,9 @@ async def execute_request(
 ) -> httpx.Response:
     """Execute a resilient, jittered HTTP request supporting GET/POST and query strings.
 
-    Uses an explicit ``AsyncRetrying`` loop (identical stop/wait/predicate to the
-    former ``@retry`` decorator) so that ``retrying.statistics["attempt_number"]``
+    Uses an ``AsyncRetrying`` loop so that ``retrying.statistics["attempt_number"]``
     is readable after the loop, enabling downstream consumers to populate
-    ``RejectEntry.attempt_number`` without re-instrumenting Tenacity.
+    ``RejectEntry.attempt_number``.
 
     Args:
         url: Absolute HTTP/HTTPS URL.
@@ -636,27 +635,15 @@ async def fetch_concurrent_payloads(
     _block_internal_redirects = kwargs.pop("block_internal_redirects", False)
     should_close = False
 
-    # ------------------------------------------------------------------
-    # Per-source throttle resolution.
-    #
-    # Caller-supplied ``requests_per_second`` is treated as a GLOBAL
-    # limit — one throttle shared by every source — to preserve the
-    # legacy "one rate per call" contract.  Without a caller rate the
-    # orchestrator picks one strategy per HOST: two URLs against the
-    # same host share a throttle (sequential within host) but two
-    # URLs against different hosts each run at their own rate
-    # (parallel across hosts).  This lifts the legacy ceiling where a
-    # CoinGecko + PokeAPI fan-out was collapsed to CoinGecko's 0.2
-    # rps for every request.
-    # ------------------------------------------------------------------
+    # Per-source throttle resolution: caller-supplied ``requests_per_second``
+    # applies as a single global cap; without it, each distinct host gets its own penstock.
     throttle_for_source: dict[str, BoundPenstock] = {}
     if _rate_limiter is not None:
         # Explicit caller injection (test hook / advanced usage) — honour it.
         for src in source_list:
             throttle_for_source[src] = _rate_limiter
     elif _user_provided_rps:
-        # Legacy semantics: caller rate is a global cap.  Build one
-        # penstock and reuse it across every source.
+        # Caller rate is a global cap — one penstock shared across every source.
         shared = resolve_penstock("", requests_per_second=_requests_per_second, burst=_user_burst)
         for src in source_list:
             throttle_for_source[src] = shared

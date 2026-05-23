@@ -356,11 +356,6 @@ class SignalPenstock(Penstock):
     return ``<= 0`` blocks the consumption entirely (returns
     :data:`math.inf` from :meth:`evaluate`).  A positive return is
     treated as the sustained rate ceiling.
-
-    Note: ``rate_fn`` signature changed in v1.3.0 — the legacy
-    ``rate_fn(scheduler, edge_state, now)`` shape no longer receives
-    the scheduler; the strategy hierarchy doesn't read scheduler
-    privates anymore.  Migration: drop the first ``scheduler`` arg.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -458,21 +453,6 @@ class BoundPenstock:
 #: that requires one; the penstock config is shared but each
 #: :func:`resolve_penstock` call gets a fresh :class:`FlowState` + lock
 #: pair so concurrent fan-out legs run independently.
-#:
-#: Migration from v1.2.0 implicit hosts — register these at startup if
-#: you relied on them:
-#:
-#: .. code-block:: python
-#:
-#:     from incorporator import register_host_penstock
-#:     from incorporator.io.penstock import SustainedPenstock
-#:
-#:     # CoinGecko public (anon): 5–15 req/min — 0.2 = 12 req/min, headroom.
-#:     register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
-#:     # PokeAPI: 100 req/min documented ceiling — 1.5 = 90 req/min.
-#:     register_host_penstock("pokeapi.co", SustainedPenstock(rate_per_sec=1.5))
-#:     # NHTSA vPIC: 100–200 req/min documented; method-agnostic.
-#:     register_host_penstock("vpic.nhtsa.dot.gov", SustainedPenstock(rate_per_sec=1.5))
 _HOST_PENSTOCKS: dict[str, Penstock] = {}
 
 DEFAULT_RPS: float = 15.0

@@ -255,12 +255,9 @@ class Incorporator(BaseModel):
     _last_http_retry_count: ClassVar[int] = 0
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        # Per-class isolation of inc_dict / _schema_union / _incorp_kwargs
-        # is required so sibling subclasses don't share the base
-        # Incorporator's containers.  The fork is deferred to the first
-        # write via ``_ensure_X()`` so a subclass that's only ever READ
-        # from (or never used at all) doesn't pay the allocation cost.
-        # The base's empty defaults cover the read path.
+        # Lazy fork on first write keeps read-only and unused subclasses allocation-free.
+        # Each ``_ensure_X()`` call forks a per-class container on demand; sibling
+        # subclasses never share the base Incorporator's containers.
         super().__init_subclass__(**kwargs)
 
     @classmethod
@@ -357,8 +354,7 @@ class Incorporator(BaseModel):
             cls._ensure_inc_dict()
             cls.inc_dict[self.inc_code] = self
 
-            # DSA OPTIMIZATION: Fast-path C-tuple evaluation.
-            # Only iterate bases if this is a deeply nested dynamic subclass.
+            # Skip base iteration for simple subclasses to avoid unnecessary work.
             if cls.__bases__ and cls.__bases__[0] is not Incorporator:
                 for base in cls.__bases__:
                     if issubclass(base, Incorporator) and base is not Incorporator:
@@ -1345,15 +1341,9 @@ class Incorporator(BaseModel):
             refresh_params = {}
 
         if stateful_polling:
-            # ----------------------------------------------------------
-            # Stateful path: delegate to the fjord engine with a
-            # synthesised identity outflow.  This collapses what used to
-            # be a separate _run_stateful_engine into a one-source fjord
-            # pipeline.  Python-object identity in ``cls.inc_dict`` is
-            # preserved across waves by the IncorporatorList pass-through
-            # fast path in ``_outflow.flush()``.  See
-            # ``observability/pipeline/_stateful_shim.py``.
-            # ----------------------------------------------------------
+            # Delegates to the fjord engine with a synthesised identity outflow;
+            # object identity in ``cls.inc_dict`` is preserved across waves via
+            # the IncorporatorList pass-through fast path in ``_outflow.flush()``.
             from .observability.pipeline._stateful_shim import stream_stateful_via_fjord
 
             async for wave in stream_stateful_via_fjord(

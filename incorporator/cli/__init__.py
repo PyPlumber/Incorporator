@@ -4,12 +4,8 @@ Requires the `[orchestrate]` extras (Typer).
 
 Implementation note: the heavy async runners and config-loading helpers live
 in :mod:`incorporator.cli.runners` so this file can stay focused on Typer
-app construction + command registration.  The legacy private symbols
-(``_load_pipeline_config``, ``_run_validation``, ``_emit_wave``,
-``_install_sigterm_handler``, ``_err``, ``_run_stream``, ``_run_fjord``,
-``_load_user_module``, ``_resolve_incorporator_class``, ``_JSON_OUTPUT_MODE``)
-are re-exported below for backwards compatibility with any tests that
-import them directly from this module.
+app construction + command registration.  Private symbols are re-exported
+below for backwards compatibility with any tests that import them directly.
 """
 
 from __future__ import annotations

@@ -339,15 +339,9 @@ async def _probe_one(
 ) -> tuple[str, SourceProfile]:
     """Probe one source via a throwaway subclass and capture the SourceProfile.
 
-    Each probe gets a fresh ``type(f"_ArchitectProbe_{name}", (cls,), {})``
-    so that mutable class state (``cls.inc_url`` / ``cls.inc_file`` /
-    ``cls._incorp_kwargs`` / ``cls.inc_dict``) lands on the throwaway and
-    NOT on the user's class.  Without this, calling
-    ``Incorporator.architect(...)`` would set ``Incorporator.inc_file``
-    to the last probed source path, and every later
-    ``MySubclass.refresh()`` that doesn't explicitly set its own
-    ``inc_file`` would inherit that path via MRO and treat URLs as
-    files.  See the v1.2.0 isolation contract in AGENTS.md.
+    Each probe gets a fresh dynamic subclass so mutable class state
+    (``inc_url`` / ``inc_file`` / ``_incorp_kwargs`` / ``inc_dict``) lands on the
+    throwaway and NOT on the user's class, preventing MRO bleed-through.
 
     Threads a mutable list as ``__capture_into`` so the inspector's
     capture path runs and the SourceProfile lands in our caller.

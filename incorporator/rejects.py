@@ -38,11 +38,6 @@ class RejectEntry(BaseModel):
     scheduler-level skips that never reach a tick body land on the
     latter.
 
-    The legacy string list :attr:`IncorporatorList.failed_sources` is a
-    derived view over the entries' ``source`` fields, fully back-compat
-    for all existing read sites in user code, tests, examples, and
-    durable logs.
-
     Attributes:
         source: URL, file path, or source identifier that failed.  For
             HTTP errors this is the request URL; for fjord seed errors
@@ -53,8 +48,7 @@ class RejectEntry(BaseModel):
             ``"Unknown"``), or a canal-layer skip kind
             (``"PenstockLimited"``, ``"SurgeHalted"``, ``"SkipAhead"``,
             ``"GateBlocked"``) emitted from the Tideweaver scheduler.
-            Defaults to ``"Unknown"`` when the framework was given only
-            a legacy string and inferred no exception context.
+            Defaults to ``"Unknown"`` when no exception context is available.
         message: Human-readable error detail.  Typically ``str(exc)``
             of the originating exception.  Empty string when no detail
             beyond the kind is available.
@@ -157,9 +151,8 @@ class RejectEntry(BaseModel):
     def __str__(self) -> str:
         """Back-compat string form for callers that log the entry directly.
 
-        Reproduces the old hand-formatted shapes when context is
-        available; falls back to the source identifier when only the
-        legacy string was supplied.
+        Returns ``error_kind: message`` when both are available, falling back
+        to the source identifier when no richer context exists.
         """
         if self.error_kind and self.error_kind != "Unknown":
             if self.message:

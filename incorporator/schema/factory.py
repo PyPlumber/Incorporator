@@ -286,7 +286,7 @@ def build_instances(
     if is_single and len(parsed_data) == 1:
         parsed_data = parsed_data[0]
 
-    # Auto-coerce based on previously-observed types.  ``_schema_union``
+    # Auto-coerce based on observed types.  ``_schema_union``
     # carries the JSON-Schema type per field from prior incorps; the helper
     # synthesises ``inc()`` converters for any field the caller didn't name
     # in ``conv_dict``.  This is what makes a CSV / TSV / PSV round-trip

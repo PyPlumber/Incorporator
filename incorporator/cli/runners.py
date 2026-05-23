@@ -208,9 +208,7 @@ async def _run_stream(
     heartbeat_file: Path | None,
 ) -> None:
     # Gate: enforce the Pydantic schema before the async pipeline boots.
-    # Errors surface here instead of mid-pipeline.  D2a-only — the legacy
-    # validator in ``validate.py`` still runs at the CLI validate
-    # entrypoint; D2b will collapse the duplication.
+    # Errors surface here instead of mid-pipeline.
     parse_pipeline_config(config, kind="stream")
 
     incorp_params = config.get("incorp_params", {})
@@ -298,8 +296,7 @@ async def _run_fjord(
     The output class is built dynamically from the outflow file's filename
     (snake_case → PascalCase); there is no ``output_class`` JSON key.
     """
-    # Gate: enforce the Pydantic schema before sidecar import / class
-    # resolution.  Matching D2a-only comment on ``_run_stream``.
+    # Gate: enforce the Pydantic schema before sidecar import / class resolution.
     parse_pipeline_config(config, kind="fjord")
 
     outflow_raw = config.get("outflow")

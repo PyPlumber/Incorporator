@@ -82,9 +82,6 @@ def build_watershed(raw: dict[str, Any], base_dir: Path) -> Watershed:
 
     # Resolve the top-level flow shorthand:
     #   ``gate_mode`` (string) or ``flow`` (full dict) — mutually exclusive.
-    # The v1.2.0 ``dependency_mode`` alias is removed as of v1.3.0; passing it
-    # raises a ValueError with migration guidance so users see the break
-    # immediately instead of silently dropping their intended config.
     def _top_level_flow(raw_obj: dict[str, Any]) -> tuple[GateMode | None, FlowControl | None]:
         if "dependency_mode" in raw_obj:
             raise ValueError(

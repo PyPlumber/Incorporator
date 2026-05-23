@@ -60,13 +60,8 @@ class IncorporatorList(list[T]):
             for entry in coins.rejects:
                 schedule_retry(entry.source, after=entry.retry_after)
 
-    The same instance can be used wherever ``List[Incorporator]`` is
-    accepted — including ``Class.export(instance=this_list)`` and any
-    ``link_to(this_list)`` join from another class.  ``rejects``
-    collects a structured :class:`RejectEntry` per URL or file path
-    that hit a permanent error (HTTP 4xx-other-than-429, network
-    failure, unparseable payload); the legacy ``failed_sources``
-    derives from it as ``[entry.source for entry in rejects]``.
+    Use :attr:`rejects` for structured failure access; :attr:`failed_sources` is a back-compat alias
+    for ``[entry.source for entry in rejects]``.
     """
 
     def __init__(
@@ -78,11 +73,8 @@ class IncorporatorList(list[T]):
     ):
         super().__init__(items)
         self._model_class = model_class
-        # Structured rejects.  Accept EITHER the legacy
-        # ``failed_sources`` (List[str] — auto-wrap each string in a
-        # minimal :class:`RejectEntry`) OR the new ``rejects``
-        # (List[RejectEntry] — preferred).  Passing both raises so
-        # callers don't accidentally double-fill.
+        # Accept ``rejects`` (List[RejectEntry], preferred) OR the legacy ``failed_sources``
+        # (List[str], auto-wrapped into minimal RejectEntry objects).  Passing both raises.
         if failed_sources is not None and rejects is not None:
             raise ValueError(
                 "IncorporatorList: pass `failed_sources` (legacy List[str]) OR `rejects` (List[RejectEntry]), not both."
@@ -109,14 +101,8 @@ class IncorporatorList(list[T]):
 
     @property
     def failed_sources(self) -> list[str]:
-        """Legacy string-list view of the failure surface.
-
-        Equivalent to ``[entry.source for entry in self.rejects]``;
-        kept as a derived view so every existing user/test/example that
-        reads ``IncorporatorList.failed_sources`` continues working
-        unchanged.  Reach for :attr:`rejects` when you need structured
-        access to ``error_kind`` / ``message`` / ``retry_after`` /
-        ``wave_index``.
+        """Deprecated back-compat alias for ``[r.source for r in self.rejects]``;
+        prefer :attr:`rejects` for structured access.
         """
         return [entry.source for entry in self._rejects]
 

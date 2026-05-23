@@ -192,9 +192,7 @@ def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[
     """
     errors: list[str] = []
 
-    # Delegate the whole shape contract to build_watershed.  Side-effect:
-    # imports any inflow/outflow sidecars (same as we used to do in this
-    # file via _validate_sidecar_file).
+    # Delegate the whole shape contract to build_watershed (which imports any inflow/outflow sidecars).
     from ..observability.tideweaver import Fjord
     from ..observability.tideweaver.config import build_watershed
 
@@ -292,8 +290,6 @@ def _validate_sidecar_file(
 
     Centralises the three-step check (string type → file exists → imports
     cleanly) shared by every sidecar reference in stream / fjord configs.
-    Tideweaver no longer routes through this helper — ``build_watershed``
-    imports its own sidecars via ``load_user_module``.
 
     Args:
         config: Validator-scope config dict (e.g. the top-level config or a
