@@ -24,8 +24,6 @@ import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Dict, List
-from unittest.mock import AsyncMock
-
 import httpx
 import pytest
 
@@ -37,6 +35,7 @@ from incorporator import (
     register_host_penstock,
 )
 from incorporator.io import fetch
+from incorporator.io.penstock import resolve_penstock
 
 
 # ---------------------------------------------------------------------------
@@ -112,30 +111,51 @@ async def test_web_paginator_penstock_composes_with_host_throttle(
     immediately and pages 2–3 wait 0.5s each.  Floor at 0.7s gives
     headroom for scheduler noise.
 
-    Also asserts that ``execute_request``'s ``rate_limiter`` parameter
-    was non-None on every call — verifies the host-level path is
-    still wired and the paginator-level throttle didn't bypass it.
+    Also exercises the REAL host-side ``BoundPenstock`` (via
+    ``resolve_penstock``) rather than an ad-hoc ``AsyncMock`` —
+    verifies that the registered host throttle's ``acquire()``
+    actually fires on every fetch, proving the additive-composition
+    contract rather than just satisfying ``rate_limiter is not None``
+    vacuously.  After the run, the host BoundPenstock's
+    ``last_consumed_at`` must be populated, confirming the host
+    layer was actually consumed.
     """
     # 10 r/s host throttle — should be the looser of the two.
     register_host_penstock("test.example.com", SustainedPenstock(rate_per_sec=10.0))
 
+    # Resolve the host BoundPenstock ONCE outside the fetch loop so all
+    # three pagination calls share the same state + lock.  resolve_penstock
+    # creates fresh state on every call, so capturing the instance in a
+    # closure is the way to get a single per-host limiter across the run.
+    host_limiter = resolve_penstock("https://test.example.com/page")
+
     # Mock execute_request: return a tiny response with a "next" link
     # that points to the same path, then signal exhaustion after 3 calls.
+    # The mock STILL has to honour the rate_limiter contract — it awaits
+    # the real host_limiter.acquire() so the host-side state gets
+    # consumed, just like the production code path would.
     call_count = 0
 
     async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
-        """Return a 1-row response with a 'next' path pointer."""
+        """Return a 1-row response with a 'next' path pointer.
+
+        Honours the rate_limiter contract from
+        ``incorporator/io/fetch.py:255-256`` so the host BoundPenstock
+        actually consumes its state — this is what makes the additive
+        composition check real rather than vacuous.
+        """
         nonlocal call_count
         call_count += 1
-        # NextUrlPaginator walks ``response.json()['next']`` by default;
-        # exhaust after the third page by returning next=None.
-        next_link = "https://test.example.com/page" if call_count < 3 else None
-        # Validate the rate_limiter param threaded through every call.
-        assert kwargs.get("rate_limiter") is not None, (
-            f"call #{call_count}: rate_limiter must be threaded through "
-            "even when the paginator has its own penstock — both throttles "
-            "should apply."
+        rate_limiter = kwargs.get("rate_limiter")
+        assert rate_limiter is host_limiter, (
+            f"call #{call_count}: rate_limiter must be the REAL host BoundPenstock "
+            "resolved from the registry, not an AsyncMock — the previous shape made "
+            "the composition assertion vacuous."
         )
+        # Mirror execute_request's own rate-limit gate so the host state
+        # actually advances on every page.
+        await rate_limiter.acquire()
+        next_link = "https://test.example.com/page" if call_count < 3 else None
         payload = json.dumps({"items": [{"id": call_count}], "next": next_link})
         return httpx.Response(200, text=payload, request=httpx.Request("GET", url))
 
@@ -151,7 +171,7 @@ async def test_web_paginator_penstock_composes_with_host_throttle(
             return await fetch.execute_request(
                 url=url,
                 client=client,
-                rate_limiter=AsyncMock(acquire=AsyncMock()),  # simulate the host BoundPenstock
+                rate_limiter=host_limiter,
             )
 
         paginator.fetch_func = bound_fetch
@@ -167,6 +187,16 @@ async def test_web_paginator_penstock_composes_with_host_throttle(
         f"in {elapsed:.2f}s — should be ≥ 0.7s (2 inter-page waits at "
         f"0.5s each).  Either the paginator-level acquire isn't firing "
         "before _fetch, or it's being short-circuited."
+    )
+    # Behavioral check on additive composition: the host BoundPenstock
+    # must have been consumed during the run (its FlowState.last_consumed_at
+    # is set after the first successful acquire).  Without this assertion,
+    # the test would pass even if the host throttle were bypassed entirely
+    # — the elapsed-time check alone only verifies the SLOWER throttle
+    # (paginator-level) fires.
+    assert host_limiter.state.last_consumed_at is not None, (
+        "host BoundPenstock must have been consumed — additive composition "
+        "requires BOTH the paginator-level and the host-level throttles to fire"
     )
 
 

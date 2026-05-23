@@ -403,3 +403,22 @@ async def test_effective_conv_cache_invalidates_on_schema_union_growth(tmp_path:
         f"cache key should change when schema_union grows; "
         f"got identical keys {key_v1} == {key_v2}"
     )
+
+    # Behavioral check: the cached TUPLE-AS-A-WHOLE must be a fresh
+    # object after the rebuild.  The cache-write site at factory.py
+    # is ``setattr(cls, "_cached_effective_conv", (cache_key, effective_conv))``
+    # — a fresh tuple is created every miss.  A hypothetical stale-cache
+    # bug that reused the old tuple identity (e.g. mutating a stored
+    # tuple — impossible for real tuples, but the ``Tuple`` protocol
+    # could be subclassed to behave that way) would fail this check.
+    #
+    # We deliberately do NOT assert on ``effective_conv_v1 is not
+    # effective_conv_v2`` because ``_expand_conv_dict_with_schema_union``
+    # can return ``None`` when conv_dict is None and no schema_union
+    # field needs synthesised coercion — in that case both calls return
+    # ``None`` and identity-comparison gives the wrong answer.  The
+    # tuple-identity check captures the same intent without that edge.
+    assert cached_after_v1 is not cached_after_v2, (
+        "cache must store a fresh tuple on rebuild — a stale tuple with "
+        "a new key would silently drop the new schema_union expansion"
+    )
