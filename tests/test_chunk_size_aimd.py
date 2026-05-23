@@ -214,7 +214,8 @@ async def test_aimd_paginator_without_chunk_size_no_op(monkeypatch: pytest.Monke
 
     # Should complete without AttributeError or any other exception.
     waves: List[Wave] = []
-    async with asyncio.timeout(5.0):
+
+    async def _drive() -> None:
         with patch(
             "incorporator.observability.pipeline.chunked._enrich_and_load",
             new=AsyncMock(side_effect=lambda *a, **kw: None),
@@ -235,6 +236,8 @@ async def test_aimd_paginator_without_chunk_size_no_op(monkeypatch: pytest.Monke
                     paginator.is_exhausted = True
                 if len(waves) >= 3:
                     break
+
+    await asyncio.wait_for(_drive(), timeout=5.0)
 
     assert len(waves) >= 1
     assert not hasattr(paginator, "chunk_size")

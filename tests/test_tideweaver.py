@@ -1333,7 +1333,7 @@ async def test_spillway_drop_oldest_is_silent_default() -> None:
     b = _stream("b", interval=10.0)
     flow = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=2), spillway=DropOldest())
     ws = Watershed(
-        window=_short_window(0.3),
+        window=_short_window(0.8),
         currents=[a, b],
         edges=[Edge(from_name="a", to_name="b", flow=flow)],
     )
@@ -1367,7 +1367,7 @@ async def test_spillway_raise_overflow_logs_each_overflow(caplog: pytest.LogCapt
     b = _stream("b", interval=10.0)
     flow = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=1), spillway=RaiseOverflow())
     ws = Watershed(
-        window=_short_window(0.3),
+        window=_short_window(0.8),
         currents=[a, b],
         edges=[Edge(from_name="a", to_name="b", flow=flow)],
     )
@@ -1411,7 +1411,7 @@ async def test_spillway_export_to_archive_routes_displaced_waves() -> None:
         spillway=ExportToArchive(archive_cls=_Archive),
     )
     ws = Watershed(
-        window=_short_window(0.3),
+        window=_short_window(0.8),
         currents=[a, b],
         edges=[Edge(from_name="a", to_name="b", flow=flow)],
     )

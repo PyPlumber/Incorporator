@@ -7,6 +7,130 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-05-23
+
+This release tags the canal-followup work (the v1.2.0-era A-F items
+that landed on `workflow` post-v1.2.0) together with the
+TypeAdapter refactor and the outcome-record telemetry buildout.
+**Tag-only release** — no PyPI publish, no GitHub Release object.
+
+### Added
+
+- **Structured canal-layer rejects (A-F-1)**.  `Tideweaver.rejects`
+  now surfaces canal-layer skips (`PenstockLimited`, `SurgeHalted`,
+  `SkipAhead`, `GateBlocked`) as `RejectEntry` records, parallel to
+  the verb-layer `IncorporatorList.rejects`.  Closes the canal-audit
+  F-1 gap.
+- **Per-paginator `Penstock` composition (A-F-9)**.  Paginators now
+  accept a `penstock=` kwarg that composes with host-level
+  throttles.  Local paginators (`SQLitePaginator`, `CSVPaginator`,
+  `AvroPaginator`) can finally be rate-limited.
+- **Scheduler / Reservoir / Penstock micro-benchmarks (F-1)**.
+  `tests/benchmarks/test_scheduler_pass_overhead.py`,
+  `test_reservoir_throughput.py`, `test_penstock_overhead.py` cover
+  the canal toolkit's hot paths.  All hold their throughput floors.
+- **TypeAdapter-vs-per-row validation benchmark (A-F-3)**.
+  `tests/benchmarks/test_validate_batch_vs_per_row.py` quantifies
+  the batch-validation speedup that motivated A-F-4.
+- **Canal routing test coverage (A-F-2 + E-F-3)**.
+  `tests/test_tideweaver_routing_*.py` exercises chain / diamond /
+  fanout / parallel / custom shapes with realistic intervals.
+- **Outcome-record telemetry**: `Wave`, `Tide`, `RejectEntry`
+  schemas gained 6 / 5 / 7 new fields covering HTTP retry counts,
+  schema cache hits, source URLs, per-edge identity, status codes,
+  cooldown hints.  New `CurrentOutcome` slotted dataclass captures
+  per-current outcomes inside Tide.
+- **`LoggedTideweaver`** — drop-in for `Tideweaver` with structured
+  JSON-line logs.  Routes every yielded Tide + every accumulated
+  `RejectEntry` to disk via the existing JSONFormatter +
+  QueueHandler.  Companion disk readers:
+  `LoggedTideweaver.get_tides()`, `LoggedTideweaver.get_rejects()`,
+  `LoggingMixin.get_rejects()`.
+- **`architect.tune()`** — post-runtime feedback loop.  Consumes
+  accumulated rejects + tides + waves and emits a `TuningReport` of
+  structured recommendations across `chunk_size`, penstock rate,
+  surge threshold, `pass_interval`, retry policy.  Companion
+  `Tideweaver.summary()` convenience method.
+- **Adaptive `chunk_size` in `stream()`** — opt-in via
+  `adapt_chunk_size=True` keyword.  AIMD policy (additive-increase
+  / multiplicative-decrease) on `paginator.chunk_size` between
+  chunks based on recent processing times.  Bounded by
+  `chunk_size_min` / `chunk_size_max` / target window.
+- **Backlog short-circuit on `Tideweaver`** — opt-in via
+  `backlog_backoff_factor=2.0` constructor arg.  Extends the
+  next-pass wait when the scheduler is consistently saturated;
+  default 1.0 = disabled = identical behaviour to v1.2.0.
+- **CLI `tideweaver` test coverage** — new
+  `tests/test_cli_tideweaver.py` covers `tideweaver run --json-output`
+  NDJSON shape, `--heartbeat-file` touch behaviour, and
+  `--drain-timeout` precedence.
+
+### Changed
+
+- **Batch-validate rows via cached `TypeAdapter` (A-F-4)**.
+  `build_instances` now calls `TypeAdapter(list[Cls]).validate_python(rows)`
+  once per chunk instead of per-row `Cls.model_validate(row)`.  The
+  `TypeAdapter` is cached per dynamic class.  Measured 1.3-2.0×
+  faster validation on realistic workloads (per
+  `tests/benchmarks/test_validate_batch_vs_per_row.py`).  Trade-off:
+  `incorp()` peak memory is now O(N) instead of streaming row-by-
+  row.  Documented in `docs/performance.md`.
+- **Python 3.9 support dropped.**  `requires-python` raised to
+  `>=3.10` to accommodate `@dataclass(slots=True)` on
+  `CurrentOutcome` and PEP 604 union syntax.  CI matrix now tests
+  3.10 / 3.11 / 3.13.
+- **`execute_request` refactored** from `@retry` decorator to
+  explicit `AsyncRetrying` loop.  Tenacity parameters (same
+  `stop_after_attempt(8)`, `wait_random_exponential`, retry
+  predicate, `reraise=True`) are byte-identical to v1.2.0.
+  Captures `attempt_number` for `RejectEntry.attempt_number`.
+- **Bulk `inc_dict` insertion** — new `_BATCH_INSERT_MODE` ClassVar
+  gates the per-instance write in `model_post_init`; the
+  `build_instances` call site does one `WeakValueDictionary.update()`
+  after `TypeAdapter.validate_python()`.  Saves ~100-200 ns/row.
+- **`RejectEntry.model_construct()` at all framework-internal
+  sites** — skip Pydantic validation on trusted input.  Companion
+  `Wave.model_construct()` and `Tide.model_construct()` everywhere
+  the framework builds these records.
+- **CLI heartbeat-touch hardened** — `_emit_wave` / `_emit_tide`
+  wrap the serialise/print in try/finally so the heartbeat file
+  always touches even if `model_dump_json` raises.  Prevents a
+  serialisation glitch from killing the Docker HEALTHCHECK.
+
+### Fixed
+
+- **Gate dedup direction (bug fix)** — `_last_consumed` is now keyed
+  on `(from_name, to_name)` consistently; previously a direction
+  inversion could cause a gate to under-block.  Pinned by
+  `tests/test_tideweaver_dedup.py`.
+- **Examples T-10 rename completion** — `fjord.py` →
+  `crypto_spread.py` → `outflow.py` rename had stale references;
+  fixed.
+- **`Tide.wake_reason` Literal narrowing** — was `str`; now
+  `Literal["startup", "timer", "wake_event", "pass_interval", "shutdown"]`.
+  No runtime change; better mypy / IDE narrowing.
+- **`Tide.next_due_in_sec` accuracy** — computed from post-walk
+  monotonic timestamp instead of pass-start; eliminates a
+  microsecond-scale overstatement.
+
+### Internal
+
+- PEP 585 builtin-generics across the source tree
+  (`typing.List/Dict/Tuple/Set` → builtins).
+- PEP 604 union syntax (`Optional[X]` → `X | None`).
+- `from __future__ import annotations` rollout to all 63 source
+  files.
+- ruff `UP` (pyupgrade) ruleset enabled; locks in the
+  modernisation.
+- `itertools.pairwise` + `isinstance(x, T1 | T2)` union syntax at
+  the relevant sites.
+- Comment-sweep: stripped ~94 lines of historical / planned-
+  refactor prose from inline comments and docstrings; current
+  behaviour described instead.
+- Obsolete planning docs `docs/canal_evaluation.md` and
+  `docs/canal_integration_audit.md` removed — their recommendations
+  are now implemented in code.
+
 ## [1.2.0] - 2026-05-22
 
 ### Changed
