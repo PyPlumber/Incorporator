@@ -8,6 +8,8 @@ Dependency direction: ``base.py → schema/factory.py → schema/{builder,router
 (never the reverse).
 """
 
+from __future__ import annotations
+
 import logging
 import warnings
 from collections.abc import Mapping

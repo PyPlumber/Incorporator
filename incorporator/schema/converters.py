@@ -8,6 +8,8 @@ fallbacks (ISO-8601 for ``datetime``, comma-stripped strings for ``int`` /
 entering the fallback chain.
 """
 
+from __future__ import annotations
+
 import functools
 import logging
 from collections.abc import Callable

@@ -31,6 +31,8 @@ Design choices:
   Arrow dataset APIs. Out of scope for v1.
 """
 
+from __future__ import annotations
+
 import contextlib
 import json
 import logging

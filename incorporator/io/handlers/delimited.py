@@ -1,5 +1,7 @@
 """Delimiter-separated format handlers: CSV, TSV, and PSV."""
 
+from __future__ import annotations
+
 import csv
 import io
 import logging

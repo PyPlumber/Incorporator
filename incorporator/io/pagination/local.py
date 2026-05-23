@@ -1,5 +1,7 @@
 """Local file and database paginators: SQLite, CSV, and Avro."""
 
+from __future__ import annotations
+
 import asyncio
 import csv
 import itertools

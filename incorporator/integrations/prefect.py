@@ -7,6 +7,8 @@ When Prefect is not installed the decorators fall back to no-ops so the
 module can be imported without raising.
 """
 
+from __future__ import annotations
+
 import json
 import sys
 from collections.abc import Callable

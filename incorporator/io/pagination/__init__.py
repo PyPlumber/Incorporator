@@ -1,5 +1,7 @@
 """Pagination engine for Incorporator: web API and local file paginators."""
 
+from __future__ import annotations
+
 from .base import AsyncPaginator
 from .local import AvroPaginator, CSVPaginator, SQLitePaginator
 from .web import CursorPaginator, LinkHeaderPaginator, NextUrlPaginator, OffsetPaginator, PageNumberPaginator

@@ -16,6 +16,8 @@ module never pulls a heavy dep at framework import time. This mirrors
 ``AvroHandler``'s lazy-import pattern.
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Iterable
 from pathlib import Path

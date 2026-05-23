@@ -6,6 +6,8 @@ schema compilation logic lives here.  Delegates to ``io/``, ``schema/``,
 assembles the resulting dynamic Pydantic object graphs.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os

@@ -1,5 +1,7 @@
 """Native zero-bloat format I/O handlers and dispatch for Incorporator."""
 
+from __future__ import annotations
+
 import asyncio
 import itertools
 import logging

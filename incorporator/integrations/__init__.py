@@ -10,3 +10,5 @@ the orchestrator never breaks ``import incorporator``.
 To add a new orchestrator (Dagster, Airflow, Temporal, Argo, …) drop a
 new module next to ``prefect.py`` following the same shield pattern.
 """
+
+from __future__ import annotations

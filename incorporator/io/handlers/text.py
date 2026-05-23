@@ -1,5 +1,7 @@
 """Text-based format handlers: JSON, NDJSON, and XML."""
 
+from __future__ import annotations
+
 import json as _stdlib_json
 import logging
 from collections.abc import Iterable

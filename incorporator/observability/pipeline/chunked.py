@@ -1,5 +1,7 @@
 """Chunked sequential engine (Engine 1): O(1)-memory paginator-driven streaming."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import statistics

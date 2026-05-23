@@ -12,6 +12,8 @@ can share the same primitive without re-implementing the dynamic-class
 build + per-class export semantics.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable

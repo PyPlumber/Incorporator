@@ -1,5 +1,7 @@
 """Custom exception hierarchy for the Incorporator package."""
 
+from __future__ import annotations
+
 __all__ = [
     "IncorporatorError",
     "IncorporatorFormatError",

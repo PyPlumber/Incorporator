@@ -1,5 +1,7 @@
 """Web API paginators: LinkHeader, Cursor, Offset, PageNumber, and NextUrl."""
 
+from __future__ import annotations
+
 import logging
 import re
 from collections.abc import AsyncGenerator

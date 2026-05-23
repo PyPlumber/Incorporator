@@ -1,5 +1,7 @@
 """Fjord engine (Engine 3): multi-source stateful streaming with combined outflow."""
 
+from __future__ import annotations
+
 import asyncio
 import inspect
 import logging

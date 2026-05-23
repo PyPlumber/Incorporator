@@ -26,6 +26,8 @@ importing ``Incorporator`` directly — keeps the import graph one-directional
 (``base.py → pipeline/`` never the reverse).
 """
 
+from __future__ import annotations
+
 import re
 import time
 import types

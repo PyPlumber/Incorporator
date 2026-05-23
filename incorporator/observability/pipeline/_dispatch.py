@@ -13,6 +13,8 @@ Stateful + monolithic is intentionally NOT rejected: stateful semantics
 coerces to.
 """
 
+from __future__ import annotations
+
 from typing import Any, Optional, Union
 
 from ...exceptions import IncorporatorFormatError

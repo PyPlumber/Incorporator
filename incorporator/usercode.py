@@ -39,6 +39,8 @@ repeat.  Callers can safely call these helpers per-wave without paying
 re-import cost.
 """
 
+from __future__ import annotations
+
 import importlib.util
 import inspect as _inspect
 import re

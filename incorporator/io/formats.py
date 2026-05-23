@@ -3,6 +3,8 @@ Format Utility Algorithms for Incorporator.
 Contains purely functional data sanitization, recursion, and format inference.
 """
 
+from __future__ import annotations
+
 import functools
 import json
 import re

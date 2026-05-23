@@ -7,6 +7,8 @@ Pydantic V2 model class from raw data samples) and
 :mod:`incorporator.schema.factory`.
 """
 
+from __future__ import annotations
+
 import keyword
 import logging
 import re

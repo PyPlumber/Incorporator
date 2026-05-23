@@ -15,6 +15,8 @@ submodule:
     )
 """
 
+from __future__ import annotations
+
 from .penstock import (
     DEFAULT_RPS,
     BoundPenstock,

@@ -1,5 +1,7 @@
 """Base paginator class and shared utilities for the pagination engine."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, Optional, Union

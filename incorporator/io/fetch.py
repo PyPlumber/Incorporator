@@ -1,5 +1,7 @@
 """HTTP client builder and request dispatcher."""
 
+from __future__ import annotations
+
 import asyncio
 import ipaddress
 import logging

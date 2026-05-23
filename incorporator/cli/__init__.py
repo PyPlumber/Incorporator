@@ -12,6 +12,8 @@ are re-exported below for backwards compatibility with any tests that
 import them directly from this module.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import sys

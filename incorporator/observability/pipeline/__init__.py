@@ -14,6 +14,8 @@ Per-source daemons (``_refresh_daemon`` / ``_export_daemon``) live in
 :mod:`._daemons` and are reused by the fjord engine.
 """
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator
 from typing import Any, Optional
 

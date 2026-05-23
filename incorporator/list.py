@@ -7,6 +7,8 @@ is reserved for the modules that build Pydantic classes from raw data
 (``builder``, ``router``, ``factory``).
 """
 
+from __future__ import annotations
+
 import logging
 import weakref
 from typing import Any, Optional, TypeVar, cast

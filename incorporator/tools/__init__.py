@@ -18,3 +18,5 @@ Tools may import freely from the rest of the package, but nothing in
 :mod:`incorporator.io` should import from ``tools`` — keep the
 dependency one-directional.
 """
+
+from __future__ import annotations

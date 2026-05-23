@@ -1,5 +1,7 @@
 """Binary and database format handlers: SQLite and Apache Avro."""
 
+from __future__ import annotations
+
 import json
 import logging
 import sqlite3

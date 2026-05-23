@@ -3,6 +3,8 @@ Modular Compression Engine for Incorporator.
 Utilizes a Strategy Pattern to safely route between Native Python and Rust-backed Cramjam algorithms.
 """
 
+from __future__ import annotations
+
 import bz2
 import functools
 import gzip

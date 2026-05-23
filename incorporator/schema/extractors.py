@@ -6,6 +6,8 @@ concurrent request payloads.  Every converter in this module is designed for
 use in ``conv_dict`` or ``json_payload`` / ``form_payload`` kwargs.
 """
 
+from __future__ import annotations
+
 import collections.abc
 import logging
 import weakref

@@ -30,6 +30,8 @@ per-interval ticking).  Stream source ingestion is owned by the upstream
 :class:`Stream` currents in the graph.
 """
 
+from __future__ import annotations
+
 from .architect import TuningHint, TuningReport, tune
 from .current import Current, CustomCurrent, Export, Fjord, Stream
 from .flow import (

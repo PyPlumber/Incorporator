@@ -21,6 +21,8 @@ Scope:
   back to row 1 if no ``<th>`` is present.
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Iterable
 from pathlib import Path

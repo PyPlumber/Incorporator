@@ -1,5 +1,7 @@
 """Multiplex logging architecture and wrapper subclass for Incorporator."""
 
+from __future__ import annotations
+
 import asyncio
 import atexit
 import json

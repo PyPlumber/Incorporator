@@ -15,6 +15,8 @@ Key sentinels exported from this package
     without coercion, delegating full control to the attached computation.
 """
 
+from __future__ import annotations
+
 __version__ = "1.2.0"
 
 from .base import Incorporator

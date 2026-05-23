@@ -1,5 +1,7 @@
 """Per-source refresh and export daemons used by stateful and fjord engines."""
 
+from __future__ import annotations
+
 import asyncio
 from typing import Any, Optional
 

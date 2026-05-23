@@ -14,6 +14,8 @@ Both routes share one detection codebase: ``analyze_data`` calls
 ``capture_signals`` internally then prints from the returned profile.
 """
 
+from __future__ import annotations
+
 import logging
 import re
 from dataclasses import dataclass, field

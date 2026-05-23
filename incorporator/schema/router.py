@@ -5,6 +5,8 @@ dynamic HTTP request generation for ``GET {}``-template and declarative
 POST / PUT / PATCH patterns (``each()``, ``join_all()``, ``as_list()``).
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Any
 
