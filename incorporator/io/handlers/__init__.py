@@ -3,8 +3,9 @@
 import asyncio
 import itertools
 import logging
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Tuple, Union, cast
+from typing import Any, Union, cast
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["parse_source_data", "write_destination_data"]
 
-_HANDLERS: Dict[FormatType, BaseFormatHandler] = {
+_HANDLERS: dict[FormatType, BaseFormatHandler] = {
     FormatType.JSON: JSONHandler(),
     FormatType.NDJSON: NDJSONHandler(),
     FormatType.CSV: CSVHandler(delimiter=","),
@@ -38,8 +39,8 @@ _HANDLERS: Dict[FormatType, BaseFormatHandler] = {
 
 
 async def parse_source_data(
-    source: Union[str, bytes, Path, List[Any], Dict[str, Any]], format_type: FormatType, **kwargs: Any
-) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    source: Union[str, bytes, Path, list[Any], dict[str, Any]], format_type: FormatType, **kwargs: Any
+) -> Union[dict[str, Any], list[dict[str, Any]]]:
     """Central parse dispatcher — routes the payload to the matching format handler.
 
     Pre-parsed ``list`` / ``dict`` sources pass through untouched. File / byte
@@ -48,7 +49,7 @@ async def parse_source_data(
     and CPU-heavy decoding never block the event loop.
     """
     if isinstance(source, list):
-        return cast(List[Dict[str, Any]], source)
+        return cast(list[dict[str, Any]], source)
     if isinstance(source, dict):
         return source
 
@@ -69,7 +70,7 @@ async def parse_source_data(
         ) from e
 
 
-def _peek_iterable(data: Iterable[Any]) -> Tuple[bool, Iterator[Any]]:
+def _peek_iterable(data: Iterable[Any]) -> tuple[bool, Iterator[Any]]:
     """Non-destructively probe any Iterable for emptiness.
 
     Consumes one item from the iterator and chains it back, so the caller

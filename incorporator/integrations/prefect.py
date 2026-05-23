@@ -9,8 +9,9 @@ module can be imported without raising.
 
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Optional, cast
 
 from incorporator import LoggedIncorporator
 from incorporator.observability.logger import Wave
@@ -43,12 +44,12 @@ if not HAS_PREFECT:
 
 @task(name="incorporator_stream_task", log_prints=True)
 async def run_incorporator_stream(
-    incorp_params: Dict[str, Any],
-    refresh_params: Optional[Dict[str, Any]] = None,
-    export_params: Optional[Dict[str, Any]] = None,
+    incorp_params: dict[str, Any],
+    refresh_params: Optional[dict[str, Any]] = None,
+    export_params: Optional[dict[str, Any]] = None,
     poll_interval: Optional[float] = None,
     stateful_polling: bool = False,
-) -> List[Wave]:
+) -> list[Wave]:
     """Prefect task wrapping :meth:`Incorporator.stream` (with optional disk logging via ``enable_logging=True``).
 
     Drives an O(1)-memory incorporator stream and routes each
@@ -61,7 +62,7 @@ async def run_incorporator_stream(
     logger = get_run_logger()
     logger.info("🚀 Starting Incorporator stream orchestration.")
 
-    results: List[Wave] = []
+    results: list[Wave] = []
 
     try:
         async for wave in LoggedIncorporator.stream(
@@ -89,7 +90,7 @@ async def run_incorporator_stream(
 
 
 @flow(name="incorporator_pipeline_flow")
-async def run_incorporator_flow(config_path: str, poll_interval: Optional[float] = None) -> List[Wave]:
+async def run_incorporator_flow(config_path: str, poll_interval: Optional[float] = None) -> list[Wave]:
     """Prefect flow entry point: load ``pipeline.json`` and run the stream task."""
     if not HAS_PREFECT:
         print("❌ Prefect is not installed. Run: pip install incorporator[orchestrate]")
@@ -100,7 +101,7 @@ async def run_incorporator_flow(config_path: str, poll_interval: Optional[float]
         raise FileNotFoundError(f"Configuration file not found at {path}")
 
     with open(path, "r", encoding="utf-8") as f:
-        config = cast(Dict[str, Any], json.load(f))
+        config = cast(dict[str, Any], json.load(f))
 
     incorp_params = config.get("incorp_params", {})
     refresh_params = config.get("refresh_params")

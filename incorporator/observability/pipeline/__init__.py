@@ -14,7 +14,8 @@ Per-source daemons (``_refresh_daemon`` / ``_export_daemon``) live in
 :mod:`._daemons` and are reused by the fjord engine.
 """
 
-from typing import Any, AsyncGenerator, Dict, Optional
+from collections.abc import AsyncGenerator
+from typing import Any, Optional
 
 # Re-export every previously top-level symbol so existing imports
 # (`from incorporator.observability.pipeline import _refresh_daemon`,
@@ -42,7 +43,6 @@ __all__ = [
     "_run_fjord_engine",
 ]
 
-
 # Module-level cadence defaults — applied at the bottom of the cascade
 # (per-entry override > top-level kwarg > poll_interval > these).  Used by
 # the fjord engine (per-source) and by the stateful-stream shim
@@ -54,9 +54,9 @@ DEFAULT_EXPORT_INTERVAL_SEC: float = 300.0
 
 async def run_pipeline(
     cls: Any,
-    incorp_params: Dict[str, Any],
-    refresh_params: Optional[Dict[str, Any]],
-    export_params: Optional[Dict[str, Any]],
+    incorp_params: dict[str, Any],
+    refresh_params: Optional[dict[str, Any]],
+    export_params: Optional[dict[str, Any]],
     poll_interval: Optional[float],
     adapt_chunk_size: bool = False,
     chunk_size_min: int = 100,

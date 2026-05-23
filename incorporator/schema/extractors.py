@@ -9,7 +9,8 @@ use in ``conv_dict`` or ``json_payload`` / ``form_payload`` kwargs.
 import collections.abc
 import logging
 import weakref
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 from .converters import _EachSentinel, is_garbage_value
 
@@ -173,7 +174,7 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
     registry: "weakref.WeakValueDictionary[Any, Any]" = weakref.WeakValueDictionary()
 
     # 2. Fallback Cache: Strong references for tests (SimpleNamespace) or non-weakref classes
-    fallback_registry: Dict[Any, Any] = {}
+    fallback_registry: dict[Any, Any] = {}
 
     def _add_to_cache(k: Any, v: Any) -> None:
         try:
@@ -244,7 +245,7 @@ def link_to(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> C
     return _mapper
 
 
-def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], List[Any]]:
+def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None) -> Callable[[Any], list[Any]]:
     """1-to-N JOIN — resolve a list of foreign-key IDs to the corresponding instances.
 
     Reach for it whenever the source field is itself a list of IDs:
@@ -284,7 +285,7 @@ def link_to_list(dataset: Any, extractor: Optional[Callable[[Any], Any]] = None)
     """
     base_linker = link_to(dataset, extractor)
 
-    def _mapper(val_list: Any) -> List[Any]:
+    def _mapper(val_list: Any) -> list[Any]:
         if not isinstance(val_list, list):
             return []
         # Per-element garbage filter mirrors link_to's pre-check.  The
@@ -436,7 +437,7 @@ def join_all(delimiter: str = ",") -> Callable[[Any], str]:
     return _joiner
 
 
-def as_list() -> Callable[[Any], List[Any]]:
+def as_list() -> Callable[[Any], list[Any]]:
     """Ship all parent IDs in one POST as a JSON array — the natural shape for typed REST endpoints.
 
     Reach for it when the endpoint expects ``{"ids": [1, 2, 3]}`` (or

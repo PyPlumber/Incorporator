@@ -17,7 +17,7 @@ Both routes share one detection codebase: ``analyze_data`` calls
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Optional
 
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from ..schema.converters import parses_as_datetime, parses_as_float, parses_as_int
@@ -42,7 +42,6 @@ _NEXT_URL_KEYS = ("next", "next_url", "next_page", "next_page_url")
 _CURSOR_KEYS = ("cursor", "next_cursor", "page_token")
 _OFFSET_PAIRS = (("offset", "limit"), ("page", "per_page"))
 _PAGE_META_KEYS = ("has_more", "total", "total_pages", "page_count")
-
 
 # ---------------------------------------------------------------------------
 # Structured signal bundle — produced by capture_signals(), consumed by both
@@ -87,31 +86,31 @@ class SourceProfile:
       attribute per inspector section.
     """
 
-    parsed_data: List[Any]
-    provided_kwargs: Dict[str, Any]
+    parsed_data: list[Any]
+    provided_kwargs: dict[str, Any]
     response_meta: Optional[ResponseMeta] = None
 
     sample: Any = None
     target_obj: Any = None
     is_dict_shaped: bool = False
-    rec_path_candidates: List[Tuple[str, int]] = field(default_factory=list)
-    top_level_fields: Set[str] = field(default_factory=set)
+    rec_path_candidates: list[tuple[str, int]] = field(default_factory=list)
+    top_level_fields: set[str] = field(default_factory=set)
 
     primary_key_field: Optional[str] = None
     primary_key_score: int = 0
     display_name_field: Optional[str] = None
     display_name_score: int = 0
 
-    datetime_fields: List[str] = field(default_factory=list)
-    int_fields: List[str] = field(default_factory=list)
-    float_fields: List[str] = field(default_factory=list)
+    datetime_fields: list[str] = field(default_factory=list)
+    int_fields: list[str] = field(default_factory=list)
+    float_fields: list[str] = field(default_factory=list)
 
     pagination_kind: Optional[str] = None
     pagination_suggestion: Optional[str] = None
     pagination_description: Optional[str] = None
-    pagination_meta_keys_present: List[str] = field(default_factory=list)
+    pagination_meta_keys_present: list[str] = field(default_factory=list)
 
-    heavy_fields: List[str] = field(default_factory=list)
+    heavy_fields: list[str] = field(default_factory=list)
 
 
 def _print_tree(data: Any, prefix: str = "", depth: int = 0, max_depth: int = 3) -> None:
@@ -154,8 +153,8 @@ def _print_tree(data: Any, prefix: str = "", depth: int = 0, max_depth: int = 3)
 
 
 def capture_signals(
-    parsed_data: List[Any],
-    provided_kwargs: Dict[str, Any],
+    parsed_data: list[Any],
+    provided_kwargs: dict[str, Any],
     response_meta: Optional[ResponseMeta] = None,
 ) -> SourceProfile:
     """Detect every inspector signal as a structured :class:`SourceProfile`.
@@ -224,7 +223,7 @@ def capture_signals(
 
 def _detect_identity_mapping(profile: SourceProfile) -> None:
     """Score inc_code / inc_name candidates on ``profile.target_obj``."""
-    target_obj: Dict[str, Any] = profile.target_obj
+    target_obj: dict[str, Any] = profile.target_obj
     best_code: Optional[str] = None
     best_code_score: int = -1
     best_name: Optional[str] = None
@@ -285,10 +284,10 @@ def _detect_type_casting(profile: SourceProfile) -> None:
     Precedence: datetime > int > float (a numeric ISO date wouldn't reach
     here, but if a string parses as both int and datetime, datetime wins).
     """
-    target_obj: Dict[str, Any] = profile.target_obj
-    date_candidates: List[str] = []
-    int_candidates: List[str] = []
-    float_candidates: List[str] = []
+    target_obj: dict[str, Any] = profile.target_obj
+    date_candidates: list[str] = []
+    int_candidates: list[str] = []
+    float_candidates: list[str] = []
 
     for k, v in target_obj.items():
         if not isinstance(v, str) or not v:
@@ -334,7 +333,7 @@ def _detect_pagination_hints(profile: SourceProfile) -> None:
     bare metadata).  Stores both the discriminator (``pagination_kind``)
     and the human-readable suggestion / description.
     """
-    sample: Dict[str, Any] = profile.sample
+    sample: dict[str, Any] = profile.sample
 
     # 1. Next-URL paginator (highest confidence — a literal URL string).
     for key in _NEXT_URL_KEYS:
@@ -396,8 +395,8 @@ def _detect_heavy_fields(profile: SourceProfile) -> None:
       * String values larger than ``_HEAVY_FIELD_BYTES``.
       * `*_url` / `*_uri` fields with long values (CDN heuristic).
     """
-    target_obj: Dict[str, Any] = profile.target_obj
-    heavy: List[str] = []
+    target_obj: dict[str, Any] = profile.target_obj
+    heavy: list[str] = []
 
     for k, v in target_obj.items():
         if not isinstance(v, str) or not v:
@@ -421,7 +420,7 @@ def _detect_heavy_fields(profile: SourceProfile) -> None:
 # ---------------------------------------------------------------------------
 
 
-def analyze_data(parsed_data: List[Any], provided_kwargs: Dict[str, Any]) -> None:
+def analyze_data(parsed_data: list[Any], provided_kwargs: dict[str, Any]) -> None:
     """Print the DX Inspector report for a freshly-fetched payload.
 
     Five sections, each actionable:

@@ -4,9 +4,10 @@ import os
 import sys
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Union
+from typing import Any, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType
@@ -14,7 +15,7 @@ from ..formats import FormatType
 # Mapping from optional-import module name to the install-extra users need.
 # Every entry is a single source of truth — when a new optional dep ships,
 # add one row here and every handler that needs it is covered automatically.
-_OPTIONAL_INSTALL_EXTRAS: Dict[str, str] = {
+_OPTIONAL_INSTALL_EXTRAS: dict[str, str] = {
     "orjson": "speedups",
     "lxml": "speedups",
     "lxml.etree": "speedups",
@@ -137,7 +138,7 @@ def _neutralise_formula_injection(value: Any) -> Any:
     return value
 
 
-def _raise_if_append_unsupported(kwargs: Dict[str, Any], format_name: str) -> None:
+def _raise_if_append_unsupported(kwargs: dict[str, Any], format_name: str) -> None:
     if kwargs.get("if_exists") == "append":
         raise IncorporatorFormatError(
             f"Monolithic formats ({format_name}) do not support O(1) streaming appends. "
@@ -149,7 +150,7 @@ class BaseFormatHandler(ABC):
     """Abstract Strategy for parsing and writing different data formats."""
 
     @abstractmethod
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[dict[str, Any], list[dict[str, Any]]]:
         """Parse a byte buffer, string, or Path into a dict or list of dicts.
 
         Each subclass implements its own format-specific parsing (JSON, XML,
@@ -159,7 +160,7 @@ class BaseFormatHandler(ABC):
         pass
 
     @abstractmethod
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Stream rows from an iterable to a file in the subclass's format.
 
         Subclasses honour standard kwargs where applicable: ``if_exists``

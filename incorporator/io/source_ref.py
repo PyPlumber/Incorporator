@@ -9,8 +9,9 @@ explicit source typing.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Mapping, Union
+from typing import Any, Literal, Union
 
 SourceKind = Literal["url", "file", "parent", "payload", "kwargs"]
 
@@ -77,7 +78,7 @@ class SourceRef:
         return cls(kind="parent", value=parent)
 
     @classmethod
-    def from_payload(cls, payload: List[Dict[str, Any]]) -> "SourceRef":
+    def from_payload(cls, payload: list[dict[str, Any]]) -> "SourceRef":
         """Construct a payload-list source reference (bulk POST dispatch).
 
         Args:

@@ -15,10 +15,11 @@ to ``FlowControl`` via :func:`~.flow.flow_from_mode`.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
@@ -84,7 +85,7 @@ class Edge(BaseModel):
         return data
 
 
-def _toposort(currents: Sequence[Current], edges: Sequence[Edge]) -> List[str]:
+def _toposort(currents: Sequence[Current], edges: Sequence[Edge]) -> list[str]:
     """Return a topological order of current names; raise on cycles."""
     names = [c.name for c in currents]
     indeg: dict[str, int] = dict.fromkeys(names, 0)
@@ -92,7 +93,7 @@ def _toposort(currents: Sequence[Current], edges: Sequence[Edge]) -> List[str]:
     for e in edges:
         adj[e.from_name].append(e.to_name)
         indeg[e.to_name] += 1
-    order: List[str] = []
+    order: list[str] = []
     queue = [n for n in names if indeg[n] == 0]
     while queue:
         n = queue.pop(0)
@@ -171,9 +172,9 @@ class Watershed(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
-    window: Tuple[datetime, datetime] = Field(..., description="Inclusive start, exclusive end.")
-    currents: List[Current] = Field(..., min_length=1)
-    edges: List[Edge] = Field(default_factory=list)
+    window: tuple[datetime, datetime] = Field(..., description="Inclusive start, exclusive end.")
+    currents: list[Current] = Field(..., min_length=1)
+    edges: list[Edge] = Field(default_factory=list)
     inflow: Optional[Path] = None
     outflow: Optional[Path] = None
     drain_timeout: float = Field(30.0, ge=0.0)
@@ -217,7 +218,7 @@ class Watershed(BaseModel):
         _toposort(self.currents, self.edges)
         return self
 
-    def toposort(self) -> List[str]:
+    def toposort(self) -> list[str]:
         """Return current names in a valid topological order."""
         return _toposort(self.currents, self.edges)
 
@@ -229,7 +230,7 @@ class Watershed(BaseModel):
     def chain(
         cls,
         *,
-        window: Tuple[datetime, datetime],
+        window: tuple[datetime, datetime],
         currents: Sequence[Current],
         gate_mode: Optional[GateMode] = None,
         flow: Optional[FlowControl] = None,
@@ -274,7 +275,7 @@ class Watershed(BaseModel):
     def diamond(
         cls,
         *,
-        window: Tuple[datetime, datetime],
+        window: tuple[datetime, datetime],
         head: Current,
         middle: Sequence[Current],
         tail: Current,
@@ -311,8 +312,8 @@ class Watershed(BaseModel):
         middle = list(middle)
         if not middle:
             raise ValueError("Watershed.diamond requires at least one middle current.")
-        currents: List[Current] = [head, *middle, tail]
-        edges: List[Edge] = []
+        currents: list[Current] = [head, *middle, tail]
+        edges: list[Edge] = []
         for m in middle:
             edges.append(Edge(from_name=head.name, to_name=m.name, flow=resolved))
             edges.append(Edge(from_name=m.name, to_name=tail.name, flow=resolved))
@@ -330,7 +331,7 @@ class Watershed(BaseModel):
     def fanout(
         cls,
         *,
-        window: Tuple[datetime, datetime],
+        window: tuple[datetime, datetime],
         source: Current,
         sinks: Sequence[Current],
         gate_mode: Optional[GateMode] = None,
@@ -362,7 +363,7 @@ class Watershed(BaseModel):
         sinks = list(sinks)
         if not sinks:
             raise ValueError("Watershed.fanout requires at least one sink current.")
-        currents: List[Current] = [source, *sinks]
+        currents: list[Current] = [source, *sinks]
         edges = [Edge(from_name=source.name, to_name=s.name, flow=resolved) for s in sinks]
         return cls(
             window=window,
@@ -378,7 +379,7 @@ class Watershed(BaseModel):
     def parallel(
         cls,
         *,
-        window: Tuple[datetime, datetime],
+        window: tuple[datetime, datetime],
         currents: Iterable[Current],
         inflow: Optional[Path] = None,
         outflow: Optional[Path] = None,

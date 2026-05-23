@@ -42,9 +42,10 @@ re-import cost.
 import importlib.util
 import inspect as _inspect
 import re
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Optional, Union, cast
 
 from .io.pagination.base import AsyncPaginator
 
@@ -108,7 +109,7 @@ def load_user_module(path: Union[str, Path], *, name_hint: str = "_inc_user_modu
     return module
 
 
-def extract_public_names(module: ModuleType) -> Dict[str, Any]:
+def extract_public_names(module: ModuleType) -> dict[str, Any]:
     """Return ``{name: obj}`` for every public (non-underscore) name in ``module``.
 
     Used by the token resolver to extend its allow-list with whatever
@@ -173,9 +174,9 @@ def _extract_user_callable(
 
 def apply_inflow_resolution(
     inflow: Union[str, Path],
-    conv_dict: Optional[Dict[str, Any]],
+    conv_dict: Optional[dict[str, Any]],
     inc_page: Optional[AsyncPaginator],
-) -> Tuple[Optional[Dict[str, Any]], Optional[AsyncPaginator]]:
+) -> tuple[Optional[dict[str, Any]], Optional[AsyncPaginator]]:
     """Load the inflow module and resolve string-form tokens in trinity kwargs.
 
     Shared by :meth:`Incorporator.incorp` and :meth:`Incorporator.refresh`.
@@ -192,7 +193,7 @@ def apply_inflow_resolution(
     module = load_user_module(inflow, name_hint="_inc_trinity_inflow")
     extra_names = extract_public_names(module)
     resolved_conv = cast(
-        Optional[Dict[str, Any]],
+        Optional[dict[str, Any]],
         resolve_tokens(conv_dict, extra_names=extra_names) if conv_dict else conv_dict,
     )
     resolved_page = inc_page
@@ -205,9 +206,9 @@ def apply_inflow_resolution(
 
 
 def apply_code_transform(
-    instances: List[Any],
+    instances: list[Any],
     outflow: Union[str, Path],
-) -> List[Any]:
+) -> list[Any]:
     """Load a Python file and call its top-level ``transform(instances)`` function.
 
     The file must define::
@@ -240,7 +241,7 @@ def apply_code_transform(
     return result if result is not None else instances
 
 
-def load_outflow_module(outflow: Union[str, Path]) -> Tuple[Callable[[Any], Any], ModuleType]:
+def load_outflow_module(outflow: Union[str, Path]) -> tuple[Callable[[Any], Any], ModuleType]:
     """Load ``outflow.py``; return both its ``outflow`` callable AND its module.
 
     The engine needs the module object so it can probe for user-pre-declared

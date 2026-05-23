@@ -18,7 +18,7 @@ public surface settles.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -27,8 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Kept in sync with ``incorporator.cli.validate._STREAM_SOURCE_KEYS``.
 _STREAM_SOURCE_KEYS = {"inc_url", "inc_file", "inc_parent", "payload_list"}
 
-
-IntervalSpec = Union[float, Dict[str, float]]
+IntervalSpec = Union[float, dict[str, float]]
 """A refresh / export interval may be a scalar (seconds, applied to
 every source) or a dict keyed by class name with numeric seconds
 values."""
@@ -51,9 +50,9 @@ class FjordStreamEntry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="allow")
 
     cls_name: str = Field(..., min_length=1)
-    incorp_params: Dict[str, Any]
-    refresh_params: Optional[Dict[str, Any]] = None
-    export_params: Optional[Dict[str, Any]] = None
+    incorp_params: dict[str, Any]
+    refresh_params: Optional[dict[str, Any]] = None
+    export_params: Optional[dict[str, Any]] = None
 
 
 class StreamConfig(BaseModel):
@@ -67,9 +66,9 @@ class StreamConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="allow")
 
-    incorp_params: Dict[str, Any]
-    refresh_params: Optional[Dict[str, Any]] = None
-    export_params: Optional[Dict[str, Any]] = None
+    incorp_params: dict[str, Any]
+    refresh_params: Optional[dict[str, Any]] = None
+    export_params: Optional[dict[str, Any]] = None
     poll_interval: Optional[float] = None
     refresh_interval: Optional[IntervalSpec] = None
     export_interval: Optional[IntervalSpec] = None
@@ -109,8 +108,8 @@ class FjordConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="allow")
 
     outflow: str = Field(..., min_length=1)
-    stream_params: List[FjordStreamEntry] = Field(..., min_length=1)
-    export_params: Dict[str, Any]
+    stream_params: list[FjordStreamEntry] = Field(..., min_length=1)
+    export_params: dict[str, Any]
     inflow: Optional[str] = None
     refresh_interval: Optional[IntervalSpec] = None
     export_interval: Optional[IntervalSpec] = None
@@ -120,7 +119,7 @@ PipelineKind = Literal["stream", "fjord"]
 
 
 def parse_pipeline_config(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     *,
     kind: PipelineKind,
 ) -> Union[StreamConfig, FjordConfig]:

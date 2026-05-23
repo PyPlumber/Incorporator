@@ -2,7 +2,8 @@
 
 import logging
 import re
-from typing import Any, AsyncGenerator, List, Optional, Set, Union, cast
+from collections.abc import AsyncGenerator
+from typing import Any, Optional, Union, cast
 from urllib.parse import urljoin
 
 import httpx
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 _RESULT_KEY_CONVENTIONS = ("results", "data", "items", "docs", "records")
 
 
-def _extract_results_array(data: Any, result_key: Optional[str]) -> List[Any]:
+def _extract_results_array(data: Any, result_key: Optional[str]) -> list[Any]:
     """Pull the results array out of a paginated response body.
 
     Honours an explicit ``result_key`` when set; otherwise walks
@@ -32,11 +33,11 @@ def _extract_results_array(data: Any, result_key: Optional[str]) -> List[Any]:
         return []
     if result_key:
         explicit = data.get(result_key, []) or []
-        return cast(List[Any], explicit)
+        return cast(list[Any], explicit)
     for key in _RESULT_KEY_CONVENTIONS:
         items = data.get(key)
         if items:
-            return cast(List[Any], items)
+            return cast(list[Any], items)
     return []
 
 
@@ -184,7 +185,7 @@ class CursorPaginator(AsyncPaginator):
         super().__init__(penstock=penstock)
         self.cursor_param = cursor_param
         self.current_cursor: Optional[str] = None
-        self.seen_cursors: Set[str] = set()
+        self.seen_cursors: set[str] = set()
 
     def reset(self) -> None:
         """Clear paginator state so the next ``paginate()`` starts from page 1.

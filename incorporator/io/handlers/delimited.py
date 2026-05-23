@@ -3,8 +3,9 @@
 import csv
 import io
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, TextIO, Union
+from typing import Any, TextIO, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import deserialize_nested, ensure_string, serialize_nested
@@ -27,7 +28,7 @@ class CSVHandler(BaseFormatHandler):
     def __init__(self, delimiter: str = ",") -> None:
         self.delimiter = delimiter
 
-    def _parse_stream(self, stream: Union[TextIO, io.StringIO], **kwargs: Any) -> List[Dict[str, Any]]:
+    def _parse_stream(self, stream: Union[TextIO, io.StringIO], **kwargs: Any) -> list[dict[str, Any]]:
         # csv.DictReader yields empty strings ("") for empty cells.  By default
         # we coerce those to None so Pydantic's Optional[T] semantics work the
         # way users expect — a blank cell in a CSV is semantically *missing*
@@ -36,10 +37,10 @@ class CSVHandler(BaseFormatHandler):
         empty_as_none: bool = kwargs.get("csv_empty_as_none", True)
         try:
             reader = csv.DictReader(stream, delimiter=self.delimiter)
-            rows: List[Dict[str, Any]] = []
+            rows: list[dict[str, Any]] = []
 
             for row in reader:
-                parsed_row: Dict[str, Any] = {}
+                parsed_row: dict[str, Any] = {}
                 for k, v in row.items():
                     safe_k = str(k) if k is not None else "unknown_column"
                     coerced = deserialize_nested(v)
@@ -51,7 +52,7 @@ class CSVHandler(BaseFormatHandler):
         except csv.Error as e:
             raise IncorporatorFormatError(f"Invalid Delimited Format: {e}") from e
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> Union[dict[str, Any], list[dict[str, Any]]]:
         """Read a delimited file or byte buffer and yield rows as dicts.
 
         Cells are passed through ``deserialize_nested`` so any JSON-encoded
@@ -65,7 +66,7 @@ class CSVHandler(BaseFormatHandler):
             raw_data = ensure_string(source)
             return self._parse_stream(io.StringIO(raw_data), **kwargs)
 
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Stream rows to a delimited file using a generator pipeline.
 
         Honours ``all_field_names`` (column order) and ``if_exists="append"``
@@ -90,19 +91,19 @@ class CSVHandler(BaseFormatHandler):
             # Only write headers if we are creating a new file
             write_headers = not (is_append and path.exists() and path.stat().st_size > 0)
 
-            explicit_fieldnames: List[str] = kwargs.get("all_field_names") or []
-            data_iter: Iterable[Dict[str, Any]]
+            explicit_fieldnames: list[str] = kwargs.get("all_field_names") or []
+            data_iter: Iterable[dict[str, Any]]
 
             if not explicit_fieldnames:
                 # No schema hint available (e.g. called outside export()): must materialize
                 # the full dataset to discover all column names before writing headers.
-                rows: List[Dict[str, Any]] = list(data)
+                rows: list[dict[str, Any]] = list(data)
                 explicit_fieldnames = list(dict.fromkeys(k for row in rows for k in row))
                 data_iter = iter(rows)
             else:
                 data_iter = data
 
-            def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+            def _serialize_row(row: dict[str, Any]) -> dict[str, Any]:
                 serialised = {k: serialize_nested(v) for k, v in row.items()}
                 if safe_formulas:
                     return {k: _neutralise_formula_injection(v) for k, v in serialised.items()}

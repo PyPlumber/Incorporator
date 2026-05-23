@@ -1,7 +1,8 @@
 """Base paginator class and shared utilities for the pagination engine."""
 
 import asyncio
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Union
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from typing import Any, Optional, Union
 
 import httpx
 
@@ -10,7 +11,7 @@ from ..handlers import parse_source_data
 from ..penstock import FlowState, NullPenstock, Penstock
 
 
-def _deserialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+def _deserialize_row(row: dict[str, Any]) -> dict[str, Any]:
     return {(str(k) if k is not None else "unknown_column"): deserialize_nested(v) for k, v in row.items()}
 
 
@@ -85,7 +86,7 @@ class AsyncPaginator:
         """
         self.is_exhausted = False
 
-    async def _fetch(self, url: str, params: Optional[Dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
+    async def _fetch(self, url: str, params: Optional[dict[str, Any]] = None, **kwargs: Any) -> httpx.Response:
         if not self.fetch_func:
             raise RuntimeError("Paginator must be bound to a network client before use.")
         return await self.fetch_func(url=url, request_params=params, **kwargs)
@@ -111,7 +112,7 @@ class AsyncPaginator:
         fmt = infer_format(str(response.url))
         return await parse_source_data(response.read(), fmt)
 
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, List[Any], Dict[str, Any]], None]:
+    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, list[Any], dict[str, Any]], None]:
         """Async-generate one chunk per yield until the source is exhausted.
 
         Subclasses implement source-specific traversal — Link headers,

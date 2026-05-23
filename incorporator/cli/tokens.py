@@ -50,7 +50,7 @@ import ast
 import logging
 import re
 from datetime import date, datetime, time
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from ..io.pagination import (
     AvroPaginator,
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 
 # Names safe to resolve from a JSON-text token. Anything outside this dict
 # is rejected before any code runs.
-_ALLOWED_NAMES: Dict[str, Any] = {
+_ALLOWED_NAMES: dict[str, Any] = {
     # Paginators — class constructors with literal args (URL, key, etc.)
     "NextUrlPaginator": NextUrlPaginator,
     "CursorPaginator": CursorPaginator,
@@ -142,7 +142,7 @@ class TokenResolutionError(ValueError):
     """Raised when a JSON-text token references an unsafe / unknown symbol."""
 
 
-def _eval_node(node: ast.AST, *, origin: str, allowed: Dict[str, Any]) -> Any:
+def _eval_node(node: ast.AST, *, origin: str, allowed: dict[str, Any]) -> Any:
     """Walk an AST under the safe-eval ``allowed`` map and return the Python value.
 
     ``origin`` is the original token string — surfaced in error messages.
@@ -207,7 +207,7 @@ def _eval_node(node: ast.AST, *, origin: str, allowed: Dict[str, Any]) -> Any:
     )
 
 
-def _resolve_string(text: str, *, allowed: Dict[str, Any]) -> Any:
+def _resolve_string(text: str, *, allowed: dict[str, Any]) -> Any:
     """Attempt to resolve ``text`` as a token. Returns the original string on
     a structural non-match; raises :class:`TokenResolutionError` on a
     structural match with an unsafe payload.
@@ -249,7 +249,7 @@ def _resolve_string(text: str, *, allowed: Dict[str, Any]) -> Any:
     return _eval_node(tree, origin=text, allowed=allowed)
 
 
-def resolve_tokens(obj: Any, extra_names: Optional[Dict[str, Any]] = None) -> Any:
+def resolve_tokens(obj: Any, extra_names: Optional[dict[str, Any]] = None) -> Any:
     """Recursively walk ``obj`` and resolve every JSON-text token in place.
 
     ``obj`` is typically the dict returned by :func:`json.load` after
@@ -267,7 +267,7 @@ def resolve_tokens(obj: Any, extra_names: Optional[Dict[str, Any]] = None) -> An
     # Build the merged allow-list once at the top of the walk.  User-supplied
     # names go FIRST so framework names win on conflict via the second update.
     if extra_names:
-        allowed: Dict[str, Any] = {**extra_names, **_ALLOWED_NAMES}
+        allowed: dict[str, Any] = {**extra_names, **_ALLOWED_NAMES}
     else:
         allowed = _ALLOWED_NAMES
 

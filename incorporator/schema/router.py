@@ -6,7 +6,7 @@ POST / PUT / PATCH patterns (``each()``, ``join_all()``, ``as_list()``).
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from .converters import _EachSentinel
 
@@ -29,12 +29,12 @@ def _get_attr(node: Any, part: str) -> Any:
     return getattr(node, part, None)
 
 
-def extract_parent_data(parents: Any, child_path: str) -> List[Any]:
+def extract_parent_data(parents: Any, child_path: str) -> list[Any]:
     """Iterative BFS to safely drill into dynamic structures without recursion."""
     current_layer = parents if isinstance(parents, list) else [parents]
 
     for part in child_path.split("."):
-        next_layer: List[Any] = []
+        next_layer: list[Any] = []
 
         for node in current_layer:
             if node is None:
@@ -58,8 +58,8 @@ def extract_parent_data(parents: Any, child_path: str) -> List[Any]:
 
 
 def resolve_declarative_routing(
-    caller_name: str, extracted_data: List[Any], source_urls: List[str], **kwargs: Any
-) -> Dict[str, Any]:
+    caller_name: str, extracted_data: list[Any], source_urls: list[str], **kwargs: Any
+) -> dict[str, Any]:
     """Unified resolver for {} GET injections and Declarative POST tokens."""
     method = kwargs.get("http_method", "GET")
 

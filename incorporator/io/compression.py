@@ -11,9 +11,10 @@ import lzma
 import shutil
 import tarfile
 import zipfile
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import Any, Optional, Union, cast
 
 from ..exceptions import IncorporatorFormatError
 from .formats import FormatType
@@ -52,7 +53,7 @@ class CompressionType(str, Enum):
 
 
 # cramjam submodule names differ from our CompressionType enum values
-_CRAMJAM_MODULE_MAP: Dict[CompressionType, str] = {
+_CRAMJAM_MODULE_MAP: dict[CompressionType, str] = {
     CompressionType.ZSTD: "zstd",
     CompressionType.LZ4: "lz4",
     CompressionType.SNAPPY: "snappy",
@@ -119,7 +120,6 @@ def _find_target_in_archive(names: list[str], active_format: FormatType, archive
 # ==========================================
 # DECOMPRESSION STRATEGIES
 # ==========================================
-
 
 # Hard ceiling on decompressed payload size.  Defends against decompression
 # bombs (gzip / zstd / brotli payloads where 1 KB of compressed data expands
@@ -217,7 +217,7 @@ def _decompress_native_stream(
     raise IncorporatorFormatError("Data must be a filepath string or bytes.")
 
 
-def _validate_archive_member_names(names: List[str], archive_kind: str) -> None:
+def _validate_archive_member_names(names: list[str], archive_kind: str) -> None:
     """Guard against archive path traversal for ZIP and TAR alike.
 
     Validates every member name against a resolved safe temp directory so
@@ -245,7 +245,7 @@ def _validate_archive_member_names(names: List[str], archive_kind: str) -> None:
         shutil.rmtree(safe_dir, ignore_errors=True)
 
 
-def _validate_tar_members(members: List[Any]) -> None:
+def _validate_tar_members(members: list[Any]) -> None:
     """Backwards-compatible wrapper that funnels TAR members through the
     shared archive-name validator.  Kept as a thin alias so existing call
     sites stay untouched.
@@ -406,7 +406,7 @@ def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> 
 # REGISTRY & PUBLIC API
 # ==========================================
 
-_DECOMPRESS_ROUTER: Dict[
+_DECOMPRESS_ROUTER: dict[
     CompressionType,
     Callable[[Union[str, bytes], CompressionType, FormatType, Optional[str]], Union[str, bytes]],
 ] = {
@@ -423,7 +423,7 @@ _DECOMPRESS_ROUTER: Dict[
     CompressionType.BROTLI: _decompress_cramjam,
 }
 
-_COMPRESS_ROUTER: Dict[CompressionType, Callable[[Path, Path, CompressionType], None]] = {
+_COMPRESS_ROUTER: dict[CompressionType, Callable[[Path, Path, CompressionType], None]] = {
     CompressionType.GZIP: _compress_native_stream,
     CompressionType.BZ2: _compress_native_stream,
     CompressionType.XZ: _compress_native_stream,

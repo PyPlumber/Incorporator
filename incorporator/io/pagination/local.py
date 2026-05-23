@@ -5,7 +5,8 @@ import csv
 import itertools
 import logging
 import sqlite3
-from typing import IO, Any, AsyncGenerator, ClassVar, Dict, List, Optional, Tuple, Union
+from collections.abc import AsyncGenerator
+from typing import IO, Any, ClassVar, Optional, Union
 
 from ..penstock import Penstock
 from .base import AsyncPaginator, _deserialize_row
@@ -37,8 +38,8 @@ class _LocalChunkedPaginator(AsyncPaginator):
     is owned in one place.
     """
 
-    _closeable_attrs: ClassVar[Tuple[str, ...]] = ()
-    _companion_attrs: ClassVar[Tuple[str, ...]] = ()
+    _closeable_attrs: ClassVar[tuple[str, ...]] = ()
+    _companion_attrs: ClassVar[tuple[str, ...]] = ()
 
     def reset(self) -> None:
         """Close any open handles and clear state for daemon-polling reuse."""
@@ -61,7 +62,7 @@ class _LocalChunkedPaginator(AsyncPaginator):
                 except Exception:  # noqa: BLE001, S110 — finalisation, nothing to do
                     pass
 
-    def _fetch_chunk(self) -> List[Dict[str, Any]]:
+    def _fetch_chunk(self) -> list[dict[str, Any]]:
         """Return the next ``chunk_size`` rows (sync).  Override in subclasses.
 
         Runs inside ``asyncio.to_thread`` so disk I/O never blocks the event
@@ -71,7 +72,7 @@ class _LocalChunkedPaginator(AsyncPaginator):
         """
         raise NotImplementedError
 
-    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, List[Any], Dict[str, Any]], None]:
+    async def paginate(self, start_url: str) -> AsyncGenerator[Union[str, bytes, list[Any], dict[str, Any]], None]:
         """Yield ``chunk_size`` rows per iteration from the local source.
 
         ``start_url`` is unused — local paginators carry their own
@@ -160,8 +161,8 @@ class SQLitePaginator(_LocalChunkedPaginator):
         chunk_size: Rows per chunk (default 10 000).
     """
 
-    _closeable_attrs: ClassVar[Tuple[str, ...]] = ("_conn",)
-    _companion_attrs: ClassVar[Tuple[str, ...]] = ("_cursor",)
+    _closeable_attrs: ClassVar[tuple[str, ...]] = ("_conn",)
+    _companion_attrs: ClassVar[tuple[str, ...]] = ("_cursor",)
 
     def __init__(
         self,
@@ -178,7 +179,7 @@ class SQLitePaginator(_LocalChunkedPaginator):
         self._conn: Optional[sqlite3.Connection] = None
         self._cursor: Optional[sqlite3.Cursor] = None
 
-    def _fetch_chunk(self) -> List[Dict[str, Any]]:
+    def _fetch_chunk(self) -> list[dict[str, Any]]:
         if not self._conn:
             self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
@@ -229,8 +230,8 @@ class CSVPaginator(_LocalChunkedPaginator):
             ``"|"`` for PSV, etc.
     """
 
-    _closeable_attrs: ClassVar[Tuple[str, ...]] = ("_file",)
-    _companion_attrs: ClassVar[Tuple[str, ...]] = ("_reader",)
+    _closeable_attrs: ClassVar[tuple[str, ...]] = ("_file",)
+    _companion_attrs: ClassVar[tuple[str, ...]] = ("_reader",)
 
     def __init__(
         self,
@@ -247,7 +248,7 @@ class CSVPaginator(_LocalChunkedPaginator):
         self._file: Optional[IO[Any]] = None
         self._reader: Optional[Any] = None
 
-    def _fetch_chunk(self) -> List[Dict[str, Any]]:
+    def _fetch_chunk(self) -> list[dict[str, Any]]:
         if not self._file:
             self._file = open(self.file_path, "rt", encoding="utf-8")
             self._reader = csv.DictReader(self._file, delimiter=self.delimiter)
@@ -296,8 +297,8 @@ class AvroPaginator(_LocalChunkedPaginator):
         chunk_size: Records per chunk (default 10 000).
     """
 
-    _closeable_attrs: ClassVar[Tuple[str, ...]] = ("_file",)
-    _companion_attrs: ClassVar[Tuple[str, ...]] = ("_reader",)
+    _closeable_attrs: ClassVar[tuple[str, ...]] = ("_file",)
+    _companion_attrs: ClassVar[tuple[str, ...]] = ("_reader",)
 
     def __init__(
         self,
@@ -312,7 +313,7 @@ class AvroPaginator(_LocalChunkedPaginator):
         self._file: Optional[IO[Any]] = None
         self._reader: Optional[Any] = None
 
-    def _fetch_chunk(self) -> List[Dict[str, Any]]:
+    def _fetch_chunk(self) -> list[dict[str, Any]]:
         try:
             import fastavro
         except ImportError:

@@ -10,7 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional, Set, Tuple, Union
+from typing import Any, Optional, Union
 
 from ..exceptions import IncorporatorFormatError
 
@@ -47,7 +47,7 @@ class FormatType(str, Enum):
         return self in _APPEND_FRIENDLY
 
 
-_APPEND_FRIENDLY: Set["FormatType"] = {
+_APPEND_FRIENDLY: set["FormatType"] = {
     FormatType.NDJSON,
     FormatType.CSV,
     FormatType.TSV,
@@ -56,9 +56,8 @@ _APPEND_FRIENDLY: Set["FormatType"] = {
     FormatType.AVRO,
 }
 
-
 # ── (FormatType, format-type-string) → Python type ──────────────────────
-FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {
+FORMAT_TO_PYTHON: dict[tuple[FormatType, str], type] = {
     # JSON Schema type strings
     (FormatType.JSON, "boolean"): bool,
     (FormatType.JSON, "integer"): int,
@@ -118,7 +117,7 @@ FORMAT_TO_PYTHON: Dict[Tuple[FormatType, str], type] = {
 # (fmt, bool) before any (fmt, int) logic. Each key is exact type(), so no
 # inheritance ambiguity in practice, but explicit entries keep intent clear.
 # Canonical Avro choice: long over int, double over float (wider range).
-PYTHON_TO_FORMAT: Dict[Tuple[FormatType, type], str] = {
+PYTHON_TO_FORMAT: dict[tuple[FormatType, type], str] = {
     # JSON Schema
     (FormatType.JSON, bool): "boolean",
     (FormatType.JSON, int): "integer",
@@ -299,7 +298,7 @@ def deserialize_nested(val: Any) -> Any:
     return val
 
 
-def xml_to_dict(element: Any, force_list: Optional[Set[str]] = None) -> Dict[str, Any]:
+def xml_to_dict(element: Any, force_list: Optional[set[str]] = None) -> dict[str, Any]:
     """Recursively converts an XML ElementTree (standard or lxml) into a Python dictionary.
 
     Tag-shape consistency: by default a tag that appears once becomes a
@@ -310,11 +309,11 @@ def xml_to_dict(element: Any, force_list: Optional[Set[str]] = None) -> Dict[str
     inference sees a stable shape.
     """
     force_list = force_list or set()
-    result: Dict[str, Any] = {element.tag: {} if element.attrib else None}
+    result: dict[str, Any] = {element.tag: {} if element.attrib else None}
     children = list(element)
 
     if children:
-        child_dict: Dict[str, Any] = {}
+        child_dict: dict[str, Any] = {}
         for child in children:
             child_result = xml_to_dict(child, force_list=force_list)
             for key, val in child_result.items():
@@ -335,7 +334,7 @@ def xml_to_dict(element: Any, force_list: Optional[Set[str]] = None) -> Dict[str
     elif element.text and element.text.strip():
         val_text = element.text.strip()
         if element.attrib:
-            leaf_dict: Dict[str, Any] = dict(element.attrib)
+            leaf_dict: dict[str, Any] = dict(element.attrib)
             leaf_dict["text"] = val_text
             result = {element.tag: leaf_dict}
         else:

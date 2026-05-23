@@ -12,7 +12,8 @@ import logging
 import re
 import weakref
 from collections import OrderedDict
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple, Type, Union
+from collections.abc import Callable
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 # LRU cache keyed by (model_name, frozenset(field_types), id(base_class)).
 # OrderedDict + move_to_end on hit gives O(1) LRU eviction — older entries
 # fall off the front while hot schemas stay at the end.
-SCHEMA_REGISTRY: "OrderedDict[Tuple[str, FrozenSet[Any], int], Type[BaseModel]]" = OrderedDict()
+SCHEMA_REGISTRY: "OrderedDict[tuple[str, frozenset[Any], int], type[BaseModel]]" = OrderedDict()
 MAX_REGISTRY_SIZE = 1000  # Hard boundary to prevent OOM leaks
 
 PYDANTIC_RESERVED = {
@@ -50,7 +51,7 @@ PYDANTIC_RESERVED = {
 # for the dynamic subclass.  WeakValueDictionary always starts empty per
 # subclass — fjord_snapshot owns the strong references during outflow.
 _MISSING: Any = object()
-_PER_SUBCLASS_CONTAINERS: Tuple[Tuple[str, Callable[[Any], Any]], ...] = (
+_PER_SUBCLASS_CONTAINERS: tuple[tuple[str, Callable[[Any], Any]], ...] = (
     ("inc_dict", lambda _seed: weakref.WeakValueDictionary[Any, Any]()),
     ("_schema_union", lambda seed: dict(seed) if isinstance(seed, dict) else {}),
     ("_incorp_kwargs", lambda seed: dict(seed) if isinstance(seed, dict) else {}),
@@ -82,13 +83,13 @@ def sanitize_json_key(key: str) -> str:
 
 
 def apply_etl_transformations(
-    parsed_data: Union[Dict[str, Any], List[Dict[str, Any]]],
+    parsed_data: Union[dict[str, Any], list[dict[str, Any]]],
     code_attr: Optional[str] = None,
     name_attr: Optional[str] = None,
-    excl_lst: Optional[List[str]] = None,
-    conv_dict: Optional[Dict[str, Any]] = None,
-    name_chg: Optional[List[Tuple[str, str]]] = None,
-) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    excl_lst: Optional[list[str]] = None,
+    conv_dict: Optional[dict[str, Any]] = None,
+    name_chg: Optional[list[tuple[str, str]]] = None,
+) -> Union[dict[str, Any], list[dict[str, Any]]]:
     """Apply exc_lst, conv_dict, name_chg, and PK-binding transforms in-place.
 
     Processes ``parsed_data`` through four ordered columnar passes: drop
@@ -116,7 +117,7 @@ def apply_etl_transformations(
     if not items:
         return parsed_data
 
-    dict_items: List[Dict[str, Any]] = [i for i in items if isinstance(i, dict)]
+    dict_items: list[dict[str, Any]] = [i for i in items if isinstance(i, dict)]
     if not dict_items:
         return items if isinstance(parsed_data, list) else items[0]
 
@@ -234,8 +235,8 @@ def apply_etl_transformations(
 
 
 def infer_dynamic_schema(
-    model_name: str, data: Union[Dict[str, Any], List[Dict[str, Any]]], base_class: Type[BaseModel]
-) -> Type[BaseModel]:
+    model_name: str, data: Union[dict[str, Any], list[dict[str, Any]]], base_class: type[BaseModel]
+) -> type[BaseModel]:
     """Recursively build a Pydantic V2 model class from a raw data sample.
 
     Samples up to 50 records from ``data`` (Python's native list slicing
@@ -268,7 +269,7 @@ def infer_dynamic_schema(
         rather than rebuilding.
     """
 
-    sample_dict: Dict[str, Any] = {}
+    sample_dict: dict[str, Any] = {}
 
     # Stratified sampling: evenly spaced indices up to 100 records so rare
     # field types that appear later in large datasets are more likely to be
@@ -326,7 +327,7 @@ def infer_dynamic_schema(
         SCHEMA_REGISTRY.move_to_end(cache_key)
         return SCHEMA_REGISTRY[cache_key]
 
-    fields: Dict[str, Any] = {}
+    fields: dict[str, Any] = {}
     for raw_key, value in sample_dict.items():
         safe_key = sanitize_json_key(raw_key)
 
@@ -342,7 +343,7 @@ def infer_dynamic_schema(
             dict_vals = [x for x in value if isinstance(x, dict)]
             nested_model_list: Any = infer_dynamic_schema(f"{model_name}_{safe_key}Item", dict_vals, BaseModel)
             fields[safe_key] = (
-                Optional[List[nested_model_list]],
+                Optional[list[nested_model_list]],
                 Field(alias=raw_key, default_factory=list),
             )
         else:

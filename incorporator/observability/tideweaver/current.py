@@ -17,7 +17,7 @@ models — these models are pure plan, not state.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Type
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -66,9 +66,9 @@ class Current(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     name: str
-    cls: Type[Incorporator]
+    cls: type[Incorporator]
     interval: float = Field(..., gt=0.0, description="Seconds between ticks; must be positive.")
-    depends_on: List[str] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
     on_error: OnErrorPolicy = "restart"
     phase_offset_sec: float = Field(0.0, ge=0.0, description="Delay first tick by N seconds for green-wave alignment.")
     inflow: Optional[Path] = None
@@ -121,9 +121,9 @@ class Stream(Current):
             :class:`Export` current handle persistence.
     """
 
-    incorp_params: Dict[str, Any] = Field(default_factory=dict)
-    refresh_params: Optional[Dict[str, Any]] = None
-    export_params: Optional[Dict[str, Any]] = None
+    incorp_params: dict[str, Any] = Field(default_factory=dict)
+    refresh_params: Optional[dict[str, Any]] = None
+    export_params: Optional[dict[str, Any]] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -204,7 +204,7 @@ class Fjord(Current):
             ``outflow(state)`` function returns multiple class rosters.
     """
 
-    export_params: Dict[str, Any] = Field(default_factory=dict)
+    export_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class Export(Current):
@@ -238,7 +238,7 @@ class Export(Current):
             (``.parquet`` / ``.ndjson`` / ``.csv`` / ``.sqlite`` / etc.).
     """
 
-    export_params: Dict[str, Any] = Field(default_factory=dict)
+    export_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class CustomCurrent(Current):

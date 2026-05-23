@@ -10,8 +10,9 @@ entering the fallback chain.
 
 import functools
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Optional
 
 from pydantic import TypeAdapter
 
@@ -45,7 +46,7 @@ class CalcOp:
 
     __slots__ = ("func", "default", "target_type", "input_list")
 
-    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]):
+    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: list[str]):
         self.func = func
         self.default = default
         self.target_type = target_type
@@ -57,7 +58,7 @@ class CalcAllOp:
 
     __slots__ = ("func", "default", "target_type", "input_list")
 
-    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: List[str]):
+    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: list[str]):
         self.func = func
         self.default = default
         self.target_type = target_type
@@ -324,7 +325,7 @@ def parses_as_float(value: Any) -> bool:
 
 
 # The Global Ranked Dictionary Engine
-RANKED_CONVERTERS: Dict[Any, List[Callable[[Any], Any]]] = {
+RANKED_CONVERTERS: dict[Any, list[Callable[[Any], Any]]] = {
     bool: [TypeAdapter(bool).validate_python, _fallback_bool],
     datetime: [TypeAdapter(datetime).validate_python, _fallback_date],
     int: [TypeAdapter(int).validate_python, _fallback_int],

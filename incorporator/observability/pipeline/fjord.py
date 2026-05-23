@@ -4,9 +4,10 @@ import asyncio
 import inspect
 import logging
 import time
+from collections.abc import AsyncGenerator, Callable
 from datetime import datetime, timezone
 from types import ModuleType
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
+from typing import Any, Optional, Union, cast
 
 from ...rejects import RejectEntry
 from ..logger import Wave
@@ -17,7 +18,7 @@ from ._shared import _row_count
 logger = logging.getLogger(__name__)
 
 
-async def _maybe_await(fn: Callable[[Any], Any], state: Dict[str, Any]) -> Any:
+async def _maybe_await(fn: Callable[[Any], Any], state: dict[str, Any]) -> Any:
     """Call ``fn(state)``; await the result if ``fn`` is a coroutine function.
 
     Lets users define ``inflow(state)`` as either sync or async.  Pays
@@ -29,7 +30,7 @@ async def _maybe_await(fn: Callable[[Any], Any], state: Dict[str, Any]) -> Any:
     return fn(state)
 
 
-def _has_any_depends_on(stream_params: List[Dict[str, Any]]) -> bool:
+def _has_any_depends_on(stream_params: list[dict[str, Any]]) -> bool:
     """True when at least one source entry declares ``depends_on``.
 
     Acts as the opt-in switch for the tiered-seed path: when ``False``, the
@@ -41,7 +42,7 @@ def _has_any_depends_on(stream_params: List[Dict[str, Any]]) -> bool:
     return any(entry.get("depends_on") for entry in stream_params)
 
 
-def _validate_depends_on(stream_params: List[Dict[str, Any]]) -> None:
+def _validate_depends_on(stream_params: list[dict[str, Any]]) -> None:
     """Validate that every ``depends_on`` name resolves to a peer in the seed.
 
     Raises ``ValueError`` with a clear message if a name doesn't match any
@@ -59,8 +60,8 @@ def _validate_depends_on(stream_params: List[Dict[str, Any]]) -> None:
 
 
 def _tiered_seed_order(
-    stream_params: List[Dict[str, Any]],
-) -> List[List[Dict[str, Any]]]:
+    stream_params: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
     """Topo-sort entries into tiers; entries in a tier have no inter-tier deps.
 
     Tier 0 contains all entries with no ``depends_on`` (or an empty list).
@@ -74,7 +75,7 @@ def _tiered_seed_order(
     """
     unresolved = list(stream_params)
     resolved_names: set[str] = set()
-    tiers: List[List[Dict[str, Any]]] = []
+    tiers: list[list[dict[str, Any]]] = []
 
     while unresolved:
         ready = [e for e in unresolved if all(d in resolved_names for d in (e.get("depends_on") or []))]
@@ -133,9 +134,9 @@ def _format_seed_error(cls_name: str, exc: Exception, inflow_active: bool) -> st
 
 
 def _resolve_seed_order(
-    stream_params: List[Dict[str, Any]],
-    refresh_interval: Union[float, Dict[Any, float], None],
-) -> List[Dict[str, Any]]:
+    stream_params: list[dict[str, Any]],
+    refresh_interval: Union[float, dict[Any, float], None],
+) -> list[dict[str, Any]]:
     """Return ``stream_params`` re-ordered for the sequential-seed phase.
 
     Order resolution (matches the user's "DX knows the best order"):
@@ -150,11 +151,11 @@ def _resolve_seed_order(
     if not isinstance(refresh_interval, dict):
         return list(stream_params)
 
-    def _entry_keys(entry: Dict[str, Any]) -> List[Any]:
+    def _entry_keys(entry: dict[str, Any]) -> list[Any]:
         cls = entry.get("cls")
         return [cls, getattr(cls, "__name__", None)]
 
-    ordered: List[Dict[str, Any]] = []
+    ordered: list[dict[str, Any]] = []
     remaining = list(stream_params)
     for key in refresh_interval.keys():
         for entry in remaining:
@@ -167,8 +168,8 @@ def _resolve_seed_order(
 
 
 async def _seed_one_source(
-    entry: Dict[str, Any],
-    state: Dict[str, Any],
+    entry: dict[str, Any],
+    state: dict[str, Any],
     inflow_callable: Optional[Callable[[Any], Any]],
 ) -> Any:
     """Run a single source's ``incorp()`` with optional state-aware inflow overrides.
@@ -180,7 +181,7 @@ async def _seed_one_source(
     override; stream_params is the static baseline).
     """
     cls = entry["cls"]
-    base_params: Dict[str, Any] = dict(entry["incorp_params"])
+    base_params: dict[str, Any] = dict(entry["incorp_params"])
 
     if inflow_callable is not None:
         overrides = await _maybe_await(inflow_callable, state)
@@ -205,8 +206,8 @@ async def _seed_one_source(
 
 
 def _resolve_per_source_interval(
-    top_level: Union[float, Dict[Any, float], None],
-    entry: Dict[str, Any],
+    top_level: Union[float, dict[Any, float], None],
+    entry: dict[str, Any],
     key: str,
 ) -> Optional[float]:
     """Pick the interval value for one fjord stream entry.
@@ -240,9 +241,9 @@ def _resolve_per_source_interval(
 async def _run_fjord_engine(
     output_class_name: str,
     base_class: Any,
-    stream_params: List[Dict[str, Any]],
+    stream_params: list[dict[str, Any]],
     outflow_fn: Any,
-    export_params: Dict[str, Any],
+    export_params: dict[str, Any],
     r_interval: Optional[float],
     e_interval: Optional[float],
     outflow_module: Optional[ModuleType] = None,
@@ -279,8 +280,8 @@ async def _run_fjord_engine(
     # ------------------------------------------------------------------
     # 1. Seed phase
     # ------------------------------------------------------------------
-    source_classes: List[Any] = [entry["cls"] for entry in stream_params]
-    source_refs: List[List[Any]] = [[None] for _ in stream_params]
+    source_classes: list[Any] = [entry["cls"] for entry in stream_params]
+    source_refs: list[list[Any]] = [[None] for _ in stream_params]
     seed_order = _resolve_seed_order(stream_params, r_interval)
 
     seed_start = time.perf_counter()
@@ -290,7 +291,7 @@ async def _run_fjord_engine(
             *[entry["cls"].incorp(**entry["incorp_params"]) for entry in stream_params],
             return_exceptions=True,
         )
-        results_by_idx: Dict[int, Any] = dict(enumerate(seed_results))
+        results_by_idx: dict[int, Any] = dict(enumerate(seed_results))
     elif _has_any_depends_on(stream_params):
         # Opt-in tiered seed: within-tier parallel, between-tier sequential.
         # Entries without depends_on (or whose deps are satisfied) run together
@@ -299,7 +300,7 @@ async def _run_fjord_engine(
         # via return_exceptions and stored in results_by_idx for the wave loop
         # below to translate into per-source failure waves.
         _validate_depends_on(stream_params)
-        state: Dict[str, Any] = {}
+        state: dict[str, Any] = {}
         results_by_idx = dict.fromkeys(range(len(stream_params)))
         idx_by_id = {id(entry): i for i, entry in enumerate(stream_params)}
         for tier in _tiered_seed_order(stream_params):
@@ -391,7 +392,7 @@ async def _run_fjord_engine(
     lock = asyncio.Lock()
     wave_queue: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
     shutdown_event = asyncio.Event()
-    tasks: List[asyncio.Task[Any]] = []
+    tasks: list[asyncio.Task[Any]] = []
 
     for idx, entry in enumerate(stream_params):
         entry_cls = entry["cls"]

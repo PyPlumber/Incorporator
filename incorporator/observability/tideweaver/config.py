@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import importlib
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Dict, List, Optional, Tuple, cast
+from typing import Any, Optional, cast
 
 from ...base import Incorporator
 from ...usercode import load_user_module
@@ -62,7 +63,7 @@ def load_watershed(path: Path) -> Watershed:
     return build_watershed(raw, base_dir)
 
 
-def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
+def build_watershed(raw: dict[str, Any], base_dir: Path) -> Watershed:
     window = _parse_window(raw.get("window"))
     inflow = _resolve_sidecar(raw.get("inflow"), base_dir)
     outflow = _resolve_sidecar(raw.get("outflow"), base_dir)
@@ -72,7 +73,7 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
     inflow_module = load_user_module(inflow) if inflow is not None else None
 
     shape = raw.get("shape", "custom")
-    common: Dict[str, Any] = {
+    common: dict[str, Any] = {
         "window": window,
         "inflow": inflow,
         "outflow": outflow,
@@ -84,7 +85,7 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
     # The v1.2.0 ``dependency_mode`` alias is removed as of v1.3.0; passing it
     # raises a ValueError with migration guidance so users see the break
     # immediately instead of silently dropping their intended config.
-    def _top_level_flow(raw_obj: Dict[str, Any]) -> Tuple[Optional[GateMode], Optional[FlowControl]]:
+    def _top_level_flow(raw_obj: dict[str, Any]) -> tuple[Optional[GateMode], Optional[FlowControl]]:
         if "dependency_mode" in raw_obj:
             raise ValueError(
                 "watershed.json: 'dependency_mode' was removed in v1.3.0.  "
@@ -167,7 +168,7 @@ def build_watershed(raw: Dict[str, Any], base_dir: Path) -> Watershed:
     raise ValueError(f"Unknown shape: {shape!r}. Expected one of: 'chain', 'diamond', 'fanout', 'parallel', 'custom'.")
 
 
-def _parse_window(raw: Any) -> Tuple[datetime, datetime]:
+def _parse_window(raw: Any) -> tuple[datetime, datetime]:
     if not isinstance(raw, dict) or "start" not in raw or "end" not in raw:
         raise ValueError("watershed.json 'window' must be an object with 'start' and 'end' ISO 8601 timestamps.")
     return (_parse_dt(raw["start"]), _parse_dt(raw["end"]))
@@ -190,21 +191,21 @@ def _resolve_sidecar(value: Any, base_dir: Path) -> Optional[Path]:
 
 
 def _build_currents(
-    entries: List[Dict[str, Any]],
+    entries: list[dict[str, Any]],
     outflow_module: Optional[ModuleType],
     inflow_module: Optional[ModuleType],
-) -> List[Current]:
+) -> list[Current]:
     return [_build_current(e, outflow_module, inflow_module) for e in entries]
 
 
 def _build_current(
-    entry: Dict[str, Any],
+    entry: dict[str, Any],
     outflow_module: Optional[ModuleType],
     inflow_module: Optional[ModuleType],
 ) -> Current:
     verb = entry.get("verb", "stream")
     cls = _resolve_class(entry["class"], outflow_module, inflow_module)
-    common: Dict[str, Any] = {
+    common: dict[str, Any] = {
         "name": entry["name"],
         "cls": cls,
         "interval": float(entry["interval"]),
@@ -237,7 +238,7 @@ def _build_current(
 
 def _lookup_sidecar_symbol(
     name: str,
-    modules: Tuple[Optional[ModuleType], ...],
+    modules: tuple[Optional[ModuleType], ...],
     predicate: Callable[[Any], bool],
     not_found_message: str,
 ) -> Any:
@@ -357,7 +358,7 @@ def _resolve_callable(
 
 
 def _build_flow(
-    raw_flow: Dict[str, Any],
+    raw_flow: dict[str, Any],
     outflow_module: Optional[ModuleType],
     inflow_module: Optional[ModuleType],
 ) -> FlowControl:

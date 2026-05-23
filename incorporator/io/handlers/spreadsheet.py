@@ -17,8 +17,9 @@ module never pulls a heavy dep at framework import time. This mirrors
 """
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Union
+from typing import Any, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import deserialize_nested, serialize_nested
@@ -41,7 +42,7 @@ class ExcelHandler(BaseFormatHandler):
     missing.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
         """Read an ``.xlsx`` file and yield rows as dicts.
 
         Opens the workbook in ``read_only=True`` + ``data_only=True`` mode so
@@ -73,17 +74,17 @@ class ExcelHandler(BaseFormatHandler):
                     return []
 
                 # Sanitise headers: missing/blank header cells get a placeholder.
-                headers: List[str] = [
+                headers: list[str] = [
                     str(h) if h is not None and str(h).strip() else f"unknown_column_{i}"
                     for i, h in enumerate(header_row)
                 ]
 
-                rows: List[Dict[str, Any]] = []
+                rows: list[dict[str, Any]] = []
                 for raw_row in row_iter:
                     # Skip fully empty rows — common with trailing whitespace in real workbooks.
                     if all(cell is None for cell in raw_row):
                         continue
-                    parsed: Dict[str, Any] = {}
+                    parsed: dict[str, Any] = {}
                     for header, cell in zip(headers, raw_row, strict=False):
                         parsed[header] = deserialize_nested(cell)
                     rows.append(parsed)
@@ -95,7 +96,7 @@ class ExcelHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"Excel Read Error: {e}") from e
 
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Stream rows to an ``.xlsx`` file using openpyxl's write-only mode.
 
         Uses ``Workbook(write_only=True)`` so only the current row is held
@@ -115,18 +116,18 @@ class ExcelHandler(BaseFormatHandler):
         # absolute Path.  ``Path()`` is a no-op on a Path instance.
         path = file_path if isinstance(file_path, Path) else Path(file_path)
         sheet_name = kwargs.get("sheet_name", "Sheet1")
-        explicit_fieldnames: List[str] = kwargs.get("all_field_names") or []
+        explicit_fieldnames: list[str] = kwargs.get("all_field_names") or []
         # Formula-injection mitigation defaults ON — cells starting with
         # =, @, +, -, or whitespace control chars get a single-quote prefix
         # so Excel renders them as text instead of evaluating.  Opt out via
         # ``xlsx_safe_formulas=False`` when the consumer needs raw passthrough.
         safe_formulas: bool = kwargs.get("xlsx_safe_formulas", True)
 
-        data_iter: Iterable[Dict[str, Any]]
+        data_iter: Iterable[dict[str, Any]]
 
         if not explicit_fieldnames:
             # No schema hint (called outside export()): must materialize to discover columns.
-            rows_list: List[Dict[str, Any]] = list(data)
+            rows_list: list[dict[str, Any]] = list(data)
             explicit_fieldnames = list(dict.fromkeys(k for row in rows_list for k in row))
             data_iter = iter(rows_list)
         else:

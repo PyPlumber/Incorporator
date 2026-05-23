@@ -14,9 +14,10 @@ build + per-class export semantics.
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from types import ModuleType
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple, cast
+from typing import Any, Optional, cast
 
 from ...list import IncorporatorList
 from ..logger import Wave  # re-export for callers
@@ -25,7 +26,6 @@ from ._shared import _daemon_tick, _interruptible_sleep, _resolve_if_exists_for_
 __all__ = ["Wave", "_outflow_daemon", "flush"]
 
 logger = logging.getLogger(__name__)
-
 
 # One-time-per-class WARNING dedup for ``_warn_on_bare_user_class`` so a
 # long-running daemon doesn't spam the same diagnosis every wave.  Keyed
@@ -37,7 +37,7 @@ _BARE_CLASS_WARNED: set[int] = set()
 def _warn_on_bare_user_class(
     user_cls: Any,
     base_class: Any,
-    sample_row: Optional[Dict[str, Any]],
+    sample_row: Optional[dict[str, Any]],
 ) -> None:
     """Warn once when a bare user class declaration suppresses field inference.
 
@@ -94,7 +94,7 @@ def _warn_on_bare_user_class(
 def _normalise_outflow_return(
     result: Any,
     default_class_name: str,
-) -> Tuple[Dict[str, List[Any]], bool]:
+) -> tuple[dict[str, list[Any]], bool]:
     """Coerce any ``outflow(state)`` return shape into ``{class_name: rows}``.
 
     Returns ``(grouped, is_multi_output)`` so the daemon can decide whether
@@ -132,11 +132,11 @@ def _normalise_outflow_return(
             # a spurious "multi-output dict but export_params is single-
             # output" warning at _resolve_export_params_for.
             if len(result) == 1 and default_class_name in result:
-                return cast(Dict[str, List[Any]], dict(result)), False
+                return cast(dict[str, list[Any]], dict(result)), False
             # Preserve values verbatim — copying with ``list(v)`` would
             # strip IncorporatorList's ``_model_class`` attribute and
             # defeat the flush() pass-through fast path.
-            return cast(Dict[str, List[Any]], dict(result)), True
+            return cast(dict[str, list[Any]], dict(result)), True
         return {default_class_name: [result]}, False
     # Anything else — fall back to wrapping in a list to match the legacy
     # "auto-coerce to list[dict]" contract.
@@ -145,9 +145,9 @@ def _normalise_outflow_return(
 
 def _resolve_export_params_for(
     derived_name: str,
-    export_params: Dict[str, Any],
+    export_params: dict[str, Any],
     is_multi_output: bool,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Pick the right ``export_params`` slice for one derived class.
 
     Detection rule (matches the user's pick — "detect by `file_path` key"):
@@ -168,18 +168,18 @@ def _resolve_export_params_for(
                 "All derived classes will write to the same file."
             )
         return export_params
-    return cast(Dict[str, Any], export_params.get(derived_name, {}))
+    return cast(dict[str, Any], export_params.get(derived_name, {}))
 
 
 async def flush(
-    outflow_fn: Callable[[Dict[str, Any]], Any],
-    state: Dict[str, List[Any]],
+    outflow_fn: Callable[[dict[str, Any]], Any],
+    state: dict[str, list[Any]],
     *,
     default_output_class_name: str,
     base_class: Any,
-    export_params: Dict[str, Any],
+    export_params: dict[str, Any],
     outflow_module: Optional[ModuleType] = None,
-) -> AsyncIterator[Tuple[str, int, Optional[Exception]]]:
+) -> AsyncIterator[tuple[str, int, Optional[Exception]]]:
     """Run one outflow flush; yield one ``(derived_name, row_count, error)`` per class.
 
     Calls ``outflow_fn(state)`` in :func:`asyncio.to_thread`, normalises the
@@ -299,10 +299,10 @@ async def flush(
 async def _outflow_daemon(
     output_class_name: str,
     base_class: Any,
-    source_refs: List[List[Any]],
-    source_classes: List[Any],
+    source_refs: list[list[Any]],
+    source_classes: list[Any],
     outflow_fn: Any,
-    export_params: Dict[str, Any],
+    export_params: dict[str, Any],
     lock: asyncio.Lock,
     wave_queue: "asyncio.Queue[Optional[Wave]]",
     shutdown_event: asyncio.Event,
@@ -392,9 +392,9 @@ async def _outflow_daemon(
                 outflow_module=outflow_module,
             ):
                 produced.add(derived_name)
-                row_count_holder: List[int] = [count]
+                row_count_holder: list[int] = [count]
 
-                def _read_row_count(holder: List[int] = row_count_holder) -> int:
+                def _read_row_count(holder: list[int] = row_count_holder) -> int:
                     return holder[0]
 
                 async with _daemon_tick(

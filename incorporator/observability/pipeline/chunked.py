@@ -5,8 +5,9 @@ import logging
 import statistics
 import time
 from collections import deque
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, Optional
 
 import httpx
 from pydantic import ValidationError
@@ -20,9 +21,9 @@ logger = logging.getLogger(__name__)
 
 async def _run_chunking_engine(
     cls: Any,
-    incorp_params: Dict[str, Any],
-    refresh_params: Optional[Dict[str, Any]],
-    export_params: Optional[Dict[str, Any]],
+    incorp_params: dict[str, Any],
+    refresh_params: Optional[dict[str, Any]],
+    export_params: Optional[dict[str, Any]],
     poll_interval: Optional[float],
     paginator: Any,
     adapt_chunk_size: bool = False,

@@ -33,8 +33,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -69,7 +70,7 @@ class FlowState:
     last_consumed_at: Optional[float] = None
     bucket_tokens: Optional[float] = None
     bucket_last_refill_at: Optional[float] = None
-    window_log: List[float] = field(default_factory=list)
+    window_log: list[float] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +452,6 @@ class BoundPenstock:
 # Per-host penstock registry — the HTTP-layer entry point
 # ---------------------------------------------------------------------------
 
-
 #: Per-host penstock registry — keyed by lowercase hostname.  **Empty by
 #: default**: the framework ships with no implicit per-host throttling.
 #: Use :func:`register_host_penstock` to attach a penstock to any host
@@ -473,12 +473,10 @@ class BoundPenstock:
 #:     register_host_penstock("pokeapi.co", SustainedPenstock(rate_per_sec=1.5))
 #:     # NHTSA vPIC: 100–200 req/min documented; method-agnostic.
 #:     register_host_penstock("vpic.nhtsa.dot.gov", SustainedPenstock(rate_per_sec=1.5))
-_HOST_PENSTOCKS: Dict[str, Penstock] = {}
-
+_HOST_PENSTOCKS: dict[str, Penstock] = {}
 
 DEFAULT_RPS: float = 15.0
 """Penstock rate used when no host match and no caller-supplied rate."""
-
 
 _BYPASS_ENV_VAR: str = "INCORPORATOR_RATE_LIMIT_BYPASS"
 """Set to ``"1"`` to force :class:`NullPenstock` everywhere — test-only."""
@@ -569,7 +567,7 @@ def resolve_penstock(
     return BoundPenstock(penstock=penstock, state=FlowState())
 
 
-def known_host_rates() -> Dict[str, float]:
+def known_host_rates() -> dict[str, float]:
     """Return ``host → rate_per_sec`` for every host in the penstock registry.
 
     Intended for diagnostics, logging, and the
@@ -580,7 +578,7 @@ def known_host_rates() -> Dict[str, float]:
     Window / Signal / Null / custom subclasses without a single rate
     figure are skipped.
     """
-    rates: Dict[str, float] = {}
+    rates: dict[str, float] = {}
     for host, penstock in _HOST_PENSTOCKS.items():
         rate = getattr(penstock, "rate_per_sec", None)
         if isinstance(rate, int | float):

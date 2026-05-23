@@ -34,8 +34,9 @@ Design choices:
 import contextlib
 import json
 import logging
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
-from typing import Any, Callable, ContextManager, Dict, Iterable, Iterator, List, Optional, Set, Union
+from typing import Any, Optional, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import FormatType, convert_type, serialize_nested
@@ -50,12 +51,12 @@ _WRITE_BATCH_ROWS = 1024
 
 
 def _stream_columnar_write(
-    data: Iterable[Dict[str, Any]],
+    data: Iterable[dict[str, Any]],
     file_path: Union[str, Path],
-    kwargs: Dict[str, Any],
+    kwargs: dict[str, Any],
     *,
     format_label: str,
-    sink_factory: Callable[[Path], ContextManager[Any]],
+    sink_factory: Callable[[Path], contextlib.AbstractContextManager[Any]],
     build_writer: Callable[[Any, Any], Any],
     write_batch: Callable[[Any, Any], None],
 ) -> None:
@@ -138,7 +139,7 @@ def _coerce_columnar_source(source: Any, handler_name: str) -> Any:
     raise IncorporatorFormatError(f"{handler_name} requires raw bytes or a physical Path object.")
 
 
-def _extract_logical_type_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+def _extract_logical_type_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     """Pull the opt-in Parquet/Feather/ORC logical-type kwargs into a single dict.
 
     Shared by ParquetHandler, FeatherHandler, and OrcHandler so all three
@@ -161,12 +162,12 @@ def _extract_logical_type_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
 
 def _arrow_type_for(
     name: str,
-    properties: Dict[str, Any],
+    properties: dict[str, Any],
     *,
-    decimal_columns: Optional[Set[str]] = None,
+    decimal_columns: Optional[set[str]] = None,
     decimal_precision: int = 38,
     decimal_scale: int = 18,
-    timestamp_columns: Optional[Set[str]] = None,
+    timestamp_columns: Optional[set[str]] = None,
     timestamp_unit: str = "us",
     timestamp_tz: Optional[str] = "UTC",
 ) -> Any:
@@ -215,7 +216,7 @@ def _arrow_type_for(
 
     parquet_type_str = convert_type(json_type or "", FormatType.JSON, FormatType.PARQUET)
 
-    type_map: Dict[str, Any] = {
+    type_map: dict[str, Any] = {
         "bool": pa.bool_(),
         "int32": pa.int32(),
         "int64": pa.int64(),
@@ -228,7 +229,7 @@ def _arrow_type_for(
     return type_map.get(parquet_type_str, pa.string())
 
 
-def _table_to_dicts(table: Any) -> List[Dict[str, Any]]:
+def _table_to_dicts(table: Any) -> list[dict[str, Any]]:
     """Convert a ``pyarrow.Table`` to ``List[Dict]`` with the minimum allocations.
 
     Shared parse-path helper for ParquetHandler, FeatherHandler, and OrcHandler —
@@ -259,7 +260,7 @@ def _table_to_dicts(table: Any) -> List[Dict[str, Any]]:
     import pyarrow as pa
     import pyarrow.compute as pc
 
-    rows: List[Dict[str, Any]] = table.to_pylist()
+    rows: list[dict[str, Any]] = table.to_pylist()
 
     # Find which columns might contain JSON-serialised nested values.
     # serialize_nested() flattens dict/list -> JSON string, so only string
@@ -308,9 +309,9 @@ def _table_to_dicts(table: Any) -> List[Dict[str, Any]]:
 
 
 def _build_columnar_schema(
-    explicit_keys: List[str],
-    properties: Dict[str, Any],
-    kwargs: Dict[str, Any],
+    explicit_keys: list[str],
+    properties: dict[str, Any],
+    kwargs: dict[str, Any],
 ) -> Optional[Any]:
     """Build an explicit pyarrow schema from the Pydantic JSON-schema properties.
 
@@ -327,7 +328,7 @@ def _build_columnar_schema(
     )
 
 
-def _coerce_batch(batch: List[Dict[str, Any]], explicit_keys: List[str]) -> List[Dict[str, Any]]:
+def _coerce_batch(batch: list[dict[str, Any]], explicit_keys: list[str]) -> list[dict[str, Any]]:
     """Apply serialize_nested to one batch — nested lists/dicts → JSON strings."""
     return [
         {k: (serialize_nested(row.get(k)) if row.get(k) is not None else None) for k in explicit_keys} for row in batch
@@ -335,10 +336,10 @@ def _coerce_batch(batch: List[Dict[str, Any]], explicit_keys: List[str]) -> List
 
 
 def _batched_dicts(
-    rows: Iterable[Dict[str, Any]], explicit_keys: List[str], batch_size: int
-) -> Iterator[List[Dict[str, Any]]]:
+    rows: Iterable[dict[str, Any]], explicit_keys: list[str], batch_size: int
+) -> Iterator[list[dict[str, Any]]]:
     """Yield ``batch_size``-row windows of coerced dicts; holds one batch in RAM."""
-    batch: List[Dict[str, Any]] = []
+    batch: list[dict[str, Any]] = []
     for row in rows:
         batch.append(row)
         if len(batch) >= batch_size:
@@ -348,7 +349,7 @@ def _batched_dicts(
         yield _coerce_batch(batch, explicit_keys)
 
 
-def _materialize_table(data: Iterable[Dict[str, Any]], kwargs: Dict[str, Any]) -> Any:
+def _materialize_table(data: Iterable[dict[str, Any]], kwargs: dict[str, Any]) -> Any:
     """**DEPRECATED** — retained for any external caller; new code should stream.
 
     Coerce an iterable of dicts into a single pyarrow.Table.  Loads the full
@@ -359,10 +360,10 @@ def _materialize_table(data: Iterable[Dict[str, Any]], kwargs: Dict[str, Any]) -
     import pyarrow as pa
 
     pydantic_schema = kwargs.get("pydantic_schema", {})
-    properties: Dict[str, Any] = pydantic_schema.get("properties", {})
-    explicit_keys: List[str] = kwargs.get("all_field_names") or list(properties.keys())
+    properties: dict[str, Any] = pydantic_schema.get("properties", {})
+    explicit_keys: list[str] = kwargs.get("all_field_names") or list(properties.keys())
 
-    rows_list: List[Dict[str, Any]] = list(data)
+    rows_list: list[dict[str, Any]] = list(data)
     if not rows_list:
         return None
     if not explicit_keys:
@@ -376,8 +377,8 @@ def _materialize_table(data: Iterable[Dict[str, Any]], kwargs: Dict[str, Any]) -
 
 
 def _batched_columns(
-    rows: Iterable[Dict[str, Any]], explicit_keys: List[str], batch_size: int
-) -> Iterator[Dict[str, List[Any]]]:
+    rows: Iterable[dict[str, Any]], explicit_keys: list[str], batch_size: int
+) -> Iterator[dict[str, list[Any]]]:
     """Yield ``batch_size``-row windows as **column-oriented** dicts.
 
     Why column-oriented: ``pa.Table.from_pydict`` is materially faster than
@@ -388,7 +389,7 @@ def _batched_columns(
     avoids the per-row dict-unpack on its side.  Used by Parquet, Feather
     and ORC writers so all three columnar formats share the same speedup.
     """
-    cols: Dict[str, List[Any]] = {k: [] for k in explicit_keys}
+    cols: dict[str, list[Any]] = {k: [] for k in explicit_keys}
     batch_rows = 0
     for row in rows:
         for k in explicit_keys:
@@ -404,8 +405,8 @@ def _batched_columns(
 
 
 def _stream_arrow_batches(
-    data: Iterable[Dict[str, Any]],
-    kwargs: Dict[str, Any],
+    data: Iterable[dict[str, Any]],
+    kwargs: dict[str, Any],
 ) -> Iterator[Any]:
     """Yield ``pyarrow.Table`` batches, each capped at ``_WRITE_BATCH_ROWS`` rows.
 
@@ -427,14 +428,14 @@ def _stream_arrow_batches(
     import pyarrow as pa
 
     pydantic_schema = kwargs.get("pydantic_schema", {})
-    properties: Dict[str, Any] = pydantic_schema.get("properties", {})
-    explicit_keys: List[str] = kwargs.get("all_field_names") or list(properties.keys())
+    properties: dict[str, Any] = pydantic_schema.get("properties", {})
+    explicit_keys: list[str] = kwargs.get("all_field_names") or list(properties.keys())
 
     # Iterator-vs-list dance: when we don't have an explicit-keys hint we
     # need to peek at the first row to discover its columns.  Pulling one row
     # with ``next()`` and chaining it back keeps the rest of the iterator
     # untouched and streaming.
-    data_iter: Iterator[Dict[str, Any]] = iter(data)
+    data_iter: Iterator[dict[str, Any]] = iter(data)
     if not explicit_keys:
         try:
             first_row = next(data_iter)
@@ -462,7 +463,7 @@ class ParquetHandler(BaseFormatHandler):
     missing.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
         """Read a Parquet file or byte buffer and yield rows as dicts.
 
         Uses ``pq.read_table().to_pylist()`` for the single-shot read path,
@@ -485,7 +486,7 @@ class ParquetHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"Parquet Read Error: {e}") from e
 
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Stream rows to a Parquet file in 1024-row Arrow batches.
 
         Uses ``ParquetWriter`` so memory holds at most one row group at a
@@ -528,7 +529,7 @@ class FeatherHandler(BaseFormatHandler):
     Compression defaults to LZ4 (Feather V2's native default).
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
         """Read a Feather V2 file or byte buffer and yield rows as dicts.
 
         Uses memory-mapped reads where possible (Feather's headline feature).
@@ -546,7 +547,7 @@ class FeatherHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"Feather Read Error: {e}") from e
 
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Stream rows into a Feather V2 (Arrow IPC) file in 1024-row batches.
 
         Feather V2 is Arrow IPC file format under the hood — pyarrow exposes a
@@ -596,7 +597,7 @@ class OrcHandler(BaseFormatHandler):
     even though pyarrow itself loaded successfully.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
         """Read an ORC file or byte buffer and yield rows as dicts.
 
         Routes through the same ``_table_to_dicts`` helper as Parquet/Feather
@@ -620,7 +621,7 @@ class OrcHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"ORC Read Error: {e}") from e
 
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Stream rows into an ORC file in 1024-row batches.
 
         pyarrow's ``ORCWriter`` accepts incremental ``write_table`` calls,

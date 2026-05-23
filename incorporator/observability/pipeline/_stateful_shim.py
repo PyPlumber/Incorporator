@@ -29,8 +29,9 @@ importing ``Incorporator`` directly — keeps the import graph one-directional
 import re
 import time
 import types
+from collections.abc import AsyncGenerator, Callable
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Type
+from typing import Any, Optional
 
 from ..logger import Wave
 from . import DEFAULT_EXPORT_INTERVAL_SEC, DEFAULT_REFRESH_INTERVAL_SEC
@@ -42,16 +43,16 @@ __all__ = ["stream_stateful_via_fjord"]
 
 async def stream_stateful_via_fjord(
     *,
-    receiver_cls: Type[Any],
-    base_class: Type[Any],
-    incorp_params: Dict[str, Any],
-    refresh_params: Optional[Dict[str, Any]],
-    export_params: Optional[Dict[str, Any]],
+    receiver_cls: type[Any],
+    base_class: type[Any],
+    incorp_params: dict[str, Any],
+    refresh_params: Optional[dict[str, Any]],
+    export_params: Optional[dict[str, Any]],
     poll_interval: Optional[float],
     refresh_interval: Optional[float],
     export_interval: Optional[float],
     outflow_user_module: Optional[Any],
-    inflow_callable: Optional[Callable[[Dict[str, Any]], Any]] = None,
+    inflow_callable: Optional[Callable[[dict[str, Any]], Any]] = None,
 ) -> AsyncGenerator[Wave, None]:
     """Run ``stream(stateful_polling=True)`` semantics by adapting to fjord.
 
@@ -147,7 +148,7 @@ async def stream_stateful_via_fjord(
     # the supplied outflow.py, otherwise synthesise an identity outflow that
     # returns the live IncorporatorList for the receiver class.  flush()'s
     # pass-through fast path detects this and preserves instance identity.
-    def _identity_outflow(state: Dict[str, Any]) -> Dict[str, Any]:
+    def _identity_outflow(state: dict[str, Any]) -> dict[str, Any]:
         return {cls_name: state[cls_name]}
 
     outflow_fn: Any = _identity_outflow
@@ -172,14 +173,14 @@ async def stream_stateful_via_fjord(
     r_interval = refresh_interval or poll_interval or DEFAULT_REFRESH_INTERVAL_SEC
     e_interval = export_interval or poll_interval or DEFAULT_EXPORT_INTERVAL_SEC
 
-    stream_params: List[Dict[str, Any]] = [
+    stream_params: list[dict[str, Any]] = [
         {
             "cls": receiver_cls,
             "incorp_params": incorp_params,
             "refresh_params": refresh_params,
         }
     ]
-    effective_export_params: Dict[str, Any] = export_params if export_params is not None else {}
+    effective_export_params: dict[str, Any] = export_params if export_params is not None else {}
 
     # Anchored regex: only strip " for <cls_name>" when it precedes " yielded".
     # That's the exact shape fjord emits in the seed-empty failure message

@@ -8,7 +8,7 @@ logging machinery in ``observability/logger.py``.  ``logger.py`` re-exports
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -82,7 +82,7 @@ class Wave(BaseModel):
         ),
     )
     rows_processed: int = Field(..., description="Number of rows successfully processed.")
-    failed_sources: List[str] = Field(default_factory=list, description="Failed source URIs.")
+    failed_sources: list[str] = Field(default_factory=list, description="Failed source URIs.")
     processing_time_sec: float = Field(..., description="Chunk processing duration in seconds.")
     source_url: Optional[str] = Field(default=None, description="Origin URL or file path for the chunk.")
     bytes_processed: Optional[int] = Field(default=None, description="Raw byte count of the HTTP response body.")

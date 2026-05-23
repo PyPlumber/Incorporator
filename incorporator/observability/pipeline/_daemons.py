@@ -1,7 +1,7 @@
 """Per-source refresh and export daemons used by stateful and fjord engines."""
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from ..logger import Wave  # re-exported for callers that still import it from here
 from ._shared import _daemon_tick, _interruptible_sleep, _resolve_if_exists_for_export, _row_count
@@ -11,8 +11,8 @@ __all__ = ["Wave", "_refresh_daemon", "_export_daemon"]
 
 async def _refresh_daemon(
     cls: Any,
-    dataset_ref: List[Any],
-    refresh_params: Dict[str, Any],
+    dataset_ref: list[Any],
+    refresh_params: dict[str, Any],
     lock: asyncio.Lock,
     wave_queue: "asyncio.Queue[Optional[Wave]]",
     shutdown_event: asyncio.Event,
@@ -57,8 +57,8 @@ async def _refresh_daemon(
 
 async def _export_daemon(
     cls: Any,
-    dataset_ref: List[Any],
-    export_params: Dict[str, Any],
+    dataset_ref: list[Any],
+    export_params: dict[str, Any],
     lock: asyncio.Lock,
     wave_queue: "asyncio.Queue[Optional[Wave]]",
     shutdown_event: asyncio.Event,
@@ -84,7 +84,7 @@ async def _export_daemon(
     # The export body re-binds ``snapshot`` per tick — capture it via a
     # nullable closure so ``row_count_fn`` sees the latest value without
     # passing it through the helper's signature.
-    snapshot: List[Any] = [None]
+    snapshot: list[Any] = [None]
     while not shutdown_event.is_set():
         loop_idx += 1
         async with _daemon_tick(

@@ -7,9 +7,10 @@ import logging
 import os
 import queue
 import re
+from collections.abc import AsyncGenerator
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 
 from ..base import _UNSET, Incorporator
 from ..list import IncorporatorList
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
 
 # Global registry to prevent duplicate background threads if a class is dynamically rebuilt
-_ACTIVE_LISTENERS: Dict[str, QueueListener] = {}
+_ACTIVE_LISTENERS: dict[str, QueueListener] = {}
 MAX_LOG_THREADS = 50  # Hard OS limit constraint
 
 __all__ = [
@@ -32,7 +33,6 @@ __all__ = [
     # if any caller uses that pattern; explicit list keeps Wave + LoggedIncorporator
     # discoverable in IDE auto-import suggestions.
 ]
-
 
 # ---------------------------------------------------------------------------
 # Secret redaction for log output
@@ -59,7 +59,7 @@ def _redact(text: str) -> str:
     return _REDACT_QS_PATTERN.sub(r"\1=***REDACTED***", text)
 
 
-def _route_wave_to_log(cls: Type[Any], wave: "Wave") -> None:
+def _route_wave_to_log(cls: type[Any], wave: "Wave") -> None:
     """Route a single Wave to the appropriate log level based on its outcome.
 
     Shared adapter used by :meth:`LoggedIncorporator.stream` and ``fjord``. The
@@ -213,7 +213,7 @@ def _safe_log_filename(prefix: str, suffix: str) -> str:
     return str(log_dir / f"{clean_prefix}_{suffix}")
 
 
-def _read_filtered(filename: str, key: str) -> List[Dict[str, Any]]:
+def _read_filtered(filename: str, key: str) -> list[dict[str, Any]]:
     """Read every JSONL record from ``filename`` that contains ``key`` as a top-level key.
 
     Skips lines that fail JSON decoding or lack the requested key.  Safe to
@@ -232,7 +232,7 @@ def _read_filtered(filename: str, key: str) -> List[Dict[str, Any]]:
     path = Path(filename).resolve()
     if not path.is_file():
         return []
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     try:
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
@@ -260,7 +260,7 @@ class JSONFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        log_obj: Dict[str, Any] = {
+        log_obj: dict[str, Any] = {
             "level": record.levelname,
             "msg": record.getMessage(),
             "time": self.formatTime(record, self.datefmt),
@@ -306,7 +306,7 @@ class StandardFilter(logging.Filter):
         return not bool(getattr(record, "is_api", False))
 
 
-def setup_class_logger(cls: Union[str, Type[Any]]) -> None:
+def setup_class_logger(cls: Union[str, type[Any]]) -> None:
     """Configures JSON-formatted, non-blocking logging for a dynamic subclass or named logger.
 
     Accepts either a class (the typical case — ``setup_class_logger(MyClass)``)
@@ -433,7 +433,7 @@ class LoggingMixin:
     """
 
     @classmethod
-    async def get_error(cls) -> List[Dict[str, Any]]:
+    async def get_error(cls) -> list[dict[str, Any]]:
         """Pull every error this class has logged for a DLQ-retry pass after an overnight pipeline finishes.
 
         Reach for ``get_error()`` when a stream or fjord daemon has
@@ -465,14 +465,14 @@ class LoggingMixin:
         :func:`asyncio.to_thread` so the event loop is never blocked.
         """
 
-        def _read_disk() -> List[Dict[str, Any]]:
+        def _read_disk() -> list[dict[str, Any]]:
             filename = _safe_log_filename(cls.__name__, "error.log")
             path = Path(filename).resolve()
 
             if not path.is_file():
                 return []
 
-            errors: List[Dict[str, Any]] = []
+            errors: list[dict[str, Any]] = []
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
@@ -488,7 +488,7 @@ class LoggingMixin:
         return await asyncio.to_thread(_read_disk)
 
     @classmethod
-    async def get_rejects(cls) -> List[Dict[str, Any]]:
+    async def get_rejects(cls) -> list[dict[str, Any]]:
         """Pull every reject this class has logged from ``logs/<ClassName>_error.log``.
 
         Reach for ``get_rejects()`` after an overnight pipeline to iterate
@@ -748,7 +748,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
 
     @classmethod
     async def incorp(
-        cls: Type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
+        cls: type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
     ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
         """Production-observable variant of :meth:`Incorporator.incorp`.
 
@@ -801,7 +801,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
 
     @classmethod
     async def refresh(
-        cls: Type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
+        cls: type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
     ) -> Union[TLoggedIncorporator, IncorporatorList[TLoggedIncorporator]]:
         """Production-observable variant of :meth:`Incorporator.refresh`.
 
@@ -842,7 +842,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         return result
 
     @classmethod
-    async def export(cls: Type[TLoggedIncorporator], *, enable_logging: bool = False, **kwargs: Any) -> None:
+    async def export(cls: type[TLoggedIncorporator], *, enable_logging: bool = False, **kwargs: Any) -> None:
         """Production-observable variant of :meth:`Incorporator.export`.
 
         Serialise the object graph to disk, with an
@@ -888,10 +888,10 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
 
     @classmethod
     async def stream(  # type: ignore[override]
-        cls: Type[TLoggedIncorporator],
-        incorp_params: Dict[str, Any],
-        refresh_params: Optional[Dict[str, Any]] = _UNSET,
-        export_params: Optional[Dict[str, Any]] = None,
+        cls: type[TLoggedIncorporator],
+        incorp_params: dict[str, Any],
+        refresh_params: Optional[dict[str, Any]] = _UNSET,
+        export_params: Optional[dict[str, Any]] = None,
         poll_interval: Optional[float] = None,
         stateful_polling: bool = False,
         refresh_interval: Optional[float] = None,
@@ -985,9 +985,9 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     @classmethod
     async def fjord(
         cls,
-        stream_params: List[Dict[str, Any]],
+        stream_params: list[dict[str, Any]],
         outflow: Any,
-        export_params: Dict[str, Any],
+        export_params: dict[str, Any],
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
         inflow: Optional[Any] = None,

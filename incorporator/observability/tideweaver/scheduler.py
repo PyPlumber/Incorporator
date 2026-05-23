@@ -34,20 +34,12 @@ import logging
 import statistics
 import time
 from collections import deque
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Deque,
-    Dict,
-    FrozenSet,
-    List,
     Optional,
-    Set,
-    Tuple,
     cast,
 )
 
@@ -79,7 +71,7 @@ class _EdgeState(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    waves: Deque[List[Any]] = Field(default_factory=deque)
+    waves: deque[list[Any]] = Field(default_factory=deque)
     """FIFO history of wave snapshots; each entry is one tick's instance list.
 
     ``collections.deque`` (not ``list``) — appends are O(1) and the trim
@@ -183,12 +175,12 @@ class Tideweaver:
             min(1.0, min(c.interval for c in watershed.currents) / 2.0),
         )
         self._backlog_backoff_factor = backlog_backoff_factor
-        self._recent_pass_metrics: Deque[Tuple[float, int]] = deque(maxlen=10)
+        self._recent_pass_metrics: deque[tuple[float, int]] = deque(maxlen=10)
 
-        self._state: Dict[str, _CurrentState] = {c.name: _CurrentState() for c in watershed.currents}
+        self._state: dict[str, _CurrentState] = {c.name: _CurrentState() for c in watershed.currents}
         # ``_last_consumed`` keys on edge tuples, not current names — so it's
         # a standalone dict instead of a field on ``_CurrentState``.
-        self._last_consumed: Dict[Tuple[str, str], datetime] = {}
+        self._last_consumed: dict[tuple[str, str], datetime] = {}
         self._tide_number = 0
         # Canal-layer skip records accumulated across the run.  Populated at
         # the four ``_gate_reason`` skip-emit sites (penstock-limited,
@@ -196,22 +188,22 @@ class Tideweaver:
         # ``rejects`` property.  Parallel to ``IncorporatorList.rejects``
         # at the verb layer — gives callers a structured DLQ view of every
         # canal skip that never reached a tick body.
-        self._canal_rejects: List[RejectEntry] = []
-        self._currents_by_name: Dict[str, Current] = {c.name: c for c in watershed.currents}
-        self._topo: List[str] = watershed.toposort()
-        self._upstream: Dict[str, List[Tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
-        self._downstream: Dict[str, List[Tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
-        self._edge_state: Dict[Tuple[str, str], _EdgeState] = {}
+        self._canal_rejects: list[RejectEntry] = []
+        self._currents_by_name: dict[str, Current] = {c.name: c for c in watershed.currents}
+        self._topo: list[str] = watershed.toposort()
+        self._upstream: dict[str, list[tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
+        self._downstream: dict[str, list[tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
+        self._edge_state: dict[tuple[str, str], _EdgeState] = {}
         for e in watershed.edges:
             self._upstream[e.to_name].append((e.from_name, e.flow))
             self._downstream[e.from_name].append((e.to_name, e.flow))
             self._edge_state[(e.from_name, e.to_name)] = _EdgeState()
-        self._transitive_cache: Dict[str, List[str]] = {}
+        self._transitive_cache: dict[str, list[str]] = {}
 
         # Heap entries are ``(due_at_monotonic, counter, name)`` — counter
         # tiebreaks so heapq never compares Current names lexicographically.
         self._wake_event: asyncio.Event = asyncio.Event()
-        self._due_heap: List[Tuple[float, int, str]] = []
+        self._due_heap: list[tuple[float, int, str]] = []
         self._heap_counter: int = 0
         self._run_started_at: Optional[float] = None
 
@@ -220,7 +212,7 @@ class Tideweaver:
     # ------------------------------------------------------------------
 
     @property
-    def rejects(self) -> List[RejectEntry]:
+    def rejects(self) -> list[RejectEntry]:
         """Canal-layer skips accumulated during the run, as structured records.
 
         Parallel to :attr:`incorporator.IncorporatorList.rejects` at the
@@ -250,8 +242,8 @@ class Tideweaver:
     def summary(
         self,
         *,
-        tides: Optional[List[Tide]] = None,
-        waves: Optional[List["Wave"]] = None,
+        tides: Optional[list[Tide]] = None,
+        waves: Optional[list["Wave"]] = None,
     ) -> "TuningReport":
         """End-of-run convenience: feed accumulated rejects, tides, and waves to :func:`architect.tune`.
 
@@ -294,7 +286,7 @@ class Tideweaver:
         """
         # HTTP client pool + phase-offset anchor reset per-run, so a
         # Tideweaver instance is safely reusable across ``run()`` calls.
-        self._client_pool: Dict[Tuple[Any, ...], httpx.AsyncClient] = {}
+        self._client_pool: dict[tuple[Any, ...], httpx.AsyncClient] = {}
         self._run_started_at = time.monotonic()
         for c in self.watershed.currents:
             if c.phase_offset_sec > 0.0:
@@ -428,9 +420,9 @@ class Tideweaver:
     async def _run_pass(self, shutdown_event: asyncio.Event, wake_reason: WakeReason) -> Tide:
         self._tide_number += 1
         started = time.monotonic()
-        fired: List[str] = []
-        skipped: List[Tuple[str, str]] = []
-        outcomes: List[CurrentOutcome] = []
+        fired: list[str] = []
+        skipped: list[tuple[str, str]] = []
+        outcomes: list[CurrentOutcome] = []
         rejects_before = len(self._canal_rejects)
         in_flight_at_start = sum(1 for s in self._state.values() if s.in_flight is not None and not s.in_flight.done())
 
@@ -514,7 +506,7 @@ class Tideweaver:
             self._recent_pass_metrics.append((tide.duration_sec, tide.in_flight_count_at_start))
         return tide
 
-    def _gate_reason(self, current: Current, now: float) -> Tuple[Optional[str], FrozenSet[str]]:
+    def _gate_reason(self, current: Current, now: float) -> tuple[Optional[str], frozenset[str]]:
         """Return ``(None, bypassed)`` if ``current`` may fire; else ``(reason, set())``.
 
         Walks each inbound edge's :class:`FlowControl`:
@@ -539,7 +531,7 @@ class Tideweaver:
                     return "phase_offset", frozenset()
         elif (now - last) < current.interval:
             return "not_due", frozenset()
-        bypassed: Set[str] = set()
+        bypassed: set[str] = set()
         for up_name, flow in self._upstream[current.name]:
             edge = (up_name, current.name)
             up_state = self._state[up_name]
@@ -645,7 +637,7 @@ class Tideweaver:
                         return penstock_reason, frozenset()
         return None, frozenset(bypassed)
 
-    def _spawn_tick(self, current: Current, bypassed_upstreams: FrozenSet[str] = frozenset()) -> None:
+    def _spawn_tick(self, current: Current, bypassed_upstreams: frozenset[str] = frozenset()) -> None:
         now_mono = time.monotonic()
         state = self._state[current.name]
         state.last_tick_started = now_mono
@@ -660,7 +652,7 @@ class Tideweaver:
         # preserving task context (the current ``tenacity.AsyncRetrying``
         # does preserve it, but that's an implementation detail of the
         # ``on_error="restart"`` policy in ``_tick_wrapper`` below).
-        consumed_snapshot: Dict[str, datetime] = {}
+        consumed_snapshot: dict[str, datetime] = {}
         for up_name, _flow in self._upstream[current.name]:
             up_wave = self._state[up_name].last_wave_at
             if up_wave is not None:
@@ -671,8 +663,8 @@ class Tideweaver:
     async def _tick_wrapper(
         self,
         current: Current,
-        consumed_snapshot: Dict[str, datetime],
-        bypassed_upstreams: FrozenSet[str] = frozenset(),
+        consumed_snapshot: dict[str, datetime],
+        bypassed_upstreams: frozenset[str] = frozenset(),
     ) -> None:
         """Run one tick under the current's :attr:`on_error` policy."""
         try:
@@ -798,7 +790,7 @@ class Tideweaver:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _client_pool_key(incorp_params: Dict[str, Any]) -> Tuple[Any, ...]:
+    def _client_pool_key(incorp_params: dict[str, Any]) -> tuple[Any, ...]:
         """Build the hashable key for one HTTP-client config bundle.
 
         Mirrors the five kwargs ``HTTPClientBuilder.build_client`` consumes
@@ -815,7 +807,7 @@ class Tideweaver:
             headers_frozen,
         )
 
-    def _get_or_create_client(self, incorp_params: Dict[str, Any]) -> httpx.AsyncClient:
+    def _get_or_create_client(self, incorp_params: dict[str, Any]) -> httpx.AsyncClient:
         """Look up — or lazily build — the pooled client for this config bundle."""
         key = self._client_pool_key(incorp_params)
         client = self._client_pool.get(key)
@@ -864,7 +856,7 @@ class Tideweaver:
         else:
             pooled = self._get_or_create_client(incorp_params)
             params_with_client = {**incorp_params, "_client": pooled}
-        kwargs: Dict[str, Any] = {
+        kwargs: dict[str, Any] = {
             "incorp_params": params_with_client,
             "poll_interval": None,
             "stateful_polling": False,
@@ -876,7 +868,7 @@ class Tideweaver:
         inflow = current.inflow or self.watershed.inflow
         if inflow is not None:
             kwargs["inflow"] = inflow
-        accumulated: Dict[Any, Any] = {}
+        accumulated: dict[Any, Any] = {}
         async for _wave in current.cls.stream(**kwargs):
             accumulated.update(current.cls.inc_dict)
         # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
@@ -919,7 +911,7 @@ class Tideweaver:
         #
         # ``last_consumed_at`` is bumped by ``_tick_wrapper.finally``, not
         # here — keeps the Penstock accounting in one place.
-        state: Dict[str, List[Any]] = {}
+        state: dict[str, list[Any]] = {}
         direct_upstreams = {up_name for up_name, _flow in self._upstream[current.name]}
         all_upstreams = self._transitive_upstreams(current.name)
 
@@ -985,7 +977,7 @@ class Tideweaver:
     # Graph utilities
     # ------------------------------------------------------------------
 
-    def _transitive_upstreams(self, name: str) -> List[str]:
+    def _transitive_upstreams(self, name: str) -> list[str]:
         """Return the set of names reachable upstream from ``name`` (excluding self).
 
         Order is topological among the reachable ancestors so downstream

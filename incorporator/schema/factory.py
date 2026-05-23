@@ -10,8 +10,9 @@ Dependency direction: ``base.py → schema/factory.py → schema/{builder,router
 
 import logging
 import warnings
+from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Type, Union, cast
+from typing import TYPE_CHECKING, Any, Optional, Union, cast
 
 from pydantic import TypeAdapter
 
@@ -25,14 +26,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # JSON-Schema "type" string → Python type.  Mirrors the table at
 # ``incorporator/io/formats.py``.  Deliberately omits ``"string"`` —
 # coercing values to ``str`` is either a no-op (real strings) or actively
 # wrong (would cast numeric / boolean values to strings if a previous
 # typeless-format read populated _schema_union with ``"string"``).  See
 # ``_expand_conv_dict_with_schema_union`` below.
-_JSON_SCHEMA_TYPE_TO_PYTHON: Dict[str, type] = {
+_JSON_SCHEMA_TYPE_TO_PYTHON: dict[str, type] = {
     "integer": int,
     "number": float,
     "boolean": bool,
@@ -85,10 +85,10 @@ def _target_type_from_schema_info(schema_info: Mapping[str, Any]) -> Optional[ty
 
 
 def _effective_conv_cache_key(
-    conv_dict: Optional[Dict[str, Any]],
+    conv_dict: Optional[dict[str, Any]],
     schema_union: Mapping[str, Any],
     declared_field_names: frozenset[str],
-) -> Tuple[int, int, frozenset[str]]:
+) -> tuple[int, int, frozenset[str]]:
     """Cheap cache key for the per-class ``_cached_effective_conv`` slot.
 
     Captures the three inputs to :func:`_expand_conv_dict_with_schema_union`
@@ -114,10 +114,10 @@ def _effective_conv_cache_key(
 
 
 def _expand_conv_dict_with_schema_union(
-    conv_dict: Optional[Dict[str, Any]],
+    conv_dict: Optional[dict[str, Any]],
     schema_union: Mapping[str, Any],
     declared_field_names: Optional[frozenset[str]] = None,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[dict[str, Any]]:
     """Backfill ``inc()`` converters for fields the caller didn't name.
 
     Bridges the gap between ``_schema_union`` (which records the JSON-Schema
@@ -174,7 +174,7 @@ def _expand_conv_dict_with_schema_union(
 
 
 async def child_incorp(
-    cls: "Type[Incorporator]",
+    cls: "type[Incorporator]",
     inc_parent: Any,
     **kwargs: Any,
 ) -> Union["Incorporator", "IncorporatorList[Any]"]:
@@ -222,16 +222,16 @@ async def child_incorp(
 
 
 def build_instances(
-    cls: "Type[Incorporator]",
-    parsed_data: List[Any],
-    rejects: List["RejectEntry"],
+    cls: "type[Incorporator]",
+    parsed_data: list[Any],
+    rejects: list["RejectEntry"],
     is_single: bool,
-    target_class: Optional["Type[Incorporator]"] = None,
+    target_class: Optional["type[Incorporator]"] = None,
     inc_code: Optional[str] = None,
     inc_name: Optional[str] = None,
-    excl_lst: Optional[List[str]] = None,
-    conv_dict: Optional[Dict[str, Any]] = None,
-    name_chg: Optional[List[Tuple[str, str]]] = None,
+    excl_lst: Optional[list[str]] = None,
+    conv_dict: Optional[dict[str, Any]] = None,
+    name_chg: Optional[list[tuple[str, str]]] = None,
 ) -> Union["Incorporator", "IncorporatorList[Any]"]:
     """Transform, compile, and instantiate the parsed payload into Incorporator objects.
 
@@ -276,7 +276,7 @@ def build_instances(
     if not parsed_data:
         # Generate a safe empty class if an API returns 200 OK but 0 records
         EmptyClass = cast(
-            "Type[Incorporator]",
+            "type[Incorporator]",
             schema_builder.infer_dynamic_schema("DynamicModel", [{}], cls),
         )
         return IncorporatorList(EmptyClass, [], rejects=rejects)
@@ -345,7 +345,7 @@ def build_instances(
     else:
         _registry_size_before = len(schema_builder.SCHEMA_REGISTRY)
         ActualClass = cast(
-            "Type[Incorporator]",
+            "type[Incorporator]",
             schema_builder.infer_dynamic_schema("DynamicModel", transformed_data, cls),
         )
         # Hit when the registry size did not grow (infer_dynamic_schema returned
@@ -403,7 +403,7 @@ def build_instances(
         # raising on the first bad row.
         adapter = getattr(ActualClass, "_cached_type_adapter", None)
         if adapter is None:
-            adapter = TypeAdapter(List[ActualClass])  # type: ignore[valid-type]
+            adapter = TypeAdapter(list[ActualClass])  # type: ignore[valid-type]
             # setattr keeps mypy strict happy — ``_cached_type_adapter`` is a
             # dynamic cache attribute, not a declared class field.
             setattr(ActualClass, "_cached_type_adapter", adapter)  # noqa: B010
@@ -413,7 +413,7 @@ def build_instances(
         # asyncio.to_thread, this gate becomes unsafe -- revisit then.
         ActualClass._BATCH_INSERT_MODE = True
         try:
-            instances: List[Any] = adapter.validate_python(transformed_data)
+            instances: list[Any] = adapter.validate_python(transformed_data)
         finally:
             ActualClass._BATCH_INSERT_MODE = False
         ActualClass._ensure_inc_dict()

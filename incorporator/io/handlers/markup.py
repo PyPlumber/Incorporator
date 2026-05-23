@@ -22,8 +22,9 @@ Scope:
 """
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Union
+from typing import Any, Union
 
 from ...exceptions import IncorporatorFormatError
 from ..formats import ensure_string
@@ -32,7 +33,7 @@ from ._base import BaseFormatHandler, _require_optional
 logger = logging.getLogger(__name__)
 
 
-def _extract_rows_from_table(table_el: Any) -> List[Dict[str, Any]]:
+def _extract_rows_from_table(table_el: Any) -> list[dict[str, Any]]:
     """Extract a single <table> into a list of dicts keyed by header cells.
 
     Walks the table once: the first row containing <th> cells is taken as the
@@ -43,7 +44,7 @@ def _extract_rows_from_table(table_el: Any) -> List[Dict[str, Any]]:
     if not rows:
         return []
 
-    headers: List[str] = []
+    headers: list[str] = []
     header_row_idx = 0
 
     # Find the first row with <th> cells. If none, fall back to row 0.
@@ -60,7 +61,7 @@ def _extract_rows_from_table(table_el: Any) -> List[Dict[str, Any]]:
         headers = [(td.text_content() or "").strip() or f"col_{i}" for i, td in enumerate(first_row_cells)]
         header_row_idx = 0
 
-    parsed: List[Dict[str, Any]] = []
+    parsed: list[dict[str, Any]] = []
     for tr in rows[header_row_idx + 1 :]:
         cells = tr.xpath("./td")
         if not cells:
@@ -69,7 +70,7 @@ def _extract_rows_from_table(table_el: Any) -> List[Dict[str, Any]]:
         # Skip completely blank rows (formatting whitespace, etc.)
         if all(not v for v in values):
             continue
-        row_dict: Dict[str, Any] = {}
+        row_dict: dict[str, Any] = {}
         for i, val in enumerate(values):
             key = headers[i] if i < len(headers) else f"col_{i}"
             row_dict[key] = val
@@ -80,7 +81,7 @@ def _extract_rows_from_table(table_el: Any) -> List[Dict[str, Any]]:
 class HTMLHandler(BaseFormatHandler):
     """Parse-only HTML table handler. Requires lxml (ships in ``[speedups]``)."""
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
         """Extract ``<table>`` rows from an HTML payload and return them as dicts.
 
         By default returns the first table on the page. Pass ``table_index=N``
@@ -105,7 +106,7 @@ class HTMLHandler(BaseFormatHandler):
 
             if table_index == -1:
                 # Flatten ALL tables into one stream.
-                flat: List[Dict[str, Any]] = []
+                flat: list[dict[str, Any]] = []
                 for t in all_tables:
                     flat.extend(_extract_rows_from_table(t))
                 return flat
@@ -121,7 +122,7 @@ class HTMLHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"HTML Parse Error: {e}") from e
 
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Always raises — HTML write is intentionally out of scope.
 
         See the module docstring for the design rationale. Export to JSON,

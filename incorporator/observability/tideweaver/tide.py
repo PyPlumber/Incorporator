@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
@@ -86,12 +86,12 @@ class Tide(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     tide_number: int = Field(..., description="Monotonic 1-indexed counter of scheduler passes.")
-    fired: List[str] = Field(default_factory=list, description="Names of currents that produced a wave.")
-    skipped: List[Tuple[str, str]] = Field(
+    fired: list[str] = Field(default_factory=list, description="Names of currents that produced a wave.")
+    skipped: list[tuple[str, str]] = Field(
         default_factory=list,
         description="(current_name, reason) pairs for currents gated out this pass.",
     )
-    current_outcomes: List[CurrentOutcome] = Field(
+    current_outcomes: list[CurrentOutcome] = Field(
         default_factory=list,
         description="Structured per-current outcome list for this pass.",
     )
@@ -116,7 +116,7 @@ class Tide(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_serializer("current_outcomes")
-    def _serialize_current_outcomes(self, outcomes: List[CurrentOutcome]) -> List[Dict[str, Any]]:
+    def _serialize_current_outcomes(self, outcomes: list[CurrentOutcome]) -> list[dict[str, Any]]:
         """Serialize :class:`CurrentOutcome` dataclasses to plain dicts for JSON output.
 
         Pydantic v2 calls ``@field_serializer`` at class level — independent

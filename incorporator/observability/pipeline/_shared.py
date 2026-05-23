@@ -2,9 +2,10 @@
 
 import asyncio
 import time
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Callable, Dict, Optional
+from typing import Any, Optional
 
 from ..logger import Wave
 
@@ -136,8 +137,8 @@ def _resolve_if_exists_for_export(
 async def _enrich_and_load(
     cls: Any,
     dataset: Any,
-    refresh_params: Optional[Dict[str, Any]],
-    export_params: Optional[Dict[str, Any]],
+    refresh_params: Optional[dict[str, Any]],
+    export_params: Optional[dict[str, Any]],
     force_append: bool,
 ) -> None:
     """Atomic helper for the Enrich (Refresh) and Load (Export) phases."""

@@ -36,7 +36,8 @@ Example::
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from typing import Any, Optional
 
 from ..logger import _read_filtered, _route_reject_to_log, _route_tide_to_log, _safe_log_filename, setup_class_logger
 from .scheduler import TickFactory, Tideweaver
@@ -138,7 +139,7 @@ class LoggedTideweaver(Tideweaver):
                     _route_reject_to_log(self._logger_name, reject)
 
     @classmethod
-    async def get_tides(cls, logger_name: str) -> List[Dict[str, Any]]:
+    async def get_tides(cls, logger_name: str) -> list[dict[str, Any]]:
         """Return all tide records from error.log AND debug.log for ``logger_name``.
 
         Deduped by ``tide_number``, sorted ascending.  Tides land in
@@ -165,12 +166,12 @@ class LoggedTideweaver(Tideweaver):
                 print(t["tide_number"], t["fired"], t["duration_sec"])
         """
 
-        def _read_both() -> List[Dict[str, Any]]:
+        def _read_both() -> list[dict[str, Any]]:
             error_file = _safe_log_filename(logger_name, "error.log")
             debug_file = _safe_log_filename(logger_name, "debug.log")
             all_records = _read_filtered(error_file, "tide") + _read_filtered(debug_file, "tide")
             # Dedupe by tide_number (monotonic, deterministic ordering).
-            by_number: Dict[int, Dict[str, Any]] = {}
+            by_number: dict[int, dict[str, Any]] = {}
             for rec in all_records:
                 t = rec.get("tide", {})
                 tn = t.get("tide_number")
@@ -181,7 +182,7 @@ class LoggedTideweaver(Tideweaver):
         return await asyncio.to_thread(_read_both)
 
     @classmethod
-    async def get_rejects(cls, logger_name: str) -> List[Dict[str, Any]]:
+    async def get_rejects(cls, logger_name: str) -> list[dict[str, Any]]:
         """Return all reject records from error.log for ``logger_name``.
 
         Overrides :meth:`~incorporator.observability.logger.LoggingMixin.get_rejects`

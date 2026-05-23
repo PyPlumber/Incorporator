@@ -60,7 +60,6 @@ __all__ = [
     "_run_validation",
 ]
 
-
 if typer:
     app: Any = typer.Typer(
         name="incorporator",
@@ -96,11 +95,9 @@ else:
     # Failsafe for entrypoint if Typer is missing
     app = None
 
-
 # ---------------------------------------------------------------------------
 # Typer commands
 # ---------------------------------------------------------------------------
-
 
 if typer:
 

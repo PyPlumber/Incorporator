@@ -14,7 +14,7 @@ import logging
 import signal
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, cast
+from typing import Any, Optional, cast
 
 try:
     import typer as _typer
@@ -28,7 +28,6 @@ from .tokens import TokenResolutionError, resolve_tokens
 from .validate import validate_config
 
 logger = logging.getLogger(__name__)
-
 
 # Set to True by the ``stream`` / ``fjord`` commands when ``--json-output``
 # is requested.  Routes the status banners + error messages to stderr so
@@ -72,7 +71,7 @@ def _green() -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _load_pipeline_config(config_path: Path) -> Dict[str, Any]:
+def _load_pipeline_config(config_path: Path) -> dict[str, Any]:
     """Load and env-expand a pipeline JSON configuration.
 
     Env-var and ``${file:...}`` references are resolved at load time so the
@@ -94,13 +93,13 @@ def _load_pipeline_config(config_path: Path) -> Dict[str, Any]:
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
-            parsed = cast(Dict[str, Any], json.load(f))
+            parsed = cast(dict[str, Any], json.load(f))
     except json.JSONDecodeError as e:
         _err(f"Error: Invalid JSON in {config_path}: {e}", fg=_red())
         sys.exit(1)
 
     try:
-        expanded = cast(Dict[str, Any], expand_env(parsed))
+        expanded = cast(dict[str, Any], expand_env(parsed))
     except EnvExpansionError as e:
         _err(f"Error: env-var expansion failed: {e}", fg=_red())
         sys.exit(1)
@@ -110,7 +109,7 @@ def _load_pipeline_config(config_path: Path) -> Dict[str, Any]:
     # "calc(my_reducer, 'stats')" resolve to real callables before the engine
     # ever sees the config.  importlib's sys.modules cache absorbs any
     # later re-load via the same path.
-    extra_names: Dict[str, Any] = {}
+    extra_names: dict[str, Any] = {}
     inflow_field = expanded.get("inflow")
     if inflow_field:
         try:
@@ -128,13 +127,13 @@ def _load_pipeline_config(config_path: Path) -> Dict[str, Any]:
     # the engine.  Tokens needing user-defined classes still require an
     # outflow file (fjord pattern).
     try:
-        return cast(Dict[str, Any], resolve_tokens(expanded, extra_names=extra_names))
+        return cast(dict[str, Any], resolve_tokens(expanded, extra_names=extra_names))
     except TokenResolutionError as e:
         _err(f"Error: token resolution failed: {e}", fg=_red())
         sys.exit(1)
 
 
-def _run_validation(config: Dict[str, Any], config_dir: Path, type_override: Optional[str]) -> str:
+def _run_validation(config: dict[str, Any], config_dir: Path, type_override: Optional[str]) -> str:
     """Run validators, print results, and return the detected type. Exits on error."""
     requested_type = cast(Any, type_override) if type_override else None
     detected, errors = validate_config(config, config_dir, requested_type)
@@ -202,7 +201,7 @@ def _install_sigterm_handler(shutdown_signal: asyncio.Event) -> None:
 
 
 async def _run_stream(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     poll_interval: Optional[float],
     enable_logging: bool,
     json_output: bool,
@@ -288,7 +287,7 @@ def _resolve_incorporator_class(module: Any, class_name: str, module_path: Path)
 
 
 async def _run_fjord(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     config_dir: Path,
     enable_logging: bool,
     json_output: bool,
@@ -319,7 +318,7 @@ async def _run_fjord(
 
     user_module = _load_user_module(outflow_path)
 
-    resolved_streams: list[Dict[str, Any]] = []
+    resolved_streams: list[dict[str, Any]] = []
     for entry in stream_params_cfg:
         cls_name = entry["cls_name"]
         resolved_entry = {k: v for k, v in entry.items() if k != "cls_name"}

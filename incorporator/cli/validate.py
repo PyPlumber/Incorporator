@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Literal
 
 from pydantic import ValidationError
 
@@ -41,7 +41,7 @@ from ._pipeline_config import parse_pipeline_config
 ConfigType = Literal["stream", "fjord", "tideweaver"]
 
 
-def autodetect_type(config: Dict[str, Any]) -> ConfigType:
+def autodetect_type(config: dict[str, Any]) -> ConfigType:
     """Infer 'stream' / 'fjord' / 'tideweaver' from distinguishing top-level keys.
 
     Tideweaver configs always declare a ``window`` object plus a ``shape``
@@ -58,10 +58,10 @@ def autodetect_type(config: Dict[str, Any]) -> ConfigType:
 
 
 def validate_config(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     config_dir: Path,
     config_type: ConfigType | None = None,
-) -> Tuple[ConfigType, List[str]]:
+) -> tuple[ConfigType, list[str]]:
     """Run the right validator for ``config`` (auto-detect type if not given).
 
     Returns (detected_type, errors). An empty error list means the config is
@@ -80,14 +80,14 @@ def validate_config(
 # ---------------------------------------------------------------------------
 
 
-def validate_stream_config(config: Dict[str, Any], config_dir: Path) -> List[str]:
+def validate_stream_config(config: dict[str, Any], config_dir: Path) -> list[str]:
     """Structural validation for an ``incorporator stream`` pipeline.json.
 
     Schema rules delegate to
     :class:`incorporator.cli._pipeline_config.StreamConfig`; only sidecar
     file existence + import-check remain here.
     """
-    errors: List[str] = []
+    errors: list[str] = []
     try:
         parse_pipeline_config(config, kind="stream")
     except ValidationError as exc:
@@ -108,7 +108,7 @@ def validate_stream_config(config: Dict[str, Any], config_dir: Path) -> List[str
 # ---------------------------------------------------------------------------
 
 
-def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]:
+def validate_fjord_config(config: dict[str, Any], config_dir: Path) -> list[str]:
     """Structural validation for an ``incorporator fjord`` pipeline.json.
 
     Schema rules delegate to
@@ -117,7 +117,7 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
     outflow file import, ``outflow(state)`` arity, and ``cls_name``
     symbol resolution against the loaded outflow module.
     """
-    errors: List[str] = []
+    errors: list[str] = []
     try:
         parse_pipeline_config(config, kind="fjord")
     except ValidationError as exc:
@@ -173,7 +173,7 @@ def validate_fjord_config(config: Dict[str, Any], config_dir: Path) -> List[str]
 # ---------------------------------------------------------------------------
 
 
-def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[str]:
+def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[str]:
     """Structural validation for an ``incorporator tideweaver`` watershed.json.
 
     Delegates to
@@ -190,7 +190,7 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
     ``build_watershed`` hits.  Multi-error reports are not promised; the
     caller is expected to fix one issue at a time.
     """
-    errors: List[str] = []
+    errors: list[str] = []
 
     # Delegate the whole shape contract to build_watershed.  Side-effect:
     # imports any inflow/outflow sidecars (same as we used to do in this
@@ -224,11 +224,10 @@ def validate_watershed_config(config: Dict[str, Any], config_dir: Path) -> List[
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 _VALUE_ERROR_PREFIX = "Value error, "
 
 
-def _format_pydantic_errors(error: ValidationError) -> List[str]:
+def _format_pydantic_errors(error: ValidationError) -> list[str]:
     """Convert a :class:`pydantic.ValidationError` into one error string per failure.
 
     The substring contract callers (and tests) depend on — e.g. a field name
@@ -243,7 +242,7 @@ def _format_pydantic_errors(error: ValidationError) -> List[str]:
     see a clean ``"stream_params[0]: missing 'cls'"`` instead of
     ``"stream_params[0]: Value error, missing 'cls'"``.
     """
-    out: List[str] = []
+    out: list[str] = []
     for item in error.errors():
         loc = item.get("loc", ())
         msg = item.get("msg", "")
@@ -281,14 +280,14 @@ def _import_module(code_path: Path) -> Any:
 
 
 def _validate_sidecar_file(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     key: str,
     config_dir: Path,
-    errors: List[str],
+    errors: list[str],
     *,
     capture_module: bool = False,
     file_label: str | None = None,
-) -> Tuple[Path | None, Any | None]:
+) -> tuple[Path | None, Any | None]:
     """Validate an optional sidecar-file path declared in ``config[key]``.
 
     Centralises the three-step check (string type → file exists → imports

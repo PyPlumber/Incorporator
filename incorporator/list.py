@@ -9,7 +9,7 @@ is reserved for the modules that build Pydantic classes from raw data
 
 import logging
 import weakref
-from typing import Any, List, Optional, Type, TypeVar, cast
+from typing import Any, Optional, TypeVar, cast
 
 from .rejects import RejectEntry
 
@@ -19,7 +19,7 @@ T = TypeVar("T")
 TIncorporator = TypeVar("TIncorporator")  # kept for any external callers
 
 
-def _deduplicate_extracted(data: List[Any]) -> List[Any]:
+def _deduplicate_extracted(data: list[Any]) -> list[Any]:
     """Deduplicate extracted parent data preserving insertion order.
 
     Falls back gracefully when non-hashable items (dicts, objects) are present:
@@ -39,7 +39,7 @@ def _deduplicate_extracted(data: List[Any]) -> List[Any]:
         return list(dict.fromkeys(hashable)) + non_hashable
 
 
-class IncorporatorList(List[T]):
+class IncorporatorList(list[T]):
     """Typed-list-plus-O(1)-registry — what :meth:`Incorporator.incorp` hands back for multi-record sources.
 
     Use it like any Python list (iterate, slice, ``len()``, pass to
@@ -69,10 +69,10 @@ class IncorporatorList(List[T]):
 
     def __init__(
         self,
-        model_class: Type[Any],
-        items: List[Any],
-        failed_sources: Optional[List[str]] = None,
-        rejects: Optional[List[RejectEntry]] = None,
+        model_class: type[Any],
+        items: list[Any],
+        failed_sources: Optional[list[str]] = None,
+        rejects: Optional[list[RejectEntry]] = None,
     ):
         super().__init__(items)
         self._model_class = model_class
@@ -86,7 +86,7 @@ class IncorporatorList(List[T]):
                 "IncorporatorList: pass `failed_sources` (legacy List[str]) OR `rejects` (List[RejectEntry]), not both."
             )
         if rejects is not None:
-            self._rejects: List[RejectEntry] = list(rejects)
+            self._rejects: list[RejectEntry] = list(rejects)
         elif failed_sources is not None:
             self._rejects = [RejectEntry(source=s, error_kind="Unknown", message=s) for s in failed_sources]
         else:
@@ -96,7 +96,7 @@ class IncorporatorList(List[T]):
         self.inc_child_path: Optional[str] = None
 
     @property
-    def rejects(self) -> List[RejectEntry]:
+    def rejects(self) -> list[RejectEntry]:
         """Structured view of failed sources — preferred over ``failed_sources``.
 
         Returns a defensive copy of the list (the underlying storage is
@@ -106,7 +106,7 @@ class IncorporatorList(List[T]):
         return list(self._rejects)
 
     @property
-    def failed_sources(self) -> List[str]:
+    def failed_sources(self) -> list[str]:
         """Legacy string-list view of the failure surface.
 
         Equivalent to ``[entry.source for entry in self.rejects]``;

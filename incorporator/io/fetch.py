@@ -8,7 +8,7 @@ import socket
 import time
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Optional, Union
 from urllib.parse import urlparse
 
 import httpx
@@ -32,7 +32,7 @@ from .source_ref import SourceRef
 # Set by ``observability/pipeline/chunked.py`` before ``cls.incorp(...)``
 # and reset by the same try/finally afterward.  Default ``None`` covers
 # all non-chunked call sites (incorp(), refresh(), inspector probes).
-_CURRENT_CHUNK_CLASS: ContextVar[Optional[Type[Any]]] = ContextVar("_CURRENT_CHUNK_CLASS", default=None)
+_CURRENT_CHUNK_CLASS: ContextVar[Optional[type[Any]]] = ContextVar("_CURRENT_CHUNK_CLASS", default=None)
 
 
 def _extract_retry_after(exc: Exception) -> Optional[float]:
@@ -89,7 +89,6 @@ def _build_reject_entry(
 
 logger = logging.getLogger(__name__)
 
-
 # ==========================================
 # 1. THROTTLING & RESILIENCE
 # ==========================================
@@ -106,7 +105,7 @@ class HTTPClientBuilder:
         concurrency_limit: int = 50,
         ignore_ssl: bool = False,
         timeout: float = 15.0,
-        headers: Optional[Dict[str, str]] = None,
+        headers: Optional[dict[str, str]] = None,
         block_internal_redirects: bool = False,
     ) -> httpx.AsyncClient:
         """Construct the shared ``httpx.AsyncClient`` used by every fetch.
@@ -131,7 +130,7 @@ class HTTPClientBuilder:
             max_keepalive_connections=10,
             max_connections=concurrency_limit,
         )
-        event_hooks: Dict[str, List[Any]] = {}
+        event_hooks: dict[str, list[Any]] = {}
         if block_internal_redirects:
             event_hooks["response"] = [_block_internal_redirect_hook]
         return httpx.AsyncClient(
@@ -182,7 +181,7 @@ def _host_is_internal_fast(host: str) -> Optional[bool]:
     return _ip_is_internal(ip)
 
 
-def _addrinfos_have_internal(infos: List[Any]) -> bool:
+def _addrinfos_have_internal(infos: list[Any]) -> bool:
     """Walk a ``getaddrinfo`` result list; True if any resolved IP is internal."""
     for info in infos:
         addr_raw = info[4][0]
@@ -274,9 +273,9 @@ async def execute_request(
     url: str,
     client: httpx.AsyncClient,
     method: str = "GET",
-    params: Optional[Dict[str, Any]] = None,
-    json_payload: Optional[Dict[str, Any]] = None,
-    form_payload: Optional[Dict[str, Any]] = None,
+    params: Optional[dict[str, Any]] = None,
+    json_payload: Optional[dict[str, Any]] = None,
+    form_payload: Optional[dict[str, Any]] = None,
     rate_limiter: Optional[BoundPenstock] = None,
 ) -> httpx.Response:
     """Execute a resilient, jittered HTTP request supporting GET/POST and query strings.
@@ -316,7 +315,7 @@ async def execute_request(
                 if rate_limiter is not None:
                     await rate_limiter.acquire()
 
-                req_kwargs: Dict[str, Any] = {}
+                req_kwargs: dict[str, Any] = {}
                 if params:
                     req_kwargs["params"] = params
                 if json_payload:
@@ -421,9 +420,9 @@ async def _process_single_source(
     is_file_mode: bool,
     client: Optional[httpx.AsyncClient],
     rate_limiter: Optional[BoundPenstock],
-    dynamic_payload: Optional[Dict[str, Any]] = None,
+    dynamic_payload: Optional[dict[str, Any]] = None,
     **kwargs: Any,
-) -> List[Any]:
+) -> list[Any]:
     """Isolates stream processing, dynamic Paginator routing, and rec_path drill-down."""
     format_type = kwargs.pop("format_type", None)
     inc_page: Optional[AsyncPaginator] = kwargs.pop("inc_page", None)
@@ -435,11 +434,11 @@ async def _process_single_source(
     base_params = kwargs.pop("params", {})
 
     active_format = format_type or infer_format(source_val)
-    accumulated: List[Any] = []
+    accumulated: list[Any] = []
 
     # 1. Setup the Injection Wrapper
     async def bound_fetch(
-        url: str, request_params: Optional[Dict[str, Any]] = None, **kwargs_override: Any
+        url: str, request_params: Optional[dict[str, Any]] = None, **kwargs_override: Any
     ) -> httpx.Response:
 
         if client is None:
@@ -469,7 +468,7 @@ async def _process_single_source(
         )
 
     # 2. Pure Data Processing (Accepts Polymorphic Inputs)
-    async def _process_payload(raw_payload: Union[str, bytes, Path, List[Any], Dict[str, Any]]) -> None:
+    async def _process_payload(raw_payload: Union[str, bytes, Path, list[Any], dict[str, Any]]) -> None:
         # Pass **kwargs down so 'sql_query' reaches the database handler!
         parsed_chunk = await format_parsers.parse_source_data(raw_payload, active_format, **kwargs)
 
@@ -531,7 +530,7 @@ async def _process_single_source(
 # ==========================================
 
 
-def _inject_sqlite_query(source: Any, table_name: str, kwargs: Dict[str, Any]) -> None:
+def _inject_sqlite_query(source: Any, table_name: str, kwargs: dict[str, Any]) -> None:
     """Auto-injects a default SELECT query for SQLite sources when sql_query is not provided.
 
     Accepts any source shape ``incorp()`` accepts (``str``, ``PathLike``, or
@@ -546,8 +545,8 @@ def _inject_sqlite_query(source: Any, table_name: str, kwargs: Dict[str, Any]) -
 
 def _normalize_source_list(
     source: Any,
-    payload_list: Optional[List[Any]],
-) -> List[str]:
+    payload_list: Optional[list[Any]],
+) -> list[str]:
     """Normalises any single-source-or-list input into a flat ``List[str]``.
 
     Accepts:
@@ -581,7 +580,7 @@ def _normalize_source_list(
         payload_ref = SourceRef.from_payload(payload_list)
         return [payload_ref.as_str()] * len(payload_list)
     items = source if isinstance(source, list) else [source]
-    out: List[str] = []
+    out: list[str] = []
     for item in items:
         if item is None:
             continue
@@ -599,11 +598,11 @@ def _normalize_source_list(
 
 
 async def fetch_concurrent_payloads(
-    source_list: List[str],
+    source_list: list[str],
     is_file_mode: bool,
-    payload_list: Optional[List[Optional[Dict[str, Any]]]] = None,
+    payload_list: Optional[list[Optional[dict[str, Any]]]] = None,
     **kwargs: Any,
-) -> Tuple[List[Any], List[RejectEntry]]:
+) -> tuple[list[Any], list[RejectEntry]]:
     """Unified Orchestrator: Exclusively manages sliding windows and concurrent batching.
 
     Returns ``(all_parsed_data, rejects)`` — the second element is a
@@ -613,7 +612,7 @@ async def fetch_concurrent_payloads(
     header.
     """
 
-    rejects: List[RejectEntry] = []
+    rejects: list[RejectEntry] = []
 
     limit = kwargs.pop("concurrency_limit", 50)
     delay_between_batches = kwargs.pop("delay_between_batches", 0.0)
@@ -648,7 +647,7 @@ async def fetch_concurrent_payloads(
     # CoinGecko + PokeAPI fan-out was collapsed to CoinGecko's 0.2
     # rps for every request.
     # ------------------------------------------------------------------
-    throttle_for_source: Dict[str, BoundPenstock] = {}
+    throttle_for_source: dict[str, BoundPenstock] = {}
     if _rate_limiter is not None:
         # Explicit caller injection (test hook / advanced usage) — honour it.
         for src in source_list:
@@ -661,7 +660,7 @@ async def fetch_concurrent_payloads(
             throttle_for_source[src] = shared
     else:
         # Per-host resolution: one penstock per distinct host.
-        by_host: Dict[str, BoundPenstock] = {}
+        by_host: dict[str, BoundPenstock] = {}
         for src in source_list:
             host = urlparse(src).hostname or "" if isinstance(src, str) else ""
             if host not in by_host:
@@ -685,7 +684,7 @@ async def fetch_concurrent_payloads(
         )
         should_close = True
 
-    async def _safe_execute(src: str, payload: Any) -> List[Any]:
+    async def _safe_execute(src: str, payload: Any) -> list[Any]:
         start = time.perf_counter()
         try:
             return await _process_single_source(
@@ -718,7 +717,7 @@ async def fetch_concurrent_payloads(
 
     try:
         p_list = payload_list if payload_list else [None] * len(source_list)
-        all_parsed_data: List[Any] = []
+        all_parsed_data: list[Any] = []
 
         # ========================================================
         # PATH A: Strict Batching (The Convoy Effect is desired)
@@ -757,7 +756,7 @@ async def fetch_concurrent_payloads(
             task_iterator = iter(enumerate(zip(source_list, p_list, strict=False)))
 
             # Pre-allocate an empty array to maintain strict ordering
-            ordered_results: List[List[Any]] = [[] for _ in range(len(source_list))]
+            ordered_results: list[list[Any]] = [[] for _ in range(len(source_list))]
 
             async def _sliding_worker() -> None:
                 """Consume items from the shared task_iterator and write results into ordered_results.

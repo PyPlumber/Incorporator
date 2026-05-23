@@ -3,8 +3,9 @@
 import json
 import logging
 import sqlite3
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Union
+from typing import Any, Union
 
 from ...exceptions import IncorporatorFormatError
 from ...schema.builder import sanitize_json_key
@@ -51,7 +52,7 @@ class SQLiteHandler(BaseFormatHandler):
     that need bools should cast explicitly.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
         """Execute ``sql_query`` against the SQLite file and return rows as dicts.
 
         Iterates the cursor directly (no ``fetchall()`` memory bomb), so the
@@ -80,7 +81,7 @@ class SQLiteHandler(BaseFormatHandler):
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(query, sql_params)
 
-                rows: List[Dict[str, Any]] = []
+                rows: list[dict[str, Any]] = []
                 # Iterate directly over the cursor to avoid the fetchall() memory bomb
                 for row in cursor:
                     parsed_row = dict(row)
@@ -97,7 +98,7 @@ class SQLiteHandler(BaseFormatHandler):
         except sqlite3.Error as e:
             raise IncorporatorFormatError(f"SQLite Read Error: {e}") from e
 
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Stream rows into a SQLite table via ``executemany``.
 
         Honours ``sql_table``, ``if_exists`` (``"replace"`` / ``"append"`` /
@@ -111,12 +112,12 @@ class SQLiteHandler(BaseFormatHandler):
         # Dispatcher pre-resolves the path; handlers always receive an absolute Path.
         path = file_path if isinstance(file_path, Path) else Path(file_path)
 
-        explicit_keys: List[str] = kwargs.get("all_field_names") or []
-        data_iter: Iterable[Dict[str, Any]]
+        explicit_keys: list[str] = kwargs.get("all_field_names") or []
+        data_iter: Iterable[dict[str, Any]]
 
         if not explicit_keys:
             # No schema hint (e.g. called outside export()): must materialize to discover columns.
-            rows_list: List[Dict[str, Any]] = list(data)
+            rows_list: list[dict[str, Any]] = list(data)
             explicit_keys = list(rows_list[0].keys()) if rows_list else []
             data_iter = iter(rows_list)
         else:
@@ -197,7 +198,7 @@ class AvroHandler(BaseFormatHandler):
     ``fastavro``'s ``a+b`` writer.
     """
 
-    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> List[Dict[str, Any]]:
+    def parse(self, source: Union[str, bytes, Path], **kwargs: Any) -> list[dict[str, Any]]:
         """Read an Avro file or byte buffer and yield rows as dicts.
 
         Iterates the ``fastavro.reader`` block-by-block — no ``list()``
@@ -207,7 +208,7 @@ class AvroHandler(BaseFormatHandler):
         fastavro = _require_optional("fastavro")
 
         try:
-            rows: List[Dict[str, Any]] = []
+            rows: list[dict[str, Any]] = []
 
             # Helper: extract the {safe_name: original_name} rename map from the
             # writer schema's custom metadata, if present.  fastavro exposes the
@@ -215,7 +216,7 @@ class AvroHandler(BaseFormatHandler):
             # serialised as a JSON string on write (Avro requires string-valued
             # custom attributes); decode here and reverse the direction so we
             # can rename keys back on each row.
-            def _build_rename_map(reader: Any) -> Dict[str, str]:
+            def _build_rename_map(reader: Any) -> dict[str, str]:
                 schema = getattr(reader, "writer_schema", None)
                 if not isinstance(schema, dict):
                     return {}
@@ -232,7 +233,7 @@ class AvroHandler(BaseFormatHandler):
                 # ``safe → original`` so each row's key swap is one dict lookup.
                 return {safe: original for original, safe in decoded.items() if isinstance(safe, str)}
 
-            def _hydrate_row(raw_row: Dict[str, Any], rename_map: Dict[str, str]) -> Dict[str, Any]:
+            def _hydrate_row(raw_row: dict[str, Any], rename_map: dict[str, str]) -> dict[str, Any]:
                 if rename_map:
                     return {rename_map.get(k, k): deserialize_nested(v) for k, v in raw_row.items()}
                 return {k: deserialize_nested(v) for k, v in raw_row.items()}
@@ -261,7 +262,7 @@ class AvroHandler(BaseFormatHandler):
         except Exception as e:
             raise IncorporatorFormatError(f"Avro Read Error: {e}") from e
 
-    def write(self, data: Iterable[Dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
+    def write(self, data: Iterable[dict[str, Any]], file_path: Union[str, Path], **kwargs: Any) -> None:
         """Stream rows into an Avro file using the dataset's Pydantic schema.
 
         Builds the Avro record schema from ``pydantic_schema`` via the
@@ -283,7 +284,7 @@ class AvroHandler(BaseFormatHandler):
         # the user's column names on round-trip.  Only entries where sanitising
         # actually changed the name are recorded — keeps the schema metadata
         # minimal for the common all-clean-names case.
-        original_names_map: Dict[str, str] = {}
+        original_names_map: dict[str, str] = {}
 
         for k, prop in properties.items():
             json_type = prop.get("type")
@@ -301,7 +302,7 @@ class AvroHandler(BaseFormatHandler):
                 original_names_map[k] = safe_k
 
         record_name = sanitize_json_key(kwargs.get("sql_table", "IncorporatorRecord"))
-        schema_dict: Dict[str, Any] = {
+        schema_dict: dict[str, Any] = {
             "doc": "Auto-generated by Incorporator",
             "name": record_name,
             "type": "record",
@@ -321,9 +322,9 @@ class AvroHandler(BaseFormatHandler):
         # after the first row, every subsequent key access is an O(1) dict hit
         # instead of a full sanitize_json_key() call.  This eliminates the only
         # significant per-row × per-key CPU cost in the Avro write path.
-        sanitized_key_cache: Dict[str, str] = {}
+        sanitized_key_cache: dict[str, str] = {}
 
-        def _record_generator() -> Iterator[Dict[str, Any]]:
+        def _record_generator() -> Iterator[dict[str, Any]]:
             for row in data:
                 processed_row = {}
                 for k, v in row.items():

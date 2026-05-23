@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, TypedDict
+from typing import Any, TypedDict
 
 
 class JsonSchemaProperty(TypedDict, total=False):
@@ -20,9 +20,9 @@ class JsonSchemaProperty(TypedDict, total=False):
 
     type: str
     format: str
-    anyOf: List["JsonSchemaProperty"]
+    anyOf: list["JsonSchemaProperty"]
     items: "JsonSchemaProperty"
-    properties: Dict[str, "JsonSchemaProperty"]
+    properties: dict[str, "JsonSchemaProperty"]
     description: str
     title: str
     default: Any

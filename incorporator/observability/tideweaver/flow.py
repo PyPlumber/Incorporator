@@ -15,10 +15,12 @@ module re-exports them and adds the edge-only
 
 from __future__ import annotations
 
+import builtins
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Dict, List, Literal, Optional, Tuple, Type, Union
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
@@ -35,7 +37,6 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .scheduler import Tideweaver
-
 
 # ---------------------------------------------------------------------------
 # Narrow context value types passed to per-edge strategies.  Drop the
@@ -124,7 +125,6 @@ class Weir(Gate):
 # ---------------------------------------------------------------------------
 # SurgeBarrier — conditional override when upstream is under extreme load
 # ---------------------------------------------------------------------------
-
 
 SurgeAction = Literal["skip", "bypass", "halt"]
 
@@ -246,7 +246,7 @@ class Spillway(BaseModel):
 
     def overflow(
         self,
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
     ) -> None:
@@ -261,7 +261,7 @@ class DropOldest(Spillway):
 
     def overflow(
         self,
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
     ) -> None:
@@ -275,7 +275,7 @@ class RaiseOverflow(Spillway):
 
     def overflow(
         self,
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
     ) -> None:
@@ -293,19 +293,19 @@ class ExportToArchive(Spillway):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     type: Literal["export_to_archive"] = "export_to_archive"
-    archive_cls: Type[Any] = Field(
+    archive_cls: builtins.type[Any] = Field(
         description="Incorporator subclass (or any class) that receives displaced wave instances.",
     )
 
     def overflow(
         self,
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
     ) -> None:
         if not isinstance(displaced_wave, list):
             return None
-        backlog: Optional[List[Any]] = getattr(self.archive_cls, "_spillway_backlog", None)
+        backlog: Optional[list[Any]] = getattr(self.archive_cls, "_spillway_backlog", None)
         if backlog is None:
             backlog = []
             self.archive_cls._spillway_backlog = backlog
@@ -364,7 +364,7 @@ class FlowObserver(BaseModel):
     def on_fire(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         wave_number: int,
     ) -> None:
         """Dependent fired this pass — upstream's wave contributed to the tick."""
@@ -373,7 +373,7 @@ class FlowObserver(BaseModel):
     def on_skip(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         reason: str,
     ) -> None:
         """This edge produced ``reason`` — its gate / penstock / surge barrier blocked the dependent."""
@@ -382,7 +382,7 @@ class FlowObserver(BaseModel):
     def on_spillway(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
     ) -> None:
@@ -392,7 +392,7 @@ class FlowObserver(BaseModel):
     def on_reservoir_level(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         used: int,
         capacity: int,
     ) -> None:
@@ -441,7 +441,7 @@ class LoggingObserver(FlowObserver):
     def on_fire(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         wave_number: int,
     ) -> None:
         logger.log(
@@ -455,7 +455,7 @@ class LoggingObserver(FlowObserver):
     def on_skip(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         reason: str,
     ) -> None:
         logger.log(
@@ -469,7 +469,7 @@ class LoggingObserver(FlowObserver):
     def on_spillway(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
     ) -> None:
@@ -484,7 +484,7 @@ class LoggingObserver(FlowObserver):
     def on_reservoir_level(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         used: int,
         capacity: int,
     ) -> None:
@@ -521,14 +521,14 @@ class SignalObserver(FlowObserver):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     type: Literal["signal"] = "signal"
-    callback: Callable[[str, Tuple[str, str], Dict[str, Any]], None] = Field(
+    callback: Callable[[str, tuple[str, str], dict[str, Any]], None] = Field(
         description="Callable invoked once per per-edge event.",
     )
 
     def on_fire(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         wave_number: int,
     ) -> None:
         self.callback("fire", edge, {"wave_number": wave_number})
@@ -536,7 +536,7 @@ class SignalObserver(FlowObserver):
     def on_skip(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         reason: str,
     ) -> None:
         self.callback("skip", edge, {"reason": reason})
@@ -544,7 +544,7 @@ class SignalObserver(FlowObserver):
     def on_spillway(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
     ) -> None:
@@ -557,7 +557,7 @@ class SignalObserver(FlowObserver):
     def on_reservoir_level(
         self,
         scheduler: "Tideweaver",
-        edge: Tuple[str, str],
+        edge: tuple[str, str],
         used: int,
         capacity: int,
     ) -> None:
@@ -567,7 +567,6 @@ class SignalObserver(FlowObserver):
 # ---------------------------------------------------------------------------
 # FlowControl — per-edge composition of all primitives
 # ---------------------------------------------------------------------------
-
 
 _GateUnion = Annotated[
     Union[HardLock, SoftPass, Weir],
@@ -611,7 +610,7 @@ class FlowControl(BaseModel):
     observer: _ObserverUnion = Field(default_factory=NullObserver)
 
     @model_serializer(mode="wrap")
-    def _drop_default_observer(self, handler: Any) -> Dict[str, Any]:
+    def _drop_default_observer(self, handler: Any) -> dict[str, Any]:
         """Drop the default :class:`NullObserver` from serialised output.
 
         ``observer`` carries a default factory so user code can read
@@ -625,7 +624,7 @@ class FlowControl(BaseModel):
         user-supplied :class:`NullObserver` indistinguishable from the
         default) still serialise normally.
         """
-        data: Dict[str, Any] = handler(self)
+        data: dict[str, Any] = handler(self)
         if isinstance(self.observer, NullObserver) and "observer" in data:
             data.pop("observer")
         return data
@@ -634,7 +633,6 @@ class FlowControl(BaseModel):
 # ---------------------------------------------------------------------------
 # Mode-string shorthand — the user-facing API surface
 # ---------------------------------------------------------------------------
-
 
 GateMode = Literal["hard", "soft", "weir"]
 

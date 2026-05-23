@@ -11,21 +11,15 @@ import logging
 import os
 import threading
 import weakref
+from collections.abc import AsyncGenerator, Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncGenerator,
     ClassVar,
-    Dict,
-    Iterable,
-    List,
     Literal,
-    Mapping,
     Optional,
-    Tuple,
-    Type,
     TypeVar,
     Union,
     cast,
@@ -163,7 +157,7 @@ class Incorporator(BaseModel):
     #: :class:`incorporator.schema.JsonSchemaProperty` for the value shape
     #: — a TypedDict mirroring Pydantic V2's
     #: ``model_json_schema()["properties"]`` entries with all keys optional.
-    _schema_union: ClassVar[Dict[str, JsonSchemaProperty]] = {}
+    _schema_union: ClassVar[dict[str, JsonSchemaProperty]] = {}
 
     #: Origin tracking — the URL the subclass was first populated from.
     #: Populated on the first :meth:`incorp` call; :meth:`refresh` falls back
@@ -190,7 +184,7 @@ class Incorporator(BaseModel):
     #: (``params``, ``headers``, ``rec_path``, ``conv_dict``, etc.) without
     #: the caller re-declaring anything.  User-supplied ``refresh_params``
     #: still win on key conflict.
-    _incorp_kwargs: ClassVar[Dict[str, Any]] = {}
+    _incorp_kwargs: ClassVar[dict[str, Any]] = {}
 
     #: Cross-engine strong-ref snapshot used by the Tideweaver scheduler.
     #: A :class:`~incorporator.observability.tideweaver.scheduler.Scheduler`
@@ -207,7 +201,7 @@ class Incorporator(BaseModel):
     #: subclass.  ``None`` means "no Tideweaver run has touched this class
     #: yet" — distinct from the empty-list case ("upstream ran, produced
     #: zero rows").
-    _tideweaver_snapshot: ClassVar[Optional[List[Any]]] = None
+    _tideweaver_snapshot: ClassVar[Optional[list[Any]]] = None
 
     #: Bulk-insert gate set by :func:`~incorporator.schema.factory.build_instances`
     #: and :func:`~incorporator.observability.pipeline._outflow.flush` around their
@@ -373,16 +367,16 @@ class Incorporator(BaseModel):
 
     @classmethod
     async def incorp(
-        cls: Type[TIncorporator],
-        inc_url: Optional[Union[str, List[str]]] = None,
-        inc_file: Optional[Union[str, "os.PathLike[str]", List[Union[str, "os.PathLike[str]"]]]] = None,
+        cls: type[TIncorporator],
+        inc_url: Optional[Union[str, list[str]]] = None,
+        inc_file: Optional[Union[str, "os.PathLike[str]", list[Union[str, "os.PathLike[str]"]]]] = None,
         inc_parent: Optional[Union[TIncorporator, "IncorporatorList[TIncorporator]"]] = None,
         inc_child: Optional[str] = None,
         inc_code: Optional[str] = None,
         inc_name: Optional[str] = None,
-        excl_lst: Optional[List[str]] = None,
-        conv_dict: Optional[Dict[str, Any]] = None,
-        name_chg: Optional[List[Tuple[str, str]]] = None,
+        excl_lst: Optional[list[str]] = None,
+        conv_dict: Optional[dict[str, Any]] = None,
+        name_chg: Optional[list[tuple[str, str]]] = None,
         inc_page: Optional[AsyncPaginator] = None,
         inflow: Optional[Union[str, Path]] = None,
         **kwargs: Any,
@@ -610,7 +604,7 @@ class Incorporator(BaseModel):
             network._inject_sqlite_query(source, kwargs.get("sql_table") or cls.__name__.lower(), kwargs)
 
         is_file_mode = bool(inc_file)
-        source_list: List[str] = network._normalize_source_list(source, kwargs.get("payload_list"))
+        source_list: list[str] = network._normalize_source_list(source, kwargs.get("payload_list"))
 
         is_single = not isinstance(source, list) and inc_page is None
 
@@ -691,16 +685,16 @@ class Incorporator(BaseModel):
 
     @classmethod
     async def refresh(
-        cls: Type[TIncorporator],
-        instance: Optional[Union[str, Path, TIncorporator, List[TIncorporator]]] = None,
-        new_url: Optional[Union[str, List[str]]] = None,
-        new_file: Optional[Union[str, List[str]]] = None,
+        cls: type[TIncorporator],
+        instance: Optional[Union[str, Path, TIncorporator, list[TIncorporator]]] = None,
+        new_url: Optional[Union[str, list[str]]] = None,
+        new_file: Optional[Union[str, list[str]]] = None,
         inc_child: Optional[str] = None,
         inc_code: Optional[str] = None,
         inc_name: Optional[str] = None,
-        excl_lst: Optional[List[str]] = None,
-        conv_dict: Optional[Dict[str, Any]] = None,
-        name_chg: Optional[List[Tuple[str, str]]] = None,
+        excl_lst: Optional[list[str]] = None,
+        conv_dict: Optional[dict[str, Any]] = None,
+        name_chg: Optional[list[tuple[str, str]]] = None,
         inc_page: Optional[AsyncPaginator] = None,
         inflow: Optional[Union[str, Path]] = None,
         **kwargs: Any,
@@ -821,7 +815,7 @@ class Incorporator(BaseModel):
         # every refresh tick so the same endpoint returns the same shape.
         # User-supplied ``refresh_params`` win on key conflict: caller's
         # explicit kwargs are appended LAST in the merge below.
-        persisted: Dict[str, Any] = getattr(cls, "_incorp_kwargs", None) or {}
+        persisted: dict[str, Any] = getattr(cls, "_incorp_kwargs", None) or {}
         if conv_dict is None:
             conv_dict = persisted.get("conv_dict")
         if excl_lst is None:
@@ -835,16 +829,16 @@ class Incorporator(BaseModel):
         kwargs = {**persisted_net, **kwargs}
 
         if instance is None:
-            inst_list = cast(List[TIncorporator], list(cls.inc_dict.values()))
+            inst_list = cast(list[TIncorporator], list(cls.inc_dict.values()))
         elif isinstance(instance, str | Path):
-            inst_list = cast(List[TIncorporator], list(cls.inc_dict.values()))
+            inst_list = cast(list[TIncorporator], list(cls.inc_dict.values()))
             target_str = str(instance)
             if target_str.startswith("http"):
                 target_url = target_str
             else:
                 target_file = target_str
         else:
-            inst_list = cast(List[TIncorporator], instance if isinstance(instance, list) else [instance])
+            inst_list = cast(list[TIncorporator], instance if isinstance(instance, list) else [instance])
 
         # Re-source mode: refresh("new_url") or refresh(new_url=...) /
         # refresh(new_file=...) should update the class's origin tracking
@@ -891,7 +885,7 @@ class Incorporator(BaseModel):
         if not target_file and extracted_data and (target_url or child_path):
             kwargs = router.resolve_declarative_routing(cls.__name__, extracted_data, source_urls, **kwargs)
             raw_url = kwargs.pop("inc_url", source_urls)
-            source_list: List[str] = network._normalize_source_list(raw_url, None)
+            source_list: list[str] = network._normalize_source_list(raw_url, None)
             payload_list = kwargs.pop("payload_list", None)
         else:
             source_list = source_urls
@@ -933,9 +927,9 @@ class Incorporator(BaseModel):
 
     @classmethod
     async def export(
-        cls: Type[TIncorporator],
+        cls: type[TIncorporator],
         *,
-        instance: Union[str, Path, TIncorporator, List[TIncorporator]],
+        instance: Union[str, Path, TIncorporator, list[TIncorporator]],
         file_path: Optional[Union[str, Path]] = None,
         format_type: Optional[FormatType] = None,
         compression: Optional[str] = None,
@@ -1062,7 +1056,7 @@ class Incorporator(BaseModel):
         """
         if file_path is None:
             actual_path = str(instance)
-            instances: List[TIncorporator] = cast(List[TIncorporator], list(cls.inc_dict.values()))
+            instances: list[TIncorporator] = cast(list[TIncorporator], list(cls.inc_dict.values()))
         else:
             actual_path = str(file_path)
             if not isinstance(instance, list):
@@ -1075,7 +1069,7 @@ class Incorporator(BaseModel):
                         "Pass a list returned by incorp(), or omit file_path to use in-state export."
                     )
             instances = cast(
-                List[TIncorporator],
+                list[TIncorporator],
                 instance if isinstance(instance, list) else [instance],
             )
 
@@ -1084,7 +1078,7 @@ class Incorporator(BaseModel):
 
         # Optional code transform — runs in a thread (user code may be CPU-bound).
         transform_source: Iterable[Any] = instances
-        outflow_field_names: Optional[List[str]] = None
+        outflow_field_names: Optional[list[str]] = None
         if outflow is not None:
             transform_source = await asyncio.to_thread(apply_code_transform, instances, outflow)
             # Peek at the first transformed row so we can rebuild all_field_names from the
@@ -1145,10 +1139,10 @@ class Incorporator(BaseModel):
 
     @classmethod
     async def stream(
-        cls: Type[TIncorporator],
-        incorp_params: Dict[str, Any],
-        refresh_params: Optional[Dict[str, Any]] = _UNSET,
-        export_params: Optional[Dict[str, Any]] = None,
+        cls: type[TIncorporator],
+        incorp_params: dict[str, Any],
+        refresh_params: Optional[dict[str, Any]] = _UNSET,
+        export_params: Optional[dict[str, Any]] = None,
         poll_interval: Optional[float] = None,
         stateful_polling: bool = False,
         refresh_interval: Optional[float] = None,
@@ -1303,7 +1297,7 @@ class Incorporator(BaseModel):
         # after the file stem in PascalCase (`outflow.py` -> `Outflow`);
         # if that name is absent the first Incorporator subclass found in
         # the module wins.
-        receiver_cls: Type[Incorporator] = cast(Type[Incorporator], cls)
+        receiver_cls: type[Incorporator] = cast(type[Incorporator], cls)
         outflow_user_module: Optional[Any] = None
         if outflow is not None:
             from .usercode import load_user_module, pascal_case_from_stem
@@ -1397,9 +1391,9 @@ class Incorporator(BaseModel):
     @classmethod
     async def fjord(
         cls,
-        stream_params: List[Dict[str, Any]],
+        stream_params: list[dict[str, Any]],
         outflow: Union[str, Path],
-        export_params: Dict[str, Any],
+        export_params: dict[str, Any],
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
         inflow: Optional[Union[str, Path]] = None,
@@ -1623,9 +1617,9 @@ class Incorporator(BaseModel):
 
     @classmethod
     async def test(
-        cls: Type[TIncorporator],
+        cls: type[TIncorporator],
         **kwargs: Any,
-    ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]", List[Any]]:
+    ) -> Union[TIncorporator, "IncorporatorList[TIncorporator]", list[Any]]:
         """The 30-second Shady Jimmy probe — point it at an unknown URL and read the suggestions.
 
         Reach for ``test()`` when you have a URL, no docs, and no idea
@@ -1715,7 +1709,7 @@ class Incorporator(BaseModel):
 
     @classmethod
     async def architect(
-        cls: Type[TIncorporator],
+        cls: type[TIncorporator],
         sources: Mapping[str, Union[str, Path, Mapping[str, Any]]],
         *,
         output: Literal["report", "python", "json", "plan"] = "report",
