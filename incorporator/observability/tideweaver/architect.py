@@ -22,15 +22,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import statistics
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Type, Union, cast
+from typing import Any, Dict, List, Literal, Mapping, Optional, Set, Tuple, Type, Union, cast
 from urllib.parse import urlparse
+
+from pydantic import BaseModel, ConfigDict
+from pydantic import Field as PydanticField
 
 from ...io.penstock import known_host_rates
 from ...io.source_ref import SourceRef
+from ...rejects import RejectEntry
 from ...tools.inspector import ResponseMeta, SourceProfile, analyze_data
+from ..wave import Wave
+from .tide import Tide
 
 # Mapping-typed source values may be runtime dicts (Mapping) — we accept any
 # Mapping for input, but the internal source list normalises to Dict[str, Any].
@@ -873,3 +881,687 @@ async def run(
     if output == "python":
         return render_python(probes, plan)
     return render_json(probes, plan)
+
+
+# ---------------------------------------------------------------------------
+# Tuner: TuningHint, TuningReport, rule functions, tune() entry point.
+# ---------------------------------------------------------------------------
+
+_SEVERITY_ORDER: Dict[str, int] = {"high": 0, "med": 1, "low": 2, "info": 3}
+
+
+def _percentile(data: List[float], p: float) -> float:
+    """Return the value at percentile p (0-100) of data using statistics.quantiles.
+
+    Args:
+        data: Non-empty list of floats.
+        p: Target percentile in the range 0–100 (e.g. 50 for median, 99 for p99).
+
+    Returns:
+        The value at the requested percentile, or ``data[0]`` for single-element
+        lists (``statistics.quantiles`` requires at least two data points).
+    """
+    if len(data) < 2:
+        return data[0] if data else 0.0
+    quantiles = statistics.quantiles(data, n=100)
+    index = max(0, min(int(p) - 1, len(quantiles) - 1))
+    return quantiles[index]
+
+
+class TuningHint(BaseModel):
+    """One structured tuning recommendation produced by :func:`tune`.
+
+    Each hint carries a severity, the name of the tunable parameter
+    (``knob``), the scope it applies to (source, edge, host, or global),
+    the observed and recommended values, a one-line signal summary, a
+    multi-line rationale, and the number of records the hint was computed
+    from.
+
+    Attributes:
+        severity: Urgency level — ``"high"`` (likely misconfig), ``"med"``
+            (suboptimal), ``"low"`` (minor tuning opportunity), or
+            ``"info"`` (no action needed, informational only).
+        knob: The tunable parameter name, e.g. ``"chunk_size"`` or
+            ``"penstock.rate_per_sec"``.
+        scope: Where this hint applies.  Keys are one of ``"source"``,
+            ``"edge"``, ``"host"``, or ``"global"``; values are the
+            identifier string.
+        current_value: What the knob is set to today, or ``None`` if not
+            recoverable from the records.
+        recommended_value: What to change it to, or ``None`` when no
+            numeric recommendation can be derived.
+        signal: One-line summary of the observation that triggered this
+            hint.
+        rationale: Multi-line explanation including representative data
+            points.
+        sample_size: Number of records the hint was computed from.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    severity: Literal["high", "med", "low", "info"] = PydanticField(...)
+    knob: str = PydanticField(..., description="The tunable parameter (e.g., 'chunk_size', 'penstock.rate_per_sec').")
+    scope: Dict[str, str] = PydanticField(
+        default_factory=dict,
+        description="Where this hint applies — keys like 'source', 'edge', 'host', 'global'.",
+    )
+    current_value: Optional[Any] = PydanticField(
+        default=None,
+        description="What the knob is set to today (None if not recoverable from records).",
+    )
+    recommended_value: Optional[Any] = PydanticField(
+        default=None,
+        description="What to change it to (None if no numeric recommendation).",
+    )
+    signal: str = PydanticField(..., description="One-line summary of the observation.")
+    rationale: str = PydanticField(..., description="Multi-line explanation including data points.")
+    sample_size: int = PydanticField(default=0, description="Number of records the hint was computed from.")
+
+
+class TuningReport(BaseModel):
+    """Full output of :func:`tune` — a collection of :class:`TuningHint` objects plus summary stats.
+
+    Attributes:
+        hints: List of structured tuning recommendations, ordered by
+            severity (high → med → low → info) when rendered.
+        summary: Aggregate stats for the analyzed window: ``total_chunks``,
+            ``total_passes``, ``total_rejects``, ``window_start``, and
+            ``window_end``.
+        analyzed_at: UTC timestamp when the report was generated.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    hints: List[TuningHint] = PydanticField(default_factory=list)
+    summary: Dict[str, Any] = PydanticField(default_factory=dict)
+    analyzed_at: datetime = PydanticField(default_factory=lambda: datetime.now(timezone.utc))
+
+    def render(self) -> str:
+        """Return a human-readable formatted tuning report.
+
+        Hints are sorted by severity (high → med → low → info) before
+        rendering.  Each hint is emitted as a labelled block; the report
+        closes with a footer showing summary statistics.
+
+        Returns:
+            Multi-line string suitable for printing or writing to a log
+            file.
+        """
+        sorted_hints = sorted(self.hints, key=lambda h: _SEVERITY_ORDER.get(h.severity, 99))
+        lines: List[str] = []
+        for hint in sorted_hints:
+            label = hint.severity.upper()
+            scope_str = ", ".join(f"{k}={v}" for k, v in hint.scope.items())
+            scope_part = f"  [{scope_str}]" if scope_str else ""
+            lines.append(f"[{label}]  {hint.knob}{scope_part}")
+            lines.append(f"        Signal: {hint.signal}")
+            for rline in hint.rationale.splitlines():
+                lines.append(f"        {rline}")
+            if hint.current_value is not None:
+                lines.append(f"        Current value: {hint.current_value}")
+            if hint.recommended_value is not None:
+                lines.append(f"        Recommended: {hint.recommended_value}")
+            lines.append(f"        Sample size: {hint.sample_size}")
+            lines.append("")
+
+        lines.append("--- Summary ---")
+        for k, v in self.summary.items():
+            lines.append(f"  {k}: {v}")
+        lines.append(f"  analyzed_at: {self.analyzed_at.isoformat()}")
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Rule functions.
+# ---------------------------------------------------------------------------
+
+
+def _tune_chunk_size(waves: List[Wave]) -> List[TuningHint]:
+    """Analyse Wave timing records and recommend chunk_size adjustments.
+
+    Groups waves by ``source_url``, computes p50 and p99 of
+    ``processing_time_sec`` per group, and emits a hint when the
+    distribution is either far too fast (chunk too small) or too slow
+    (memory pressure).
+
+    Args:
+        waves: List of :class:`~incorporator.Wave` records from a run.
+
+    Returns:
+        List of :class:`TuningHint` — one per source group that
+        triggered a rule, including INFO hints for well-tuned or
+        data-insufficient groups.
+    """
+    # Group by source_url (may be None for file-mode or one-shot sources).
+    groups: Dict[Optional[str], List[Wave]] = {}
+    for w in waves:
+        groups.setdefault(w.source_url, []).append(w)
+
+    hints: List[TuningHint] = []
+    for source_url, group in groups.items():
+        scope = {"source": str(source_url)}
+        n = len(group)
+        if n < 20:
+            hints.append(
+                TuningHint.model_construct(
+                    severity="info",
+                    knob="chunk_size",
+                    scope=scope,
+                    current_value=None,
+                    recommended_value=None,
+                    signal=f"insufficient data (n={n})",
+                    rationale=f"Need at least 20 waves per source to compute reliable p50/p99. Got {n}.",
+                    sample_size=n,
+                )
+            )
+            continue
+
+        times = [w.processing_time_sec for w in group]
+        p50 = _percentile(times, 50)
+        p99 = _percentile(times, 99)
+
+        if p50 < 0.010 and p99 < 0.050:
+            hints.append(
+                TuningHint.model_construct(
+                    severity="high",
+                    knob="chunk_size",
+                    scope=scope,
+                    current_value=None,
+                    recommended_value="raise from current (target ~50 ms p50)",
+                    signal=f"p50={p50 * 1000:.1f}ms, p99={p99 * 1000:.1f}ms — chunks finishing too fast",
+                    rationale=(
+                        f"p50={p50 * 1000:.1f}ms and p99={p99 * 1000:.1f}ms are both well below the 50ms target.\n"
+                        "Current chunk_size is not recoverable from Wave records alone"
+                        " — check the Stream/incorp call.\n"
+                        "Raising chunk_size reduces per-chunk overhead and improves throughput."
+                    ),
+                    sample_size=n,
+                )
+            )
+        elif p99 > 0.500:
+            hints.append(
+                TuningHint.model_construct(
+                    severity="med",
+                    knob="chunk_size",
+                    scope=scope,
+                    current_value=None,
+                    recommended_value="lower from current (memory pressure)",
+                    signal=f"p99={p99 * 1000:.1f}ms — chunks taking too long, possible memory pressure",
+                    rationale=(
+                        f"p99={p99 * 1000:.1f}ms exceeds 500ms, suggesting chunk_size is too large.\n"
+                        f"p50={p50 * 1000:.1f}ms. Lower chunk_size to reduce memory footprint per chunk."
+                    ),
+                    sample_size=n,
+                )
+            )
+        else:
+            hints.append(
+                TuningHint.model_construct(
+                    severity="info",
+                    knob="chunk_size",
+                    scope=scope,
+                    current_value=None,
+                    recommended_value=None,
+                    signal=f"well-tuned. p50={p50 * 1000:.1f}ms, p99={p99 * 1000:.1f}ms",
+                    rationale=(
+                        f"p50={p50 * 1000:.1f}ms and p99={p99 * 1000:.1f}ms are within the target range.\n"
+                        "No chunk_size change recommended."
+                    ),
+                    sample_size=n,
+                )
+            )
+    return hints
+
+
+def _tune_penstock_rate(rejects: List[RejectEntry], window_sec: float = 600.0) -> List[TuningHint]:
+    """Analyse reject records to recommend penstock rate adjustments.
+
+    Filters to ``PenstockLimited`` and HTTP 429 rejects, then groups
+    canal rejects by ``(from_name, to_name)`` edge and HTTP rejects by
+    ``host``.  For groups with more than 5 entries, computes the median
+    ``cooldown_sec`` and derives a recommended ``rate_per_sec``.
+
+    Args:
+        rejects: List of :class:`~incorporator.RejectEntry` records.
+        window_sec: Observation window in seconds (informational only;
+            not used in rate computation).
+
+    Returns:
+        List of :class:`TuningHint`.
+    """
+    # Filter to penstock-related rejects only.
+    penstock_rejects = [
+        r
+        for r in rejects
+        if r.error_kind == "PenstockLimited" or (r.error_kind == "HTTPStatusError" and r.status_code == 429)
+    ]
+
+    hints: List[TuningHint] = []
+
+    # Canal rejects: from_name is not None.
+    canal = [r for r in penstock_rejects if r.from_name is not None]
+    canal_groups: Dict[Tuple[Optional[str], Optional[str]], List[RejectEntry]] = {}
+    for r in canal:
+        canal_groups.setdefault((r.from_name, r.to_name), []).append(r)
+
+    for (from_name, to_name), group in canal_groups.items():
+        if len(group) <= 5:
+            continue
+        edge_label = f"{from_name}->{to_name}"
+        cooldowns = [r.cooldown_sec for r in group if r.cooldown_sec is not None]
+        if cooldowns:
+            median_cooldown = statistics.median(cooldowns)
+            recommended = round(1.0 / median_cooldown, 4) if median_cooldown > 0 else None
+            hints.append(
+                TuningHint.model_construct(
+                    severity="high",
+                    knob="penstock.rate_per_sec",
+                    scope={"edge": edge_label},
+                    current_value=None,
+                    recommended_value=recommended,
+                    signal=f"{len(group)} PenstockLimited rejects on edge {edge_label}",
+                    rationale=(
+                        f"{len(group)} rejects on edge {edge_label}.\n"
+                        f"Median cooldown_sec={median_cooldown:.3f}s "
+                        f"→ recommended rate_per_sec={recommended} (1 req per cooldown period)."
+                    ),
+                    sample_size=len(group),
+                )
+            )
+        else:
+            hints.append(
+                TuningHint.model_construct(
+                    severity="med",
+                    knob="penstock.rate_per_sec",
+                    scope={"edge": edge_label},
+                    current_value=None,
+                    recommended_value=None,
+                    signal=f"{len(group)} PenstockLimited rejects on edge {edge_label}; no cooldown_sec data",
+                    rationale=(
+                        f"{len(group)} rejects on edge {edge_label}, but no cooldown_sec values were recorded.\n"
+                        "Raise rate; cooldown_sec data unavailable for precise recommendation."
+                    ),
+                    sample_size=len(group),
+                )
+            )
+
+    # HTTP rejects: host is not None.
+    http_rejects = [r for r in penstock_rejects if r.host is not None]
+    http_groups: Dict[str, List[RejectEntry]] = {}
+    for r in http_rejects:
+        if r.host is not None:
+            http_groups.setdefault(r.host, []).append(r)
+
+    for host, group in http_groups.items():
+        if len(group) <= 5:
+            continue
+        cooldowns = [r.cooldown_sec for r in group if r.cooldown_sec is not None]
+        if cooldowns:
+            median_cooldown = statistics.median(cooldowns)
+            recommended = round(1.0 / median_cooldown, 4) if median_cooldown > 0 else None
+            hints.append(
+                TuningHint.model_construct(
+                    severity="high",
+                    knob="penstock.rate_per_sec",
+                    scope={"host": host},
+                    current_value=None,
+                    recommended_value=recommended,
+                    signal=f"{len(group)} HTTP 429 rejects for host {host!r}",
+                    rationale=(
+                        f"{len(group)} HTTPStatusError(429) rejects for host {host!r}.\n"
+                        f"Median cooldown_sec={median_cooldown:.3f}s "
+                        f"→ recommended rate_per_sec={recommended} (1 req per cooldown period)."
+                    ),
+                    sample_size=len(group),
+                )
+            )
+        else:
+            hints.append(
+                TuningHint.model_construct(
+                    severity="med",
+                    knob="penstock.rate_per_sec",
+                    scope={"host": host},
+                    current_value=None,
+                    recommended_value=None,
+                    signal=f"{len(group)} HTTP 429 rejects for host {host!r}; no cooldown_sec data",
+                    rationale=(
+                        f"{len(group)} HTTPStatusError(429) rejects for host {host!r}, "
+                        "but no cooldown_sec values were recorded.\n"
+                        "Raise rate; cooldown_sec data unavailable for precise recommendation."
+                    ),
+                    sample_size=len(group),
+                )
+            )
+
+    return hints
+
+
+def _tune_surge_threshold(rejects: List[RejectEntry], tides: List[Tide]) -> List[TuningHint]:
+    """Analyse surge-related rejects and in-flight data to recommend threshold adjustments.
+
+    Filters to ``SkipAhead`` / ``SurgeHalted`` canal rejects, groups by
+    ``(from_name, to_name)`` edge, then gathers ``in_flight_sec`` from
+    matching :class:`~incorporator.observability.tideweaver.tide.Tide`
+    outcomes to derive a recommended ``threshold_multiple``.
+
+    Args:
+        rejects: List of :class:`~incorporator.RejectEntry` records.
+        tides: List of :class:`~incorporator.observability.tideweaver.tide.Tide`
+            records from the same run.
+
+    Returns:
+        List of :class:`TuningHint`.
+    """
+    # Filter to surge-related canal rejects only (from_name must be set).
+    surge_rejects = [r for r in rejects if r.error_kind in ("SkipAhead", "SurgeHalted") and r.from_name is not None]
+
+    # Group by (from_name, to_name).
+    groups: Dict[Tuple[Optional[str], Optional[str]], List[RejectEntry]] = {}
+    for r in surge_rejects:
+        groups.setdefault((r.from_name, r.to_name), []).append(r)
+
+    hints: List[TuningHint] = []
+    for (from_name, to_name), group in groups.items():
+        if len(group) <= 5:
+            continue
+        edge_label = f"{from_name}->{to_name}"
+
+        # Gather in_flight_sec from tide outcomes where outcome.name == from_name.
+        in_flight_values: List[float] = []
+        for tide in tides:
+            for outcome in tide.current_outcomes:
+                if outcome.name == from_name and outcome.in_flight_sec is not None:
+                    in_flight_values.append(outcome.in_flight_sec)
+
+        if not in_flight_values:
+            hints.append(
+                TuningHint.model_construct(
+                    severity="info",
+                    knob="surge_barrier.threshold_multiple",
+                    scope={"edge": edge_label},
+                    current_value=None,
+                    recommended_value=None,
+                    signal=f"{len(group)} surge rejects on edge {edge_label}; insufficient in_flight_sec data",
+                    rationale=(
+                        f"{len(group)} surge rejects on edge {edge_label}, but no in_flight_sec data "
+                        "was found in the tide records for the upstream current.\n"
+                        "Insufficient in_flight_sec data for edge — cannot derive threshold recommendation."
+                    ),
+                    sample_size=len(group),
+                )
+            )
+            continue
+
+        median_in_flight = statistics.median(in_flight_values)
+        hints.append(
+            TuningHint.model_construct(
+                severity="med",
+                knob="surge_barrier.threshold_multiple",
+                scope={"edge": edge_label},
+                current_value=None,
+                recommended_value=None,
+                signal=f"{len(group)} surge rejects on edge {edge_label}; median in_flight_sec={median_in_flight:.2f}s",
+                rationale=(
+                    f"{len(group)} rejects; median in_flight_sec={median_in_flight:.2f}s; "
+                    "compare against the from_name current's configured interval — "
+                    "raise threshold_multiple if median > 2.0 × interval."
+                ),
+                sample_size=len(group),
+            )
+        )
+    return hints
+
+
+def _tune_pass_interval(tides: List[Tide], current_pass_interval: float) -> List[TuningHint]:
+    """Analyse Tide duration records to recommend pass_interval adjustments.
+
+    Computes p50/p99 of ``duration_sec`` across tides and the fraction
+    that woke via the ``"pass_interval"`` fallback (heap-empty).  Emits
+    HIGH when p99 saturates the current interval or MED when the heap-empty
+    fallback fraction exceeds 30%.
+
+    Args:
+        tides: List of :class:`~incorporator.observability.tideweaver.tide.Tide`
+            records from a run.
+        current_pass_interval: The ``pass_interval`` the scheduler was
+            configured with, in seconds.
+
+    Returns:
+        List of :class:`TuningHint` — at most two (one per rule).
+    """
+    n = len(tides)
+    if n < 20:
+        return [
+            TuningHint.model_construct(
+                severity="info",
+                knob="pass_interval",
+                scope={"global": "true"},
+                current_value=current_pass_interval,
+                recommended_value=None,
+                signal=f"insufficient data (n={n})",
+                rationale=f"Need at least 20 tides to compute reliable p50/p99. Got {n}.",
+                sample_size=n,
+            )
+        ]
+
+    durations = [t.duration_sec for t in tides]
+    p50 = _percentile(durations, 50)
+    p99 = _percentile(durations, 99)
+
+    fallback_count = sum(1 for t in tides if t.wake_reason == "pass_interval")
+    fallback_fraction = fallback_count / n
+
+    hints: List[TuningHint] = []
+
+    # Rule A: p99 saturates the current interval.
+    if p99 > 0.8 * current_pass_interval:
+        recommended = round(p99 * 1.25, 4)
+        hints.append(
+            TuningHint.model_construct(
+                severity="high",
+                knob="pass_interval",
+                scope={"global": "true"},
+                current_value=current_pass_interval,
+                recommended_value=recommended,
+                signal=(
+                    f"p99 duration ({p99 * 1000:.1f}ms) exceeds 80% of"
+                    f" pass_interval ({current_pass_interval * 1000:.1f}ms)"
+                ),
+                rationale=(
+                    f"p99={p99 * 1000:.1f}ms is {p99 / current_pass_interval:.1%} of the current "
+                    f"pass_interval={current_pass_interval * 1000:.1f}ms.\n"
+                    f"p50={p50 * 1000:.1f}ms. "
+                    f"Recommended pass_interval={recommended}s covers p99 with 25% headroom."
+                ),
+                sample_size=n,
+            )
+        )
+
+    # Rule B: heap-empty fallback degeneracy (independent of Rule A).
+    if fallback_fraction > 0.30:
+        hints.append(
+            TuningHint.model_construct(
+                severity="med",
+                knob="pass_interval",
+                scope={"global": "true"},
+                current_value=current_pass_interval,
+                recommended_value=None,
+                signal=f"{fallback_fraction:.0%} of passes woke via pass_interval fallback (heap empty)",
+                rationale=(
+                    f"{fallback_count}/{n} passes ({fallback_fraction:.1%}) woke because the due-heap "
+                    "was empty (wake_reason='pass_interval').\n"
+                    "This indicates heap-empty fallback degeneracy — currents are not re-scheduling "
+                    "themselves on the adaptive heap. Review current intervals and gate conditions."
+                ),
+                sample_size=n,
+            )
+        )
+
+    if not hints:
+        hints.append(
+            TuningHint.model_construct(
+                severity="info",
+                knob="pass_interval",
+                scope={"global": "true"},
+                current_value=current_pass_interval,
+                recommended_value=None,
+                signal=f"pass_interval well-sized. p50={p50 * 1000:.1f}ms, p99={p99 * 1000:.1f}ms",
+                rationale=(
+                    f"p50={p50 * 1000:.1f}ms, p99={p99 * 1000:.1f}ms are well below the 80% saturation "
+                    f"threshold ({0.8 * current_pass_interval * 1000:.1f}ms).\n"
+                    f"Fallback fraction={fallback_fraction:.1%} is below 30%. No change recommended."
+                ),
+                sample_size=n,
+            )
+        )
+
+    return hints
+
+
+def _tune_retry_policy(rejects: List[RejectEntry]) -> List[TuningHint]:
+    """Analyse HTTP error rejects to recommend retry policy adjustments.
+
+    Groups ``HTTPStatusError`` rejects by host.  For each group emits:
+
+    * MED hint to raise ``stop_after_attempt`` when the majority of
+      ``attempt_number`` values hit the ceiling.
+    * LOW hint to tune ``wait_random_exponential`` when ``duration_sec``
+      and ``cooldown_sec`` medians are close.
+
+    Args:
+        rejects: List of :class:`~incorporator.RejectEntry` records.
+
+    Returns:
+        List of :class:`TuningHint`.
+    """
+    http_errors = [r for r in rejects if r.error_kind == "HTTPStatusError"]
+    if not http_errors:
+        return []
+
+    # Group by host.
+    groups: Dict[str, List[RejectEntry]] = {}
+    for r in http_errors:
+        key = r.host or r.source
+        groups.setdefault(key, []).append(r)
+
+    hints: List[TuningHint] = []
+    for host, group in groups.items():
+        # Attempt-number ceiling detection.
+        with_attempt = [r for r in group if r.attempt_number is not None]
+        if with_attempt:
+            attempt_numbers = [r.attempt_number for r in with_attempt]
+            # attempt_numbers is List[Optional[int]] but filtered to non-None above.
+            non_none_attempts: List[int] = [a for a in attempt_numbers if a is not None]
+            if non_none_attempts:
+                max_attempt = max(non_none_attempts)
+                at_ceiling = sum(1 for a in non_none_attempts if a == max_attempt)
+                if at_ceiling > len(non_none_attempts) / 2:
+                    hints.append(
+                        TuningHint.model_construct(
+                            severity="med",
+                            knob="http.stop_after_attempt",
+                            scope={"host": host},
+                            current_value=max_attempt,
+                            recommended_value=None,
+                            signal=(
+                                f"{at_ceiling}/{len(non_none_attempts)} retries hit ceiling"
+                                f" (attempt={max_attempt}) for host {host!r}"
+                            ),
+                            rationale=(
+                                f"Majority ({at_ceiling}/{len(non_none_attempts)}) of HTTP errors for host {host!r} "
+                                f"reached the retry ceiling (attempt_number={max_attempt}).\n"
+                                "Raise stop_after_attempt to allow more retries before giving up."
+                            ),
+                            sample_size=len(group),
+                        )
+                    )
+
+        # Wait-exponential tuning from duration_sec vs cooldown_sec.
+        with_timing = [r for r in group if r.duration_sec is not None and r.cooldown_sec is not None]
+        if with_timing:
+            median_duration = statistics.median(r.duration_sec for r in with_timing if r.duration_sec is not None)
+            median_cooldown = statistics.median(r.cooldown_sec for r in with_timing if r.cooldown_sec is not None)
+            if median_cooldown > 0 and abs(median_duration - median_cooldown) / median_cooldown < 0.5:
+                hints.append(
+                    TuningHint.model_construct(
+                        severity="low",
+                        knob="http.wait_random_exponential",
+                        scope={"host": host},
+                        current_value=None,
+                        recommended_value=None,
+                        signal=(
+                            f"median duration ({median_duration:.2f}s) ≈ median cooldown"
+                            f" ({median_cooldown:.2f}s) for host {host!r}"
+                        ),
+                        rationale=(
+                            f"median duration_sec={median_duration:.2f}s is within 50% of "
+                            f"median cooldown_sec={median_cooldown:.2f}s for host {host!r}.\n"
+                            f"tune wait_random_exponential(max≈{median_cooldown:.2f})"
+                        ),
+                        sample_size=len(with_timing),
+                    )
+                )
+
+    return hints
+
+
+def tune(
+    *,
+    rejects: Optional[List[RejectEntry]] = None,
+    tides: Optional[List[Tide]] = None,
+    waves: Optional[List[Wave]] = None,
+    pass_interval: Optional[float] = None,
+) -> TuningReport:
+    """Generate tuning recommendations from accumulated outcome records.
+
+    Runs up to five rule functions over the supplied record lists and
+    aggregates the resulting :class:`TuningHint` objects into a
+    :class:`TuningReport`.  Any argument may be omitted; rules that
+    require missing inputs are skipped.
+
+    Args:
+        rejects: Canal-layer and HTTP :class:`~incorporator.RejectEntry`
+            records, typically from :attr:`Tideweaver.rejects` or
+            :attr:`IncorporatorList.rejects`.
+        tides: Scheduler pass records from a :class:`Tideweaver` run,
+            typically collected by iterating :meth:`Tideweaver.run`.
+        waves: Chunk telemetry records from a streaming pipeline,
+            typically collected by iterating :meth:`Incorporator.stream`.
+        pass_interval: The ``pass_interval`` the scheduler was configured
+            with, in seconds.  Required for the ``_tune_pass_interval``
+            rule; ignored if ``tides`` is also omitted.
+
+    Returns:
+        A :class:`TuningReport` with structured hints and a summary dict.
+    """
+    rejects = rejects or []
+    tides = tides or []
+    waves = waves or []
+
+    hints: List[TuningHint] = []
+    if waves:
+        hints.extend(_tune_chunk_size(waves))
+    if rejects:
+        hints.extend(_tune_penstock_rate(rejects))
+    if rejects and tides:
+        hints.extend(_tune_surge_threshold(rejects, tides))
+    if tides and pass_interval is not None:
+        hints.extend(_tune_pass_interval(tides, pass_interval))
+    if rejects:
+        hints.extend(_tune_retry_policy(rejects))
+
+    # Window timestamps from waves + tides only (RejectEntry has no timestamp).
+    timestamps = [w.timestamp for w in waves] + [t.timestamp for t in tides]
+    summary: Dict[str, Any] = {
+        "total_chunks": len(waves),
+        "total_passes": len(tides),
+        "total_rejects": len(rejects),
+        "window_start": min(timestamps) if timestamps else None,
+        "window_end": max(timestamps) if timestamps else None,
+    }
+
+    return TuningReport.model_construct(
+        hints=hints,
+        summary=summary,
+        analyzed_at=datetime.now(timezone.utc),
+    )

@@ -34,7 +34,25 @@ import logging
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Awaitable, Callable, Deque, Dict, FrozenSet, List, Optional, Set, Tuple, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Deque,
+    Dict,
+    FrozenSet,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    cast,
+)
+
+if TYPE_CHECKING:
+    from ..wave import Wave
+    from .architect import TuningReport
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -224,6 +242,41 @@ class Tideweaver:
         affecting the scheduler's accumulator.
         """
         return list(self._canal_rejects)
+
+    def summary(
+        self,
+        *,
+        tides: Optional[List[Tide]] = None,
+        waves: Optional[List["Wave"]] = None,
+    ) -> "TuningReport":
+        """End-of-run convenience: feed accumulated rejects, tides, and waves to :func:`architect.tune`.
+
+        Collects :attr:`rejects` from the scheduler and passes them to
+        :func:`~incorporator.observability.tideweaver.architect.tune`
+        alongside any tides and waves supplied by the caller.  The
+        scheduler's ``pass_interval`` is forwarded automatically.
+
+        Args:
+            tides: Tide records collected during the run (e.g. by
+                appending each yielded :class:`Tide` inside the
+                ``async for`` loop).  ``None`` is treated as an empty
+                list.
+            waves: Wave records from any upstream Stream currents,
+                collected in the same run.  ``None`` is treated as an
+                empty list.
+
+        Returns:
+            A :class:`~incorporator.observability.tideweaver.architect.TuningReport`
+            with structured tuning hints for this run.
+        """
+        from .architect import tune  # lazy — avoids module cycle
+
+        return tune(
+            rejects=self.rejects,
+            tides=tides,
+            waves=waves,
+            pass_interval=self.pass_interval,
+        )
 
     async def run(self) -> AsyncIterator[Tide]:
         """Enter the orchestration loop — one async iteration per scheduler pass until the window closes.
