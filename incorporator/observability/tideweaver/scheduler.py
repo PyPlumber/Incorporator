@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import heapq
 import logging
+import statistics
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -173,6 +174,7 @@ class Tideweaver:
         *,
         tick_factory: Optional[TickFactory] = None,
         pass_interval: Optional[float] = None,
+        backlog_backoff_factor: float = 1.0,
     ) -> None:
         self.watershed = watershed
         self.tick_factory = tick_factory
@@ -180,6 +182,8 @@ class Tideweaver:
             0.05,
             min(1.0, min(c.interval for c in watershed.currents) / 2.0),
         )
+        self._backlog_backoff_factor = backlog_backoff_factor
+        self._recent_pass_metrics: Deque[Tuple[float, int]] = deque(maxlen=10)
 
         self._state: Dict[str, _CurrentState] = {c.name: _CurrentState() for c in watershed.currents}
         # ``_last_consumed`` keys on edge tuples, not current names — so it's
@@ -351,6 +355,13 @@ class Tideweaver:
         else:
             timeout = max(0.0, next_due - now)
             fallback_reason = "timer"
+        if self._backlog_backoff_factor > 1.0 and len(self._recent_pass_metrics) >= 5:
+            total_currents = len(self.watershed.currents)
+            if total_currents > 0:
+                med_inflight = statistics.median(m[1] for m in self._recent_pass_metrics)
+                med_duration = statistics.median(m[0] for m in self._recent_pass_metrics)
+                if med_inflight > 0.8 * total_currents and med_duration > 0.8 * self.pass_interval:
+                    timeout = min(timeout * self._backlog_backoff_factor, 5.0 * self.pass_interval)
         if timeout <= 0.0:
             # Heap already expired — re-pass immediately.  Still clear the
             # wake event so a stale set() from earlier doesn't no-op the
@@ -486,7 +497,7 @@ class Tideweaver:
         # ``due <= started`` (and any new entries pushed during the walk
         # have ``due = monotonic + interval > pass_end`` by construction).
         next_due_in_sec = (self._due_heap[0][0] - pass_end) if self._due_heap else None
-        return Tide.model_construct(
+        tide = Tide.model_construct(
             tide_number=self._tide_number,
             fired=fired,
             skipped=skipped,
@@ -499,6 +510,9 @@ class Tideweaver:
             next_due_in_sec=next_due_in_sec,
             timestamp=datetime.now(timezone.utc),
         )
+        if self._backlog_backoff_factor > 1.0:
+            self._recent_pass_metrics.append((tide.duration_sec, tide.in_flight_count_at_start))
+        return tide
 
     def _gate_reason(self, current: Current, now: float) -> Tuple[Optional[str], FrozenSet[str]]:
         """Return ``(None, bypassed)`` if ``current`` may fire; else ``(reason, set())``.

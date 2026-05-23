@@ -1,7 +1,10 @@
 """Chunked sequential engine (Engine 1): O(1)-memory paginator-driven streaming."""
 
 import asyncio
+import logging
+import statistics
 import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, Optional
 
@@ -11,6 +14,8 @@ from ...io.fetch import _CURRENT_CHUNK_CLASS, HTTPClientBuilder
 from ..logger import Wave
 from ._shared import _enrich_and_load, _row_count
 
+logger = logging.getLogger(__name__)
+
 
 async def _run_chunking_engine(
     cls: Any,
@@ -19,6 +24,11 @@ async def _run_chunking_engine(
     export_params: Optional[Dict[str, Any]],
     poll_interval: Optional[float],
     paginator: Any,
+    adapt_chunk_size: bool = False,
+    chunk_size_min: int = 100,
+    chunk_size_max: int = 100_000,
+    target_min_sec: float = 0.030,
+    target_max_sec: float = 0.100,
 ) -> AsyncGenerator[Wave, None]:
     """Stream a paginated source one chunk at a time, with flat memory.
 
@@ -47,6 +57,16 @@ async def _run_chunking_engine(
             headers=incorp_params.get("headers"),
             block_internal_redirects=incorp_params.get("block_internal_redirects", False),
         )
+    _aimd_enabled = adapt_chunk_size
+    _ring: deque[float] = deque(maxlen=5)
+    if _aimd_enabled and paginator is not None:
+        if not hasattr(paginator, "chunk_size"):
+            logger.debug(
+                "AIMD: paginator %r has no chunk_size attribute; adaptation disabled.",
+                type(paginator).__name__,
+            )
+            _aimd_enabled = False
+
     try:
         while True:
             chunk_idx = 0
@@ -84,7 +104,7 @@ async def _run_chunking_engine(
                     if rows > 0:
                         await _enrich_and_load(cls, dataset, refresh_params, export_params, force_append=True)
 
-                    yield Wave.model_construct(
+                    wave_obj = Wave.model_construct(
                         chunk_index=chunk_idx,
                         operation="chunk",
                         rows_processed=rows,
@@ -98,6 +118,21 @@ async def _run_chunking_engine(
                         conv_dict_time_sec=conv_elapsed,
                         timestamp=datetime.now(timezone.utc),
                     )
+                    yield wave_obj
+
+                    if _aimd_enabled and paginator is not None:
+                        _ring.append(wave_obj.processing_time_sec)
+                        if len(_ring) == _ring.maxlen:
+                            med = statistics.median(_ring)
+                            current_cs = paginator.chunk_size
+                            if med < target_min_sec:
+                                new_cs = min(chunk_size_max, current_cs + current_cs // 5)
+                            elif med > target_max_sec:
+                                new_cs = max(chunk_size_min, current_cs // 2)
+                            else:
+                                new_cs = current_cs
+                            if new_cs != current_cs:
+                                paginator.chunk_size = new_cs
 
                     del dataset
                     # Yield the event loop so other tasks can run between chunks.

@@ -58,6 +58,11 @@ async def run_pipeline(
     refresh_params: Optional[Dict[str, Any]],
     export_params: Optional[Dict[str, Any]],
     poll_interval: Optional[float],
+    adapt_chunk_size: bool = False,
+    chunk_size_min: int = 100,
+    chunk_size_max: int = 100_000,
+    target_min_sec: float = 0.030,
+    target_max_sec: float = 0.100,
 ) -> AsyncGenerator[Wave, None]:
     """Run a single-source chunking pipeline — the engine behind ``stream()``.
 
@@ -68,6 +73,23 @@ async def run_pipeline(
     stateful pipeline transparently — Python-object identity in
     ``cls.inc_dict`` survives across waves thanks to the IncorporatorList
     pass-through fast path in :func:`._outflow.flush`.
+
+    Args:
+        cls: The Incorporator subclass to fetch data for.
+        incorp_params: kwargs forwarded to ``cls.incorp()`` each chunk.
+        refresh_params: kwargs for ``cls.refresh()`` between chunks.
+        export_params: kwargs for ``cls.export()`` between chunks.
+        poll_interval: Sleep between full passes; ``None`` for one-shot.
+        adapt_chunk_size: When ``True`` and the paginator exposes a
+            ``chunk_size`` attribute, use AIMD feedback to grow or shrink
+            ``chunk_size`` based on median processing time over the last 5
+            chunks.  Default ``False`` preserves existing behaviour.
+        chunk_size_min: Floor for AIMD shrinkage.  Default 100.
+        chunk_size_max: Ceiling for AIMD growth.  Default 100 000.
+        target_min_sec: Processing time below which chunk_size grows.
+            Default 30 ms.
+        target_max_sec: Processing time above which chunk_size shrinks.
+            Default 100 ms.
 
     Yields:
         Wave: one per chunk, success or failure.  The chunking engine
@@ -82,5 +104,10 @@ async def run_pipeline(
         export_params=export_params,
         poll_interval=poll_interval,
         paginator=paginator,
+        adapt_chunk_size=adapt_chunk_size,
+        chunk_size_min=chunk_size_min,
+        chunk_size_max=chunk_size_max,
+        target_min_sec=target_min_sec,
+        target_max_sec=target_max_sec,
     ):
         yield wave

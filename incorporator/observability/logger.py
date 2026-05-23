@@ -213,6 +213,41 @@ def _safe_log_filename(prefix: str, suffix: str) -> str:
     return str(log_dir / f"{clean_prefix}_{suffix}")
 
 
+def _read_filtered(filename: str, key: str) -> List[Dict[str, Any]]:
+    """Read every JSONL record from ``filename`` that contains ``key`` as a top-level key.
+
+    Skips lines that fail JSON decoding or lack the requested key.  Safe to
+    call when ``filename`` does not yet exist — returns ``[]`` rather than
+    raising.  OSError (e.g. permission denied) is silently swallowed so
+    callers can treat disk-read failures as "no records yet".
+
+    Args:
+        filename: Absolute or CWD-relative path to a JSONL log file.
+        key: Top-level JSON key that must be present in a record for it
+            to be included in the result.
+
+    Returns:
+        List of dicts — every record that contains ``key``, in file order.
+    """
+    path = Path(filename).resolve()
+    if not path.is_file():
+        return []
+    records: List[Dict[str, Any]] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        rec = json.loads(line)
+                        if key in rec:
+                            records.append(rec)
+                    except json.JSONDecodeError:
+                        pass
+    except OSError:
+        pass
+    return records
+
+
 class JSONFormatter(logging.Formatter):
     """Emit one JSON-line record per log call for grep, aggregators, and DLQ retrieval.
 
@@ -451,6 +486,32 @@ class LoggingMixin:
             return errors
 
         return await asyncio.to_thread(_read_disk)
+
+    @classmethod
+    async def get_rejects(cls) -> List[Dict[str, Any]]:
+        """Pull every reject this class has logged from ``logs/<ClassName>_error.log``.
+
+        Reach for ``get_rejects()`` after an overnight pipeline to iterate
+        over every HTTP failure, fjord seed error, or canal skip that was
+        serialised to the error log as a structured ``reject`` record.
+
+        Example::
+
+            rejects = await Launch.get_rejects()
+            for rec in rejects:
+                reject = rec["reject"]
+                print(reject["source"], reject["error_kind"])
+
+        Records contain a top-level ``"reject"`` key whose value matches the
+        :class:`~incorporator.rejects.RejectEntry` model dump.  The full
+        error log is **not** returned — only records that carry a ``"reject"``
+        key (as written by :func:`_route_reject_to_log`).  Safe to call when
+        no rejects have been logged yet — returns an empty list rather than
+        raising.  Tails ``logs/<ClassName>_error.log`` in a worker thread via
+        :func:`asyncio.to_thread` so the event loop is never blocked.
+        """
+        filename = _safe_log_filename(cls.__name__, "error.log")
+        return await asyncio.to_thread(_read_filtered, filename, "reject")
 
     # --- CLASS-LEVEL LOGGING (For Factory Methods like export) ---
 
@@ -826,7 +887,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             raise
 
     @classmethod
-    async def stream(
+    async def stream(  # type: ignore[override]
         cls: Type[TLoggedIncorporator],
         incorp_params: Dict[str, Any],
         refresh_params: Optional[Dict[str, Any]] = _UNSET,
@@ -835,9 +896,14 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         stateful_polling: bool = False,
         refresh_interval: Optional[float] = None,
         export_interval: Optional[float] = None,
-        inflow: Optional[Any] = None,
-        outflow: Optional[Any] = None,
+        inflow: Optional[Union[str, Path]] = None,
+        outflow: Optional[Union[str, Path]] = None,
         enable_logging: bool = False,
+        adapt_chunk_size: bool = False,
+        chunk_size_min: int = 100,
+        chunk_size_max: int = 100_000,
+        target_min_sec: float = 0.030,
+        target_max_sec: float = 0.100,
     ) -> AsyncGenerator[Wave, None]:
         """Production-observable variant of :meth:`Incorporator.stream`.
 
@@ -895,6 +961,11 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
                 export_interval=export_interval,
                 inflow=inflow,
                 outflow=outflow,
+                adapt_chunk_size=adapt_chunk_size,
+                chunk_size_min=chunk_size_min,
+                chunk_size_max=chunk_size_max,
+                target_min_sec=target_min_sec,
+                target_max_sec=target_max_sec,
             ):
                 if enable_logging:
                     _route_wave_to_log(cls, wave)

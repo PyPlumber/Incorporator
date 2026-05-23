@@ -1139,6 +1139,11 @@ class Incorporator(BaseModel):
         export_interval: Optional[float] = None,
         inflow: Optional[Union[str, Path]] = None,
         outflow: Optional[Union[str, Path]] = None,
+        adapt_chunk_size: bool = False,
+        chunk_size_min: int = 100,
+        chunk_size_max: int = 100_000,
+        target_min_sec: float = 0.030,
+        target_max_sec: float = 0.100,
     ) -> AsyncGenerator["Wave", None]:
         """Overnight unattended drain of a paginated source — one chunk in memory at a time.
 
@@ -1365,6 +1370,11 @@ class Incorporator(BaseModel):
             refresh_params=refresh_params,
             export_params=export_params,
             poll_interval=poll_interval,
+            adapt_chunk_size=adapt_chunk_size,
+            chunk_size_min=chunk_size_min,
+            chunk_size_max=chunk_size_max,
+            target_min_sec=target_min_sec,
+            target_max_sec=target_max_sec,
         ):
             yield wave
 

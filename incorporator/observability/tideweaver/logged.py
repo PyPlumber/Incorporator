@@ -35,9 +35,10 @@ Example::
 
 from __future__ import annotations
 
-from typing import AsyncIterator, Optional
+import asyncio
+from typing import Any, AsyncIterator, Dict, List, Optional
 
-from ..logger import _route_reject_to_log, _route_tide_to_log, setup_class_logger
+from ..logger import _read_filtered, _route_reject_to_log, _route_tide_to_log, _safe_log_filename, setup_class_logger
 from .scheduler import TickFactory, Tideweaver
 from .tide import Tide
 from .watershed import Watershed
@@ -94,10 +95,16 @@ class LoggedTideweaver(Tideweaver):
         *,
         tick_factory: Optional[TickFactory] = None,
         pass_interval: Optional[float] = None,
+        backlog_backoff_factor: float = 1.0,
         enable_logging: bool = False,
         logger_name: str = "Tideweaver",
     ) -> None:
-        super().__init__(watershed, tick_factory=tick_factory, pass_interval=pass_interval)
+        super().__init__(
+            watershed,
+            tick_factory=tick_factory,
+            pass_interval=pass_interval,
+            backlog_backoff_factor=backlog_backoff_factor,
+        )
         self._enable_logging = enable_logging
         self._logger_name = logger_name
         if enable_logging:
@@ -129,3 +136,74 @@ class LoggedTideweaver(Tideweaver):
             if self._enable_logging:
                 for reject in self.rejects:
                     _route_reject_to_log(self._logger_name, reject)
+
+    @classmethod
+    async def get_tides(cls, logger_name: str) -> List[Dict[str, Any]]:
+        """Return all tide records from error.log AND debug.log for ``logger_name``.
+
+        Deduped by ``tide_number``, sorted ascending.  Tides land in
+        ``error.log`` when severity is ERROR/INFO and in ``debug.log`` when
+        severity is DEBUG (no-op passes).  Both files must be read to recover
+        the full population of tide records for a given session.
+
+        Args:
+            logger_name: The name used when the :class:`LoggedTideweaver` was
+                constructed (e.g. ``"PriceSession"``).  Controls which
+                ``logs/<logger_name>_*.log`` files are read.
+
+        Returns:
+            List of tide-record dicts sorted ascending by ``tide_number``.
+            Each dict contains a top-level ``"tide"`` key whose value matches
+            the :class:`~incorporator.observability.tideweaver.tide.Tide`
+            model dump.  Returns an empty list when no log files exist yet.
+
+        Example::
+
+            tides = await LoggedTideweaver.get_tides("PriceSession")
+            for rec in tides:
+                t = rec["tide"]
+                print(t["tide_number"], t["fired"], t["duration_sec"])
+        """
+
+        def _read_both() -> List[Dict[str, Any]]:
+            error_file = _safe_log_filename(logger_name, "error.log")
+            debug_file = _safe_log_filename(logger_name, "debug.log")
+            all_records = _read_filtered(error_file, "tide") + _read_filtered(debug_file, "tide")
+            # Dedupe by tide_number (monotonic, deterministic ordering).
+            by_number: Dict[int, Dict[str, Any]] = {}
+            for rec in all_records:
+                t = rec.get("tide", {})
+                tn = t.get("tide_number")
+                if isinstance(tn, int):
+                    by_number[tn] = rec
+            return [by_number[n] for n in sorted(by_number)]
+
+        return await asyncio.to_thread(_read_both)
+
+    @classmethod
+    async def get_rejects(cls, logger_name: str) -> List[Dict[str, Any]]:
+        """Return all reject records from error.log for ``logger_name``.
+
+        Overrides :meth:`~incorporator.observability.logger.LoggingMixin.get_rejects`
+        — :class:`LoggedTideweaver` uses an instance-level ``logger_name``
+        rather than ``cls.__name__``, so the correct log file cannot be
+        determined from the class alone.
+
+        Args:
+            logger_name: The name used when the :class:`LoggedTideweaver` was
+                constructed (e.g. ``"PriceSession"``).
+
+        Returns:
+            List of reject-record dicts from
+            ``logs/<logger_name>_error.log``.  Each dict contains a
+            top-level ``"reject"`` key.  Returns an empty list when no
+            log file exists yet.
+
+        Example::
+
+            rejects = await LoggedTideweaver.get_rejects("PriceSession")
+            for rec in rejects:
+                print(rec["reject"]["source"], rec["reject"]["error_kind"])
+        """
+        filename = _safe_log_filename(logger_name, "error.log")
+        return await asyncio.to_thread(_read_filtered, filename, "reject")
