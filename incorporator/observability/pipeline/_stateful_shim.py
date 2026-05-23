@@ -29,6 +29,7 @@ importing ``Incorporator`` directly — keeps the import graph one-directional
 import re
 import time
 import types
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Type
 
 from ..logger import Wave
@@ -95,29 +96,50 @@ async def stream_stateful_via_fjord(
         try:
             initial_dataset = await receiver_cls.incorp(**incorp_params)
         except Exception as exc:
-            yield Wave(
+            yield Wave.model_construct(
                 chunk_index=1,
                 operation="incorp",
                 rows_processed=0,
                 failed_sources=[f"Seed Error: {exc}"],
                 processing_time_sec=time.perf_counter() - seed_start,
+                source_url=None,
+                bytes_processed=None,
+                http_retry_count=0,
+                validation_error_count=0,
+                schema_cache_hit=True,
+                conv_dict_time_sec=None,
+                timestamp=datetime.now(timezone.utc),
             )
             return
         seed_elapsed = time.perf_counter() - seed_start
         if not initial_dataset:
-            yield Wave(
+            yield Wave.model_construct(
                 chunk_index=1,
                 operation="incorp",
                 rows_processed=0,
                 failed_sources=["Initial incorp() yielded no data"],
                 processing_time_sec=seed_elapsed,
+                source_url=None,
+                bytes_processed=None,
+                http_retry_count=0,
+                validation_error_count=0,
+                schema_cache_hit=True,
+                conv_dict_time_sec=None,
+                timestamp=datetime.now(timezone.utc),
             )
             return
-        yield Wave(
+        yield Wave.model_construct(
             chunk_index=1,
             operation="incorp",
             rows_processed=_row_count(initial_dataset),
             processing_time_sec=seed_elapsed,
+            source_url=None,
+            bytes_processed=None,
+            http_retry_count=0,
+            validation_error_count=0,
+            schema_cache_hit=True,
+            conv_dict_time_sec=None,
+            timestamp=datetime.now(timezone.utc),
         )
         return
 

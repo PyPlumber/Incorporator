@@ -3279,3 +3279,108 @@ async def test_fjord_flush_parks_tideweaver_snapshot_on_output_class(
     )
     derived_ids = {getattr(d, "derived_id", None) for d in snapshot}
     assert derived_ids == {101, 102}, f"snapshot must contain both derived rows by derived_id, got {derived_ids}"
+
+
+# ---------------------------------------------------------------------------
+# Back-compat + new Tide fields
+# ---------------------------------------------------------------------------
+
+
+def test_tide_fired_and_skipped_still_populated() -> None:
+    """Tide.fired and Tide.skipped remain populated alongside current_outcomes — back-compat."""
+    from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
+
+    tide = Tide(
+        tide_number=1,
+        fired=["a"],
+        skipped=[("b", "not_due")],
+        current_outcomes=[
+            CurrentOutcome(name="a", status="fired"),
+            CurrentOutcome(name="b", status="skipped", reason="not_due"),
+        ],
+        duration_sec=0.01,
+    )
+    # Existing consumers of fired/skipped must keep working.
+    assert tide.fired == ["a"]
+    assert tide.skipped == [("b", "not_due")]
+    # New structured field also populated.
+    assert len(tide.current_outcomes) == 2
+
+
+@pytest.mark.asyncio
+async def test_tide_current_outcomes_smoke() -> None:
+    """current_outcomes is populated by the scheduler for each pass — basic smoke test."""
+    fires: List[str] = []
+
+    async def fake_tick(current: Current) -> None:
+        fires.append(current.name)
+
+    a = _stream("a", interval=0.1)
+    ws = Watershed.parallel(window=_short_window(0.3), currents=[a])
+    tw = Tideweaver(ws, tick_factory=fake_tick, pass_interval=0.05)
+    tides = await _collect_tides(tw)
+
+    # Every tide must have a current_outcomes list.
+    for tide in tides:
+        assert isinstance(tide.current_outcomes, list)
+
+    # At least one tide should have "a" in its current_outcomes.
+    all_names = {co.name for tide in tides for co in tide.current_outcomes}
+    assert "a" in all_names
+
+
+@pytest.mark.asyncio
+async def test_tide_wake_reason_startup_on_first_pass() -> None:
+    """The very first Tide's wake_reason is 'startup'."""
+    fires: List[str] = []
+
+    async def fake_tick(current: Current) -> None:
+        fires.append(current.name)
+
+    a = _stream("a", interval=0.1)
+    ws = Watershed.parallel(window=_short_window(0.3), currents=[a])
+    tw = Tideweaver(ws, tick_factory=fake_tick, pass_interval=0.05)
+    tides = await _collect_tides(tw)
+
+    assert tides, "must have emitted at least one tide"
+    assert tides[0].wake_reason == "startup"
+
+
+@pytest.mark.asyncio
+async def test_tide_canal_rejects_from_name_to_name_populated() -> None:
+    """Canal-layer rejects carry from_name and to_name identifying the edge."""
+    async def slow_a(current: Current) -> None:
+        if current.name == "a":
+            await asyncio.sleep(0.6)
+
+    a = _stream("a", interval=0.1)
+    b = _stream("b", interval=0.1)
+    ws = Watershed.chain(window=_short_window(0.7), currents=[a, b])
+    tw = Tideweaver(ws, tick_factory=slow_a, pass_interval=0.05)
+    await _collect_tides(tw)
+
+    sa_rejects = [r for r in tw.rejects if r.error_kind == "SkipAhead"]
+    assert sa_rejects, "expected at least one SkipAhead reject"
+    # from_name and to_name must be populated on canal-layer rejects.
+    assert sa_rejects[0].from_name == "a"
+    assert sa_rejects[0].to_name == "b"
+
+
+@pytest.mark.asyncio
+async def test_tide_new_scalar_fields_populated() -> None:
+    """Tide heap_depth, in_flight_count_at_start, canal_rejects_added are present on every pass."""
+    fires: List[str] = []
+
+    async def fake_tick(current: Current) -> None:
+        fires.append(current.name)
+
+    a = _stream("a", interval=0.1)
+    ws = Watershed.parallel(window=_short_window(0.3), currents=[a])
+    tw = Tideweaver(ws, tick_factory=fake_tick, pass_interval=0.05)
+    tides = await _collect_tides(tw)
+
+    for tide in tides:
+        assert isinstance(tide.heap_depth, int)
+        assert isinstance(tide.in_flight_count_at_start, int)
+        assert isinstance(tide.canal_rejects_added, int)
+        assert tide.canal_rejects_added >= 0

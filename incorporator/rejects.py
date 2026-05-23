@@ -68,6 +68,34 @@ class RejectEntry(BaseModel):
             (set when the failure was captured during a streaming /
             fjord tick that emitted a wave).  ``None`` for one-shot
             ``incorp()`` calls.
+        from_name: Tideweaver edge source name (upstream current name).
+            Populated at canal-layer skip sites so per-edge penstock
+            recommendations can key on ``(from_name, to_name)`` without
+            re-parsing the ``message`` field.  ``None`` for HTTP-layer
+            and fjord-seed rejects.
+        to_name: Tideweaver edge destination name (downstream current
+            name).  Same origin as ``from_name``; ``None`` elsewhere.
+        host: Network host extracted from the ``source`` URL via
+            ``urlparse(source).netloc``.  Populated on the HTTP-error
+            path so per-host failure clustering needs no string parsing
+            in the consumer.  ``None`` for file-mode and canal-layer
+            rejects.
+        status_code: HTTP response status code (e.g. ``429``, ``500``).
+            Extracted from ``exc.response.status_code`` when available.
+            ``None`` for non-HTTP failures.
+        attempt_number: Tenacity retry attempt number at the point of
+            final failure.  ``None`` when the failure did not go through
+            the Tenacity retry wrapper.
+        duration_sec: Wall-clock seconds from the start of the failing
+            call to the exception.  Populated where a timing bracket is
+            cheaply available; ``None`` otherwise.
+        cooldown_sec: Unified "try again after N seconds" hint across
+            HTTP and canal sites.  At HTTP error sites this mirrors
+            ``retry_after`` (populated from the ``Retry-After`` header);
+            at canal sites this carries the penstock-state cooldown.
+            Coexists with ``retry_after`` — ``retry_after`` is
+            HTTP-specific and kept for back-compat; ``cooldown_sec`` is
+            the general cross-site hint.
 
     Frozen — assigning to any field after construction raises.
 
@@ -95,6 +123,37 @@ class RejectEntry(BaseModel):
     wave_index: Optional[int] = Field(
         default=None,
         description="``chunk_index`` of the parent :class:`Wave`, if any.",
+    )
+    from_name: Optional[str] = Field(
+        default=None,
+        description="Tideweaver upstream current name for canal-layer rejects.",
+    )
+    to_name: Optional[str] = Field(
+        default=None,
+        description="Tideweaver downstream current name for canal-layer rejects.",
+    )
+    host: Optional[str] = Field(
+        default=None,
+        description="Network host from ``urlparse(source).netloc``, for HTTP-layer rejects.",
+    )
+    status_code: Optional[int] = Field(
+        default=None,
+        description="HTTP response status code (e.g. 429, 500).",
+    )
+    attempt_number: Optional[int] = Field(
+        default=None,
+        description="Tenacity retry attempt number at final failure.",
+    )
+    duration_sec: Optional[float] = Field(
+        default=None,
+        description="Wall-clock seconds from call start to exception.",
+    )
+    cooldown_sec: Optional[float] = Field(
+        default=None,
+        description=(
+            "Unified try-again hint in seconds — mirrors retry_after at HTTP sites, "
+            "carries penstock-state cooldown at canal sites."
+        ),
     )
 
     def __str__(self) -> str:

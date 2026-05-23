@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import time
+from datetime import datetime, timezone
 from types import ModuleType
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 
@@ -112,7 +113,12 @@ def _build_seed_reject(cls_name: str, exc: Exception, inflow_active: bool) -> Re
     else:
         message = f"Seed Error in source {cls_name!r}: {exc_type}: {exc}"
     return RejectEntry.model_construct(
-        source=cls_name, error_kind=exc_type, message=message, retry_after=None, wave_index=None
+        source=cls_name,
+        error_kind=exc_type,
+        message=message,
+        retry_after=None,
+        wave_index=None,
+        duration_sec=None,
     )
 
 
@@ -333,29 +339,50 @@ async def _run_fjord_engine(
         cls_name = entry["cls"].__name__
         result = results_by_idx[original_idx]
         if isinstance(result, Exception):
-            yield Wave(
+            yield Wave.model_construct(
                 chunk_index=1,
                 operation=f"fjord_incorp:{cls_name}",
                 rows_processed=0,
                 failed_sources=[_format_seed_error(cls_name, result, inflow_callable is not None)],
                 processing_time_sec=seed_elapsed,
+                source_url=None,
+                bytes_processed=None,
+                http_retry_count=0,
+                validation_error_count=0,
+                schema_cache_hit=True,
+                conv_dict_time_sec=None,
+                timestamp=datetime.now(timezone.utc),
             )
             return
         if not result:
-            yield Wave(
+            yield Wave.model_construct(
                 chunk_index=1,
                 operation=f"fjord_incorp:{cls_name}",
                 rows_processed=0,
                 failed_sources=[f"Initial incorp() for {cls_name} yielded no data"],
                 processing_time_sec=seed_elapsed,
+                source_url=None,
+                bytes_processed=None,
+                http_retry_count=0,
+                validation_error_count=0,
+                schema_cache_hit=True,
+                conv_dict_time_sec=None,
+                timestamp=datetime.now(timezone.utc),
             )
             return
         source_refs[original_idx][0] = result
-        yield Wave(
+        yield Wave.model_construct(
             chunk_index=1,
             operation=f"fjord_incorp:{cls_name}",
             rows_processed=_row_count(result),
             processing_time_sec=seed_elapsed,
+            source_url=None,
+            bytes_processed=None,
+            http_retry_count=0,
+            validation_error_count=0,
+            schema_cache_hit=True,
+            conv_dict_time_sec=None,
+            timestamp=datetime.now(timezone.utc),
         )
 
     # ------------------------------------------------------------------

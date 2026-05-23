@@ -44,12 +44,16 @@ def _extract_retry_after(exc: Exception) -> Optional[float]:
 
 def _build_reject_entry(source: str, exc: Exception) -> RejectEntry:
     """Construct a :class:`RejectEntry` for one source's network failure."""
+    retry_after = _extract_retry_after(exc)
     return RejectEntry.model_construct(
         source=source,
         error_kind=type(exc).__name__,
         message=str(exc),
-        retry_after=_extract_retry_after(exc),
+        retry_after=retry_after,
         wave_index=None,
+        host=urlparse(source).netloc if source else None,
+        status_code=getattr(getattr(exc, "response", None), "status_code", None),
+        cooldown_sec=retry_after,
     )
 
 

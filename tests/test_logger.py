@@ -464,3 +464,79 @@ def test_route_wave_to_log_skips_zero_row_no_failure(
     # Neither path should have been triggered by this no-op wave.
     assert not info_log.exists() or info_log.read_text(encoding="utf-8").strip() == ""
     assert not error_log.exists() or error_log.read_text(encoding="utf-8").strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# New-field coverage for Wave and Tide model_dump(mode="json")
+# ---------------------------------------------------------------------------
+
+
+def test_wave_model_dump_includes_new_fields() -> None:
+    """model_dump(mode='json') includes all six new Wave fields without breaking existing keys."""
+    from incorporator.observability.wave import Wave
+
+    wave = Wave.model_construct(
+        chunk_index=5,
+        operation="chunk",
+        rows_processed=42,
+        failed_sources=[],
+        processing_time_sec=0.1,
+        source_url="https://api.example.com/data",
+        bytes_processed=4096,
+        http_retry_count=2,
+        validation_error_count=1,
+        schema_cache_hit=False,
+        conv_dict_time_sec=0.005,
+        timestamp=__import__("datetime").datetime(2025, 1, 1, tzinfo=__import__("datetime").timezone.utc),
+    )
+    dumped = wave.model_dump(mode="json")
+    # Existing fields still present.
+    assert dumped["chunk_index"] == 5
+    assert dumped["operation"] == "chunk"
+    assert dumped["rows_processed"] == 42
+    assert dumped["processing_time_sec"] == 0.1
+    # New fields present.
+    assert dumped["source_url"] == "https://api.example.com/data"
+    assert dumped["bytes_processed"] == 4096
+    assert dumped["http_retry_count"] == 2
+    assert dumped["validation_error_count"] == 1
+    assert dumped["schema_cache_hit"] is False
+    assert dumped["conv_dict_time_sec"] == 0.005
+
+
+def test_tide_model_dump_includes_new_fields() -> None:
+    """model_dump(mode='json') includes all new Tide scalar fields without breaking existing keys."""
+    from datetime import datetime, timezone
+
+    from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
+    from incorporator.observability.tideweaver.tide import Tide
+
+    outcomes = [CurrentOutcome(name="coin", status="fired")]
+    tide = Tide.model_construct(
+        tide_number=3,
+        fired=["coin"],
+        skipped=[],
+        current_outcomes=outcomes,
+        duration_sec=0.05,
+        wake_reason="wake_event",
+        heap_depth=2,
+        in_flight_count_at_start=1,
+        canal_rejects_added=0,
+        next_due_in_sec=3.0,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+    dumped = tide.model_dump(mode="json")
+    # Existing fields still present.
+    assert dumped["tide_number"] == 3
+    assert dumped["fired"] == ["coin"]
+    assert dumped["duration_sec"] == 0.05
+    # New scalar fields present.
+    assert dumped["wake_reason"] == "wake_event"
+    assert dumped["heap_depth"] == 2
+    assert dumped["in_flight_count_at_start"] == 1
+    assert dumped["canal_rejects_added"] == 0
+    assert dumped["next_due_in_sec"] == 3.0
+    # current_outcomes serialized as dicts, not objects.
+    assert isinstance(dumped["current_outcomes"], list)
+    assert dumped["current_outcomes"][0]["name"] == "coin"
+    assert dumped["current_outcomes"][0]["status"] == "fired"

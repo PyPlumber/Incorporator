@@ -45,6 +45,7 @@ from ...io.penstock import FlowState
 from ...rejects import RejectEntry
 from ..pipeline._outflow import flush
 from .current import Current, CustomCurrent, Export, Fjord, Stream
+from .current_outcome import CurrentOutcome
 from .flow import FlowControl, GateContext, SurgeContext
 from .tide import Tide
 from .watershed import Watershed
@@ -243,13 +244,14 @@ class Tideweaver:
                 self._push_due(c.name, self._run_started_at + c.phase_offset_sec)
         shutdown_event = asyncio.Event()
         stopper = asyncio.create_task(self._shutdown_at_window_end(shutdown_event))
+        wake_reason = "startup"
         try:
             while not shutdown_event.is_set():
-                tide = await self._run_pass(shutdown_event)
+                tide = await self._run_pass(shutdown_event, wake_reason)
                 yield tide
                 if shutdown_event.is_set():
                     break
-                await self._wait_for_next_event(shutdown_event)
+                wake_reason = await self._wait_for_next_event(shutdown_event)
         finally:
             await self._drain()
             stopper.cancel()
@@ -266,7 +268,7 @@ class Tideweaver:
                 await client.aclose()
             self._client_pool.clear()
 
-    async def _wait_for_next_event(self, shutdown_event: asyncio.Event) -> None:
+    async def _wait_for_next_event(self, shutdown_event: asyncio.Event) -> str:
         """Adaptive sleep until the next interesting moment.
 
         Wakes on the earliest of:
@@ -281,32 +283,47 @@ class Tideweaver:
         re-check within bounded time.  This preserves the
         one-Tide-per-pass contract — every wake produces exactly one
         :meth:`_run_pass` iteration.
+
+        Returns:
+            The wake reason: ``"timer"`` (heap due-time elapsed),
+            ``"wake_event"`` (upstream tick completed), ``"pass_interval"``
+            (safety-net timeout with empty heap), or ``"shutdown"``
+            (window-close event fired).
         """
         next_due = self._due_heap[0][0] if self._due_heap else None
         now = time.monotonic()
         if next_due is None:
             timeout: float = self.pass_interval
+            fallback_reason = "pass_interval"
         else:
             timeout = max(0.0, next_due - now)
+            fallback_reason = "timer"
         if timeout <= 0.0:
             # Heap already expired — re-pass immediately.  Still clear the
             # wake event so a stale set() from earlier doesn't no-op the
             # next sleep.
             self._wake_event.clear()
-            return
+            return "timer"
         shutdown_waiter = asyncio.create_task(shutdown_event.wait())
         wake_waiter = asyncio.create_task(self._wake_event.wait())
+        wake_reason = fallback_reason
         try:
-            await asyncio.wait(
+            done, _ = await asyncio.wait(
                 [shutdown_waiter, wake_waiter],
                 timeout=timeout,
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            if shutdown_waiter in done:
+                wake_reason = "shutdown"
+            elif wake_waiter in done:
+                wake_reason = "wake_event"
+            # else: timed out → fallback_reason already set
         finally:
             self._wake_event.clear()
             for t in (shutdown_waiter, wake_waiter):
                 if not t.done():
                     t.cancel()
+        return wake_reason
 
     def _push_due(self, name: str, due_at: float) -> None:
         """Push a ``(due_at, counter, name)`` heap entry for an adaptive wake."""
@@ -344,11 +361,14 @@ class Tideweaver:
     # Pass-level scheduling
     # ------------------------------------------------------------------
 
-    async def _run_pass(self, shutdown_event: asyncio.Event) -> Tide:
+    async def _run_pass(self, shutdown_event: asyncio.Event, wake_reason: str) -> Tide:
         self._tide_number += 1
         started = time.monotonic()
         fired: List[str] = []
         skipped: List[Tuple[str, str]] = []
+        outcomes: List[CurrentOutcome] = []
+        rejects_before = len(self._canal_rejects)
+        in_flight_at_start = sum(1 for s in self._state.values() if s.in_flight is not None and not s.in_flight.done())
 
         # Housekeeping: drop heap entries whose due-time has already
         # passed.  The pass that runs at the due moment is the
@@ -361,16 +381,42 @@ class Tideweaver:
             if shutdown_event.is_set():
                 break
             current = self._currents_by_name[name]
-            existing = self._state[name].in_flight
+            state = self._state[name]
+            existing = state.in_flight
             if existing is not None and not existing.done():
                 skipped.append((name, "still_running"))
+                outcomes.append(
+                    CurrentOutcome(
+                        name=name,
+                        status="still_running",
+                        in_flight_sec=(time.monotonic() - state.started_at) if state.started_at is not None else None,
+                        last_wave_at=state.last_wave_at,
+                    )
+                )
                 continue
             reason, bypassed = self._gate_reason(current, time.monotonic())
             if reason is not None:
                 skipped.append((name, reason))
+                outcomes.append(
+                    CurrentOutcome(
+                        name=name,
+                        status="skipped",
+                        reason=reason,
+                        bypassed_edges=tuple(bypassed),
+                        last_wave_at=state.last_wave_at,
+                    )
+                )
                 continue
             self._spawn_tick(current, bypassed)
             fired.append(name)
+            outcomes.append(
+                CurrentOutcome(
+                    name=name,
+                    status="fired",
+                    bypassed_edges=tuple(bypassed),
+                    last_wave_at=state.last_wave_at,
+                )
+            )
             # Schedule the adaptive wake for this current's next interval.
             # Data-gated skips don't need an entry — ``_wake_event`` fires
             # when their upstream tick completes — but firing here covers
@@ -378,8 +424,28 @@ class Tideweaver:
             # cadence.
             self._push_due(name, time.monotonic() + current.interval)
 
-        duration = time.monotonic() - started
-        return Tide(tide_number=self._tide_number, fired=fired, skipped=skipped, duration_sec=duration)
+        pass_end = time.monotonic()
+        duration = pass_end - started
+        # Use ``pass_end`` (not ``started``) as the reference: the topo walk
+        # took ``duration`` seconds, and consumers want time-until-next-pass
+        # from "now," not from pass start.  Always positive when non-None
+        # because the stale-pop loop above discarded entries with
+        # ``due <= started`` (and any new entries pushed during the walk
+        # have ``due = monotonic + interval > pass_end`` by construction).
+        next_due_in_sec = (self._due_heap[0][0] - pass_end) if self._due_heap else None
+        return Tide.model_construct(
+            tide_number=self._tide_number,
+            fired=fired,
+            skipped=skipped,
+            current_outcomes=outcomes,
+            duration_sec=duration,
+            wake_reason=wake_reason,
+            heap_depth=len(self._due_heap),
+            in_flight_count_at_start=in_flight_at_start,
+            canal_rejects_added=len(self._canal_rejects) - rejects_before,
+            next_due_in_sec=next_due_in_sec,
+            timestamp=datetime.now(timezone.utc),
+        )
 
     def _gate_reason(self, current: Current, now: float) -> Tuple[Optional[str], FrozenSet[str]]:
         """Return ``(None, bypassed)`` if ``current`` may fire; else ``(reason, set())``.
@@ -430,6 +496,9 @@ class Tideweaver:
                                 message=f"edge {edge[0]}→{edge[1]}: surge skip-ahead",
                                 retry_after=None,
                                 wave_index=self._tide_number,
+                                from_name=up_name,
+                                to_name=current.name,
+                                cooldown_sec=None,
                             )
                         )
                         return "skip_ahead", frozenset()
@@ -442,6 +511,9 @@ class Tideweaver:
                                 message=f"edge {edge[0]}→{edge[1]}: surge halted",
                                 retry_after=None,
                                 wave_index=self._tide_number,
+                                from_name=up_name,
+                                to_name=current.name,
+                                cooldown_sec=None,
                             )
                         )
                         return "surge_halted", frozenset()
@@ -474,6 +546,9 @@ class Tideweaver:
                             message=f"edge {edge[0]}→{edge[1]}: {gate_reason}",
                             retry_after=None,
                             wave_index=self._tide_number,
+                            from_name=up_name,
+                            to_name=current.name,
+                            cooldown_sec=None,
                         )
                     )
                 return gate_reason, frozenset()
@@ -495,6 +570,9 @@ class Tideweaver:
                                 message=f"edge {edge[0]}→{edge[1]}: {penstock_reason}",
                                 retry_after=None,
                                 wave_index=self._tide_number,
+                                from_name=up_name,
+                                to_name=current.name,
+                                cooldown_sec=None,
                             )
                         )
                         return penstock_reason, frozenset()

@@ -8,7 +8,7 @@ logging machinery in ``observability/logger.py``.  ``logger.py`` re-exports
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,6 +42,28 @@ class Wave(BaseModel):
             non-empty means partial-failure semantics kicked in.
         processing_time_sec: Wall-clock duration of the chunk in
             seconds, useful for live mark-to-market latency tracking.
+        source_url: Origin URL or file path the chunk was fetched from.
+            Populated from the class-level ``inc_url`` or ``inc_file``
+            at chunk close.  ``None`` for one-shot or non-URL sources.
+        bytes_processed: Raw byte count of the HTTP response body
+            (``len(response.content)``).  Populated after a successful
+            fetch; ``None`` for file-mode and error chunks.
+        http_retry_count: Number of Tenacity retry attempts beyond the
+            first for this chunk.  Zero when the request succeeded on
+            the first attempt.
+        validation_error_count: Count of Pydantic ``ValidationError``
+            rows caught during this chunk's build phase.  Zero when all
+            rows validated cleanly.
+        schema_cache_hit: Whether the schema registry returned an
+            existing compiled class (``True``) or built a new one
+            (``False``) for this chunk's payload shape.  A persistent
+            ``False`` signals a shape-cycling source that may need an
+            explicit schema declaration.
+        conv_dict_time_sec: Wall-clock seconds spent running the
+            converter pass (``conv_dict`` expansion + ETL
+            transformations) for this chunk.  Measured at chunk
+            boundary, never per-row.  ``None`` when no converter pass
+            ran.
         timestamp: UTC timestamp at which the wave was emitted.
 
     Frozen Pydantic model so instances can be passed around (and
@@ -62,6 +84,23 @@ class Wave(BaseModel):
     rows_processed: int = Field(..., description="Number of rows successfully processed.")
     failed_sources: List[str] = Field(default_factory=list, description="Failed source URIs.")
     processing_time_sec: float = Field(..., description="Chunk processing duration in seconds.")
+    source_url: Optional[str] = Field(default=None, description="Origin URL or file path for the chunk.")
+    bytes_processed: Optional[int] = Field(default=None, description="Raw byte count of the HTTP response body.")
+    http_retry_count: int = Field(default=0, description="Tenacity retry attempts beyond the first.")
+    validation_error_count: int = Field(default=0, description="Pydantic ValidationError rows caught.")
+    schema_cache_hit: bool = Field(
+        default=True, description="True when the schema registry reused an existing compiled class."
+    )
+    conv_dict_time_sec: Optional[float] = Field(
+        default=None,
+        description=(
+            "Wall-clock seconds spent inside the wrapped ``cls.incorp(...)`` "
+            "call for this chunk — covers fetch + parse + validate + "
+            "converter expansion together.  Use it as a proxy for total "
+            "per-chunk ETL work; isolating the converter-only slice "
+            "requires future per-stage instrumentation."
+        ),
+    )
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def log_meta(self) -> str:

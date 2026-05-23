@@ -204,5 +204,77 @@ def test_fetch_reject_entry_no_retry_after() -> None:
     assert entry.retry_after is None
 
 
+# ---------------------------------------------------------------------------
+# New fields — back-compat and new-field coverage
+# ---------------------------------------------------------------------------
+
+
+def test_new_fields_default_to_none() -> None:
+    """The seven new RejectEntry fields all default to None — back-compat for existing consumers."""
+    entry = RejectEntry(source="https://x")
+    assert entry.from_name is None
+    assert entry.to_name is None
+    assert entry.host is None
+    assert entry.status_code is None
+    assert entry.attempt_number is None
+    assert entry.duration_sec is None
+    assert entry.cooldown_sec is None
+
+
+def test_retry_after_still_works() -> None:
+    """retry_after is unchanged — back-compat for existing retry-loop consumers."""
+    entry = RejectEntry(source="https://x", retry_after=45.0)
+    assert entry.retry_after == 45.0
+
+
+def test_cooldown_sec_coexists_with_retry_after() -> None:
+    """cooldown_sec and retry_after are distinct fields that coexist — not a rename."""
+    entry = RejectEntry(source="https://x", retry_after=30.0, cooldown_sec=30.0)
+    assert entry.retry_after == 30.0
+    assert entry.cooldown_sec == 30.0
+
+
+def test_str_unchanged_with_new_fields_populated() -> None:
+    """__str__ output is unaffected by new fields — back-compat for log consumers."""
+    entry = RejectEntry(
+        source="https://x",
+        error_kind="HTTPStatusError",
+        message="429 Too Many Requests",
+        host="x.com",
+        status_code=429,
+        cooldown_sec=15.0,
+    )
+    assert str(entry) == "HTTPStatusError: 429 Too Many Requests"
+
+
+def test_build_reject_entry_populates_host_and_status_code() -> None:
+    """fetch._build_reject_entry populates host and status_code alongside retry_after."""
+    from httpx import HTTPStatusError, Request, Response
+
+    from incorporator.io.fetch import _build_reject_entry
+
+    req = Request("GET", "https://api.example.com/users")
+    resp = Response(429, headers={"Retry-After": "30"}, request=req)
+    exc = HTTPStatusError("rate limited", request=req, response=resp)
+
+    entry = _build_reject_entry("https://api.example.com/users", exc)
+    assert entry.host == "api.example.com"
+    assert entry.status_code == 429
+    assert entry.cooldown_sec == 30.0
+
+
+def test_build_reject_entry_no_header_sets_cooldown_none() -> None:
+    """No Retry-After header → cooldown_sec is also None alongside retry_after."""
+    from httpx import RequestError
+
+    from incorporator.io.fetch import _build_reject_entry
+
+    exc = RequestError("connection refused")
+    entry = _build_reject_entry("https://api.example.com/data", exc)
+    assert entry.retry_after is None
+    assert entry.cooldown_sec is None
+    assert entry.host == "api.example.com"
+
+
 # Suppress an unused-import lint when typing checkers narrow Type.
 _ = Type

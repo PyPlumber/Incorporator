@@ -217,6 +217,33 @@ class Incorporator(BaseModel):
     #: the bulk caller sets and clears it on the concrete class only.
     _BATCH_INSERT_MODE: ClassVar[bool] = False
 
+    #: Schema-registry cache-hit flag written by
+    #: :func:`~incorporator.schema.factory.build_instances` at the
+    #: ``SCHEMA_REGISTRY`` lookup.  ``True`` when the registry returned an
+    #: existing compiled class; ``False`` when a new class was built.
+    #: Initialized to ``True`` so refresh() paths (which supply a
+    #: ``target_class`` and bypass schema inference) report a hit — correct
+    #: because no registry lookup was needed.
+    #:
+    #: Yield-point-safe, not thread-safe: written inside ``build_instances``
+    #: (no ``await`` between write and read), read at the chunk boundary in
+    #: ``observability/pipeline/chunked.py`` after ``build_instances`` returns.
+    _last_schema_cache_hit: ClassVar[bool] = True
+
+    #: Byte count of the most recent HTTP response body processed by this
+    #: class's fetch path.  **Reserved for future fetch-layer plumbing** —
+    #: ``incorporator/observability/pipeline/chunked.py`` already reads this
+    #: ClassVar at the chunk boundary into the Wave's ``bytes_processed``
+    #: field, so wiring up ``cls._last_bytes_processed = len(response.content)``
+    #: at the fetch site in ``io/fetch.py`` is a one-line follow-up that
+    #: lights up the field for HTTP sources.  Until that lands, the
+    #: corresponding Wave field stays ``None`` (file-mode sources stay
+    #: ``None`` permanently — they don't go through the fetch path).
+    #:
+    #: Yield-point-safe, not thread-safe (same caveat as
+    #: :attr:`_last_schema_cache_hit`).
+    _last_bytes_processed: ClassVar[Optional[int]] = None
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # Per-class isolation of inc_dict / _schema_union / _incorp_kwargs
         # is required so sibling subclasses don't share the base

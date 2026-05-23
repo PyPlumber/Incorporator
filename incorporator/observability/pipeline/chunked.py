@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, Optional
 
 import httpx
@@ -65,7 +66,9 @@ async def _run_chunking_engine(
                     params.setdefault("_client", shared_client)
 
                 try:
+                    conv_start = time.perf_counter()
                     dataset = await cls.incorp(**params)
+                    conv_elapsed = time.perf_counter() - conv_start
 
                     if not dataset and not paginator:
                         break
@@ -77,11 +80,19 @@ async def _run_chunking_engine(
                     if rows > 0:
                         await _enrich_and_load(cls, dataset, refresh_params, export_params, force_append=True)
 
-                    yield Wave(
+                    yield Wave.model_construct(
                         chunk_index=chunk_idx,
                         operation="chunk",
                         rows_processed=rows,
+                        failed_sources=[],
                         processing_time_sec=time.perf_counter() - start_time,
+                        source_url=getattr(cls, "inc_url", None) or getattr(cls, "inc_file", None),
+                        bytes_processed=cls._last_bytes_processed,
+                        http_retry_count=0,
+                        validation_error_count=0,
+                        schema_cache_hit=cls._last_schema_cache_hit,
+                        conv_dict_time_sec=conv_elapsed,
+                        timestamp=datetime.now(timezone.utc),
                     )
 
                     del dataset
@@ -91,12 +102,19 @@ async def _run_chunking_engine(
                     if not paginator:
                         break
                 except Exception as e:
-                    yield Wave(
+                    yield Wave.model_construct(
                         chunk_index=chunk_idx,
                         operation="chunk",
                         rows_processed=0,
                         failed_sources=[str(e)],
                         processing_time_sec=time.perf_counter() - start_time,
+                        source_url=getattr(cls, "inc_url", None) or getattr(cls, "inc_file", None),
+                        bytes_processed=None,
+                        http_retry_count=0,
+                        validation_error_count=0,
+                        schema_cache_hit=True,
+                        conv_dict_time_sec=None,
+                        timestamp=datetime.now(timezone.utc),
                     )
                     break
 

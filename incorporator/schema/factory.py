@@ -337,10 +337,20 @@ def build_instances(
         name_chg=name_chg,
     )
 
-    ActualClass = target_class or cast(
-        "Type[Incorporator]",
-        schema_builder.infer_dynamic_schema("DynamicModel", transformed_data, cls),
-    )
+    if target_class is not None:
+        ActualClass = target_class
+        # refresh() paths supply a target_class — no registry lookup needed;
+        # treat as a cache hit because no schema inference ran.
+        cls._last_schema_cache_hit = True
+    else:
+        _registry_size_before = len(schema_builder.SCHEMA_REGISTRY)
+        ActualClass = cast(
+            "Type[Incorporator]",
+            schema_builder.infer_dynamic_schema("DynamicModel", transformed_data, cls),
+        )
+        # Hit when the registry size did not grow (infer_dynamic_schema returned
+        # a cached class); miss when a new entry was added.
+        cls._last_schema_cache_hit = len(schema_builder.SCHEMA_REGISTRY) == _registry_size_before
 
     if isinstance(transformed_data, list):
         # Populate the superset schema from raw dicts before Pydantic absorbs extra keys.

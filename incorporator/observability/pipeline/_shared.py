@@ -3,6 +3,7 @@
 import asyncio
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable, Dict, Optional
 
 from ..logger import Wave
@@ -42,21 +43,35 @@ async def _daemon_tick(
         yield
     except Exception as exc:
         await wave_queue.put(
-            Wave(
+            Wave.model_construct(
                 chunk_index=chunk_index,
                 operation=operation,
                 rows_processed=0,
                 failed_sources=[f"{error_prefix}: {exc}"],
                 processing_time_sec=0.0,
+                source_url=None,
+                bytes_processed=None,
+                http_retry_count=0,
+                validation_error_count=0,
+                schema_cache_hit=True,
+                conv_dict_time_sec=None,
+                timestamp=datetime.now(timezone.utc),
             )
         )
         return
     await wave_queue.put(
-        Wave(
+        Wave.model_construct(
             chunk_index=chunk_index,
             operation=operation,
             rows_processed=row_count_fn(),
             processing_time_sec=time.perf_counter() - start,
+            source_url=None,
+            bytes_processed=None,
+            http_retry_count=0,
+            validation_error_count=0,
+            schema_cache_hit=True,
+            conv_dict_time_sec=None,
+            timestamp=datetime.now(timezone.utc),
         )
     )
 

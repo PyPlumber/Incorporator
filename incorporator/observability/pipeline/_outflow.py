@@ -14,6 +14,7 @@ build + per-class export semantics.
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from types import ModuleType
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple, cast
 
@@ -425,12 +426,19 @@ async def _outflow_daemon(
             # by the default output class (we don't know which derived class
             # would have produced what at this point).
             await wave_queue.put(
-                Wave(
+                Wave.model_construct(
                     chunk_index=loop_idx,
                     operation=f"outflow:{output_class_name}",
                     rows_processed=0,
                     failed_sources=[f"Outflow Error: {exc}"],
                     processing_time_sec=0.0,
+                    source_url=None,
+                    bytes_processed=None,
+                    http_retry_count=0,
+                    validation_error_count=0,
+                    schema_cache_hit=True,
+                    conv_dict_time_sec=None,
+                    timestamp=datetime.now(timezone.utc),
                 )
             )
 
