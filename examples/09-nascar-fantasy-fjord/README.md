@@ -650,6 +650,7 @@ Notable wiring:
 * **Same-file inflow + outflow.**  Both `inflow=` and `outflow=` point at `outflow.py` because both callables live there.  Fjord loads the module once via `importlib`'s cache, so the second import is free.
 * **`refresh_params=None` everywhere = single-wave test mode.**  Drop those lines (refresh defaults on at 60s) and the daemons stay alive — perfect for production but blocks the `async for` loop indefinitely.  Mix and match: leave `Track`'s refresh off (tracks never change) while letting standings refresh every 5 minutes.
 * **`export_params` is keyed by output class name.**  Each key matches a key returned by `outflow(state)`; fjord's multi-output detection is "is there a top-level `file_path`?  No → multi-output."
+* **Structured error surface.**  The `wave.failed_sources` print above is the bare-string view; production retry orchestrators should reach for `wave.rejects: list[RejectEntry]` instead — each entry carries `source`, `error_kind` (exception type), `message`, `retry_after` (parsed from any HTTP `Retry-After` header), and `wave_index`.  Honour `retry_after` and backoff on 429s without re-parsing the message string.
 
 ---
 
