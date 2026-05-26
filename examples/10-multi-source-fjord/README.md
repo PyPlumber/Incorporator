@@ -201,7 +201,11 @@ if __name__ == "__main__":
 > with empty data unless you log `failed_sources`.  Always print it so
 > geo-blocks (`api.binance.com` is blocked in the US — use
 > `api.binance.us`), rate-limit responses, and transient API outages
-> surface visibly.
+> surface visibly.  For structured per-source errors with HTTP retry
+> hints, reach for `wave.rejects: list[RejectEntry]` instead — each
+> entry carries `error_kind`, `retry_after` (parsed from the HTTP
+> header), and the parent `wave_index`, so 429-aware backoff doesn't
+> need to re-parse the bare strings.
 >
 > **`KeyError` on a missing peer?**  When `inflow(state)` raises
 > `KeyError` because a peer source hasn't seeded yet, the seed-error
@@ -231,6 +235,31 @@ if __name__ == "__main__":
 > reads at a glance.  Inline overrides take priority when both are
 > set on the same source.  Defaults: 60 s refresh, 300 s export, when
 > nothing is specified.
+
+> **CoinGecko is rate-limited — register the host throttle at startup.**
+> The free tier allows roughly 5–15 calls per *minute*; v1.2.0 removed
+> the implicit per-host registry that used to auto-pace it.  One line
+> at process start re-engages the cap:
+>
+> ```python
+> from incorporator import register_host_penstock
+> from incorporator.io.penstock import SustainedPenstock
+>
+> register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+> ```
+>
+> Every subsequent `incorp()` / `stream()` / `fjord()` against
+> `api.coingecko.com` inherits the cap.  Binance is unmetered on the
+> public price endpoints used here; only register hosts you actually
+> need to throttle.
+
+> **Production observability — `LoggedIncorporator` for disk-readable
+> logs.** Subclass the source classes from `LoggedIncorporator` and
+> pass `enable_logging=True` on the fjord call; every successful wave
+> and every `RejectEntry` lands in `logs/<ClassName>_{api,error}.log`
+> via a non-blocking `QueueHandler`.  Replay with
+> `await ClassName.get_error()` from any other process — see
+> [docs/debugging.md](../../docs/debugging.md) for the DLQ-retry pattern.
 
 ---
 
