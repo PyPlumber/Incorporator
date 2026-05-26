@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-05-26
+
+Docs polish for the v1.2.1 surface.  **Tag-only release** — no PyPI
+publish, no GitHub Release object.  No runtime / API changes.
+
+### Docs
+
+- **README refreshed to v1.2.1 surface** — `tune()` / `TuningReport`
+  / `LoggedTideweaver` / `register_host_penstock` callouts.
+- **`docs/api_atlas.md`** — new entries for `tune()`, `TuningReport`,
+  `TuningHint`, `LoggedTideweaver` (with `get_tides()` /
+  `get_rejects()` disk readers).
+- **CLI reference (`docs/cli_and_configuration.md`)** — v1.2.1 Tide
+  schema fields, canal-layer `error_kind` values,
+  `backlog_backoff_factor` constructor arg.
+- **Streaming guide (`docs/streaming_and_pagination.md`)** —
+  `adapt_chunk_size=True` AIMD subsection + voice cleanup.
+- **Performance guide (`docs/performance.md`)** — v1.2.1 typo fix,
+  `adapt_chunk_size` notes, `backlog_backoff_factor` notes.
+- **Deployment guide (`docs/deployment.md`)** — `LoggedTideweaver`
+  and `backlog_backoff_factor` for production Tideweaver runs.
+- **Debugging guide (`docs/debugging.md`)** — orchestration
+  debugging recipe using `LoggedTideweaver` + `tune()`.
+- **Installation guide (`docs/installation.md`)** — Python 3.10
+  floor (3.9 dropped in v1.2.1) + voice cleanup.
+- **Formats guide (`docs/formats_and_compression.md`)** — voice
+  cleanup (dropped "modern", "lightning-fast").
+- **Historical benchmarks** — `docs/benchmark_results_v1.1.3.md`
+  renamed to `_historical.md` with a header note pointing at
+  `docs/performance.md` for current numbers.
+- **Tutorials refreshed for v1.2.1**: T2 (data-lake-pivot) voice
+  cleanup; T3 (universal-formats) surface refresh; T5
+  (parent-child-drilling) corrected stale host-registry claim
+  and added `register_host_penstock` alternative; T7
+  (stateful-refresh) `RejectEntry` alongside `failed_sources`;
+  T8 (streaming-daemon) surface refresh; T9 (nascar-fantasy-fjord)
+  surfaces `RejectEntry` for production retries; T10
+  (multi-source-fjord) `rejects` + `register_host_penstock` +
+  `LoggedIncorporator` for production fjord; T11 (tideweaver)
+  surface refresh.
+- **Appendices**: `crypto-graph-mapping` voice cleanup;
+  `nascar-tideweaver` surface refresh; `tideweaver-parquet-snapshots`
+  picked up `LoggedTideweaver` + `tune()` + canal rejects;
+  `tideweaver-vs-prefect` gained v1.2.1 capability rows.
+- **THANK_YOU.md** voice cleanup.
+- **`architect.py` module docstring** advertises `tune()` +
+  `TuningReport` as the post-runtime feedback loop.
+
 ## [1.2.1] - 2026-05-23
 
 This release tags the canal-followup work (the v1.2.0-era A-F items
