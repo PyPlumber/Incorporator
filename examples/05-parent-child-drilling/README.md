@@ -15,14 +15,20 @@ land child-drilled detail in a warehouse), [Tutorial 4](../04-xml-post-audit/REA
 >
 > The free public API allows roughly **5–15 calls per *minute*** (not per second).
 > Incorporator's default rate limiter is **15 req/*sec* — 60× too fast**.  Without a
-> safeguard you will be throttled or banned within seconds.  Two safeguards are in play:
+> safeguard you will be throttled or banned within seconds.  Two ways to opt in:
 >
-> 1. **Host-aware default.** When you don't pass `requests_per_second`, the
->    framework looks up the source's host in an internal registry; calls to
->    `api.coingecko.com` get capped at 0.2 req/sec (12 req/min) automatically.
-> 2. **Explicit throttle in this tutorial.** The script passes
->    `requests_per_second=0.2` so the kwarg is visible to readers.  Total
->    wall-clock without a key: ~50 s.
+> 1. **Per-call kwarg (this tutorial).** The script passes
+>    `requests_per_second=0.2` directly to `incorp()` so the kwarg is
+>    visible to readers.  Local to each call; easiest to discover.
+> 2. **Process-wide registration (production).** Call
+>    `register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))`
+>    once at process start; every subsequent `incorp()` / `stream()` /
+>    `fjord()` against that host inherits the cap with no per-call kwarg.
+>    See [Penstock surface in the API Atlas](../../docs/api_atlas.md#shared-kwargs-glossary).
+>
+> Total wall-clock without a key: ~50 s.  (v1.2.0 removed the older
+> implicit per-host registry that paced CoinGecko / pokeapi / NHTSA
+> automatically — both options above are opt-in.)
 >
 > **Bumping the rate with a free Demo key.**  CoinGecko's [Demo plan](https://www.coingecko.com/en/developers/dashboard)
 > gives 30 req/min stable (requires email signup, no card).  Set
