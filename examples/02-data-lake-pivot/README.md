@@ -11,7 +11,7 @@ This tutorial walks that arc on a SaaS-style `/users` endpoint.  `jsonplaceholde
 ## 💡 What this tutorial proves
 1. **Automatic Schema Translation:** Incorporator infers types from the JSON API and natively maps them to strict Avro types (e.g., `int` to `long`) and SQLite columns.
 2. **Nested Data Flattening:** It safely flattens nested JSON objects (like an `address` dictionary) into strings for binary/SQL storage, preventing database crashes.
-3. **Universal Memory Mapping:** The exact same `inc_code` syntax that maps a JSON key to the in-memory registry (`inc_dict`) also maps SQLite columns and Avro fields seamlessly.
+3. **Universal Memory Mapping:** The exact same `inc_code` syntax that maps a JSON key to the in-memory registry (`inc_dict`) also keys SQLite columns and Avro fields — one declaration, three storage shapes.
 4. **Flawless Reconstruction:** When reading back from SQL or Avro, Incorporator detects the flattened strings and magically reconstructs the full Pydantic object graph, allowing instant dot-notation (`.address.city`).
 
 ---
