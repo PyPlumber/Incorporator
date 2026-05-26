@@ -63,6 +63,14 @@ async for tide in Tideweaver(watershed).run():
 
 Pyarrow writes the file via the same atomic `os.replace()` path `incorp().export()` uses, so a crash mid-write leaves the previous snapshot (or nothing) — never a half-written Parquet.
 
+For production runs that should leave a disk trail of every pass,
+swap `Tideweaver(watershed)` for `LoggedTideweaver(watershed,
+enable_logging=True, logger_name="LapsSnapshot")` — same constructor
+surface, but every yielded `Tide` and every canal-layer `RejectEntry`
+lands in `logs/LapsSnapshot_{api,error}.log` via a non-blocking
+`QueueHandler`.  Import path:
+`from incorporator.observability.tideweaver import LoggedTideweaver`.
+
 ---
 
 ## Pattern 2: Post-run export
@@ -76,6 +84,54 @@ await Lap.export(file_path="laps_final.parquet")            # one-shot, no Tidew
 ```
 
 This is the right shape when you want exactly one artifact at the end and don't need an `Export` node in the graph for ordering or dependency reasons.
+
+---
+
+## Post-window observability (v1.2.1+)
+
+A Parquet snapshot is only complete if every upstream wave actually
+landed in the registry.  After the loop exits, three Tideweaver-side
+surfaces tell you what to check before treating the artifact as final:
+
+**`tw.rejects` — what didn't make it in.**  Canal-layer skips
+(`PenstockLimited`, `SurgeHalted`, `SkipAhead`, `GateBlocked`) surface
+as `RejectEntry` records on the `Tideweaver` instance; filter by
+`error_kind` to audit which upstream waves were dropped before the
+Export current ran.
+
+```python
+tw = Tideweaver(watershed)
+tides = [tide async for tide in tw.run()]
+await Lap.export(file_path="laps_final.parquet")
+
+canal_drops = [r for r in tw.rejects
+               if r.error_kind in {"PenstockLimited", "SurgeHalted",
+                                   "SkipAhead", "GateBlocked"}]
+if canal_drops:
+    print(f"⚠ {len(canal_drops)} upstream waves skipped by canal control")
+```
+
+**`tune()` — what to adjust next window.**  Feed the accumulated
+records back in and get severity-sorted hints across `chunk_size`,
+penstock rate, surge threshold, `pass_interval`, and retry policy:
+
+```python
+from incorporator.observability.tideweaver import tune
+
+report = tune(rejects=tw.rejects, tides=tides,
+              pass_interval=tw.pass_interval)
+print(report.render())
+```
+
+`Tideweaver.summary(tides=tides)` returns the same `TuningReport` as
+an instance-method convenience.
+
+**`backlog_backoff_factor` — for saturated runs near window close.**
+If `tide.next_due_in_sec` is consistently negative in the final
+quarter of the window, the scheduler is behind.  Set
+`Tideweaver(watershed, backlog_backoff_factor=2.0)` next run to
+multiplicatively extend the next-pass wait until the heap drains.
+Default `1.0` is disabled.
 
 ---
 
