@@ -225,7 +225,11 @@ Two verbs, one shared registry, zero stale references.
 Transient HTTP errors are handled by the same Tenacity retry policy
 `incorp()` uses; permanent failures surface via
 `refreshed.failed_sources` for DLQ-style retry workflows (see the
-[Production Debugging](../../docs/debugging.md) reference).
+[Production Debugging](../../docs/debugging.md) reference).  For
+structured per-source error data (exception type, `Retry-After`
+hint, parent wave index), reach for `refreshed.rejects:
+list[RejectEntry]` — same population as `failed_sources` but keyed
+on `error_kind` rather than the bare string.
 
 ---
 
