@@ -15,7 +15,7 @@ You don't need a daemon. You want T10's cross-venue join done **once**, the resu
 In the real world, no single API has all the data you need:
 
 * **CoinGecko** is fantastic for global market caps and circulating supply, but lacks deep, real-time exchange liquidity metrics.
-* **Binance** has lightning-fast order book bids and asks, but their API is fragmented across hundreds of individual trading pairs (USDT, USDC, etc.).
+* **Binance** has real-time order book bids and asks, but their API is fragmented across hundreds of individual trading pairs (USDT, USDC, etc.).
 
 Try to merge these with standard Python `for` loops and you'll hit **429 Too Many Requests** instantly. This appendix pulls data from **three different endpoints**, merges them into a single Python object graph, and maps 100 assets to 400 exchange markets using exactly **3 API calls**.
 
