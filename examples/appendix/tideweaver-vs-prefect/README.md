@@ -30,12 +30,17 @@ The two are not competitors. Tideweaver fits inside a single Prefect task. Prefe
 | Bounded time window (e.g. a 4-hour NASCAR race)  | ✅ native            | ⚠️ requires external stop logic |
 | Per-current fault isolation (`on_error`)         | ✅ native            | ⚠️ task-level retries        |
 | Graceful drain at window close                   | ✅ native            | ⚠️ requires custom hook      |
+| Structured event logs to disk (per-pass)         | ✅ `LoggedTideweaver` | ✅ Prefect Cloud + handlers |
+| Post-run tuning recommendations                  | ✅ `tune()` → `TuningReport` (v1.2.1+) | ❌ no built-in equivalent (custom observer pattern) |
+| Structured canal-layer reject taxonomy           | ✅ `Tideweaver.rejects` (`error_kind` ∈ `PenstockLimited`/`SurgeHalted`/`SkipAhead`/`GateBlocked`) | ⚠️ task-level retries; no edge/canal cause taxonomy |
 | Cron-style daily / weekly scheduling             | ⚠️ wrap in cron/systemd | ✅ native                 |
 | Multi-machine fan-out                            | ❌ (single process)  | ✅ native                    |
-| UI / audit log / observability dashboard         | ❌ (log records only) | ✅ native                    |
+| UI / observability dashboard                     | ❌ (disk logs only)  | ✅ native                    |
 | Multi-team coordination across services          | ❌                   | ✅ native                    |
 
 A useful summary: **Tideweaver is what runs during a window. Prefect is what decides which window to run next.** Sub-minute cadence and in-process registries are the dividing line — at hour/day cadence with cross-machine fan-out, Prefect's overhead pays for itself.
+
+For a consistently-saturated Tideweaver scheduler (every pass running over `pass_interval`, `tide.next_due_in_sec` repeatedly negative), the v1.2.1 `Tideweaver(watershed, backlog_backoff_factor=2.0)` constructor knob multiplicatively extends the next-pass wait until the heap drains.  Default `1.0` is disabled.  Prefect handles the analogous case via task-concurrency limiters and work-pool concurrency caps.
 
 ---
 
