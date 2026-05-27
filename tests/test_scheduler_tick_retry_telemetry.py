@@ -114,19 +114,21 @@ async def test_restart_exhausted_attempt_number_on_exception(
 
 
 # ---------------------------------------------------------------------------
-# T2 — on_error="isolate" path: retrying is None → exception gets attempt_number=1
+# T2 — on_error="isolate" path: exception swallowed; scheduler keeps running
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_isolate_path_retrying_none_guard(
+async def test_isolate_path_does_not_crash_siblings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    """on_error=isolate: retrying stays None; the fallback guard sets attempt_number=1.
+    """on_error=isolate: failing current is contained; healthy siblings keep firing.
 
-    The isolate path catches the exception before it bubbles to the outer
-    except block, so _incorporator_attempt_number is never set.  The
-    scheduler keeps running (does not crash) and healthy siblings fire.
+    The isolate path catches the exception inside the per-current try/except
+    before it reaches the outer except block where _incorporator_attempt_number
+    would be attached.  This test asserts the containment contract: scheduler
+    keeps emitting tides, and healthy siblings fire at least once despite the
+    failing sibling raising every tick.
     """
     monkeypatch.chdir(tmp_path)
     fire_count: list[str] = []
@@ -162,14 +164,6 @@ async def test_isolate_path_retrying_none_guard(
     assert len(tides) >= 1, "Scheduler should emit tides even with isolated failures"
     healthy_fires = fire_count.count("healthy")
     assert healthy_fires >= 1, "Healthy current must fire at least once despite sibling failure"
-
-    # Verify that when retrying is None, the guard produces attempt_number=1.
-    # This is tested directly below via the guard logic:
-    retrying = None
-    attempt_number = retrying.statistics.get("attempt_number", 1) if retrying is not None else 1  # type: ignore[union-attr]
-    assert attempt_number == 1, (
-        f"When retrying is None, attempt_number should default to 1; got {attempt_number}"
-    )
 
 
 # ---------------------------------------------------------------------------
