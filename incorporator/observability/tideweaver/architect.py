@@ -56,6 +56,13 @@ from .tide import Tide
 # input is narrowed.
 SourceValue = str | Path | Mapping[str, Any]
 
+#: Error kinds that carry retry-policy telemetry — broadened from HTTP-only
+#: to include canal-layer skip kinds so ``_tune_retry_policy`` covers
+#: both penstock and surge-barrier rejects alongside HTTP failures.
+_RETRY_POLICY_KINDS: frozenset[str] = frozenset(
+    {"HTTPStatusError", "PenstockLimited", "SurgeHalted", "SkipAhead", "GateBlocked"}
+)
+
 # ---------------------------------------------------------------------------
 # Plan dataclasses — what _analyze_topology produces and the renderers consume.
 # ---------------------------------------------------------------------------
@@ -1421,14 +1428,16 @@ def _tune_pass_interval(tides: list[Tide], current_pass_interval: float) -> list
 
 
 def _tune_retry_policy(rejects: list[RejectEntry]) -> list[TuningHint]:
-    """Analyse HTTP error rejects to recommend retry policy adjustments.
+    """Analyse retry-relevant rejects to recommend retry policy adjustments.
 
-    Groups ``HTTPStatusError`` rejects by host.  For each group emits:
+    Filters to ``_RETRY_POLICY_KINDS`` (HTTP errors and canal-layer skip
+    kinds).  Groups canal-kind rejects by ``(from_name, to_name)`` edge
+    and HTTP-kind rejects by ``host or source``.  For each group emits:
 
     * MED hint to raise ``stop_after_attempt`` when the majority of
       ``attempt_number`` values hit the ceiling.
-    * LOW hint to tune ``wait_random_exponential`` when ``duration_sec``
-      and ``cooldown_sec`` medians are close.
+    * LOW hint to tune ``wait_random_exponential`` / ``wait_penstock``
+      when ``duration_sec`` and ``cooldown_sec`` medians are close.
 
     Args:
         rejects: List of :class:`~incorporator.RejectEntry` records.
@@ -1436,18 +1445,27 @@ def _tune_retry_policy(rejects: list[RejectEntry]) -> list[TuningHint]:
     Returns:
         List of :class:`TuningHint`.
     """
-    http_errors = [r for r in rejects if r.error_kind == "HTTPStatusError"]
-    if not http_errors:
+    relevant = [r for r in rejects if r.error_kind in _RETRY_POLICY_KINDS]
+    if not relevant:
         return []
 
-    # Group by host.
+    # Group by (from_name, to_name) for canal kinds; by host/source for HTTP.
     groups: dict[str, list[RejectEntry]] = {}
-    for r in http_errors:
-        key = r.host or r.source
+    for r in relevant:
+        if r.error_kind == "HTTPStatusError":
+            key = r.host or r.source
+        else:
+            # Canal kinds — key on edge tuple stringified for display.
+            key = f"{r.from_name}->{r.to_name}" if r.from_name is not None else r.source
         groups.setdefault(key, []).append(r)
 
     hints: list[TuningHint] = []
-    for host, group in groups.items():
+    for group_key, group in groups.items():
+        is_canal = group[0].error_kind != "HTTPStatusError"
+        stop_knob = "canal.stop_after_attempt" if is_canal else "http.stop_after_attempt"
+        wait_knob = "canal.wait_penstock" if is_canal else "http.wait_random_exponential"
+        scope: dict[str, str] = {"edge": group_key} if is_canal else {"host": group_key}
+
         # Attempt-number ceiling detection.
         with_attempt = [r for r in group if r.attempt_number is not None]
         if with_attempt:
@@ -1461,16 +1479,16 @@ def _tune_retry_policy(rejects: list[RejectEntry]) -> list[TuningHint]:
                     hints.append(
                         TuningHint.model_construct(
                             severity="med",
-                            knob="http.stop_after_attempt",
-                            scope={"host": host},
+                            knob=stop_knob,
+                            scope=scope,
                             current_value=max_attempt,
                             recommended_value=None,
                             signal=(
                                 f"{at_ceiling}/{len(non_none_attempts)} retries hit ceiling"
-                                f" (attempt={max_attempt}) for host {host!r}"
+                                f" (attempt={max_attempt}) for {group_key!r}"
                             ),
                             rationale=(
-                                f"Majority ({at_ceiling}/{len(non_none_attempts)}) of HTTP errors for host {host!r} "
+                                f"Majority ({at_ceiling}/{len(non_none_attempts)}) of rejects for {group_key!r} "
                                 f"reached the retry ceiling (attempt_number={max_attempt}).\n"
                                 "Raise stop_after_attempt to allow more retries before giving up."
                             ),
@@ -1478,7 +1496,7 @@ def _tune_retry_policy(rejects: list[RejectEntry]) -> list[TuningHint]:
                         )
                     )
 
-        # Wait-exponential tuning from duration_sec vs cooldown_sec.
+        # Wait-exponential / wait-penstock tuning from duration_sec vs cooldown_sec.
         with_timing = [r for r in group if r.duration_sec is not None and r.cooldown_sec is not None]
         if with_timing:
             median_duration = statistics.median(r.duration_sec for r in with_timing if r.duration_sec is not None)
@@ -1487,18 +1505,18 @@ def _tune_retry_policy(rejects: list[RejectEntry]) -> list[TuningHint]:
                 hints.append(
                     TuningHint.model_construct(
                         severity="low",
-                        knob="http.wait_random_exponential",
-                        scope={"host": host},
+                        knob=wait_knob,
+                        scope=scope,
                         current_value=None,
                         recommended_value=None,
                         signal=(
                             f"median duration ({median_duration:.2f}s) ≈ median cooldown"
-                            f" ({median_cooldown:.2f}s) for host {host!r}"
+                            f" ({median_cooldown:.2f}s) for {group_key!r}"
                         ),
                         rationale=(
                             f"median duration_sec={median_duration:.2f}s is within 50% of "
-                            f"median cooldown_sec={median_cooldown:.2f}s for host {host!r}.\n"
-                            f"tune wait_random_exponential(max≈{median_cooldown:.2f})"
+                            f"median cooldown_sec={median_cooldown:.2f}s for {group_key!r}.\n"
+                            f"tune {wait_knob}(max≈{median_cooldown:.2f})"
                         ),
                         sample_size=len(with_timing),
                     )

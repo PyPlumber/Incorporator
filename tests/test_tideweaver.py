@@ -1247,11 +1247,13 @@ async def test_backpressure_penstock_slows_under_full_reservoir() -> None:
     assert pen.consume_reason(es_empty, flow, 1.0) is None  # type: ignore[arg-type]
     # Same edge, simulate consumption 0.05s ago: rate 10/s, gap < 0.1 → limited.
     es_empty.last_consumed_at = 0.95
-    assert pen.consume_reason(es_empty, flow, 1.0) == "penstock_limited"  # type: ignore[arg-type]
+    result_empty = pen.consume_reason(es_empty, flow, 1.0)  # type: ignore[arg-type]
+    assert result_empty is not None and result_empty[0] == "penstock_limited"
     # Full reservoir (5/5 fullness=1.0): effective_rate = 1.  min_gap = 1.0s.
     es_full = _Es(5)
     es_full.last_consumed_at = 0.5  # 0.5s ago, rate=1 → min_gap=1.0 → limited.
-    assert pen.consume_reason(es_full, flow, 1.0) == "penstock_limited"  # type: ignore[arg-type]
+    result_full = pen.consume_reason(es_full, flow, 1.0)  # type: ignore[arg-type]
+    assert result_full is not None and result_full[0] == "penstock_limited"
     # After 1.0s+ idle on full reservoir, allowed again.
     es_full.last_consumed_at = -0.1
     assert pen.consume_reason(es_full, flow, 1.0) is None  # type: ignore[arg-type]
@@ -1305,7 +1307,8 @@ async def test_signal_penstock_callable_drives_rate() -> None:
 
     es = _Es()
     # rate_fn returns 0 → must block.
-    assert pen.consume_reason(es, flow, 0.5) == "penstock_limited"  # type: ignore[arg-type]
+    result_blocked = pen.consume_reason(es, flow, 0.5)  # type: ignore[arg-type]
+    assert result_blocked is not None and result_blocked[0] == "penstock_limited"
     # rate_fn returns 100 → allowed at clear rate; last_consumed_at None, so no gap to check.
     assert pen.consume_reason(es, flow, 1.5) is None  # type: ignore[arg-type]
     assert len(invocations) == 2, f"rate_fn must be called once per consume_reason; got {len(invocations)}"

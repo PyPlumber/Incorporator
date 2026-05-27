@@ -76,8 +76,9 @@ class RejectEntry(BaseModel):
             Extracted from ``exc.response.status_code`` when available.
             ``None`` for non-HTTP failures.
         attempt_number: Tenacity retry attempt number at the point of
-            final failure.  ``None`` when the failure did not go through
-            the Tenacity retry wrapper.
+            final failure, or ``1`` for canal-layer skip sites (which
+            have no retry loop — the first skip is always attempt 1).
+            ``None`` when no attempt context is available.
         duration_sec: Wall-clock seconds from the start of the failing
             call to the exception.  Populated where a timing bracket is
             cheaply available; ``None`` otherwise.

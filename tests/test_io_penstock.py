@@ -279,11 +279,16 @@ def test_consume_reason_returns_none_when_permitted() -> None:
     assert pen.consume_reason(state, flow=None, now=0.0) is None
 
 
-def test_consume_reason_returns_string_when_blocked() -> None:
-    """Default ``consume_reason`` translates a wait into ``"penstock_limited"``."""
+def test_consume_reason_returns_tuple_when_blocked() -> None:
+    """Default ``consume_reason`` translates a wait into ``("penstock_limited", cooldown_sec)``."""
     pen = SustainedPenstock(rate_per_sec=10.0)
     state = FlowState(last_consumed_at=0.0)
-    assert pen.consume_reason(state, flow=None, now=0.05) == "penstock_limited"
+    result = pen.consume_reason(state, flow=None, now=0.05)
+    assert result is not None
+    reason, cooldown = result
+    assert reason == "penstock_limited"
+    assert cooldown is not None
+    assert cooldown > 0.0
 
 
 def test_post_consume_advances_state() -> None:

@@ -162,13 +162,32 @@ class Penstock(BaseModel):
                 now = asyncio.get_running_loop().time()
             self.record(state, now)
 
+    def _compute_cooldown(self, state: Any, flow: Any, now: float) -> float | None:
+        """Return seconds until this edge is unthrottled, or None.
+
+        Override in subclasses that can compute a meaningful cooldown.
+        Default returns None (safe for NullPenstock, SignalPenstock, and
+        third-party subclasses that only override consume_reason).
+
+        Args:
+            state: The :class:`FlowState` (or duck-typed equivalent) for
+                this edge — already unwrapped from ``edge_state``.
+            flow: The parent :class:`FlowControl` for this edge.
+            now: Monotonic time at the point of the blocked evaluation.
+
+        Returns:
+            Seconds until the next permitted consumption, or ``None``
+            when a precise cooldown cannot be computed.
+        """
+        return None
+
     def consume_reason(
         self,
         edge_state: Any,
         flow: Any,
         now: float,
-    ) -> str | None:
-        """Edge-style throttle: return ``"penstock_limited"`` if blocked, ``None`` otherwise.
+    ) -> tuple[str, float | None] | None:
+        """Edge-style throttle: return ``(reason, cooldown_sec)`` if blocked, ``None`` otherwise.
 
         Default impl reads the edge's :class:`FlowState` — either composed
         under ``edge_state.flow_state`` (Tideweaver scheduler path) or
@@ -198,12 +217,17 @@ class Penstock(BaseModel):
                 state object.
 
         Returns:
-            ``"penstock_limited"`` to skip this tick, or ``None`` to
-            permit consumption.
+            ``("penstock_limited", cooldown_sec)`` to skip this tick, or
+            ``None`` to permit consumption.  ``cooldown_sec`` is the
+            subclass-computed seconds until unthrottled, or ``None``
+            when not available.
         """
         state = getattr(edge_state, "flow_state", edge_state)
         wait = self.evaluate(state, now, context=flow)
-        return "penstock_limited" if wait is not None else None
+        if wait is None:
+            return None
+        cooldown = self._compute_cooldown(state, flow, now)
+        return ("penstock_limited", cooldown)
 
     def post_consume(self, edge_state: Any, now: float) -> None:
         """Edge-style post-consume hook (delegates to :meth:`record`).
@@ -268,6 +292,12 @@ class SustainedPenstock(Penstock):
             return None
         return min_gap - elapsed
 
+    def _compute_cooldown(self, state: Any, flow: Any, now: float) -> float | None:
+        if state.last_consumed_at is None:
+            return None
+        last: float = float(state.last_consumed_at)
+        return max(0.0, 1.0 / self.rate_per_sec - (now - last))
+
     def record(self, state: Any, now: float) -> None:
         state.last_consumed_at = now
 
@@ -311,6 +341,12 @@ class BurstPenstock(Penstock):
             return wait
         return None
 
+    def _compute_cooldown(self, state: Any, flow: Any, now: float) -> float | None:
+        if state.bucket_tokens is not None and state.bucket_tokens < 1.0:
+            tokens: float = float(state.bucket_tokens)
+            return (1.0 - tokens) / self.rate_per_sec
+        return None
+
     def record(self, state: Any, now: float) -> None:
         if state.bucket_tokens is not None:
             state.bucket_tokens = max(0.0, state.bucket_tokens - 1.0)
@@ -341,6 +377,12 @@ class WindowPenstock(Penstock):
         state.window_log = [t for t in state.window_log if t > cutoff]
         if len(state.window_log) >= self.cap:
             oldest: float = state.window_log[0]
+            return oldest + self.window_sec - now
+        return None
+
+    def _compute_cooldown(self, state: Any, flow: Any, now: float) -> float | None:
+        if state.window_log:
+            oldest: float = float(state.window_log[0])
             return oldest + self.window_sec - now
         return None
 

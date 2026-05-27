@@ -351,10 +351,118 @@ def test_tune_retry_policy_hits_ceiling() -> None:
 
 
 def test_tune_retry_policy_empty_when_no_http_errors() -> None:
-    """No HTTPStatusError rejects → _tune_retry_policy returns empty list."""
+    """PenstockLimited rejects with no attempt_number/duration data → empty list.
+
+    The function now accepts canal kinds too (via _RETRY_POLICY_KINDS), but
+    5 rejects with all-None attempt_number and timing data produce no hints.
+    """
     rejects = [_reject_canal("PenstockLimited") for _ in range(5)]
     hints = _tune_retry_policy(rejects)
     assert hints == []
+
+
+def test_tune_retry_policy_canal_only_corpus_knob_starts_with_canal() -> None:
+    """_tune_retry_policy on canal-only corpus emits knobs starting with 'canal.'."""
+    # 10 PenstockLimited rejects with attempt_number=3 (ceiling = 3 for all → majority at ceiling).
+    rejects = [
+        RejectEntry.model_construct(
+            source="DownstreamCls",
+            error_kind="PenstockLimited",
+            message="edge up->down: penstock_limited",
+            retry_after=None,
+            wave_index=None,
+            from_name="up",
+            to_name="down",
+            host=None,
+            status_code=None,
+            attempt_number=3,
+            duration_sec=0.1,
+            cooldown_sec=None,
+        )
+        for _ in range(10)
+    ]
+    hints = _tune_retry_policy(rejects)
+    ceiling_hints = [h for h in hints if "stop_after_attempt" in h.knob]
+    assert len(ceiling_hints) == 1
+    h = ceiling_hints[0]
+    assert h.knob.startswith("canal."), f"Expected canal. prefix; got {h.knob!r}"
+    assert h.scope.get("edge") == "up->down"
+
+
+def test_tune_retry_policy_mixed_corpus_no_cross_contamination() -> None:
+    """Mixed HTTP+canal corpus produces both groups without cross-contamination.
+
+    HTTP rejects should produce http.* knobs with host scope;
+    canal rejects should produce canal.* knobs with edge scope.
+    No HTTP hint should carry an edge scope, and no canal hint should carry a host scope.
+    """
+    http_rejects = [_reject_http(host="api.example.com", attempt_number=5) for _ in range(8)]
+    http_rejects += [_reject_http(host="api.example.com", attempt_number=3) for _ in range(2)]
+    canal_rejects = [
+        RejectEntry.model_construct(
+            source="Cls",
+            error_kind="SurgeHalted",
+            message="edge a->b: surge halted",
+            retry_after=None,
+            wave_index=None,
+            from_name="a",
+            to_name="b",
+            host=None,
+            status_code=None,
+            attempt_number=5,
+            duration_sec=0.2,
+            cooldown_sec=None,
+        )
+        for _ in range(8)
+    ]
+    canal_rejects += [
+        RejectEntry.model_construct(
+            source="Cls",
+            error_kind="SurgeHalted",
+            message="edge a->b: surge halted",
+            retry_after=None,
+            wave_index=None,
+            from_name="a",
+            to_name="b",
+            host=None,
+            status_code=None,
+            attempt_number=3,
+            duration_sec=0.2,
+            cooldown_sec=None,
+        )
+        for _ in range(2)
+    ]
+    hints = _tune_retry_policy(http_rejects + canal_rejects)
+
+    http_hints = [h for h in hints if h.knob.startswith("http.")]
+    canal_hints = [h for h in hints if h.knob.startswith("canal.")]
+
+    assert len(http_hints) >= 1, f"Expected at least one http.* hint; got {hints}"
+    assert len(canal_hints) >= 1, f"Expected at least one canal.* hint; got {hints}"
+
+    for h in http_hints:
+        assert "host" in h.scope, f"HTTP hint must have 'host' scope; got {h.scope}"
+        assert "edge" not in h.scope, f"HTTP hint must not have 'edge' scope; got {h.scope}"
+
+    for h in canal_hints:
+        assert "edge" in h.scope, f"Canal hint must have 'edge' scope; got {h.scope}"
+        assert "host" not in h.scope, f"Canal hint must not have 'host' scope; got {h.scope}"
+
+
+def test_tune_retry_policy_http_error_shape_unchanged() -> None:
+    """Existing HTTPStatusError-only corpus produces the same hint shape as before broadening.
+
+    Regression guard: adding canal kinds must not change the knob/scope shape for HTTP errors.
+    """
+    rejects = [_reject_http(attempt_number=5) for _ in range(8)]
+    rejects += [_reject_http(attempt_number=3) for _ in range(2)]
+    hints = _tune_retry_policy(rejects)
+    ceiling_hints = [h for h in hints if "stop_after_attempt" in h.knob]
+    assert len(ceiling_hints) == 1
+    h = ceiling_hints[0]
+    assert h.knob == "http.stop_after_attempt"
+    assert h.scope.get("host") == "api.example.com"
+    assert h.severity == "med"
 
 
 # ---------------------------------------------------------------------------

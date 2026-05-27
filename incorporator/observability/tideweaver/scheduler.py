@@ -99,6 +99,14 @@ class _EdgeState(BaseModel):
     HTTP throttling (via ``BoundPenstock``) and edge throttling (via
     ``_EdgeState``) without duplicating the field set."""
 
+    eligibility_start_perf: float | None = None
+    """``time.perf_counter()`` recorded when this edge first became eligible
+    for firing in the current window.  Set on first entry to the per-edge
+    loop body; reset to ``None`` in ``_tick_wrapper.finally`` after a
+    successful consumption so the next firing window starts fresh.
+    Used to populate ``duration_sec`` on canal-layer :class:`~incorporator.rejects.RejectEntry`
+    records at the four skip-emit sites."""
+
 
 class _CurrentState(BaseModel):
     """Per-current scheduler bookkeeping, keyed by ``current.name`` in :attr:`Tideweaver._state`."""
@@ -536,6 +544,12 @@ class Tideweaver:
             up_state = self._state[up_name]
             up_in_flight = up_state.in_flight is not None and not up_state.in_flight.done()
 
+            # Retrieve edge_state early so eligibility_start_perf is available
+            # at all four skip-emit sites below.
+            edge_state = self._edge_state.get(edge)
+            if edge_state is not None and edge_state.eligibility_start_perf is None:
+                edge_state.eligibility_start_perf = time.perf_counter()
+
             surge = flow.surge_barrier
             if surge is not None:
                 surge_ctx = SurgeContext(
@@ -556,6 +570,12 @@ class Tideweaver:
                                 wave_index=self._tide_number,
                                 from_name=up_name,
                                 to_name=current.name,
+                                attempt_number=1,
+                                duration_sec=(
+                                    (time.perf_counter() - edge_state.eligibility_start_perf)
+                                    if edge_state is not None and edge_state.eligibility_start_perf is not None
+                                    else None
+                                ),
                                 cooldown_sec=None,
                             )
                         )
@@ -571,6 +591,12 @@ class Tideweaver:
                                 wave_index=self._tide_number,
                                 from_name=up_name,
                                 to_name=current.name,
+                                attempt_number=1,
+                                duration_sec=(
+                                    (time.perf_counter() - edge_state.eligibility_start_perf)
+                                    if edge_state is not None and edge_state.eligibility_start_perf is not None
+                                    else None
+                                ),
                                 cooldown_sec=None,
                             )
                         )
@@ -606,6 +632,12 @@ class Tideweaver:
                             wave_index=self._tide_number,
                             from_name=up_name,
                             to_name=current.name,
+                            attempt_number=1,
+                            duration_sec=(
+                                (time.perf_counter() - edge_state.eligibility_start_perf)
+                                if edge_state is not None and edge_state.eligibility_start_perf is not None
+                                else None
+                            ),
                             cooldown_sec=None,
                         )
                     )
@@ -614,26 +646,37 @@ class Tideweaver:
             # strategy class (SustainedPenstock / BurstPenstock /
             # WindowPenstock / BackpressurePenstock / SignalPenstock); each
             # mutates its own slice of ``_EdgeState`` for bookkeeping and
-            # returns a skip reason or None.
-            if flow.penstock is not None:
-                edge_state = self._edge_state.get(edge)
-                if edge_state is not None:
-                    penstock_reason = flow.penstock.consume_reason(edge_state, flow, now)
-                    if penstock_reason is not None:
-                        flow.observer.on_skip(self, edge, penstock_reason)
-                        self._canal_rejects.append(
-                            RejectEntry.model_construct(
-                                source=current.cls.__name__,
-                                error_kind="PenstockLimited",
-                                message=f"edge {edge[0]}→{edge[1]}: {penstock_reason}",
-                                retry_after=None,
-                                wave_index=self._tide_number,
-                                from_name=up_name,
-                                to_name=current.name,
-                                cooldown_sec=None,
-                            )
+            # returns a (reason, cooldown_sec) tuple or None.
+            if flow.penstock is not None and edge_state is not None:
+                raw = flow.penstock.consume_reason(edge_state, flow, now)
+                # Back-compat shim: third-party subclasses may still return str | None.
+                if isinstance(raw, str):
+                    penstock_reason, cooldown_sec = raw, None
+                elif raw is not None:
+                    penstock_reason, cooldown_sec = raw
+                else:
+                    penstock_reason, cooldown_sec = None, None
+                if penstock_reason is not None:
+                    flow.observer.on_skip(self, edge, penstock_reason)
+                    self._canal_rejects.append(
+                        RejectEntry.model_construct(
+                            source=current.cls.__name__,
+                            error_kind="PenstockLimited",
+                            message=f"edge {edge[0]}→{edge[1]}: {penstock_reason}",
+                            retry_after=None,
+                            wave_index=self._tide_number,
+                            from_name=up_name,
+                            to_name=current.name,
+                            attempt_number=1,
+                            duration_sec=(
+                                (time.perf_counter() - edge_state.eligibility_start_perf)
+                                if edge_state.eligibility_start_perf is not None
+                                else None
+                            ),
+                            cooldown_sec=cooldown_sec,
                         )
-                        return penstock_reason, frozenset()
+                    )
+                    return penstock_reason, frozenset()
         return None, frozenset(bypassed)
 
     def _spawn_tick(self, current: Current, bypassed_upstreams: frozenset[str] = frozenset()) -> None:
@@ -666,13 +709,15 @@ class Tideweaver:
         bypassed_upstreams: frozenset[str] = frozenset(),
     ) -> None:
         """Run one tick under the current's :attr:`on_error` policy."""
+        retrying: AsyncRetrying | None = None
         try:
             if current.on_error == "restart":
-                async for attempt in AsyncRetrying(
+                retrying = AsyncRetrying(
                     stop=stop_after_attempt(5),
                     wait=wait_random_exponential(multiplier=1.0, min=0.5, max=8.0),
                     reraise=True,
-                ):
+                )
+                async for attempt in retrying:
                     with attempt:
                         await self._invoke_tick(current)
             elif current.on_error == "isolate":
@@ -682,7 +727,12 @@ class Tideweaver:
                     logger.warning("Tideweaver: isolated tick failure on %s: %s", current.name, exc)
             else:  # fail_watershed
                 await self._invoke_tick(current)
-        except (Exception, RetryError):
+        except (Exception, RetryError) as e:
+            attempt_number = retrying.statistics.get("attempt_number", 1) if retrying is not None else 1
+            try:
+                e._incorporator_attempt_number = attempt_number  # type: ignore[attr-defined]
+            except AttributeError:
+                pass
             if current.on_error == "fail_watershed":
                 raise
             logger.error("Tideweaver: tick failed for %s after retries; current parked.", current.name)
@@ -724,6 +774,8 @@ class Tideweaver:
                     edge_state.flow_state.last_consumed_at = now_mono
                     if edge_flow.penstock is not None and not bypassed:
                         edge_flow.penstock.post_consume(edge_state, now_mono)
+                    # Reset eligibility timer so the next firing window starts fresh.
+                    edge_state.eligibility_start_perf = None
                 if not bypassed:
                     edge_flow.observer.on_fire(self, edge_key, self._tide_number)
             state.started_at = None

@@ -137,6 +137,10 @@ class SurgeBarrier(BaseModel):
     * ``"skip"`` — dependent skips this pass (reason ``"skip_ahead"``).
     * ``"bypass"`` — dependent fires unconditionally, ignoring the gate for this upstream.
     * ``"halt"`` — dependent stops firing (reason ``"surge_halted"``).
+    * Note: ``"bypass"`` skips this edge's canal gate AND canal penstock for the pass but does
+      **not** skip the per-host HTTP :class:`~incorporator.io.penstock.BoundPenstock`, which is
+      consulted per-request inside :func:`~incorporator.io.fetch.execute_request` independently
+      of edge-layer flow control.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -194,7 +198,7 @@ class BackpressurePenstock(Penstock):
             )
         return self
 
-    def consume_reason(self, edge_state: Any, flow: FlowControl, now: float) -> str | None:
+    def consume_reason(self, edge_state: Any, flow: FlowControl, now: float) -> tuple[str, float | None] | None:
         # Backpressure needs BOTH the wave count (scheduler-owned on
         # ``_EdgeState.waves``) AND the rate-limit watermark
         # (Penstock-owned on ``_EdgeState.flow_state``).  Uses the same
@@ -207,12 +211,13 @@ class BackpressurePenstock(Penstock):
         fullness = min(1.0, len(edge_state.waves) / flow.reservoir.depth)
         effective_rate = self.max_rate - (self.max_rate - self.min_rate) * fullness
         if effective_rate <= 0.0:
-            return "penstock_limited"
+            return ("penstock_limited", None)
         if state.last_consumed_at is None:
             return None
         min_gap = 1.0 / effective_rate
         if (now - state.last_consumed_at) < min_gap:
-            return "penstock_limited"
+            cooldown = 1.0 / effective_rate
+            return ("penstock_limited", cooldown)
         return None
 
 
