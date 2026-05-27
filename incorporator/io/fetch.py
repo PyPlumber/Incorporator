@@ -294,22 +294,20 @@ async def _stream_to_path_request(
     ``dest.parent`` must exist before this is called; a missing parent
     directory raises ``FileNotFoundError`` which is NOT retried by
     tenacity (correct — bad path is a permanent caller error).
-
-    # TODO: max_bytes guard out of scope for this bundle
     """
-    fh = dest.open("wb")
+    fh = await asyncio.to_thread(dest.open, "wb")
     try:
         async with client.stream(method.upper(), url, **req_kwargs) as response:
             response.raise_for_status()  # mid-stream 429 / 5xx surface here, before body
             async for chunk in response.aiter_bytes(chunk_size=_STREAM_CHUNK_SIZE):
-                fh.write(chunk)
+                await asyncio.to_thread(fh.write, chunk)
             return httpx.Response(
                 status_code=response.status_code,
                 headers=response.headers,
                 content=b"",
             )
     finally:
-        fh.close()
+        await asyncio.to_thread(fh.close)
 
 
 async def execute_request(
@@ -383,7 +381,13 @@ async def execute_request(
                     req_kwargs["data"] = form_payload
 
                 if stream_to_path is not None:
-                    return await _stream_to_path_request(client, method, url, req_kwargs, stream_to_path)
+                    try:
+                        return await _stream_to_path_request(client, method, url, req_kwargs, stream_to_path)
+                    except httpx.HTTPStatusError as exc:
+                        status = exc.response.status_code
+                        if status < 500 and status != 429:
+                            raise IncorporatorNetworkError(f"Fatal client error {status} for URL {url}: {exc}") from exc
+                        raise
 
                 # method.upper() natively supports 'POST', 'PUT', etc.
                 response = await client.request(method.upper(), url, **req_kwargs)

@@ -325,3 +325,50 @@ async def test_stream_to_path_memory_bounded(tmp_path: Path) -> None:
     )
 
     assert dest.stat().st_size == total_size
+
+
+# ---------------------------------------------------------------------------
+# Test 6 — 4xx in streaming mode fails fast (not retried)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_4xx_fails_fast(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """404 in streaming mode raises IncorporatorNetworkError without retrying.
+
+    Proves: IncorporatorNetworkError is raised (not httpx.HTTPStatusError),
+    BoundPenstock.acquire is called exactly once (no retry burn),
+    and the output file is empty or absent (no chunks written before
+    raise_for_status fires).
+    """
+    monkeypatch.chdir(tmp_path)
+
+    acquire_count = {"n": 0}
+    original_acquire = BoundPenstock.acquire
+
+    async def spy_acquire(self: BoundPenstock) -> None:
+        acquire_count["n"] += 1
+        await original_acquire(self)
+
+    monkeypatch.setattr(BoundPenstock, "acquire", spy_acquire)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, content=b"not found")
+
+    dest = tmp_path / "fourxx.bin"
+    async with _make_client_with_transport(httpx.MockTransport(handler)) as client:
+        with pytest.raises(IncorporatorNetworkError, match="404"):
+            await execute_request(
+                url="https://example.com/missing",
+                client=client,
+                rate_limiter=BoundPenstock(penstock=NullPenstock(), state=FlowState()),
+                stream_to_path=dest,
+            )
+
+    assert acquire_count["n"] == 1, (
+        f"Expected acquire() called exactly once (no retry for 4xx), got {acquire_count['n']}."
+    )
+    assert not dest.exists() or dest.stat().st_size == 0
