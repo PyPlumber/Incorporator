@@ -54,6 +54,12 @@ from ...io.fetch import HTTPClientBuilder
 from ...io.penstock import FlowState
 from ...rejects import RejectEntry
 from ..pipeline._outflow import flush
+from ._retry_defaults import (
+    _CANAL_OUTER_STOP,
+    _CANAL_OUTER_WAIT_MAX,
+    _CANAL_OUTER_WAIT_MIN,
+    _CANAL_OUTER_WAIT_MULTIPLIER,
+)
 from .current import Current, CustomCurrent, Export, Fjord, Stream
 from .current_outcome import CurrentOutcome
 from .flow import FlowControl, GateContext, SurgeContext
@@ -713,8 +719,10 @@ class Tideweaver:
         try:
             if current.on_error == "restart":
                 retrying = AsyncRetrying(
-                    stop=stop_after_attempt(5),
-                    wait=wait_random_exponential(multiplier=1.0, min=0.5, max=8.0),
+                    stop=stop_after_attempt(_CANAL_OUTER_STOP),
+                    wait=wait_random_exponential(
+                        multiplier=_CANAL_OUTER_WAIT_MULTIPLIER, min=_CANAL_OUTER_WAIT_MIN, max=_CANAL_OUTER_WAIT_MAX
+                    ),
                     reraise=True,
                 )
                 async for attempt in retrying:

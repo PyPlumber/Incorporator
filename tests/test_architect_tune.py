@@ -16,6 +16,7 @@ from incorporator.observability.tideweaver.architect import (
     TuningHint,
     TuningReport,
     _tune_chunk_size,
+    _tune_compound_budget,
     _tune_pass_interval,
     _tune_penstock_rate,
     _tune_retry_policy,
@@ -543,3 +544,47 @@ def test_tuning_report_render_format() -> None:
     # Summary footer should be present.
     assert "--- Summary ---" in rendered
     assert "total_chunks" in rendered
+
+
+# ---------------------------------------------------------------------------
+# _tune_compound_budget
+# ---------------------------------------------------------------------------
+
+
+def test_tune_compound_budget_fires_when_budget_exceeds_interval() -> None:
+    """_tune_compound_budget emits a HIGH hint when compound budget (1200s) > pass_interval."""
+    hints = _tune_compound_budget(60.0)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "high"
+    assert h.knob == "compound_retry_budget"
+    assert h.scope == {"global": "tideweaver"}
+    assert h.current_value == pytest.approx(1200.0)
+    assert "1200" in h.signal and "60" in h.signal
+
+
+def test_tune_compound_budget_silent_when_budget_within_interval() -> None:
+    """_tune_compound_budget returns empty list when compound budget (1200s) < pass_interval."""
+    hints = _tune_compound_budget(2000.0)
+    assert hints == []
+
+
+def test_tune_compound_budget_fires_on_exact_equality() -> None:
+    """_tune_compound_budget fires (>=) when pass_interval exactly equals the budget (1200s)."""
+    hints = _tune_compound_budget(1200.0)
+    assert len(hints) == 1
+    assert hints[0].severity == "high"
+
+
+def test_tune_compound_budget_skipped_via_tune_no_pass_interval() -> None:
+    """tune() with no pass_interval does not produce a compound_retry_budget hint."""
+    rejects = [_reject_http(attempt_number=5) for _ in range(8)]
+    report = tune(rejects=rejects)
+    compound_hints = [h for h in report.hints if h.knob == "compound_retry_budget"]
+    assert compound_hints == []
+
+
+def test_tune_compound_budget_skipped_via_tune_pass_interval_none() -> None:
+    """tune(pass_interval=None) returns a report with no hints at all."""
+    report = tune(pass_interval=None)
+    assert report.hints == []

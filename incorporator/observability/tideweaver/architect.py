@@ -47,6 +47,12 @@ from ...io.source_ref import SourceRef
 from ...rejects import RejectEntry
 from ...tools.inspector import ResponseMeta, SourceProfile, analyze_data
 from ..wave import Wave
+from ._retry_defaults import (
+    _CANAL_OUTER_STOP,
+    _COMPOUND_RETRY_BUDGET_SEC,
+    _HTTP_INNER_STOP,
+    _HTTP_INNER_WAIT_MAX,
+)
 from .tide import Tide
 
 # Mapping-typed source values may be runtime dicts (Mapping) — we accept any
@@ -1525,6 +1531,53 @@ def _tune_retry_policy(rejects: list[RejectEntry]) -> list[TuningHint]:
     return hints
 
 
+def _tune_compound_budget(pass_interval: float | None) -> list[TuningHint]:
+    """Check whether the worst-case compound retry budget exceeds the configured pass_interval.
+
+    A pure static-cap check — no records consumed.  Fires when
+    ``_CANAL_OUTER_STOP × _HTTP_INNER_STOP × _HTTP_INNER_WAIT_MAX >= pass_interval``,
+    meaning a single stalled tick could block the scheduler for a multiple of the
+    intended pass window.
+
+    Args:
+        pass_interval: The ``pass_interval`` the scheduler was configured with, in
+            seconds.  ``None`` or non-positive values are silently skipped.
+
+    Returns:
+        A list containing one HIGH :class:`TuningHint` when the budget exceeds
+        ``pass_interval``, or an empty list otherwise.
+    """
+    if pass_interval is None or pass_interval <= 0:
+        return []
+    if _COMPOUND_RETRY_BUDGET_SEC < pass_interval:
+        return []
+    return [
+        TuningHint(
+            severity="high",
+            knob="compound_retry_budget",
+            scope={"global": "tideweaver"},
+            current_value=_COMPOUND_RETRY_BUDGET_SEC,  # 1200.0
+            recommended_value=None,
+            signal=(
+                f"{_CANAL_OUTER_STOP} × {_HTTP_INNER_STOP} × {_HTTP_INNER_WAIT_MAX:.0f}s"
+                f" = {_COMPOUND_RETRY_BUDGET_SEC:.0f}s exceeds pass_interval={pass_interval:.1f}s"
+            ),
+            rationale=(
+                f"Worst-case compound retry budget ({_CANAL_OUTER_STOP} outer × "
+                f"{_HTTP_INNER_STOP} inner × {_HTTP_INNER_WAIT_MAX:.0f}s max wait = "
+                f"{_COMPOUND_RETRY_BUDGET_SEC:.0f}s) exceeds the configured "
+                f"pass_interval={pass_interval:.1f}s. A single stalled tick may block "
+                f"the scheduler for up to {_COMPOUND_RETRY_BUDGET_SEC / pass_interval:.1f}× "
+                f"the intended pass window.\n"
+                "To remediate: lower pass_interval (if ticks complete well within "
+                "budget) OR lower stop_after_attempt / wait max on the HTTP inner "
+                "retry and/or the canal outer retry in on_error='restart' currents."
+            ),
+            sample_size=0,  # static rule — no records consumed
+        )
+    ]
+
+
 def tune(
     *,
     rejects: list[RejectEntry] | None = None,
@@ -1569,6 +1622,7 @@ def tune(
         hints.extend(_tune_pass_interval(tides, pass_interval))
     if rejects:
         hints.extend(_tune_retry_policy(rejects))
+    hints.extend(_tune_compound_budget(pass_interval))
 
     # Window timestamps from waves + tides only (RejectEntry has no timestamp).
     timestamps = [w.timestamp for w in waves] + [t.timestamp for t in tides]

@@ -303,9 +303,18 @@ async def execute_request(
         httpx.HTTPStatusError: For 429 / 5xx errors after all retries are exhausted.
         httpx.RequestError: For network-layer failures after all retries are exhausted.
     """
+    from ..observability.tideweaver._retry_defaults import (
+        _HTTP_INNER_STOP,
+        _HTTP_INNER_WAIT_MAX,
+        _HTTP_INNER_WAIT_MIN,
+        _HTTP_INNER_WAIT_MULTIPLIER,
+    )
+
     retrying = AsyncRetrying(
-        stop=stop_after_attempt(8),
-        wait=wait_random_exponential(multiplier=1.5, min=2, max=30),
+        stop=stop_after_attempt(_HTTP_INNER_STOP),
+        wait=wait_random_exponential(
+            multiplier=_HTTP_INNER_WAIT_MULTIPLIER, min=_HTTP_INNER_WAIT_MIN, max=_HTTP_INNER_WAIT_MAX
+        ),
         retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
         reraise=True,
     )
