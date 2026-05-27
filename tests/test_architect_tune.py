@@ -552,7 +552,7 @@ def test_tuning_report_render_format() -> None:
 
 
 def test_tune_compound_budget_fires_when_budget_exceeds_interval() -> None:
-    """_tune_compound_budget emits a HIGH hint when compound budget (1200s) > pass_interval."""
+    """_tune_compound_budget emits a HIGH hint when compound budget (1200s) >= pass_interval."""
     hints = _tune_compound_budget(60.0)
     assert len(hints) == 1
     h = hints[0]
