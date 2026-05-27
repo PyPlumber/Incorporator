@@ -1552,7 +1552,7 @@ def _tune_compound_budget(pass_interval: float | None) -> list[TuningHint]:
     if _COMPOUND_RETRY_BUDGET_SEC < pass_interval:
         return []
     return [
-        TuningHint(
+        TuningHint.model_construct(
             severity="high",
             knob="compound_retry_budget",
             scope={"global": "tideweaver"},
