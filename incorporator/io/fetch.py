@@ -91,6 +91,9 @@ def _build_reject_entry(
 
 logger = logging.getLogger(__name__)
 
+# 64 KB — consistent with decompress_data buffer discipline.
+_STREAM_CHUNK_SIZE: int = 65_536
+
 # ==========================================
 # 1. THROTTLING & RESILIENCE
 # ==========================================
@@ -271,6 +274,44 @@ async def _block_internal_redirect_hook(response: httpx.Response) -> None:
 # ==========================================
 # 3. CORE HTTP EXECUTION WORKERS
 # ==========================================
+
+
+async def _stream_to_path_request(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    req_kwargs: dict[str, Any],
+    dest: Path,
+) -> httpx.Response:
+    """Stream a response body to ``dest`` and return a sentinel Response.
+
+    Opens ``dest`` in "wb" mode at the top of each call, so a retry by
+    AsyncRetrying naturally truncates the partial write from the prior
+    attempt.  Penstock acquire and SSRF event hooks fire identically to
+    the non-streaming path because the AsyncClient owns those concerns,
+    not the call style.
+
+    ``dest.parent`` must exist before this is called; a missing parent
+    directory raises ``FileNotFoundError`` which is NOT retried by
+    tenacity (correct — bad path is a permanent caller error).
+
+    # TODO: max_bytes guard out of scope for this bundle
+    """
+    fh = dest.open("wb")
+    try:
+        async with client.stream(method.upper(), url, **req_kwargs) as response:
+            response.raise_for_status()  # mid-stream 429 / 5xx surface here, before body
+            async for chunk in response.aiter_bytes(chunk_size=_STREAM_CHUNK_SIZE):
+                fh.write(chunk)
+            return httpx.Response(
+                status_code=response.status_code,
+                headers=response.headers,
+                content=b"",
+            )
+    finally:
+        fh.close()
+
+
 async def execute_request(
     url: str,
     client: httpx.AsyncClient,
@@ -279,6 +320,7 @@ async def execute_request(
     json_payload: dict[str, Any] | None = None,
     form_payload: dict[str, Any] | None = None,
     rate_limiter: BoundPenstock | None = None,
+    stream_to_path: Path | None = None,
 ) -> httpx.Response:
     """Execute a resilient, jittered HTTP request supporting GET/POST and query strings.
 
@@ -294,9 +336,16 @@ async def execute_request(
         json_payload: Body serialised as JSON (``Content-Type: application/json``).
         form_payload: Body serialised as form data (``Content-Type: application/x-www-form-urlencoded``).
         rate_limiter: Optional per-host :class:`BoundPenstock`; acquired once per attempt.
+        stream_to_path: When set, streams the response body to this :class:`~pathlib.Path`
+            instead of buffering it in memory.  Returns a sentinel
+            ``httpx.Response`` with ``content=b""``; callers detect the streaming
+            path via ``len(response.content) == 0``.  The file is opened in
+            ``"wb"`` mode on each attempt so retries automatically truncate any
+            partial write from the previous attempt.
 
     Returns:
-        The successful ``httpx.Response``.
+        The successful ``httpx.Response``.  When ``stream_to_path`` is set,
+        this is a sentinel with ``content=b""`` and the actual body is on disk.
 
     Raises:
         IncorporatorNetworkError: For permanent 4xx client errors (excluding 429).
@@ -332,6 +381,9 @@ async def execute_request(
                     req_kwargs["json"] = json_payload
                 if form_payload:
                     req_kwargs["data"] = form_payload
+
+                if stream_to_path is not None:
+                    return await _stream_to_path_request(client, method, url, req_kwargs, stream_to_path)
 
                 # method.upper() natively supports 'POST', 'PUT', etc.
                 response = await client.request(method.upper(), url, **req_kwargs)
@@ -439,6 +491,7 @@ async def _process_single_source(
     call_lim = kwargs.pop("call_lim", None)
     rec_path = kwargs.pop("rec_path", None)
     archive_target = kwargs.pop("archive_target", None)
+    stream_to_path: Path | None = kwargs.pop("stream_to_path", None)
 
     method = kwargs.pop("http_method", kwargs.pop("method", "GET"))
     base_params = kwargs.pop("params", {})
@@ -475,6 +528,7 @@ async def _process_single_source(
             json_payload=j_payload,
             form_payload=f_payload,
             rate_limiter=rate_limiter,
+            stream_to_path=stream_to_path,
         )
 
     # 2. Pure Data Processing (Accepts Polymorphic Inputs)
