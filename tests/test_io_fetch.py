@@ -777,12 +777,11 @@ async def test_rec_path_negative_index_is_not_supported(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Negative index segments ("-1") are not treated as list indices — loop breaks.
+    """Negative index segments ("-1") are not treated as list indices — returns None.
 
-    ``"-1".isdigit()`` is False, so the drill loop hits the ``else`` branch
-    and breaks, leaving parsed_chunk as the full list.  The negative index is
-    NOT applied — accumulated contains three elements (not one), proving that
-    Python-style negative indexing is intentionally unsupported.
+    post-Bundle G: non-digit segment on a list returns None instead of leaving partial state.
+    ``"-1".isdigit()`` is False, so ``_drill_path`` returns None on the ``"a.-1"`` path
+    and the accumulator skips it.  Zero instances are created.
     """
     from incorporator.io import fetch
 
@@ -795,9 +794,7 @@ async def test_rec_path_negative_index_is_not_supported(
     monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
 
     result = await _Item.incorp(inc_url="https://api.example.com/items", rec_path="a.-1")
-    # The break leaves the full list intact — 3 elements are accumulated, not 1
-    # (which would be the case if -1 were applied as a Python index).
-    assert len(result) == 3
+    assert len(result) == 0
 
 
 @pytest.mark.asyncio
@@ -805,12 +802,12 @@ async def test_rec_path_non_digit_key_on_list_breaks(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A non-digit segment on a list value breaks the drill loop.
+    """A non-digit segment on a list value returns None from _drill_path.
 
+    post-Bundle G: non-digit segment on a list returns None instead of leaving partial state.
     rec_path="a.foo.b" on ``{"a": [{"b": 1}, {"b": 2}]}``: after drilling to
-    ``"a"`` the current value is a list; ``"foo"`` is not a digit so the loop
-    breaks, leaving the list as parsed_chunk.  Both list elements are
-    accumulated as separate instances.
+    ``"a"`` the current value is a list; ``"foo"`` is not a digit so ``_drill_path``
+    returns None and the accumulator skips.  Zero instances are created.
     """
     from incorporator.io import fetch
 
@@ -823,7 +820,7 @@ async def test_rec_path_non_digit_key_on_list_breaks(
     monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
 
     result = await _Item.incorp(inc_url="https://api.example.com/items", rec_path="a.foo.b")
-    assert len(result) == 2
+    assert len(result) == 0
 
 
 @pytest.mark.asyncio
@@ -850,3 +847,27 @@ async def test_rec_path_dict_only_path_still_works(
     assert len(result) == 2
     assert result.inc_dict[1].id == 1
     assert result.inc_dict[2].id == 2
+
+
+@pytest.mark.asyncio
+async def test_rec_path_dict_only_smoke_post_drill_path_refactor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Regression lock: dict-only rec_path drill still works post-Bundle G _drill_path refactor."""
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Item(Incorporator):
+        id: int = 0
+
+    payload = {"data": {"items": [{"id": 10}, {"id": 20}]}}
+    monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
+
+    result = await _Item.incorp(
+        inc_url="https://api.example.com/items", inc_code="id", rec_path="data.items"
+    )
+    assert len(result) == 2
+    assert result.inc_dict[10].id == 10
+    assert result.inc_dict[20].id == 20

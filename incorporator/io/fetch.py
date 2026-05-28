@@ -18,6 +18,7 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from ..rejects import RejectEntry
+from ..schema.extractors import _drill_path
 from . import handlers as format_parsers
 from .compression import decompress_data, infer_compression
 from .formats import FormatType, infer_format
@@ -541,19 +542,8 @@ async def _process_single_source(
         # Typed as Any so the drill loop below can assign None on out-of-range.
         parsed_chunk: Any = await format_parsers.parse_source_data(raw_payload, active_format, **kwargs)
 
-        # Each part may be a dict key or a list index ("0", "1", ...).
-        # Negative indices are intentionally unsupported; "-1".isdigit() is False.
         if rec_path:
-            for part in rec_path.split("."):
-                if isinstance(parsed_chunk, dict) and part in parsed_chunk:
-                    parsed_chunk = parsed_chunk[part]
-                elif isinstance(parsed_chunk, list) and part.isdigit():
-                    idx = int(part)
-                    parsed_chunk = parsed_chunk[idx] if idx < len(parsed_chunk) else None
-                    if parsed_chunk is None:
-                        break
-                else:
-                    break
+            parsed_chunk = _drill_path(parsed_chunk, rec_path)
 
         if isinstance(parsed_chunk, list):
             accumulated.extend(parsed_chunk)

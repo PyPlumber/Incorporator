@@ -299,6 +299,44 @@ def link_to_list(dataset: Any, extractor: Callable[[Any], Any] | None = None) ->
     return _mapper
 
 
+def _drill_path(node: Any, path: str) -> Any:
+    """Walk a dotted path through mixed dict / list structures.
+
+    Single shared walker for every dot-notation drill site in the
+    framework: ``rec_path``, ``pluck``, ``calc``/``calc_all`` input
+    keys, and ``inc_code``/``inc_name`` PK binding.
+
+    Args:
+        node: Raw parsed JSON-like value (typically dict or list).
+        path: Dot-separated path string. Each segment is either a
+            dict key or a digit-only string interpreted as a list
+            position. An empty path returns ``node`` unchanged.
+
+    Returns:
+        The drilled value, or ``None`` if any segment cannot be
+        navigated (missing key, non-digit segment on list,
+        out-of-range index, scalar node mid-walk).
+
+    Note:
+        Pydantic model navigation lives in ``router._get_attr``;
+        this helper operates on raw dict/list structures only.
+    """
+    if not path:
+        return node
+    current: Any = node
+    for part in path.split("."):
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list) and part.isdigit():
+            idx = int(part)
+            current = current[idx] if idx < len(current) else None
+        else:
+            return None
+    return current
+
+
 def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Callable[[Any], Any]:
     """Lift a deeply-nested field to a top-level attribute using a dot-notation path.
 
@@ -338,27 +376,9 @@ def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Callable[[Any]
     callables (``pluck("data.title", chain=str.lower)``) without writing
     a defensive null guard.
     """
-    parts = key.split(".")
 
     def _plucker(val: Any) -> Any:
-        extracted = val
-        for part in parts:
-            if isinstance(extracted, dict):
-                extracted = extracted.get(part)
-            elif isinstance(extracted, list) and part.isdigit():
-                idx = int(part)
-                extracted = extracted[idx] if idx < len(extracted) else None
-            else:
-                extracted = None
-                break
-            if extracted is None:
-                break
-
-        # Align with inc()'s null contract: only invoke ``chain`` on real
-        # data.  Missing path segments / garbage source values
-        # short-circuit to ``None`` without entering the chain callable —
-        # otherwise ``chain(None)`` for chain=str.lower (etc.) would raise
-        # and trigger a per-row WARNING at the dispatch boundary.
+        extracted = _drill_path(val, key)
         if chain is None or is_garbage_value(extracted):
             return extracted
         return chain(extracted)

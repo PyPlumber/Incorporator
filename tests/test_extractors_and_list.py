@@ -7,6 +7,7 @@ import pytest
 
 from incorporator.list import IncorporatorList, _deduplicate_extracted
 from incorporator.schema.extractors import (
+    _drill_path,
     as_list,
     join_all,
     link_to,
@@ -15,6 +16,7 @@ from incorporator.schema.extractors import (
     split_and_get,
     sum_attributes,
 )
+from incorporator.schema.router import extract_parent_data
 
 
 # ==========================================
@@ -341,3 +343,72 @@ def test_pluck_negative_index_returns_none() -> None:
     plucker = pluck("a.-1")
     result = plucker({"a": [1, 2]})
     assert result is None
+
+
+# ==========================================
+# 10. _drill_path — direct unit tests
+# ==========================================
+
+
+def test_drill_path_dict_only() -> None:
+    """_drill_path walks nested dicts via dot-notation."""
+    assert _drill_path({"a": {"b": 1}}, "a.b") == 1
+
+
+def test_drill_path_list_digit_index() -> None:
+    """_drill_path uses a digit segment to index into a list."""
+    assert _drill_path({"a": [10, 20]}, "a.1") == 20
+
+
+def test_drill_path_mixed_dict_and_list() -> None:
+    """_drill_path navigates across both dict and list nodes in a single path."""
+    payload = {"splits": [{"stat": {"era": 3.2}}]}
+    assert _drill_path(payload, "splits.0.stat") == {"era": 3.2}
+
+
+def test_drill_path_none_mid_walk() -> None:
+    """_drill_path returns None when an intermediate node is None."""
+    assert _drill_path({"a": None}, "a.b") is None
+
+
+def test_drill_path_single_token() -> None:
+    """_drill_path with a single-segment path returns the top-level value."""
+    assert _drill_path({"x": 42}, "x") == 42
+
+
+def test_drill_path_missing_key() -> None:
+    """_drill_path returns None for a key absent from the dict."""
+    assert _drill_path({"a": 1}, "b") is None
+
+
+def test_drill_path_out_of_range_index() -> None:
+    """_drill_path returns None when a digit index exceeds the list length."""
+    assert _drill_path({"a": []}, "a.0") is None
+
+
+def test_drill_path_empty_path_returns_node() -> None:
+    """_drill_path with an empty path string returns the node unchanged."""
+    payload = {"a": 1}
+    assert _drill_path(payload, "") == payload
+
+
+def test_drill_path_non_navigable_else_returns_none() -> None:
+    """_drill_path returns None when a non-navigable node is encountered mid-walk."""
+    assert _drill_path("scalar", "a") is None
+
+
+# ==========================================
+# 11. extract_parent_data — positional digit vs fanout
+# ==========================================
+
+
+def test_extract_parent_data_positional_digit() -> None:
+    """extract_parent_data uses a digit segment as a positional index, not fanout."""
+    parents = [{"results": [{"url": "x"}, {"url": "y"}]}]
+    assert extract_parent_data(parents, "results.0.url") == ["x"]
+
+
+def test_extract_parent_data_non_digit_fanout_unchanged() -> None:
+    """extract_parent_data fans out over list items for non-digit segments (regression lock)."""
+    parents = [{"results": [{"url": "x"}, {"url": "y"}]}]
+    assert extract_parent_data(parents, "results.url") == ["x", "y"]

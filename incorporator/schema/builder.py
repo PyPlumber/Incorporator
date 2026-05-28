@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..exceptions import IncorporatorSchemaError
 from .converters import CalcAllOp, CalcOp, is_garbage_value
+from .extractors import _drill_path
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,7 @@ def apply_etl_transformations(
                 target_type = operation.target_type if callable(operation.target_type) else None
                 inputs = operation.input_list if operation.input_list else [key]
                 for d in dict_items:
-                    args = [d.get(dep) for dep in inputs]
+                    args = [_drill_path(d, dep) for dep in inputs]
                     # Align with inc()'s null-handling contract: when EVERY
                     # input value is garbage (None/""/n-a/null/unknown/nan/
                     # undefined), skip the user-supplied func and silently
@@ -178,7 +179,7 @@ def apply_etl_transformations(
                 default = operation.default
                 target_type = operation.target_type if callable(operation.target_type) else None
                 inputs = operation.input_list if operation.input_list else [key]
-                col_args = [[d.get(dep) for d in dict_items] for dep in inputs]
+                col_args = [[_drill_path(d, dep) for d in dict_items] for dep in inputs]
                 # Symmetric to CalcOp's pre-check, applied across the full
                 # column matrix: if every cell of every input column is
                 # garbage, skip the func call and default every output row.
@@ -226,12 +227,14 @@ def apply_etl_transformations(
 
     if code_attr:
         for d in dict_items:
-            if code_attr in d:
-                d["inc_code"] = d[code_attr]
+            val = _drill_path(d, code_attr)
+            if val is not None:
+                d["inc_code"] = val
     if name_attr:
         for d in dict_items:
-            if name_attr in d:
-                d["inc_name"] = d[name_attr]
+            val = _drill_path(d, name_attr)
+            if val is not None:
+                d["inc_name"] = val
 
     return items if isinstance(parsed_data, list) else items[0]
 

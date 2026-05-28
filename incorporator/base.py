@@ -448,8 +448,11 @@ class Incorporator(BaseModel):
             inc_code: Source-field name to use as the primary key for
                 ``cls.inc_dict`` registration. If omitted, instances are
                 keyed by an auto-incremented integer from ``_auto_counter``.
+                Supports dot-notation drilling into nested structures
+                (e.g. ``inc_code="team.id"`` reads ``record["team"]["id"]``).
             inc_name: Source-field name used as the human-readable label.
                 Stored on each instance as ``self.inc_name``.
+                Supports dot-notation drilling (e.g. ``inc_name="team.name"``).
             excl_lst: List of field names to **drop** before Pydantic
                 compilation — useful for stripping heavy keys like
                 ``"image_data"`` or ``"raw_html"``.
