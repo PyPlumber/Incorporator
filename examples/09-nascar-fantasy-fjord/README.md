@@ -593,14 +593,6 @@ _STANDINGS_EXCL = [
     "driver_first_name", "driver_last_name", "driver_suffix",
     "playoff_stage_wins",
 ]
-_STANDINGS_CONV = {
-    "points":   calc(int, default=0, target_type=int),
-    "wins":     calc(int, default=0, target_type=int),
-    "top_10":   calc(int, default=0, target_type=int),
-    "top_5":    calc(int, default=0, target_type=int),
-    "laps_led": calc(int, default=0, target_type=int),
-    "position": calc(int, default=0, target_type=int),
-}
 _DRIVER_EXCL = [
     "Series_Logo", "Short_Name", "Description", "Hobbies", "Children",
     "Residing_City", "Residing_State", "Residing_Country", "Image_Transparent",
@@ -621,9 +613,9 @@ async def main() -> None:
             {"cls": Track, "incorp_params": {"inc_url": f"{CFC_BASE}/tracks.json", "rec_path": "items", "inc_code": "track_id", "inc_name": "track_name"}, "refresh_params": None},
             {"cls": Driver, "incorp_params": {"inc_url": f"{CFC_BASE}/drivers.json", "rec_path": "response", "inc_code": "Nascar_Driver_ID", "inc_name": "Full_Name", "excl_lst": _DRIVER_EXCL}, "refresh_params": None},
             {"cls": Race, "incorp_params": {"inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/race_list_basic.json", "rec_path": "series_1", "inc_code": "race_id", "inc_name": "race_name", "excl_lst": ["schedule", "track_name"], "name_chg": [("track_id", "track")]}, "refresh_params": None},
-            {"cls": CupStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/1/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": _STANDINGS_CONV}, "refresh_params": None},
-            {"cls": BuschStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/2/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": _STANDINGS_CONV}, "refresh_params": None},
-            {"cls": TruckStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/3/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": _STANDINGS_CONV}, "refresh_params": None},
+            {"cls": CupStanding,   "incorp_params": {"inc_url": f"{PROD_BASE}/1/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": calc(int, default=0, target_type=int), "wins": calc(int, default=0, target_type=int), "top_10": calc(int, default=0, target_type=int), "top_5": calc(int, default=0, target_type=int), "laps_led": calc(int, default=0, target_type=int), "position": calc(int, default=0, target_type=int)}}, "refresh_params": None},
+            {"cls": BuschStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/2/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": calc(int, default=0, target_type=int), "wins": calc(int, default=0, target_type=int), "top_10": calc(int, default=0, target_type=int), "top_5": calc(int, default=0, target_type=int), "laps_led": calc(int, default=0, target_type=int), "position": calc(int, default=0, target_type=int)}}, "refresh_params": None},
+            {"cls": TruckStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/3/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": calc(int, default=0, target_type=int), "wins": calc(int, default=0, target_type=int), "top_10": calc(int, default=0, target_type=int), "top_5": calc(int, default=0, target_type=int), "laps_led": calc(int, default=0, target_type=int), "position": calc(int, default=0, target_type=int)}}, "refresh_params": None},
             {"cls": LeagueRoster, "incorp_params": {"inc_file": str(HERE / "fixtures/league_teams.json"), "inc_code": "team_id", "inc_name": "team_id"}, "refresh_params": None},
         ],
         inflow=str(HERE / "outflow.py"),
