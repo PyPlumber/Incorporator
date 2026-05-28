@@ -33,7 +33,7 @@ per-interval ticking).  Stream source ingestion is owned by the upstream
 from __future__ import annotations
 
 from .architect import TuningHint, TuningReport, tune
-from .current import Current, CustomCurrent, Export, Fjord, Stream
+from .current import Current, CustomCurrent, Export, FilteredDrillCurrent, Fjord, Stream
 from .flow import (
     BackpressurePenstock,
     BurstPenstock,
@@ -74,6 +74,7 @@ __all__ = [
     "Edge",
     "Export",
     "ExportToArchive",
+    "FilteredDrillCurrent",
     "Fjord",
     "FlowControl",
     "FlowObserver",

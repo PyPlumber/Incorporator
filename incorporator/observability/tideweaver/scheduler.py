@@ -716,6 +716,7 @@ class Tideweaver:
     ) -> None:
         """Run one tick under the current's :attr:`on_error` policy."""
         retrying: AsyncRetrying | None = None
+        _tick_raised: bool = False
         try:
             if current.on_error == "restart":
                 retrying = AsyncRetrying(
@@ -733,6 +734,7 @@ class Tideweaver:
                     await self._invoke_tick(current)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Tideweaver: isolated tick failure on %s: %s", current.name, exc)
+                    _tick_raised = True
             else:  # fail_watershed
                 await self._invoke_tick(current)
         except (Exception, RetryError) as e:
@@ -741,6 +743,7 @@ class Tideweaver:
                 e._incorporator_attempt_number = attempt_number  # type: ignore[attr-defined]
             except AttributeError:
                 pass
+            _tick_raised = True
             if current.on_error == "fail_watershed":
                 raise
             logger.error("Tideweaver: tick failed for %s after retries; current parked.", current.name)
@@ -798,6 +801,21 @@ class Tideweaver:
             # polluting the reservoir with no-op ticks.
             snapshot_attr = getattr(current.cls, "_tideweaver_snapshot", None)
             wave_snapshot = list(snapshot_attr) if snapshot_attr else list(current.cls.inc_dict.values())
+            if not wave_snapshot and not _tick_raised and isinstance(current, CustomCurrent):
+                upstream_had_data = any(
+                    getattr(self._currents_by_name[up_name].cls, "_tideweaver_snapshot", None)
+                    for up_name, _ in self._upstream[current.name]
+                )
+                if upstream_had_data:
+                    upstream_names = ", ".join(up for up, _ in self._upstream[current.name])
+                    logger.warning(
+                        "Tideweaver: %s tick produced empty output despite non-empty "
+                        "upstream snapshot(s) (%s); check the tick body / predicate / "
+                        "missing conv_dict on the upstream (fires each tick while the "
+                        "condition persists).",
+                        current.name,
+                        upstream_names,
+                    )
             if wave_snapshot:
                 for downstream_name, edge_flow in self._downstream[current.name]:
                     edge_key = (current.name, downstream_name)
@@ -836,7 +854,7 @@ class Tideweaver:
         elif isinstance(current, Export):
             await self._tick_export(current)
         elif isinstance(current, CustomCurrent):
-            await current.tick(self)
+            await current._run_tick(self)
         else:
             raise NotImplementedError(
                 f"Tideweaver has no default tick body for bare Current; "

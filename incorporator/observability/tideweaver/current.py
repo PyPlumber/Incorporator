@@ -16,8 +16,9 @@ models — these models are pure plan, not state.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -285,6 +286,27 @@ class CustomCurrent(Current):
     :class:`Tideweaver` instance.
     """
 
+    auto_park_snapshot: ClassVar[bool] = True
+
+    async def _run_tick(self, scheduler: Any) -> None:
+        """Wrap :meth:`tick` with automatic snapshot parking.
+
+        After :meth:`tick` returns, if ``auto_park_snapshot`` is ``True`` and
+        the user's ``tick()`` body did not manually assign
+        ``cls._tideweaver_snapshot`` (identity check on the pre-tick sentinel),
+        the scheduler parks ``list(cls.inc_dict.values())`` as the snapshot.
+        A manual assignment inside ``tick()`` produces a new list object,
+        so ``is pre`` is ``False`` and auto-park is skipped.
+
+        Args:
+            scheduler: The :class:`~.scheduler.Tideweaver` instance driving
+                this current.
+        """
+        pre = getattr(self.cls, "_tideweaver_snapshot", None)
+        await self.tick(scheduler)
+        if self.auto_park_snapshot and getattr(self.cls, "_tideweaver_snapshot", None) is pre:
+            cast(Any, self.cls)._tideweaver_snapshot = list(self.cls.inc_dict.values())
+
     async def tick(self, scheduler: Any) -> None:
         """Per-tick body.  Subclasses MUST override this method."""
         raise NotImplementedError(
@@ -292,3 +314,102 @@ class CustomCurrent(Current):
             f"Subclass CustomCurrent and implement the tick coroutine, "
             f"or use Stream/Fjord/Export for the standard verb tick bodies."
         )
+
+
+class FilteredDrillCurrent(CustomCurrent):
+    """Declarative T5-drill-with-filter primitive.
+
+    Filters an upstream class's parked ``_tideweaver_snapshot`` by a
+    predicate, then fan-outs a ``cls.incorp(inc_parent=filtered, ...)``
+    call.  ``CustomCurrent._run_tick`` auto-parks the downstream
+    ``_tideweaver_snapshot`` automatically — no manual park required.
+
+    Predicate forms:
+
+    - **Callable**: ``lambda row: row.division_id == 201``.  Receives the
+      row object; returns ``bool``.
+    - **Structured tuple**: ``(attr_name, op, value)``, e.g.
+      ``("division_id", operator.eq, 201)``.  Reads ``getattr(row, attr,
+      None)`` then calls ``op(value_or_none, value)``.
+
+    Null safety of structured-tuple form: ``operator.eq(None, x)`` and
+    ``operator.ne(None, x)`` are safe — they return ``False`` / ``True``
+    respectively.  **Ordered operators** (``operator.lt``, ``operator.le``,
+    ``operator.gt``, ``operator.ge``) raise ``TypeError`` when one operand
+    is ``None`` — this is intentional fail-fast behavior; do not wrap in
+    try/except.  Use the callable form if you need null-safe ordered
+    comparisons.
+
+    First-tick / no-upstream-data: if the parent's
+    ``_tideweaver_snapshot`` is ``None`` (Tideweaver hasn't reached the
+    upstream yet) or ``[]``, ``tick()`` silently returns.
+
+    Empty filtered list: if the predicate rejects every row, ``tick()``
+    returns without making an ``incorp()`` call (no wire traffic).
+
+    Example::
+
+        FilteredDrillCurrent(
+            name="hitting_drill",
+            cls=MLBHitting,
+            interval=30.0,
+            parent=MLBAllTeam,
+            predicate=("division_id", operator.eq, 201),
+            inc_url="https://statsapi.mlb.com/api/v1/teams/{}/stats?...",
+            inc_child="inc_code",
+            rec_path="stats.0.splits.0",
+            incorp_code="team.id",
+            conv_dict=HITTING_CONV,
+        )
+    """
+
+    parent: type[Incorporator]
+    # Loose tuple arm lets Pydantic accept the 3-tuple regardless of element types;
+    # _validate_predicate then enforces the callable constraint so the error message
+    # is human-readable rather than Pydantic's generic union-failure text.
+    predicate: Callable[[Any], bool] | tuple[str, Any, Any]
+    inc_url: str
+    inc_child: str = "inc_code"
+    rec_path: str | None = None
+    incorp_code: str | None = None
+    conv_dict: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _validate_predicate(self) -> FilteredDrillCurrent:
+        """Validate the structured-tuple predicate form at construction time."""
+        if isinstance(self.predicate, tuple):
+            if len(self.predicate) != 3 or not isinstance(self.predicate[0], str) or not callable(self.predicate[1]):
+                raise ValueError(
+                    f"FilteredDrillCurrent predicate tuple must be "
+                    f"(attr: str, op: Callable, value: Any); got {self.predicate!r}"
+                )
+        return self
+
+    async def tick(self, scheduler: Any) -> None:
+        """Filter the parent snapshot and fan-out incorp() for matching rows.
+
+        Args:
+            scheduler: The :class:`~.scheduler.Tideweaver` instance driving
+                this current (not used directly; present for interface
+                compatibility).
+        """
+        pre_snap = getattr(self.parent, "_tideweaver_snapshot", None)
+        if not pre_snap:
+            return
+        if callable(self.predicate):
+            filtered = [row for row in pre_snap if self.predicate(row)]
+        else:
+            attr, op, value = self.predicate
+            filtered = [row for row in pre_snap if op(getattr(row, attr, None), value)]
+        if not filtered:
+            return
+        await self.cls.incorp(
+            # cast: filtered is list[Incorporator] at runtime; IncorporatorList is list[T] subclass
+            inc_parent=cast(Any, filtered),
+            inc_child=self.inc_child,
+            inc_url=self.inc_url,
+            inc_code=self.incorp_code,
+            conv_dict=self.conv_dict,
+            rec_path=self.rec_path,
+        )
+        # _run_tick auto-parks _tideweaver_snapshot via auto_park_snapshot=True.
