@@ -122,6 +122,11 @@ def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target
 
     over the explicit-null-guard lambda; same behaviour, no log noise.
 
+    Input keys support dot-notation drilling, including integer list indices:
+    ``calc(func, "stat.avg", "stat.obp")`` reads from nested sub-dicts.
+    Any key of the form ``"a.b.0.c"`` drills through mixed dict/list structures
+    using the shared ``_drill_path`` walker.
+
     For column-wide aggregation (a single call across every row) use
     :func:`calc_all` instead.
     """
@@ -169,6 +174,11 @@ def calc_all(func: Callable[..., Any], *input_keys: str, default: Any = None, ta
     is only invoked when at least one cell is real data; if it raises
     on that real data, the warning fires and the per-row default is
     used.  Symmetric with :func:`calc`'s row-level contract.
+
+    Input keys support dot-notation drilling, including integer list indices:
+    ``calc_all(func, "stat.avg", "stat.obp")`` reads from nested sub-dicts.
+    Any key of the form ``"a.b.0.c"`` drills through mixed dict/list structures
+    using the shared ``_drill_path`` walker.
 
     For per-row computation use :func:`calc` instead.
     """

@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from incorporator.schema import router
+from incorporator.schema.builder import apply_etl_transformations
 from incorporator.schema.converters import (
     CalcAllOp,
     CalcOp,
@@ -151,8 +152,9 @@ def test_url_toolkit() -> None:
     # Test dictionary pluck (e.g. from JSON response)
     assert plucker({"name": "Earth", "homeworld": "https://api.com/planet/5/"}) == 5
 
-    # Test flat string fallback (e.g. passing a raw string through the converter)
-    assert plucker("https://api.com/planet/5/") == 5
+    # Non-dict/non-list top-level values return None — the outer isinstance(val, dict)
+    # gate was removed to support list-rooted paths; plain strings no longer fall through.
+    assert plucker("https://api.com/planet/5/") is None
 
 
 def test_link_to_relational_mapping() -> None:
@@ -444,3 +446,41 @@ def test_calc_all_short_circuits_when_every_cell_garbage(caplog: pytest.LogCaptu
         result = _run_calc(op, rows)
     assert [r["out"] for r in result] == [0, 0, 0]
     assert not [r for r in caplog.records if "calc_all failed" in r.getMessage()]
+
+
+# ---------------------------------------------------------------------------
+# Bundle G: dotted-path input keys for calc, calc_all, and inc_code binding.
+# ---------------------------------------------------------------------------
+
+
+def _double_each(values: list[float]) -> list[float]:
+    """Return each value doubled — calc_all helper for test_calc_all_dotted_input_keys."""
+    return [v * 2 for v in values]
+
+
+def test_calc_dotted_input_key() -> None:
+    """calc reads from a nested sub-dict when the input key contains dot-notation."""
+    rows = [{"team": {"name": "cubs"}}]
+    apply_etl_transformations(
+        rows,
+        conv_dict={"team_name": calc(str.upper, "team.name", default="", target_type=str)},
+    )
+    assert rows[0]["team_name"] == "CUBS"
+
+
+def test_calc_all_dotted_input_keys() -> None:
+    """calc_all reads from nested sub-dicts when input keys contain dot-notation."""
+    rows = [{"team": {"score": 3}}, {"team": {"score": 5}}]
+    apply_etl_transformations(
+        rows,
+        conv_dict={"score_doubled": calc_all(_double_each, "team.score", default=0)},
+    )
+    assert rows[0]["score_doubled"] == 6
+    assert rows[1]["score_doubled"] == 10
+
+
+def test_inc_code_dotted_attr_binds_pk() -> None:
+    """inc_code with a dotted path drills into nested dicts to produce the PK value."""
+    rows = [{"team": {"id": "cub1"}}]
+    apply_etl_transformations(rows, code_attr="team.id")
+    assert rows[0]["inc_code"] == "cub1"

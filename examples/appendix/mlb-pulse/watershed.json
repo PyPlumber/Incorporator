@@ -1,0 +1,91 @@
+{
+  "_comment_1_": "CLI-declarative form of the MLB AL East Pulse diamond.",
+  "_comment_2_": "Relative outflow path is resolved against this JSON's parent directory,",
+  "_comment_3_": "so the example runs from any working directory:",
+  "_comment_4_": "  incorporator validate examples/appendix/mlb-pulse/watershed.json",
+  "_comment_5_": "  incorporator tideweaver run examples/appendix/mlb-pulse/watershed.json",
+  "_comment_6_": "Override the default window with env vars: PULSE_START / PULSE_END (ISO 8601, UTC).",
+  "_comment_7_": "CustomCurrent nodes (hitting, pitching) are loaded from pulse_outflow.py via the",
+  "_comment_8_": "class field referencing HittingDrillCurrent / PitchingDrillCurrent defined there.",
+  "_doc_limitation_": "PYTHON-ONLY ORCHESTRATION: The framework JSON config loader passes incorp_params verbatim from JSON; it has no mechanism to deserialize conv_dict entries (calc/inc callables) from string representations. The all_teams and standings nodes therefore omit conv_dict here. Without conv_dict applied, division_id is never coerced on MLBAllTeam instances and the HittingDrillCurrent/PitchingDrillCurrent AL East filter produces zero teams — the CLI path produces empty output. Use the Python entry (mlb_pulse.py) for a full run that applies ALL_TEAMS_CONV and STANDINGS_CONV. This is a framework gap: watershed.json would need a conv_dict resolver that maps string sigils like '@ALL_TEAMS_CONV' to callable dicts defined in the outflow sidecar.",
+
+  "window": {
+    "start": "${PULSE_START:-2026-05-28T00:00:00+00:00}",
+    "end":   "${PULSE_END:-2026-05-28T00:00:25+00:00}"
+  },
+
+  "shape": "diamond",
+  "outflow": "pulse_outflow.py",
+  "drain_timeout": 20,
+  "gate_mode": "weir",
+
+  "head": {
+    "name": "schedule",
+    "class": "MLBSchedule",
+    "verb": "stream",
+    "interval": 8,
+    "on_error": "isolate",
+    "incorp_params": {
+      "inc_url": "https://statsapi.mlb.com/api/v1/schedule?sportId=1",
+      "rec_path": "dates.0.games",
+      "inc_code": "gamePk",
+      "inc_name": "teams.home.team.name"
+    }
+  },
+
+  "middle": [
+    {
+      "name": "all_teams",
+      "class": "MLBAllTeam",
+      "verb": "stream",
+      "interval": 20,
+      "on_error": "isolate",
+      "incorp_params": {
+        "inc_url": "https://statsapi.mlb.com/api/v1/teams?sportId=1",
+        "rec_path": "teams",
+        "inc_code": "id",
+        "inc_name": "name"
+      }
+    },
+    {
+      "name": "standings",
+      "class": "MLBStandings",
+      "verb": "stream",
+      "interval": 8,
+      "on_error": "isolate",
+      "incorp_params": {
+        "inc_url": "https://statsapi.mlb.com/api/v1/standings?leagueId=103",
+        "rec_path": "records",
+        "inc_code": "division.id",
+        "inc_name": "division.name"
+      }
+    },
+    {
+      "name": "hitting",
+      "class": "HittingDrillCurrent",
+      "verb": "custom",
+      "interval": 6,
+      "on_error": "isolate"
+    },
+    {
+      "name": "pitching",
+      "class": "PitchingDrillCurrent",
+      "verb": "custom",
+      "interval": 6,
+      "on_error": "isolate"
+    }
+  ],
+
+  "tail": {
+    "name": "pulse",
+    "class": "TeamPulseCard",
+    "verb": "fjord",
+    "interval": 4,
+    "on_error": "isolate",
+    "export_params": {
+      "file_path": "out/al_east_pulse.ndjson",
+      "format": "ndjson",
+      "if_exists": "replace"
+    }
+  }
+}

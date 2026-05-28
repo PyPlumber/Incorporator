@@ -1,0 +1,142 @@
+{
+  "_comment": "Architect-probe schema baselines — one entry per source. Used as a documentation aid and smoke-test reference. Fields confirmed via live probe on 2026-05-28.",
+  "sources": [
+    {
+      "name": "schedule",
+      "endpoint": "https://statsapi.mlb.com/api/v1/schedule?sportId=1",
+      "rec_path": "dates.0.games",
+      "inc_code": "gamePk",
+      "inc_name": "teams.home.team.name",
+      "expected_fields": [
+        "gamePk",
+        "gameDate",
+        "status",
+        "teams",
+        "venue"
+      ],
+      "conv_dict_fields": [
+        "home_team_id",
+        "away_team_id",
+        "home_team_name",
+        "away_team_name",
+        "game_date",
+        "game_status"
+      ],
+      "notes": "rec_path drills dates[0].games — first scheduled date. gamePk is the unique game PK."
+    },
+    {
+      "name": "all_teams",
+      "endpoint": "https://statsapi.mlb.com/api/v1/teams?sportId=1",
+      "rec_path": "teams",
+      "inc_code": "id",
+      "inc_name": "name",
+      "expected_fields": [
+        "id",
+        "name",
+        "abbreviation",
+        "teamName",
+        "shortName",
+        "division",
+        "league",
+        "sport",
+        "venue"
+      ],
+      "conv_dict_fields": [
+        "name",
+        "abbreviation",
+        "abbr_lower",
+        "division_id",
+        "league_id",
+        "team_name",
+        "short_name"
+      ],
+      "notes": "division.id == 201 identifies AL East teams. abbr_lower derived from abbreviation after inc(str) coercion."
+    },
+    {
+      "name": "standings",
+      "endpoint": "https://statsapi.mlb.com/api/v1/standings?leagueId=103",
+      "rec_path": "records",
+      "inc_code": "division.id",
+      "inc_name": "division.name",
+      "expected_fields": [
+        "standingsType",
+        "league",
+        "division",
+        "lastUpdated",
+        "teamRecords"
+      ],
+      "conv_dict_fields": [
+        "last_updated"
+      ],
+      "notes": "inc_code='division.id' drills the nested division.id field; produces inc_code=201 for AL East. teamRecords list accessed directly in outflow(state)."
+    },
+    {
+      "name": "hitting",
+      "endpoint": "https://statsapi.mlb.com/api/v1/teams/{team_id}/stats?group=hitting&stats=season&season=2026",
+      "rec_path": "stats.0.splits.0",
+      "inc_code": "team.id",
+      "inc_name": "team.id",
+      "expected_fields": [
+        "season",
+        "stat",
+        "team",
+        "player",
+        "league",
+        "sport"
+      ],
+      "conv_dict_fields": [
+        "ops",
+        "obp",
+        "slg",
+        "avg",
+        "home_runs",
+        "rbi",
+        "strikeouts",
+        "walks"
+      ],
+      "notes": "T5 drill via HittingDrillCurrent. rec_path drills stats[0].splits[0] — the season aggregate split. stat.* sub-dict paths verified by live probe on 2026-05-28 against team 147 (Yankees)."
+    },
+    {
+      "name": "pitching",
+      "endpoint": "https://statsapi.mlb.com/api/v1/teams/{team_id}/stats?group=pitching&stats=season&season=2026",
+      "rec_path": "stats.0.splits.0",
+      "inc_code": "team.id",
+      "inc_name": "team.id",
+      "expected_fields": [
+        "season",
+        "stat",
+        "team",
+        "player",
+        "league",
+        "sport"
+      ],
+      "conv_dict_fields": [
+        "era",
+        "whip",
+        "wins",
+        "losses",
+        "strikeouts",
+        "walks",
+        "innings_pitched",
+        "earned_runs"
+      ],
+      "notes": "T5 drill via PitchingDrillCurrent. Same rec_path as hitting. era/whip default=9.99 so garbage rows sort to the bottom of Power Index."
+    }
+  ],
+  "al_east_team_ids": [139, 141, 147, 110, 111],
+  "al_east_division_id": 201,
+  "output_fields": [
+    "inc_code",
+    "team_name",
+    "wins",
+    "losses",
+    "win_pct",
+    "games_back",
+    "ops",
+    "era",
+    "power_index",
+    "pythag",
+    "pythag_delta",
+    "power_rank"
+  ]
+}

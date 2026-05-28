@@ -18,6 +18,7 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from ..rejects import RejectEntry
+from ..schema.extractors import _drill_path
 from . import handlers as format_parsers
 from .compression import decompress_data, infer_compression
 from .formats import FormatType, infer_format
@@ -538,18 +539,15 @@ async def _process_single_source(
     # 2. Pure Data Processing (Accepts Polymorphic Inputs)
     async def _process_payload(raw_payload: str | bytes | Path | list[Any] | dict[str, Any]) -> None:
         # Pass **kwargs down so 'sql_query' reaches the database handler!
-        parsed_chunk = await format_parsers.parse_source_data(raw_payload, active_format, **kwargs)
+        # Typed as Any so the drill loop below can assign None on out-of-range.
+        parsed_chunk: Any = await format_parsers.parse_source_data(raw_payload, active_format, **kwargs)
 
         if rec_path:
-            for part in rec_path.split("."):
-                if isinstance(parsed_chunk, dict) and part in parsed_chunk:
-                    parsed_chunk = parsed_chunk[part]
-                else:
-                    break
+            parsed_chunk = _drill_path(parsed_chunk, rec_path)
 
         if isinstance(parsed_chunk, list):
             accumulated.extend(parsed_chunk)
-        else:
+        elif parsed_chunk is not None:
             accumulated.append(parsed_chunk)
 
     # 3. Execution Routing

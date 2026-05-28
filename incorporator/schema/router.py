@@ -20,9 +20,16 @@ def _get_attr(node: Any, part: str) -> Any:
     Pydantic V2 aware attribute lookup.
     Checks __pydantic_extra__ for dynamically-built fields before falling back to getattr.
     Regular getattr misses dynamic fields since they live in __pydantic_extra__, not __dict__.
+
+    Lists with digit-string parts get positional indexing — ``_get_attr([10, 20], "1")``
+    returns ``20``. Non-digit parts on a list node return None (the list-fanout branch
+    in ``extract_parent_data`` handles those).
     """
     if isinstance(node, dict):
         return node.get(part)
+    if isinstance(node, list) and part.isdigit():
+        idx = int(part)
+        return node[idx] if idx < len(node) else None
     # Check Pydantic V2 extra fields first (dynamic schema fields live here)
     pydantic_extra = getattr(node, "__pydantic_extra__", None)
     if pydantic_extra and part in pydantic_extra:
@@ -32,7 +39,18 @@ def _get_attr(node: Any, part: str) -> Any:
 
 
 def extract_parent_data(parents: Any, child_path: str) -> list[Any]:
-    """Iterative BFS to safely drill into dynamic structures without recursion."""
+    """Iterative BFS to safely drill into dynamic structures without recursion.
+
+    Path-segment semantics on list nodes:
+      * Digit segment ``"0"`` → positional index (single item).
+      * Non-digit segment ``"url"`` → fanout across all list items
+        (existing behaviour, preserved).
+
+    This split lets ``inc_child="results.0.url"`` mean "for each parent,
+    take ``results[0]``, then ``.url``" while ``inc_child="results.url"``
+    still means "for each parent, for each item in ``results``, take
+    ``.url``".
+    """
     current_layer = parents if isinstance(parents, list) else [parents]
 
     for part in child_path.split("."):
@@ -43,10 +61,17 @@ def extract_parent_data(parents: Any, child_path: str) -> list[Any]:
                 continue
 
             if isinstance(node, list):
-                for item in node:
-                    val = _get_attr(item, part)
+                if part.isdigit():
+                    # Positional index: treat the list as the target, not as items to fan out.
+                    val = _get_attr(node, part)
                     if val is not None:
                         next_layer.append(val)
+                else:
+                    # Non-digit segment: fanout across all list items (existing behaviour).
+                    for item in node:
+                        val = _get_attr(item, part)
+                        if val is not None:
+                            next_layer.append(val)
             else:
                 val = _get_attr(node, part)
                 if val is not None:

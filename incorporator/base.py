@@ -448,8 +448,11 @@ class Incorporator(BaseModel):
             inc_code: Source-field name to use as the primary key for
                 ``cls.inc_dict`` registration. If omitted, instances are
                 keyed by an auto-incremented integer from ``_auto_counter``.
+                Supports dot-notation drilling into nested structures
+                (e.g. ``inc_code="team.id"`` reads ``record["team"]["id"]``).
             inc_name: Source-field name used as the human-readable label.
                 Stored on each instance as ``self.inc_name``.
+                Supports dot-notation drilling (e.g. ``inc_name="team.name"``).
             excl_lst: List of field names to **drop** before Pydantic
                 compilation — useful for stripping heavy keys like
                 ``"image_data"`` or ``"raw_html"``.
@@ -469,6 +472,7 @@ class Incorporator(BaseModel):
                 :class:`CSVPaginator`, and :class:`AvroPaginator`.
             **kwargs: Forwarded to the format handler **and** the HTTP
                 client. Common keys: ``rec_path`` (dot-notation drill-down
+                supporting dict keys and integer list indices (e.g. "records.0.teamRecords")
                 to extract a list from a wrapper response), ``http_method``
                 (``"GET"`` / ``"POST"`` / ``"PUT"`` / ``"PATCH"``),
                 ``json_payload`` or ``form_payload`` (POST body),
