@@ -34,7 +34,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from incorporator import Incorporator, calc
+from incorporator import Incorporator, inc
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "out"  # examples/09-nascar-fantasy-fjord/out/
@@ -66,19 +66,44 @@ STANDINGS_BASE = "racinginsights-points-feed.json"
 # FantasyTeam scoring and ManufacturerLeaderboard both need them.
 _STANDINGS_EXCL = [
     "is_clinch",
-    "driver_first_name", "driver_last_name", "driver_suffix",
+    "driver_first_name",
+    "driver_last_name",
+    "driver_suffix",
     "playoff_stage_wins",
 ]
 # Driver exclusion list — keep ``Manufacturer``, ``Hometown_City``,
 # ``Hometown_State`` (used by the enriched FantasyTeam roster).
 _DRIVER_EXCL = [
-    "Series_Logo", "Short_Name", "Description", "Hobbies", "Children",
-    "Residing_City", "Residing_State", "Residing_Country", "Image_Transparent",
-    "SecondaryImage", "Career_Stats", "Age", "Rank", "Points", "Points_Behind",
-    "No_Wins", "Poles", "Top5", "Top10", "Laps_Led", "Stage_Wins",
-    "Playoff_Points", "Playoff_Rank", "Integrated_Sponsor_Name",
-    "Integrated_Sponsor", "Integrated_Sponsor_URL", "Silly_Season_Change",
-    "Silly_Season_Change_Description", "Driver_Post_Status", "Driver_Part_Time",
+    "Series_Logo",
+    "Short_Name",
+    "Description",
+    "Hobbies",
+    "Children",
+    "Residing_City",
+    "Residing_State",
+    "Residing_Country",
+    "Image_Transparent",
+    "SecondaryImage",
+    "Career_Stats",
+    "Age",
+    "Rank",
+    "Points",
+    "Points_Behind",
+    "No_Wins",
+    "Poles",
+    "Top5",
+    "Top10",
+    "Laps_Led",
+    "Stage_Wins",
+    "Playoff_Points",
+    "Playoff_Rank",
+    "Integrated_Sponsor_Name",
+    "Integrated_Sponsor",
+    "Integrated_Sponsor_URL",
+    "Silly_Season_Change",
+    "Silly_Season_Change_Description",
+    "Driver_Post_Status",
+    "Driver_Part_Time",
 ]
 
 
@@ -97,7 +122,7 @@ async def main() -> None:
                     "inc_code": "track_id",
                     "inc_name": "track_name",
                 },
-                "refresh_params": None,           # tracks never change
+                "refresh_params": None,  # tracks never change
             },
             # ── Drivers refresh occasionally ──
             {
@@ -133,12 +158,12 @@ async def main() -> None:
                     "inc_name": "driver_name",
                     "excl_lst": _STANDINGS_EXCL,
                     "conv_dict": {
-                        "points":   calc(int, default=0, target_type=int),
-                        "wins":     calc(int, default=0, target_type=int),
-                        "top_10":   calc(int, default=0, target_type=int),
-                        "top_5":    calc(int, default=0, target_type=int),
-                        "laps_led": calc(int, default=0, target_type=int),
-                        "position": calc(int, default=0, target_type=int),
+                        "points": inc(int, default=0),
+                        "wins": inc(int, default=0),
+                        "top_10": inc(int, default=0),
+                        "top_5": inc(int, default=0),
+                        "laps_led": inc(int, default=0),
+                        "position": inc(int, default=0),
                     },
                 },
                 "refresh_params": None,
@@ -151,12 +176,12 @@ async def main() -> None:
                     "inc_name": "driver_name",
                     "excl_lst": _STANDINGS_EXCL,
                     "conv_dict": {
-                        "points":   calc(int, default=0, target_type=int),
-                        "wins":     calc(int, default=0, target_type=int),
-                        "top_10":   calc(int, default=0, target_type=int),
-                        "top_5":    calc(int, default=0, target_type=int),
-                        "laps_led": calc(int, default=0, target_type=int),
-                        "position": calc(int, default=0, target_type=int),
+                        "points": inc(int, default=0),
+                        "wins": inc(int, default=0),
+                        "top_10": inc(int, default=0),
+                        "top_5": inc(int, default=0),
+                        "laps_led": inc(int, default=0),
+                        "position": inc(int, default=0),
                     },
                 },
                 "refresh_params": None,
@@ -169,12 +194,12 @@ async def main() -> None:
                     "inc_name": "driver_name",
                     "excl_lst": _STANDINGS_EXCL,
                     "conv_dict": {
-                        "points":   calc(int, default=0, target_type=int),
-                        "wins":     calc(int, default=0, target_type=int),
-                        "top_10":   calc(int, default=0, target_type=int),
-                        "top_5":    calc(int, default=0, target_type=int),
-                        "laps_led": calc(int, default=0, target_type=int),
-                        "position": calc(int, default=0, target_type=int),
+                        "points": inc(int, default=0),
+                        "wins": inc(int, default=0),
+                        "top_10": inc(int, default=0),
+                        "top_5": inc(int, default=0),
+                        "laps_led": inc(int, default=0),
+                        "position": inc(int, default=0),
                     },
                 },
                 "refresh_params": None,
@@ -194,19 +219,16 @@ async def main() -> None:
                 "refresh_params": None,
             },
         ],
-
         # The state-aware inflow + outflow sidecar.
         inflow=str(HERE / "outflow.py"),
         outflow=str(HERE / "outflow.py"),
-
         # Per-class export_params — one entry per dict-key returned
         # by outflow(state).  Detection: nested dict shape = multi-output.
         export_params={
-            "MonthlyRaceSchedule":     {"file_path": str(DATA / "nascar_monthly_schedule.ndjson")},
-            "FantasyTeam":             {"file_path": str(DATA / "nascar_fantasy_scoreboard.ndjson")},
+            "MonthlyRaceSchedule": {"file_path": str(DATA / "nascar_monthly_schedule.ndjson")},
+            "FantasyTeam": {"file_path": str(DATA / "nascar_fantasy_scoreboard.ndjson")},
             "ManufacturerLeaderboard": {"file_path": str(DATA / "nascar_manufacturer_leaderboard.ndjson")},
         },
-
         # This is a one-shot test run — every source has
         # ``refresh_params=None`` above so no refresh daemon spawns
         # and the pipeline exits after a single outflow wave.

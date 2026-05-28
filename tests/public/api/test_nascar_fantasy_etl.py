@@ -8,9 +8,9 @@ from typing import Any
 import httpx
 import pytest
 
-from incorporator import Incorporator, link_to
+from incorporator import Incorporator
 from incorporator.io import fetch
-from incorporator.schema.converters import calc, datetime, inc
+from incorporator.schema.converters import inc
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -114,28 +114,15 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
         ),
     )
 
-    cup_races = await Race.incorp(
-        inc_url=f"{BASE}/2026/race_list_basic.json",
-        rec_path="series_1",
-        inc_code="race_id",
-        inc_name="race_name",
-        conv_dict={
-            "track_id": link_to(tracks),
-            "pole_winner_driver_id": link_to(drivers),
-            "date_scheduled": inc(datetime),
-        },
-        name_chg=[("track_id", "track")],
-    )
-
     cup_st, busch_st, truck_st = await asyncio.gather(
         Standing.incorp(
             inc_url=f"{BASE}/1/racinginsights-points-feed.json",
             inc_code="driver_id",
             inc_name="driver_name",
             conv_dict={
-                "points": calc(int, default=0, target_type=int),
-                "wins": calc(int, default=0, target_type=int),
-                "top_10": calc(int, default=0, target_type=int),
+                "points": inc(int, default=0),
+                "wins": inc(int, default=0),
+                "top_10": inc(int, default=0),
             },
         ),
         Standing.incorp(
@@ -143,9 +130,9 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
             inc_code="driver_id",
             inc_name="driver_name",
             conv_dict={
-                "points": calc(int, default=0, target_type=int),
-                "wins": calc(int, default=0, target_type=int),
-                "top_10": calc(int, default=0, target_type=int),
+                "points": inc(int, default=0),
+                "wins": inc(int, default=0),
+                "top_10": inc(int, default=0),
             },
         ),
         Standing.incorp(
@@ -153,9 +140,9 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
             inc_code="driver_id",
             inc_name="driver_name",
             conv_dict={
-                "points": calc(int, default=0, target_type=int),
-                "wins": calc(int, default=0, target_type=int),
-                "top_10": calc(int, default=0, target_type=int),
+                "points": inc(int, default=0),
+                "wins": inc(int, default=0),
+                "top_10": inc(int, default=0),
             },
         ),
     )

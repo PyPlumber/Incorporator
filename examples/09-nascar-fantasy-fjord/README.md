@@ -565,7 +565,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from incorporator import Incorporator, calc
+from incorporator import Incorporator, inc
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "out"
@@ -613,9 +613,9 @@ async def main() -> None:
             {"cls": Track, "incorp_params": {"inc_url": f"{CFC_BASE}/tracks.json", "rec_path": "items", "inc_code": "track_id", "inc_name": "track_name"}, "refresh_params": None},
             {"cls": Driver, "incorp_params": {"inc_url": f"{CFC_BASE}/drivers.json", "rec_path": "response", "inc_code": "Nascar_Driver_ID", "inc_name": "Full_Name", "excl_lst": _DRIVER_EXCL}, "refresh_params": None},
             {"cls": Race, "incorp_params": {"inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/race_list_basic.json", "rec_path": "series_1", "inc_code": "race_id", "inc_name": "race_name", "excl_lst": ["schedule", "track_name"], "name_chg": [("track_id", "track")]}, "refresh_params": None},
-            {"cls": CupStanding,   "incorp_params": {"inc_url": f"{PROD_BASE}/1/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": calc(int, default=0, target_type=int), "wins": calc(int, default=0, target_type=int), "top_10": calc(int, default=0, target_type=int), "top_5": calc(int, default=0, target_type=int), "laps_led": calc(int, default=0, target_type=int), "position": calc(int, default=0, target_type=int)}}, "refresh_params": None},
-            {"cls": BuschStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/2/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": calc(int, default=0, target_type=int), "wins": calc(int, default=0, target_type=int), "top_10": calc(int, default=0, target_type=int), "top_5": calc(int, default=0, target_type=int), "laps_led": calc(int, default=0, target_type=int), "position": calc(int, default=0, target_type=int)}}, "refresh_params": None},
-            {"cls": TruckStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/3/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": calc(int, default=0, target_type=int), "wins": calc(int, default=0, target_type=int), "top_10": calc(int, default=0, target_type=int), "top_5": calc(int, default=0, target_type=int), "laps_led": calc(int, default=0, target_type=int), "position": calc(int, default=0, target_type=int)}}, "refresh_params": None},
+            {"cls": CupStanding,   "incorp_params": {"inc_url": f"{PROD_BASE}/1/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": inc(int, default=0), "wins": inc(int, default=0), "top_10": inc(int, default=0), "top_5": inc(int, default=0), "laps_led": inc(int, default=0), "position": inc(int, default=0)}}, "refresh_params": None},
+            {"cls": BuschStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/2/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": inc(int, default=0), "wins": inc(int, default=0), "top_10": inc(int, default=0), "top_5": inc(int, default=0), "laps_led": inc(int, default=0), "position": inc(int, default=0)}}, "refresh_params": None},
+            {"cls": TruckStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/3/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": inc(int, default=0), "wins": inc(int, default=0), "top_10": inc(int, default=0), "top_5": inc(int, default=0), "laps_led": inc(int, default=0), "position": inc(int, default=0)}}, "refresh_params": None},
             {"cls": LeagueRoster, "incorp_params": {"inc_file": str(HERE / "fixtures/league_teams.json"), "inc_code": "team_id", "inc_name": "team_id"}, "refresh_params": None},
         ],
         inflow=str(HERE / "outflow.py"),
@@ -821,12 +821,12 @@ The same seven-source pipeline expressed as a JSON config — no Python wrapper 
         "excl_lst":  ["is_clinch", "driver_first_name", "driver_last_name",
                       "driver_suffix", "playoff_stage_wins"],
         "conv_dict": {
-          "points":   "calc(int, default=0, target_type=int)",
-          "wins":     "calc(int, default=0, target_type=int)",
-          "top_10":   "calc(int, default=0, target_type=int)",
-          "top_5":    "calc(int, default=0, target_type=int)",
-          "laps_led": "calc(int, default=0, target_type=int)",
-          "position": "calc(int, default=0, target_type=int)"
+          "points":   "inc(int, default=0)",
+          "wins":     "inc(int, default=0)",
+          "top_10":   "inc(int, default=0)",
+          "top_5":    "inc(int, default=0)",
+          "laps_led": "inc(int, default=0)",
+          "position": "inc(int, default=0)"
         }
       }
     },
@@ -867,7 +867,7 @@ The same seven-source pipeline expressed as a JSON config — no Python wrapper 
 A few JSON-specific notes:
 
 * **`refresh_params: null`** is the JSON spelling of Python's `refresh_params=None` — opts the source out of the refresh daemon.  Used here for `Track` (tracks never change) and `LeagueRoster` (rosters change rarely; restart the daemon when you edit the file).
-* **`conv_dict` values are quoted strings.**  The token resolver in `cli/tokens.py` parses them at config-load time and substitutes the real callables.  `calc(int, default=0, target_type=int)` becomes the actual converter; same for `inc(datetime)` etc.  `link_to(state["…"])` calls live in `inflow(state)` — not in the JSON — because they need the runtime registry handle.
+* **`conv_dict` values are quoted strings.**  The token resolver in `cli/tokens.py` parses them at config-load time and substitutes the real callables.  `inc(int, default=0)` becomes the actual converter; same for `inc(datetime)` etc.  `link_to(state["…"])` calls live in `inflow(state)` — not in the JSON — because they need the runtime registry handle.
 * **`name_chg` uses arrays not tuples.**  JSON has no tuple literal; `["track_id", "track"]` deserialises to the same shape the Python code uses.
 * **`refresh_interval` as a dict** keyed by class name, exactly like Python — JSON-friendly out of the box.
 * **`export_params` keyed by output class** — multi-output detection is "is there a top-level `file_path` key?  No → multi-output."
