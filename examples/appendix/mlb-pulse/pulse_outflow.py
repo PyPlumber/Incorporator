@@ -102,11 +102,6 @@ def derive_pythag(runs_scored: float, runs_allowed: float) -> float:
     return round(runs_scored**2 / denom, 4) if denom > 0 else 0.5
 
 
-def _format_wl(wins: int, losses: int) -> str:
-    """Return 'W-L' string for the console leaderboard."""
-    return f"{wins}-{losses}"
-
-
 def _safe_float(value: Any, default: float = 0.0) -> float:
     """Coerce a value to float; return ``default`` on failure or None."""
     if value is None:
