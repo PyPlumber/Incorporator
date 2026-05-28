@@ -1,257 +1,395 @@
-"""Outflow logic for the MLB AL East Pulse Tideweaver diamond.
+"""Outflow logic and class definitions for the MLB AL East Pulse Tideweaver diamond.
 
-Defines the six ``Incorporator`` subclasses the diamond uses (one per
-Stream / CustomCurrent + the tail's output class) plus the
-``outflow(state)`` function the ``Fjord`` tail current calls each tick.
+Defines the six ``Incorporator`` subclasses and two ``CustomCurrent`` subclasses
+referenced from ``watershed.json`` and ``mlb_pulse.py``, plus named module-level
+helpers and the ``outflow(state)`` function the tail Fjord calls each tick.
 
-The outflow joins four upstream graph maps from state — `MLBAllTeam`
-(filtered to AL East via ``division_id == 201``), `MLBHitting`,
-`MLBPitching`, `MLBStandings` — plus today's schedule, and computes
-two independent composite metrics side-by-side for each team:
+Imported by both the Python entry (``mlb_pulse.py``) and the CLI form
+(``incorporator tideweaver run watershed.json``), so host-throttle registration
+lives here as well as in the entry script.  Both import paths must register the
+penstock independently.
 
-  * Power Index — peer-relative composite: ``(team_OPS / league_avg_OPS)
-    × (league_avg_ERA / team_ERA) × win_pct``.  Higher = stronger
-    all-around team relative to division peers.
-  * Pythagorean win expectation — classic sabermetric:
-    ``runs_scored² / (runs_scored² + runs_allowed²)``.  ``pythag_delta =
-    pythag - win_pct`` exposes over-/under-performing teams.
+Run from repo root:
 
-Output rows are pre-sorted by ``power_index`` descending.
+    incorporator validate examples/appendix/mlb-pulse/watershed.json
+    incorporator tideweaver run examples/appendix/mlb-pulse/watershed.json
 """
 
 from __future__ import annotations
 
-from operator import itemgetter
+import operator
 from typing import Any
 
-from pydantic import ConfigDict
-
-from incorporator import Incorporator
-
+from incorporator import Incorporator, SustainedPenstock, register_host_penstock
+from incorporator.observability.tideweaver import CustomCurrent
+from incorporator.schema.converters import calc, inc
 
 # ---------------------------------------------------------------------------
-# Source classes (one per upstream Stream / CustomCurrent + tail output)
-# All use extra="allow" so conv_dict-derived fields are preserved alongside
-# the auto-inferred fields.
-# Matches the pattern in tests/test_tideweaver_routing_diamond.py.
+# Host throttle — 1 req/sec = 60 req/min, well under any undocumented MLB cap.
+# Registered at module-top so both the Python entry and the CLI form impose
+# the same constraint regardless of import order.
+# ---------------------------------------------------------------------------
+
+register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))
+
+# ---------------------------------------------------------------------------
+# AL East division ID (MLB Stats API constant, does not change season-to-season)
+# ---------------------------------------------------------------------------
+
+_AL_EAST_DIVISION_ID = 201
+
+# ---------------------------------------------------------------------------
+# Incorporator subclasses — one per stream node + two derived output classes
 # ---------------------------------------------------------------------------
 
 
 class MLBSchedule(Incorporator):
-    """Today's MLB game schedule (head Stream)."""
-
-    model_config = ConfigDict(extra="allow")
+    """Today's game schedule from /api/v1/schedule — rec_path 'dates.0.games'."""
 
 
 class MLBAllTeam(Incorporator):
-    """All 30 MLB teams + their league / division / venue (middle Stream)."""
-
-    model_config = ConfigDict(extra="allow")
-
-
-class MLBHitting(Incorporator):
-    """Team-level season hitting stats (populated by HittingDrillCurrent)."""
-
-    model_config = ConfigDict(extra="allow")
-
-
-class MLBPitching(Incorporator):
-    """Team-level season pitching stats (populated by PitchingDrillCurrent)."""
-
-    model_config = ConfigDict(extra="allow")
+    """All MLB teams from /api/v1/teams — rec_path 'teams'."""
 
 
 class MLBStandings(Incorporator):
-    """Live division standings (middle Stream, refreshes during the run)."""
+    """AL East standings record from /api/v1/standings — rec_path 'records'.
 
-    model_config = ConfigDict(extra="allow")
+    Live probe confirmed ``inc_code='division.id'`` produces ``inc_code=201``
+    for the AL East record.  The ``teamRecords`` list is accessed directly from
+    the raw instance attribute in ``outflow()``; no conv_dict entry needed.
+    """
+
+
+class MLBHitting(Incorporator):
+    """Per-team season hitting stats — populated by HittingDrillCurrent T5 drills."""
+
+
+class MLBPitching(Incorporator):
+    """Per-team season pitching stats — populated by PitchingDrillCurrent T5 drills."""
 
 
 class TeamPulseCard(Incorporator):
-    """Derived per-team Power Card — built by the fjord flush each tick."""
-
-    model_config = ConfigDict(extra="allow")
+    """Derived AL East Pulse Card — one row per team, produced by outflow(state)."""
 
 
 # ---------------------------------------------------------------------------
-# Constants
+# Module-level conv_dict constants — passed as incorp_params kwargs, not class
+# attributes (Pydantic V2 rejects unannotated class attrs on Incorporator subs).
+# ---------------------------------------------------------------------------
+
+# schedule conv_dict — passed as incorp_params["conv_dict"] in Stream/incorp calls.
+# abbr_lower note: ordering matters for MLBAllTeam — see SCHEDULE_CONV comment.
+SCHEDULE_CONV: dict[str, Any] = {
+    "home_team_id": calc(int, "teams.home.team.id", default=0, target_type=int),
+    "away_team_id": calc(int, "teams.away.team.id", default=0, target_type=int),
+    "home_team_name": calc(str, "teams.home.team.name", default="", target_type=str),
+    "away_team_name": calc(str, "teams.away.team.name", default="", target_type=str),
+    "game_date": calc(str, "gameDate", default="", target_type=str),
+    "game_status": calc(str, "status.detailedState", default="", target_type=str),
+}
+
+# all_teams conv_dict — abbr_lower MUST come after abbreviation so inc(str) has
+# already coerced the field before str.lower reads it (conv_dict insertion order).
+ALL_TEAMS_CONV: dict[str, Any] = {
+    "name": inc(str, default=""),
+    "abbreviation": inc(str, default=""),
+    "abbr_lower": calc(str.lower, "abbreviation", default="", target_type=str),
+    "division_id": calc(int, "division.id", default=0, target_type=int),
+    "league_id": calc(int, "league.id", default=0, target_type=int),
+    "team_name": calc(str, "teamName", default="", target_type=str),
+    "short_name": calc(str, "shortName", default="", target_type=str),
+}
+
+STANDINGS_CONV: dict[str, Any] = {
+    "last_updated": inc(str, default=""),
+}
+
+
+# ---------------------------------------------------------------------------
+# Named module-level helpers (lambda-free, per AGENTS.md H3 idiom)
 # ---------------------------------------------------------------------------
 
 
-AL_EAST_DIVISION_ID: int = 201
+def derive_power_index(ops: float, era: float, mean_ops: float, mean_era: float) -> float:
+    """Peer-relative composite metric: (OPS / mean_OPS) × (mean_ERA / ERA).
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _is_al_east(team: Any) -> bool:
-    """Filter predicate matching the team's `division_id` against AL East (201).
-
-    `MLBAllTeam` carries the full 30-team registry; the outflow narrows it
-    down to the 5 AL East teams here (same filter the CustomCurrents apply
-    upstream for their T5 drills).
+    Higher is better.  Teams with OPS above average AND ERA below average score
+    above 1.0.  Division-mean normalisation makes the metric comparable across
+    different scoring environments and seasons.
     """
-    return getattr(team, "division_id", None) == AL_EAST_DIVISION_ID
+    ops_ratio = ops / mean_ops if mean_ops > 0 else 0.0
+    era_ratio = mean_era / era if era > 0 else 0.0
+    return round(ops_ratio * era_ratio, 4)
 
 
-def _mean(values: list[float]) -> float:
-    """Defensive mean — returns 0.0 on an empty list (caller pre-filtered)."""
-    real = [v for v in values if v is not None]
-    return sum(real) / len(real) if real else 0.0
+def derive_pythag(runs_scored: float, runs_allowed: float) -> float:
+    """Bill James Pythagorean win expectation: RS^2 / (RS^2 + RA^2).
 
-
-def _power_index(team_ops: float, team_era: float, win_pct: float, league_ops: float, league_era: float) -> float:
-    """Composite peer-relative team strength.
-
-    `team_OPS` normalized against the division peer mean × inverted
-    `team_ERA` peer ratio × actual `win_pct`.  Higher = stronger team.
-    Returns 0.0 if any divisor is missing/zero (defensive).
+    Returns 0.5 when both are zero (no data) to avoid division by zero.
+    Exponent 2 is the classic form; advanced models use 1.83 but the
+    integer form is accurate enough for single-season leaderboards.
     """
-    if not league_ops or not team_era:
-        return 0.0
-    return (team_ops / league_ops) * (league_era / team_era) * win_pct
+    if runs_scored <= 0 and runs_allowed <= 0:
+        return 0.5
+    denom = runs_scored**2 + runs_allowed**2
+    return round(runs_scored**2 / denom, 4) if denom > 0 else 0.5
 
 
-def _pythag(runs_scored: int, runs_allowed: int) -> float:
-    """Pythagorean win expectation — classic sabermetric.
+def _format_wl(wins: int, losses: int) -> str:
+    """Return 'W-L' string for the console leaderboard."""
+    return f"{wins}-{losses}"
 
-    Returns the expected winning percentage given a team's run differential.
-    `runs² / (runs² + ra²)`.  Returns 0.0 when both inputs are zero
-    (off-season / no games played).
-    """
-    rs2 = runs_scored**2
-    ra2 = runs_allowed**2
-    denom = rs2 + ra2
-    if not denom:
-        return 0.0
-    return rs2 / denom
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Coerce a value to float; return ``default`` on failure or None."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    """Coerce a value to int; return ``default`` on failure or None."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 # ---------------------------------------------------------------------------
-# outflow(state) — called by the Fjord tail current every flush
+# CustomCurrent subclasses — T5 parent-child drill nodes
+# ---------------------------------------------------------------------------
+
+_HITTING_URL = "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=hitting&stats=season&season=2026"
+_PITCHING_URL = "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=pitching&stats=season&season=2026"
+
+_HITTING_CONV: dict[str, Any] = {
+    "ops": calc(float, "stat.ops", default=0.0, target_type=float),
+    "obp": calc(float, "stat.obp", default=0.0, target_type=float),
+    "slg": calc(float, "stat.slg", default=0.0, target_type=float),
+    "avg": calc(float, "stat.avg", default=0.0, target_type=float),
+    "home_runs": calc(int, "stat.homeRuns", default=0, target_type=int),
+    "rbi": calc(int, "stat.rbi", default=0, target_type=int),
+    "strikeouts": calc(int, "stat.strikeOuts", default=0, target_type=int),
+    "walks": calc(int, "stat.baseOnBalls", default=0, target_type=int),
+}
+
+_PITCHING_CONV: dict[str, Any] = {
+    # default=9.99 for era/whip so garbage rows sort to bottom of Power Index
+    "era": calc(float, "stat.era", default=9.99, target_type=float),
+    "whip": calc(float, "stat.whip", default=9.99, target_type=float),
+    "wins": calc(int, "stat.wins", default=0, target_type=int),
+    "losses": calc(int, "stat.losses", default=0, target_type=int),
+    "strikeouts": calc(int, "stat.strikeOuts", default=0, target_type=int),
+    "walks": calc(int, "stat.baseOnBalls", default=0, target_type=int),
+    "innings_pitched": calc(str, "stat.inningsPitched", default="0", target_type=str),
+    "earned_runs": calc(int, "stat.earnedRuns", default=0, target_type=int),
+}
+
+
+class HittingDrillCurrent(CustomCurrent):
+    """T5 drill: reads MLBAllTeam snapshot, filters to AL East, fires 5 hitting-stat fetches.
+
+    Must park ``_tideweaver_snapshot`` after the incorp call so the tail
+    Fjord's ``outflow(state)`` can read ``state['MLBHitting']``.  Without
+    the explicit park the WeakValueDictionary GC race empties the registry
+    between ticks.
+    """
+
+    async def tick(self, scheduler: Any) -> None:
+        """Filter upstream MLBAllTeam to AL East; fire T5 hitting drills; park snapshot."""
+        snapshot = getattr(MLBAllTeam, "_tideweaver_snapshot", None)
+        if not snapshot:
+            return  # all_teams hasn't fired yet — skip silently
+        al_east = [t for t in snapshot if getattr(t, "division_id", 0) == _AL_EAST_DIVISION_ID]
+        if not al_east:
+            return
+        result = await MLBHitting.incorp(
+            inc_parent=al_east,
+            inc_child="inc_code",
+            inc_url=_HITTING_URL,
+            rec_path="stats.0.splits.0",
+            inc_code="team.id",
+            conv_dict=_HITTING_CONV,
+        )
+        MLBHitting._tideweaver_snapshot = (
+            list(result)
+            if isinstance(result, list)
+            # type: ignore[attr-defined]
+            else ([result] if result is not None else [])
+        )
+
+
+class PitchingDrillCurrent(CustomCurrent):
+    """T5 drill: reads MLBAllTeam snapshot, filters to AL East, fires 5 pitching-stat fetches.
+
+    Same snapshot-parking pattern as HittingDrillCurrent — required so
+    ``state['MLBPitching']`` is non-empty when the tail Fjord flushes.
+    """
+
+    async def tick(self, scheduler: Any) -> None:
+        """Filter upstream MLBAllTeam to AL East; fire T5 pitching drills; park snapshot."""
+        snapshot = getattr(MLBAllTeam, "_tideweaver_snapshot", None)
+        if not snapshot:
+            return  # all_teams hasn't fired yet — skip silently
+        al_east = [t for t in snapshot if getattr(t, "division_id", 0) == _AL_EAST_DIVISION_ID]
+        if not al_east:
+            return
+        result = await MLBPitching.incorp(
+            inc_parent=al_east,
+            inc_child="inc_code",
+            inc_url=_PITCHING_URL,
+            rec_path="stats.0.splits.0",
+            inc_code="team.id",
+            conv_dict=_PITCHING_CONV,
+        )
+        MLBPitching._tideweaver_snapshot = (
+            list(result)
+            if isinstance(result, list)
+            # type: ignore[attr-defined]
+            else ([result] if result is not None else [])
+        )
+
+
+# ---------------------------------------------------------------------------
+# Outflow function — joins 4 upstream graph maps into ranked Pulse Cards
 # ---------------------------------------------------------------------------
 
 
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Join the four upstream registries + today's schedule into per-team Pulse Cards.
+    """Join standings + hitting + pitching + team metadata into one Pulse Card per AL East team.
 
-    Reads from state (transitive-upstream snapshot):
-      * `state["MLBAllTeam"]`     — 30 teams; we filter to AL East
-      * `state["MLBHitting"]`     — 5 team-level hitting rows
-      * `state["MLBPitching"]`    — 5 team-level pitching rows
-      * `state["MLBStandings"]`   — 5 live standings rows
-      * `state["MLBSchedule"]`    — today's MLB games (we filter to AL East matchups)
+    Args:
+        state: Keyed by upstream ``Incorporator`` subclass name; maps to a list
+            of that class's current registry instances held alive between ticks
+            via ``_tideweaver_snapshot`` strong-refs.
 
-    Produces sorted Power Cards: each AL East team gets one card with
-    standing, hitting, pitching, today's game (if any), Power Index, and
-    Pythagorean expectation.  Rows pre-sorted by Power Index descending.
+    Returns:
+        Five rows sorted by ``power_index`` descending, one per AL East team,
+        or an empty list when any required upstream hasn't fired yet.
     """
-    all_teams = list(state.get("MLBAllTeam", []) or [])
-    hitting_rows = list(state.get("MLBHitting", []) or [])
-    pitching_rows = list(state.get("MLBPitching", []) or [])
-    standings_rows = list(state.get("MLBStandings", []) or [])
-    schedule_rows = list(state.get("MLBSchedule", []) or [])
+    teams_by_id = {
+        t.inc_code: t for t in state.get("MLBAllTeam", []) if getattr(t, "division_id", 0) == _AL_EAST_DIVISION_ID
+    }
+    hitting_by_id = {h.inc_code: h for h in state.get("MLBHitting", [])}
+    pitching_by_id = {p.inc_code: p for p in state.get("MLBPitching", [])}
 
-    # Narrow MLBAllTeam to AL East via division_id filter.
-    al_east_teams = [t for t in all_teams if _is_al_east(t)]
-    if len(al_east_teams) < 5:
-        # Diamond hasn't fully populated yet; emit nothing this flush.
+    # Guard: CustomCurrents may not have fired on the first few ticks.
+    if not hitting_by_id or not pitching_by_id:
         return []
 
-    al_east_team_ids = {t.inc_code for t in al_east_teams}
+    standings_row = next(
+        (r for r in state.get("MLBStandings", []) if r.inc_code == _AL_EAST_DIVISION_ID),
+        None,
+    )
+    if standings_row is None:
+        return []
 
-    # Index the upstream rows by team id for O(1) join.
-    hitting_by_tid = {getattr(h, "team_id", None): h for h in hitting_rows}
-    pitching_by_tid = {getattr(p, "team_id", None): p for p in pitching_rows}
-    standings_by_tid = {getattr(s, "team_id", None): s for s in standings_rows}
+    # teamRecords may be a list attribute (Stream materialised it) or missing.
+    team_records: list[Any] = getattr(standings_row, "teamRecords", None) or []
 
-    # Today's schedule filtered to AL East matchups.
-    al_east_games = [
-        g
-        for g in schedule_rows
-        if getattr(g, "home_team_id", None) in al_east_team_ids
-        or getattr(g, "away_team_id", None) in al_east_team_ids
-    ]
+    rows: list[dict[str, Any]] = []
+    for tr in team_records:
+        # teamRecord.team may be a sub-Incorporator instance OR a raw dict
+        # depending on how MLBStandings' nested list is materialised.
+        team_sub = getattr(tr, "team", None)
+        if team_sub is not None:
+            # Instance attribute path
+            team_id = getattr(team_sub, "id", None)
+            if team_id is None and isinstance(team_sub, dict):
+                team_id = team_sub.get("id")
+        else:
+            # Dict access path
+            raw_tr = tr if isinstance(tr, dict) else {}
+            team_id = raw_tr.get("team", {}).get("id")
 
-    # League averages for Power Index normalization (only over teams we have hitting/pitching for).
-    league_ops_mean = _mean([float(getattr(h, "ops", 0.0) or 0.0) for h in hitting_rows])
-    league_era_mean = _mean([float(getattr(p, "era", 0.0) or 0.0) for p in pitching_rows])
+        if team_id is None or team_id not in teams_by_id:
+            continue
 
-    cards: list[dict[str, Any]] = []
-    for team in al_east_teams:
-        tid = team.inc_code
-        h = hitting_by_tid.get(tid)
-        p = pitching_by_tid.get(tid)
-        s = standings_by_tid.get(tid)
+        team = teams_by_id[team_id]
+        hit = hitting_by_id.get(team_id)
+        pit = pitching_by_id.get(team_id)
+        if hit is None or pit is None:
+            continue
 
-        win_pct = float(getattr(s, "win_pct", 0.0) or 0.0) if s else 0.0
-        team_ops = float(getattr(h, "ops", 0.0) or 0.0) if h else 0.0
-        team_era = float(getattr(p, "era", 0.0) or 0.0) if p else 0.0
-        runs_scored = int(getattr(s, "runs_scored", 0) or 0) if s else 0
-        runs_allowed = int(getattr(s, "runs_allowed", 0) or 0) if s else 0
+        # Extract W-L from teamRecord; path depends on materialisation form.
+        if isinstance(tr, dict):
+            wins = _safe_int(tr.get("wins", tr.get("leagueRecord", {}).get("wins", 0)))
+            losses = _safe_int(tr.get("losses", tr.get("leagueRecord", {}).get("losses", 0)))
+            win_pct_raw = tr.get("winningPercentage", tr.get("leagueRecord", {}).get("pct", "0"))
+            games_back_raw = tr.get("gamesBack", "0")
+            runs_scored = _safe_float(tr.get("runsScored", 0))
+            runs_allowed = _safe_float(tr.get("runsAllowed", 0))
+        else:
+            league_rec = getattr(tr, "leagueRecord", None) or {}
+            wins = _safe_int(
+                getattr(
+                    tr,
+                    "wins",
+                    getattr(league_rec, "wins", 0) if not isinstance(league_rec, dict) else league_rec.get("wins", 0),
+                )
+            )
+            losses = _safe_int(
+                getattr(
+                    tr,
+                    "losses",
+                    getattr(league_rec, "losses", 0)
+                    if not isinstance(league_rec, dict)
+                    else league_rec.get("losses", 0),
+                )
+            )
+            win_pct_raw = getattr(
+                tr,
+                "winningPercentage",
+                getattr(league_rec, "pct", "0") if not isinstance(league_rec, dict) else league_rec.get("pct", "0"),
+            )
+            games_back_raw = getattr(tr, "gamesBack", "0")
+            runs_scored = _safe_float(getattr(tr, "runsScored", 0))
+            runs_allowed = _safe_float(getattr(tr, "runsAllowed", 0))
 
-        power_index = _power_index(team_ops, team_era, win_pct, league_ops_mean, league_era_mean)
-        pythag = _pythag(runs_scored, runs_allowed)
-        pythag_delta = pythag - win_pct
+        win_pct = _safe_float(win_pct_raw)
+        games_back_str = str(games_back_raw) if games_back_raw is not None else "0"
+        games_back = 0.0 if games_back_str in ("-", "") else _safe_float(games_back_str)
 
-        # Find today's game for this team (if any).
-        team_game = None
-        for g in al_east_games:
-            home_id = getattr(g, "home_team_id", None)
-            away_id = getattr(g, "away_team_id", None)
-            if home_id == tid or away_id == tid:
-                # Resolve opponent name from MLBAllTeam registry.
-                opponent_id = away_id if home_id == tid else home_id
-                opponent_team = next((t for t in all_teams if t.inc_code == opponent_id), None)
-                team_game = {
-                    "opponent": getattr(opponent_team, "name", None) if opponent_team else None,
-                    "home": home_id == tid,
-                    "status": getattr(g, "game_status", None),
-                    "time": getattr(g, "game_time", None),
-                }
-                break
+        ops = _safe_float(getattr(hit, "ops", 0.0))
+        era = _safe_float(getattr(pit, "era", 9.99), default=9.99)
+        pythag = derive_pythag(runs_scored, runs_allowed)
 
-        cards.append(
+        rows.append(
             {
-                "inc_code": tid,
-                "team": getattr(team, "name", None),
-                "abbr": getattr(team, "abbreviation", None),
-                "abbr_lower": getattr(team, "abbr_lower", None),
-                "venue": getattr(team, "venue_name", None),
-                "league": getattr(team, "league_name", None),
-                "standing": {
-                    "wins": getattr(s, "wins", None) if s else None,
-                    "losses": getattr(s, "losses", None) if s else None,
-                    "win_pct": win_pct,
-                    "games_back": getattr(s, "games_back", None) if s else None,
-                    "streak": getattr(s, "streak", None) if s else None,
-                    "runs_scored": runs_scored,
-                    "runs_allowed": runs_allowed,
-                    "over_500": getattr(s, "over_500", None) if s else None,
-                },
-                "hitting": {
-                    "avg": getattr(h, "avg", None) if h else None,
-                    "obp": getattr(h, "obp", None) if h else None,
-                    "slg": getattr(h, "slg", None) if h else None,
-                    "ops": team_ops or None,
-                    "home_runs": getattr(h, "home_runs", None) if h else None,
-                },
-                "pitching": {
-                    "era": team_era or None,
-                    "whip": getattr(p, "whip", None) if p else None,
-                    "k_per_9": getattr(p, "strikeouts_per9inn", None) if p else None,
-                    "saves": getattr(p, "saves", None) if p else None,
-                    "power_pitchers": getattr(p, "power_pitchers", None) if p else None,
-                },
-                "todays_game": team_game,
-                "power_index": round(power_index, 3),
-                "pythag": round(pythag, 3),
-                "pythag_delta": round(pythag_delta, 3),
+                "inc_code": team_id,
+                "team_name": getattr(team, "name", ""),
+                "wins": wins,
+                "losses": losses,
+                "win_pct": win_pct,
+                "games_back": games_back,
+                "ops": ops,
+                "era": era,
+                "power_index": 0.0,  # filled after division means computed
+                "pythag": pythag,
+                "pythag_delta": 0.0,  # filled after power_index pass
+                "power_rank": 0,  # filled after sort
             }
         )
 
-    # Pre-sort by Power Index descending so the NDJSON is ranked.
-    cards.sort(key=itemgetter("power_index"), reverse=True)
-    return cards
+    if not rows:
+        return []
+
+    # Compute division means for Power Index normalisation.
+    mean_ops = sum(r["ops"] for r in rows) / len(rows)
+    mean_era = sum(r["era"] for r in rows) / len(rows)
+
+    for r in rows:
+        r["power_index"] = derive_power_index(r["ops"], r["era"], mean_ops, mean_era)
+        r["pythag_delta"] = round(r["pythag"] - r["win_pct"], 4)
+
+    rows.sort(key=operator.itemgetter("power_index"), reverse=True)
+
+    for rank, r in enumerate(rows, start=1):
+        r["power_rank"] = rank
+
+    return rows
