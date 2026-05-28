@@ -120,11 +120,16 @@ def test_pluck_stops_when_intermediate_key_missing() -> None:
     assert result is None
 
 
-def test_pluck_non_dict_top_level_returns_value() -> None:
-    """When the top-level value is not a dict, pluck returns it unchanged."""
+def test_pluck_non_dict_top_level_returns_none() -> None:
+    """When the top-level value is not a dict or list, pluck returns None.
+
+    The outer isinstance(val, dict) gate was removed to allow list-rooted
+    paths.  A plain non-traversable value (e.g. a bare string) can no longer
+    be returned unchanged — the loop reaches the else branch and yields None.
+    """
     plucker = pluck("anything")
     result = plucker("a plain string")
-    assert result == "a plain string"
+    assert result is None
 
 
 # ==========================================
@@ -290,3 +295,49 @@ def test_split_and_get_widens_null_check_to_garbage_set() -> None:
     assert op("") is None
     # Real input still parses.
     assert op("https://api.com/items/42/") == 42
+
+
+# ==========================================
+# 9. pluck() — integer-index list navigation
+# ==========================================
+
+
+def test_pluck_intermediate_list_index() -> None:
+    """pluck traverses a list segment via a digit path part.
+
+    Proves that ``"splits.0.stat"`` on ``{"splits": [{"stat": {"era": 3.2}}]}``
+    correctly indexes into the list and continues drilling into the dict.
+    """
+    plucker = pluck("splits.0.stat")
+    result = plucker({"splits": [{"stat": {"era": 3.2}}]})
+    assert result == {"era": 3.2}
+
+
+def test_pluck_list_rooted_value() -> None:
+    """pluck handles a list as the top-level value when the first segment is a digit.
+
+    Proves that list-rooted paths (e.g. ``"0.name"``) work now that
+    the outer isinstance(val, dict) gate has been removed.
+    """
+    plucker = pluck("0.name")
+    result = plucker([{"name": "a"}])
+    assert result == "a"
+
+
+def test_pluck_out_of_range_returns_none() -> None:
+    """pluck returns None when a digit index exceeds the list length."""
+    plucker = pluck("a.0")
+    result = plucker({"a": []})
+    assert result is None
+
+
+def test_pluck_negative_index_returns_none() -> None:
+    """pluck treats a negative index segment as a non-matching key, returning None.
+
+    ``"-1".isdigit()`` is False, so the loop falls through to the
+    ``else`` branch and short-circuits to None — negative indexing is
+    intentionally unsupported.
+    """
+    plucker = pluck("a.-1")
+    result = plucker({"a": [1, 2]})
+    assert result is None

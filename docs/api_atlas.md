@@ -197,7 +197,7 @@ This is the cold-start verb — the one you call when a new endpoint hits your r
 - `inc_parent` + `inc_child` — drill a parent list's URLs into child fetches (HATEOAS).
 - `conv_dict` — `{field_name: converter}` pre-validation coercion (`inc`, `calc`, `calc_all`, `pluck`, `link_to`, `link_to_list`, `split_and_get`).  **Null-handling contract:** every converter short-circuits on garbage input (`None`, `""`, `"N/A"`, `"null"`, `"unknown"`, `"nan"`, `"undefined"`) before invoking the user callable — defensive null guards in lambdas are unnecessary.  Idioms: `calc(str.lower, "title", default="", target_type=str)` · `calc(str.upper, "code", default="", target_type=str)` · `calc(str.strip, "name", default="", target_type=str)` · `calc(len, "body", default=0, target_type=int)` · `calc("Alive".__eq__, "status", default=False)` · `inc(float)` (type coerce; use `inc()`, not `calc()`).
 - `inc_page` — `AsyncPaginator` subclass for paginated endpoints.
-- `rec_path` — dot-notation drill into a wrapper response (e.g. `"results"`).
+- `rec_path` — dot-notation drill into a wrapper response; supports integer indices for list segments (e.g. `"results"` or `"dates.0.games"`).
 - `concurrency_limit`, `requests_per_second`, `timeout`, `headers` — network knobs.
 
 **Yields / returns**

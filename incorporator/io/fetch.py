@@ -538,18 +538,26 @@ async def _process_single_source(
     # 2. Pure Data Processing (Accepts Polymorphic Inputs)
     async def _process_payload(raw_payload: str | bytes | Path | list[Any] | dict[str, Any]) -> None:
         # Pass **kwargs down so 'sql_query' reaches the database handler!
-        parsed_chunk = await format_parsers.parse_source_data(raw_payload, active_format, **kwargs)
+        # Typed as Any so the drill loop below can assign None on out-of-range.
+        parsed_chunk: Any = await format_parsers.parse_source_data(raw_payload, active_format, **kwargs)
 
+        # Each part may be a dict key or a list index ("0", "1", ...).
+        # Negative indices are intentionally unsupported; "-1".isdigit() is False.
         if rec_path:
             for part in rec_path.split("."):
                 if isinstance(parsed_chunk, dict) and part in parsed_chunk:
                     parsed_chunk = parsed_chunk[part]
+                elif isinstance(parsed_chunk, list) and part.isdigit():
+                    idx = int(part)
+                    parsed_chunk = parsed_chunk[idx] if idx < len(parsed_chunk) else None
+                    if parsed_chunk is None:
+                        break
                 else:
                     break
 
         if isinstance(parsed_chunk, list):
             accumulated.extend(parsed_chunk)
-        else:
+        elif parsed_chunk is not None:
             accumulated.append(parsed_chunk)
 
     # 3. Execution Routing

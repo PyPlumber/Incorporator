@@ -323,7 +323,7 @@ def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Callable[[Any]
         )
 
     Args:
-        key: Dot-separated path to the value (e.g. ``"a.b.c"``).
+        key: Dot-separated path to the value (e.g. ``"a.b.c"`` or ``"splits.0.stat"`` for list indexing).
         chain: Optional callable applied to the extracted value (e.g.
             ``int`` or another converter token like ``inc(datetime)``).
 
@@ -342,16 +342,17 @@ def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Callable[[Any]
 
     def _plucker(val: Any) -> Any:
         extracted = val
-
-        if isinstance(val, dict):
-            for part in parts:
-                if not isinstance(extracted, dict):
-                    extracted = None
-                    break
-
+        for part in parts:
+            if isinstance(extracted, dict):
                 extracted = extracted.get(part)
-                if extracted is None:
-                    break
+            elif isinstance(extracted, list) and part.isdigit():
+                idx = int(part)
+                extracted = extracted[idx] if idx < len(extracted) else None
+            else:
+                extracted = None
+                break
+            if extracted is None:
+                break
 
         # Align with inc()'s null contract: only invoke ``chain`` on real
         # data.  Missing path segments / garbage source values

@@ -469,6 +469,7 @@ class Incorporator(BaseModel):
                 :class:`CSVPaginator`, and :class:`AvroPaginator`.
             **kwargs: Forwarded to the format handler **and** the HTTP
                 client. Common keys: ``rec_path`` (dot-notation drill-down
+                supporting dict keys and integer list indices (e.g. "records.0.teamRecords")
                 to extract a list from a wrapper response), ``http_method``
                 (``"GET"`` / ``"POST"`` / ``"PUT"`` / ``"PATCH"``),
                 ``json_payload`` or ``form_payload`` (POST body),

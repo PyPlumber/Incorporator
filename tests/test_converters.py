@@ -151,8 +151,9 @@ def test_url_toolkit() -> None:
     # Test dictionary pluck (e.g. from JSON response)
     assert plucker({"name": "Earth", "homeworld": "https://api.com/planet/5/"}) == 5
 
-    # Test flat string fallback (e.g. passing a raw string through the converter)
-    assert plucker("https://api.com/planet/5/") == 5
+    # Non-dict/non-list top-level values return None — the outer isinstance(val, dict)
+    # gate was removed to support list-rooted paths; plain strings no longer fall through.
+    assert plucker("https://api.com/planet/5/") is None
 
 
 def test_link_to_relational_mapping() -> None:

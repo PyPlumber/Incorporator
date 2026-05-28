@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from incorporator import Incorporator
@@ -678,3 +679,174 @@ async def test_wave_bytes_processed_resets_between_classes(
     # Each class holds its own value — no bleed.
     assert _ClassA._last_bytes_processed == 100
     assert _ClassB._last_bytes_processed == 200
+
+
+# ----------------------------------------------------------------------
+# rec_path — integer-index list navigation
+# ----------------------------------------------------------------------
+
+
+def _mock_json_response(payload: Any) -> Any:
+    """Return an async execute_request mock that always replies with *payload* as JSON."""
+
+    async def _mock(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        content = json.dumps(payload).encode()
+        return httpx.Response(200, content=content, request=httpx.Request("GET", url))
+
+    return _mock
+
+
+@pytest.mark.asyncio
+async def test_rec_path_integer_index_drills_nested_array(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """rec_path="records.0.teamRecords" drills through a list index into a nested array.
+
+    Proves that digit segments correctly index into the list at each level,
+    yielding the inner list for accumulation.
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Team(Incorporator):
+        id: int = 0
+        name: str = ""
+
+    payload = {"records": [{"teamRecords": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]}]}
+    monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
+
+    result = await _Team.incorp(inc_url="https://api.example.com/teams", inc_code="id", rec_path="records.0.teamRecords")
+    assert len(result) == 2
+    assert result.inc_dict[1].name == "a"
+    assert result.inc_dict[2].name == "b"
+
+
+@pytest.mark.asyncio
+async def test_rec_path_terminal_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """rec_path="a.0" selects the first element of a list and returns it as a single instance.
+
+    The drill leaves a dict (not a list) in parsed_chunk, so the single dict is
+    accumulated and the framework returns one instance (not an IncorporatorList).
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Item(Incorporator):
+        x: int = 0
+
+    payload = {"a": [{"x": 10}, {"x": 20}]}
+    monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
+
+    result = await _Item.incorp(inc_url="https://api.example.com/items", rec_path="a.0")
+    # Single-record path: incorp() returns the instance directly, not an IncorporatorList.
+    assert result.x == 10  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_rec_path_out_of_range_index_yields_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """rec_path drill that exceeds the list length returns None and yields zero records.
+
+    Proves out-of-range indexing short-circuits the loop, leaving parsed_chunk=None,
+    which is accumulated as a single None item — but Pydantic discards it.
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Item(Incorporator):
+        b: int = 0
+
+    payload = {"a": []}
+    monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
+
+    result = await _Item.incorp(inc_url="https://api.example.com/items", rec_path="a.99.b")
+    assert len(result) == 0
+
+
+@pytest.mark.asyncio
+async def test_rec_path_negative_index_is_not_supported(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Negative index segments ("-1") are not treated as list indices — loop breaks.
+
+    ``"-1".isdigit()`` is False, so the drill loop hits the ``else`` branch
+    and breaks, leaving parsed_chunk as the full list.  The negative index is
+    NOT applied — accumulated contains three elements (not one), proving that
+    Python-style negative indexing is intentionally unsupported.
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Item(Incorporator):
+        v: int = 0
+
+    payload = {"a": [{"v": 1}, {"v": 2}, {"v": 3}]}
+    monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
+
+    result = await _Item.incorp(inc_url="https://api.example.com/items", rec_path="a.-1")
+    # The break leaves the full list intact — 3 elements are accumulated, not 1
+    # (which would be the case if -1 were applied as a Python index).
+    assert len(result) == 3
+
+
+@pytest.mark.asyncio
+async def test_rec_path_non_digit_key_on_list_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A non-digit segment on a list value breaks the drill loop.
+
+    rec_path="a.foo.b" on ``{"a": [{"b": 1}, {"b": 2}]}``: after drilling to
+    ``"a"`` the current value is a list; ``"foo"`` is not a digit so the loop
+    breaks, leaving the list as parsed_chunk.  Both list elements are
+    accumulated as separate instances.
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Item(Incorporator):
+        b: int = 0
+
+    payload = {"a": [{"b": 1}, {"b": 2}]}
+    monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
+
+    result = await _Item.incorp(inc_url="https://api.example.com/items", rec_path="a.foo.b")
+    assert len(result) == 2
+
+
+@pytest.mark.asyncio
+async def test_rec_path_dict_only_path_still_works(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Regression: dict-only rec_path continues to work after the integer-index addition.
+
+    rec_path="results" on ``{"results": [{"id": 1}, {"id": 2}]}`` must still
+    yield 2 instances — the new elif branches are never reached.
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Item(Incorporator):
+        id: int = 0
+
+    payload = {"results": [{"id": 1}, {"id": 2}]}
+    monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
+
+    result = await _Item.incorp(inc_url="https://api.example.com/items", inc_code="id", rec_path="results")
+    assert len(result) == 2
+    assert result.inc_dict[1].id == 1
+    assert result.inc_dict[2].id == 2
