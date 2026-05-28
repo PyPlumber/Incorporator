@@ -57,18 +57,6 @@ async def mock_execute_get(url: str, *args: Any, **kwargs: Any) -> httpx.Respons
                 },
             ]
         }
-    elif "race_list_basic.json" in url:
-        payload = {
-            "series_1": [
-                {
-                    "race_id": 5333,
-                    "race_name": "Daytona 500",
-                    "track_id": 1,
-                    "pole_winner_driver_id": 3989,
-                    "date_scheduled": "2026-02-15T14:30:00Z",
-                }
-            ]
-        }
     elif "/1/racinginsights" in url:
         payload = [
             {

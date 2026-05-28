@@ -163,8 +163,6 @@ examples/appendix/mlb-pulse/
   mlb_pulse.py               (entry point: probe + run + tune)
   pulse_outflow.py           (Incorporator classes + outflow(state) join)
   watershed.json             (CLI-equivalent declarative form)
-  fixtures/
-    expected_schemas.json    (architect-probe baselines; documentation aid)
   out/                       (runtime artifacts; gitignored)
     al_east_pulse.ndjson
     logs/
@@ -176,7 +174,6 @@ Matches the [Tutorial 11](../../11-tideweaver/) + [`nascar-tideweaver`](../nasca
 - Entry script named after the demo
 - Outflow sidecar with prefix-style name (`pulse_outflow.py`, mirroring `arb_outflow.py` and `race_outflow.py`)
 - Companion `watershed.json` for the CLI form
-- `fixtures/` directory for static reference data
 
 ---
 
