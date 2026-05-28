@@ -10,8 +10,6 @@ Asserts:
 - Sorted by power_index descending
 - All 5 inc_codes in {139, 141, 147, 110, 111}
 - Presence of power_index, pythag, pythag_delta fields
-- conv_dicts are lambda-free (verified by inspecting callable types in the
-  conv_dict entries of MLBSchedule, MLBAllTeam, MLBHitting, MLBPitching)
 """
 
 from __future__ import annotations
@@ -45,12 +43,8 @@ _SIDECAR_DIR = _HERE.parents[3] / "examples" / "appendix" / "mlb-pulse"
 if str(_SIDECAR_DIR) not in sys.path:
     sys.path.insert(0, str(_SIDECAR_DIR))
 
+from incorporator.schema.converters import calc  # noqa: E402
 from pulse_outflow import (  # noqa: E402
-    _HITTING_CONV,
-    _PITCHING_CONV,
-    ALL_TEAMS_CONV,
-    SCHEDULE_CONV,
-    STANDINGS_CONV,
     HittingDrillCurrent,
     MLBAllTeam,
     MLBHitting,
@@ -528,8 +522,6 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
     - Sorted by power_index descending
     - All 5 inc_codes belong to {139, 141, 147, 110, 111}
     - power_index, pythag, and pythag_delta fields are present and numeric
-    - conv_dicts in MLBSchedule, MLBAllTeam, MLBHitting, MLBPitching are lambda-free
-      (no callable entry is a lambda function)
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
@@ -550,12 +542,12 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
         cls=MLBSchedule,
         interval=0.5,
         on_error="isolate",
+        # No conv_dict — outflow() does not read any MLBSchedule field.
         incorp_params={
             "inc_url": "https://statsapi.mlb.com/api/v1/schedule?sportId=1",
             "rec_path": "dates.0.games",
             "inc_code": "gamePk",
             "inc_name": "teams.home.team.name",
-            "conv_dict": SCHEDULE_CONV,
         },
     )
     all_teams_stream = Stream(
@@ -568,7 +560,8 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
             "rec_path": "teams",
             "inc_code": "id",
             "inc_name": "name",
-            "conv_dict": ALL_TEAMS_CONV,
+            # Only division_id needs coercion for the AL East filter.
+            "conv_dict": {"division_id": calc(int, "division.id", default=0, target_type=int)},
         },
     )
     standings_stream = Stream(
@@ -576,12 +569,12 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
         cls=MLBStandings,
         interval=0.5,
         on_error="isolate",
+        # No conv_dict — outflow() reads teamRecords via local _safe_* helpers.
         incorp_params={
             "inc_url": "https://statsapi.mlb.com/api/v1/standings?leagueId=103",
             "rec_path": "records",
             "inc_code": "division.id",
             "inc_name": "division.name",
-            "conv_dict": STANDINGS_CONV,
         },
     )
     hitting_current = HittingDrillCurrent(
@@ -662,18 +655,3 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
         assert isinstance(r.get("pythag"), float), f"pythag must be float in {r}"
         assert isinstance(r.get("pythag_delta"), float), f"pythag_delta must be float in {r}"
         assert r.get("power_rank") in range(1, 6), f"power_rank must be 1-5 in {r}"
-
-    # 6. Lambda-free conv_dicts — no entry may be a lambda function.
-    import types
-
-    for label, conv in (
-        ("SCHEDULE_CONV", SCHEDULE_CONV),
-        ("ALL_TEAMS_CONV", ALL_TEAMS_CONV),
-        ("STANDINGS_CONV", STANDINGS_CONV),
-        ("_HITTING_CONV", _HITTING_CONV),
-        ("_PITCHING_CONV", _PITCHING_CONV),
-    ):
-        for key, val in conv.items():
-            assert not (isinstance(val, types.LambdaType) and val.__name__ == "<lambda>"), (
-                f"{label}[{key!r}] is a lambda — violates AGENTS.md H3 idiom"
-            )

@@ -22,7 +22,7 @@ from typing import Any
 
 from incorporator import Incorporator, SustainedPenstock, register_host_penstock
 from incorporator.observability.tideweaver import CustomCurrent
-from incorporator.schema.converters import calc, inc
+from incorporator.schema.converters import calc
 
 # ---------------------------------------------------------------------------
 # Host throttle — 1 req/sec = 60 req/min, well under any undocumented MLB cap.
@@ -70,39 +70,6 @@ class MLBPitching(Incorporator):
 
 class TeamPulseCard(Incorporator):
     """Derived AL East Pulse Card — one row per team, produced by outflow(state)."""
-
-
-# ---------------------------------------------------------------------------
-# Module-level conv_dict constants — passed as incorp_params kwargs, not class
-# attributes (Pydantic V2 rejects unannotated class attrs on Incorporator subs).
-# ---------------------------------------------------------------------------
-
-# schedule conv_dict — passed as incorp_params["conv_dict"] in Stream/incorp calls.
-# abbr_lower note: ordering matters for MLBAllTeam — see SCHEDULE_CONV comment.
-SCHEDULE_CONV: dict[str, Any] = {
-    "home_team_id": calc(int, "teams.home.team.id", default=0, target_type=int),
-    "away_team_id": calc(int, "teams.away.team.id", default=0, target_type=int),
-    "home_team_name": calc(str, "teams.home.team.name", default="", target_type=str),
-    "away_team_name": calc(str, "teams.away.team.name", default="", target_type=str),
-    "game_date": calc(str, "gameDate", default="", target_type=str),
-    "game_status": calc(str, "status.detailedState", default="", target_type=str),
-}
-
-# all_teams conv_dict — abbr_lower MUST come after abbreviation so inc(str) has
-# already coerced the field before str.lower reads it (conv_dict insertion order).
-ALL_TEAMS_CONV: dict[str, Any] = {
-    "name": inc(str, default=""),
-    "abbreviation": inc(str, default=""),
-    "abbr_lower": calc(str.lower, "abbreviation", default="", target_type=str),
-    "division_id": calc(int, "division.id", default=0, target_type=int),
-    "league_id": calc(int, "league.id", default=0, target_type=int),
-    "team_name": calc(str, "teamName", default="", target_type=str),
-    "short_name": calc(str, "shortName", default="", target_type=str),
-}
-
-STANDINGS_CONV: dict[str, Any] = {
-    "last_updated": inc(str, default=""),
-}
 
 
 # ---------------------------------------------------------------------------
@@ -167,29 +134,6 @@ def _safe_int(value: Any, default: int = 0) -> int:
 _HITTING_URL = "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=hitting&stats=season&season=2026"
 _PITCHING_URL = "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=pitching&stats=season&season=2026"
 
-_HITTING_CONV: dict[str, Any] = {
-    "ops": calc(float, "stat.ops", default=0.0, target_type=float),
-    "obp": calc(float, "stat.obp", default=0.0, target_type=float),
-    "slg": calc(float, "stat.slg", default=0.0, target_type=float),
-    "avg": calc(float, "stat.avg", default=0.0, target_type=float),
-    "home_runs": calc(int, "stat.homeRuns", default=0, target_type=int),
-    "rbi": calc(int, "stat.rbi", default=0, target_type=int),
-    "strikeouts": calc(int, "stat.strikeOuts", default=0, target_type=int),
-    "walks": calc(int, "stat.baseOnBalls", default=0, target_type=int),
-}
-
-_PITCHING_CONV: dict[str, Any] = {
-    # default=9.99 for era/whip so garbage rows sort to bottom of Power Index
-    "era": calc(float, "stat.era", default=9.99, target_type=float),
-    "whip": calc(float, "stat.whip", default=9.99, target_type=float),
-    "wins": calc(int, "stat.wins", default=0, target_type=int),
-    "losses": calc(int, "stat.losses", default=0, target_type=int),
-    "strikeouts": calc(int, "stat.strikeOuts", default=0, target_type=int),
-    "walks": calc(int, "stat.baseOnBalls", default=0, target_type=int),
-    "innings_pitched": calc(str, "stat.inningsPitched", default="0", target_type=str),
-    "earned_runs": calc(int, "stat.earnedRuns", default=0, target_type=int),
-}
-
 
 class HittingDrillCurrent(CustomCurrent):
     """T5 drill: reads MLBAllTeam snapshot, filters to AL East, fires 5 hitting-stat fetches.
@@ -214,7 +158,8 @@ class HittingDrillCurrent(CustomCurrent):
             inc_url=_HITTING_URL,
             rec_path="stats.0.splits.0",
             inc_code="team.id",
-            conv_dict=_HITTING_CONV,
+            # Only ``ops`` is load-bearing — ``derive_power_index`` reads it as a float.
+            conv_dict={"ops": calc(float, "stat.ops", default=0.0, target_type=float)},
         )
         MLBHitting._tideweaver_snapshot = (
             list(result)
@@ -245,7 +190,9 @@ class PitchingDrillCurrent(CustomCurrent):
             inc_url=_PITCHING_URL,
             rec_path="stats.0.splits.0",
             inc_code="team.id",
-            conv_dict=_PITCHING_CONV,
+            # Only ``era`` is load-bearing — ``derive_power_index`` reads it as a float.
+            # default=9.99 so garbage rows sort to bottom of Power Index.
+            conv_dict={"era": calc(float, "stat.era", default=9.99, target_type=float)},
         )
         MLBPitching._tideweaver_snapshot = (
             list(result)

@@ -37,6 +37,7 @@ from incorporator.observability.tideweaver import (
     Watershed,
 )
 from incorporator.observability.tideweaver.architect import tune
+from incorporator.schema.converters import calc
 
 HERE = Path(__file__).resolve().parent
 OUTFLOW_PATH = HERE / "pulse_outflow.py"
@@ -53,9 +54,6 @@ if str(HERE) not in sys.path:
 # shared sidecar so both the Python entry and the CLI watershed.json form stay
 # in lockstep.
 from pulse_outflow import (  # noqa: E402
-    ALL_TEAMS_CONV,
-    SCHEDULE_CONV,
-    STANDINGS_CONV,
     HittingDrillCurrent,
     MLBAllTeam,
     MLBHitting,
@@ -136,12 +134,13 @@ async def _run() -> list[dict]:
         cls=MLBSchedule,
         interval=8.0,
         on_error="isolate",
+        # No conv_dict: outflow() does not read any MLBSchedule field, so no
+        # source value requires coercion.  Pydantic accepts the raw payload as-is.
         incorp_params={
             "inc_url": _SCHEDULE_URL,
             "rec_path": "dates.0.games",
             "inc_code": "gamePk",
             "inc_name": "teams.home.team.name",
-            "conv_dict": SCHEDULE_CONV,
         },
     )
     all_teams_stream = Stream(
@@ -154,7 +153,9 @@ async def _run() -> list[dict]:
             "rec_path": "teams",
             "inc_code": "id",
             "inc_name": "name",
-            "conv_dict": ALL_TEAMS_CONV,
+            # Only ``division_id`` needs coercion — the AL East filter in
+            # outflow() compares against the literal int 201.
+            "conv_dict": {"division_id": calc(int, "division.id", default=0, target_type=int)},
         },
     )
     standings_stream = Stream(
@@ -162,12 +163,13 @@ async def _run() -> list[dict]:
         cls=MLBStandings,
         interval=8.0,
         on_error="isolate",
+        # No conv_dict: outflow() reads ``teamRecords`` directly as a raw nested
+        # list and uses local _safe_int/_safe_float helpers for per-row values.
         incorp_params={
             "inc_url": _STANDINGS_URL,
             "rec_path": "records",
             "inc_code": "division.id",
             "inc_name": "division.name",
-            "conv_dict": STANDINGS_CONV,
         },
     )
     hitting_current = HittingDrillCurrent(
