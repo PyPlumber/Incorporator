@@ -69,14 +69,6 @@ _STANDINGS_EXCL = [
     "driver_first_name", "driver_last_name", "driver_suffix",
     "playoff_stage_wins",
 ]
-_STANDINGS_CONV = {
-    "points":   calc(int, default=0, target_type=int),
-    "wins":     calc(int, default=0, target_type=int),
-    "top_10":   calc(int, default=0, target_type=int),
-    "top_5":    calc(int, default=0, target_type=int),
-    "laps_led": calc(int, default=0, target_type=int),
-    "position": calc(int, default=0, target_type=int),
-}
 # Driver exclusion list — keep ``Manufacturer``, ``Hometown_City``,
 # ``Hometown_State`` (used by the enriched FantasyTeam roster).
 _DRIVER_EXCL = [
@@ -140,7 +132,14 @@ async def main() -> None:
                     "inc_code": "driver_id",
                     "inc_name": "driver_name",
                     "excl_lst": _STANDINGS_EXCL,
-                    "conv_dict": _STANDINGS_CONV,
+                    "conv_dict": {
+                        "points":   calc(int, default=0, target_type=int),
+                        "wins":     calc(int, default=0, target_type=int),
+                        "top_10":   calc(int, default=0, target_type=int),
+                        "top_5":    calc(int, default=0, target_type=int),
+                        "laps_led": calc(int, default=0, target_type=int),
+                        "position": calc(int, default=0, target_type=int),
+                    },
                 },
                 "refresh_params": None,
             },
@@ -151,7 +150,14 @@ async def main() -> None:
                     "inc_code": "driver_id",
                     "inc_name": "driver_name",
                     "excl_lst": _STANDINGS_EXCL,
-                    "conv_dict": _STANDINGS_CONV,
+                    "conv_dict": {
+                        "points":   calc(int, default=0, target_type=int),
+                        "wins":     calc(int, default=0, target_type=int),
+                        "top_10":   calc(int, default=0, target_type=int),
+                        "top_5":    calc(int, default=0, target_type=int),
+                        "laps_led": calc(int, default=0, target_type=int),
+                        "position": calc(int, default=0, target_type=int),
+                    },
                 },
                 "refresh_params": None,
             },
@@ -162,7 +168,14 @@ async def main() -> None:
                     "inc_code": "driver_id",
                     "inc_name": "driver_name",
                     "excl_lst": _STANDINGS_EXCL,
-                    "conv_dict": _STANDINGS_CONV,
+                    "conv_dict": {
+                        "points":   calc(int, default=0, target_type=int),
+                        "wins":     calc(int, default=0, target_type=int),
+                        "top_10":   calc(int, default=0, target_type=int),
+                        "top_5":    calc(int, default=0, target_type=int),
+                        "laps_led": calc(int, default=0, target_type=int),
+                        "position": calc(int, default=0, target_type=int),
+                    },
                 },
                 "refresh_params": None,
             },

@@ -127,30 +127,36 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
         name_chg=[("track_id", "track")],
     )
 
-    standings_conv = {
-        "points": calc(int, default=0, target_type=int),
-        "wins": calc(int, default=0, target_type=int),
-        "top_10": calc(int, default=0, target_type=int),
-    }
-
     cup_st, busch_st, truck_st = await asyncio.gather(
         Standing.incorp(
             inc_url=f"{BASE}/1/racinginsights-points-feed.json",
             inc_code="driver_id",
             inc_name="driver_name",
-            conv_dict=standings_conv,
+            conv_dict={
+                "points": calc(int, default=0, target_type=int),
+                "wins": calc(int, default=0, target_type=int),
+                "top_10": calc(int, default=0, target_type=int),
+            },
         ),
         Standing.incorp(
             inc_url=f"{BASE}/2/racinginsights-points-feed.json",
             inc_code="driver_id",
             inc_name="driver_name",
-            conv_dict=standings_conv,
+            conv_dict={
+                "points": calc(int, default=0, target_type=int),
+                "wins": calc(int, default=0, target_type=int),
+                "top_10": calc(int, default=0, target_type=int),
+            },
         ),
         Standing.incorp(
             inc_url=f"{BASE}/3/racinginsights-points-feed.json",
             inc_code="driver_id",
             inc_name="driver_name",
-            conv_dict=standings_conv,
+            conv_dict={
+                "points": calc(int, default=0, target_type=int),
+                "wins": calc(int, default=0, target_type=int),
+                "top_10": calc(int, default=0, target_type=int),
+            },
         ),
     )
 
