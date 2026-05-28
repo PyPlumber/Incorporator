@@ -1,0 +1,63 @@
+{
+  "_doc": "Architect-probe baseline schemas captured during a known-good run. Documentation aid only — the runtime probe re-fetches these live each invocation. If a future API change drops or renames a field, diff this file against the current architect() report to see the delta.",
+  "_captured_at": "<populated on first known-good run>",
+  "_captured_season": null,
+  "schedule": {
+    "endpoint": "https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=<today>",
+    "rec_path": "dates.0.games",
+    "expected_fields": [
+      "gamePk",
+      "gameDate",
+      "status.abstractGameState",
+      "teams.home.team.id",
+      "teams.away.team.id"
+    ]
+  },
+  "all_teams": {
+    "endpoint": "https://statsapi.mlb.com/api/v1/teams?sportId=1",
+    "rec_path": "teams",
+    "expected_fields": [
+      "id",
+      "name",
+      "abbreviation",
+      "division.id",
+      "league.id",
+      "venue.name"
+    ]
+  },
+  "standings": {
+    "endpoint": "https://statsapi.mlb.com/api/v1/standings?leagueId=103&divisionId=201&season=<year>",
+    "rec_path": "records.0.teamRecords",
+    "expected_fields": [
+      "team.id",
+      "team.name",
+      "wins",
+      "losses",
+      "winningPercentage",
+      "gamesBack",
+      "runsScored",
+      "runsAllowed",
+      "streak.streakCode"
+    ]
+  },
+  "hitting": {
+    "endpoint": "https://statsapi.mlb.com/api/v1/teams/<team_id>/stats?stats=season&group=hitting&season=<year>",
+    "rec_path": "stats.0.splits.0.stat",
+    "expected_fields": [
+      "avg",
+      "obp",
+      "slg",
+      "homeRuns"
+    ]
+  },
+  "pitching": {
+    "endpoint": "https://statsapi.mlb.com/api/v1/teams/<team_id>/stats?stats=season&group=pitching&season=<year>",
+    "rec_path": "stats.0.splits.0.stat",
+    "expected_fields": [
+      "era",
+      "whip",
+      "strikeoutsPer9Inn",
+      "saves"
+    ]
+  }
+}
