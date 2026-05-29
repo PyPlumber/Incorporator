@@ -45,14 +45,14 @@ class CurrentOutcome:
             when no filter is set or for non-parent-child ticks.  Zero
             indicates the filter matched no rows.
 
-    Additional ``reason`` values introduced by the parent-child audit
-    surface (Chain 2 of the parent-child parity plan):
+    Additional ``reason`` values the scheduler may set on the outcome
+    when a parent-child tick was skipped:
 
     - ``"parent_snapshot_empty"`` — upstream snapshot was None or empty;
-      the tick body silently skipped because there was nothing to drill.
+      the tick body skipped because there was nothing to drill.
     - ``"filter_matched_zero"`` — upstream had rows but the filter
-      matched zero of them; the tick body silently skipped after
-      applying the predicate.
+      matched zero of them; the tick body skipped after applying the
+      predicate.
     """
 
     name: str
