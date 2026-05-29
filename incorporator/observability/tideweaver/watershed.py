@@ -56,6 +56,9 @@ class Edge(BaseModel):
         from_name: The upstream current name.
         to_name: The dependent current name.
         flow: The :class:`FlowControl` governing this edge.
+        auto_derived: ``True`` when the edge was synthesised by Watershed
+            validation from a :attr:`Stream.parent_current` declaration;
+            ``False`` for user-declared edges.
     """
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
@@ -63,6 +66,7 @@ class Edge(BaseModel):
     from_name: str = Field(validation_alias=AliasChoices("from_name", "from"))
     to_name: str = Field(validation_alias=AliasChoices("to_name", "to"))
     flow: FlowControl = Field(default_factory=FlowControl)
+    auto_derived: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -216,7 +220,7 @@ class Watershed(BaseModel):
                         f"does not match any current in the watershed."
                     )
                 if (c.parent_current, c.name) not in existing:
-                    self.edges.append(Edge(from_name=c.parent_current, to_name=c.name))
+                    self.edges.append(Edge(from_name=c.parent_current, to_name=c.name, auto_derived=True))
                     existing.add((c.parent_current, c.name))
 
         for e in self.edges:

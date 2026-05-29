@@ -177,11 +177,7 @@ class Stream(Current):
     def _validate_parent_filter(self) -> Stream:
         """Validate parent_filter consistency at construction time."""
         if isinstance(self.parent_filter, tuple):
-            if (
-                len(self.parent_filter) != 3
-                or not isinstance(self.parent_filter[0], str)
-                or not callable(self.parent_filter[1])
-            ):
+            if len(self.parent_filter) != 3 or not callable(self.parent_filter[1]):
                 raise ValueError(
                     f"Stream parent_filter tuple must be (attr: str, op: Callable, value: Any); "
                     f"got {self.parent_filter!r}"
@@ -330,8 +326,11 @@ class CustomCurrent(Current):
         the user's ``tick()`` body did not manually assign
         ``cls._tideweaver_snapshot`` (identity check on the pre-tick sentinel),
         the scheduler parks ``list(cls.inc_dict.values())`` as the snapshot.
-        A manual assignment inside ``tick()`` produces a new list object,
-        so ``is pre`` is ``False`` and auto-park is skipped.
+        A manual assignment inside ``tick()`` typically produces a new list
+        object, so ``is pre`` is ``False`` and auto-park is skipped.
+        Re-assigning the same list object
+        (``cls._tideweaver_snapshot = cls._tideweaver_snapshot``) defeats the
+        identity check; assign a NEW list to opt out.
 
         Args:
             scheduler: The :class:`~.scheduler.Tideweaver` instance driving
