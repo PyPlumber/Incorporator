@@ -1,19 +1,18 @@
-"""Unit tests for ``Fjord.parent_currents`` + ``Fjord.parent_filters``.
+"""Unit tests for ``Fjord.parent_currents``.
 
-Seven tests covering the parent-child filter mode on ``Fjord``:
+Two tests covering the parent-child declaration on ``Fjord``:
 
-1. Tuple ``parent_filter`` filters the named upstream's state-dict entry.
-2. Callable ``parent_filter`` filters the named upstream's state-dict entry.
-3. Empty filter result → state-dict entry is empty list (no silent skip; outflow still fires).
-4. None/missing upstream snapshot → state-dict entry is empty list.
-5. Validator: malformed tuple → ValueError at construction.
-6. Validator: orphan filter key not in ``parent_currents`` → ValueError at construction.
-7. ``Watershed._validate_graph`` auto-derives a hard-gate edge from each ``parent_currents`` name → Fjord.
+1. None/missing upstream snapshot → state-dict entry is empty list.
+2. ``Watershed._validate_graph`` auto-derives one hard-gate edge per name in
+   ``parent_currents``.
+
+Row filtering itself is NOT a framework primitive — each named parent declares
+its scope at the URL or other source-side filter; the framework does not
+post-filter rows.
 """
 
 from __future__ import annotations
 
-import operator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import MagicMock
@@ -24,10 +23,6 @@ from pydantic import ConfigDict
 from incorporator import Incorporator
 from incorporator.observability.tideweaver import Fjord, Stream, Watershed
 from incorporator.observability.tideweaver.current import Fjord as FjordCls
-
-# ---------------------------------------------------------------------------
-# Module-level Incorporator subclasses
-# ---------------------------------------------------------------------------
 
 
 class UpstreamA(Incorporator):
@@ -48,11 +43,6 @@ class FjordCls_(Incorporator):
     model_config = ConfigDict(extra="allow")
 
 
-# ---------------------------------------------------------------------------
-# Reset helper
-# ---------------------------------------------------------------------------
-
-
 def _reset_registries(*classes: type[Incorporator]) -> None:
     """Wipe per-class inc_dict + parked snapshot between tests."""
     for cls in classes:
@@ -62,11 +52,6 @@ def _reset_registries(*classes: type[Incorporator]) -> None:
                 delattr(cls, "_tideweaver_snapshot")
             except AttributeError:
                 pass
-
-
-# ---------------------------------------------------------------------------
-# Stub scheduler for _tick_fjord
-# ---------------------------------------------------------------------------
 
 
 def _make_stub_scheduler(
@@ -89,14 +74,7 @@ def _make_stub_scheduler(
     return stub
 
 
-async def _empty_flush(*_args: Any, **_kwargs: Any) -> Any:
-    """No-op async-generator stub used to bypass the real outflow pipeline."""
-    return
-    yield  # pragma: no cover  (makes this an async generator)
-
-
 def _install_flush_capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """Patch flush() and load_outflow_module() to capture the state dict."""
     captured: dict[str, Any] = {}
 
     async def capturing_flush(_outflow_fn: Any, state: dict[str, Any], **_kw: Any) -> Any:
@@ -113,111 +91,7 @@ def _install_flush_capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — tuple parent_filter filters the state-dict entry
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_tuple_parent_filter_filters_state(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tuple parent_filter selects matching rows in the state dict."""
-    monkeypatch.chdir(tmp_path)
-    _reset_registries(UpstreamA, FjordCls_)
-
-    row_a = UpstreamA(inc_code=1, division=201)  # type: ignore[call-arg]
-    row_b = UpstreamA(inc_code=2, division=200)  # type: ignore[call-arg]
-    row_c = UpstreamA(inc_code=3, division=201)  # type: ignore[call-arg]
-    UpstreamA._tideweaver_snapshot = [row_a, row_b, row_c]  # type: ignore[attr-defined]
-
-    upstream = Stream(name="up", cls=UpstreamA, interval=1.0, incorp_params={"inc_file": "x"})
-    fjord = Fjord(
-        name="fjord",
-        cls=FjordCls_,
-        interval=1.0,
-        parent_currents=["up"],
-        parent_filters={"up": ("division", operator.eq, 201)},
-    )
-
-    captured = _install_flush_capture(monkeypatch)
-    scheduler = _make_stub_scheduler([upstream], fjord)
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
-
-    await Tideweaver._tick_fjord(scheduler, fjord)
-
-    state_rows = captured["state"]["UpstreamA"]
-    assert state_rows == [row_a, row_c], f"Expected only rows with division=201; got {state_rows}"
-
-
-# ---------------------------------------------------------------------------
-# Test 2 — callable parent_filter filters the state-dict entry
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_callable_parent_filter_filters_state(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Callable parent_filter selects matching rows in the state dict."""
-    monkeypatch.chdir(tmp_path)
-    _reset_registries(UpstreamA, FjordCls_)
-
-    row_a = UpstreamA(inc_code=1, score=10)  # type: ignore[call-arg]
-    row_b = UpstreamA(inc_code=2, score=20)  # type: ignore[call-arg]
-    UpstreamA._tideweaver_snapshot = [row_a, row_b]  # type: ignore[attr-defined]
-
-    def above_15(row: Any) -> bool:
-        return getattr(row, "score", 0) > 15
-
-    upstream = Stream(name="up", cls=UpstreamA, interval=1.0, incorp_params={"inc_file": "x"})
-    fjord = Fjord(
-        name="fjord",
-        cls=FjordCls_,
-        interval=1.0,
-        parent_currents=["up"],
-        parent_filters={"up": above_15},
-    )
-
-    captured = _install_flush_capture(monkeypatch)
-    scheduler = _make_stub_scheduler([upstream], fjord)
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
-
-    await Tideweaver._tick_fjord(scheduler, fjord)
-
-    state_rows = captured["state"]["UpstreamA"]
-    assert state_rows == [row_b], f"Expected only row_b (score=20); got {state_rows}"
-
-
-# ---------------------------------------------------------------------------
-# Test 3 — empty filter result → state-dict entry is empty list
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_empty_filter_result_yields_empty_state_entry(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the filter matches zero rows, state[cls.__name__] is [] — not skipped."""
-    monkeypatch.chdir(tmp_path)
-    _reset_registries(UpstreamA, FjordCls_)
-
-    row_a = UpstreamA(inc_code=1, division=200)  # type: ignore[call-arg]
-    UpstreamA._tideweaver_snapshot = [row_a]  # type: ignore[attr-defined]
-
-    upstream = Stream(name="up", cls=UpstreamA, interval=1.0, incorp_params={"inc_file": "x"})
-    fjord = Fjord(
-        name="fjord",
-        cls=FjordCls_,
-        interval=1.0,
-        parent_currents=["up"],
-        parent_filters={"up": ("division", operator.eq, 999)},
-    )
-
-    captured = _install_flush_capture(monkeypatch)
-    scheduler = _make_stub_scheduler([upstream], fjord)
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
-
-    await Tideweaver._tick_fjord(scheduler, fjord)
-
-    assert captured["state"]["UpstreamA"] == [], "filter matching zero rows must yield empty list, not skip"
-
-
-# ---------------------------------------------------------------------------
-# Test 4 — None/missing upstream snapshot → state-dict entry is empty list
+# Test 1 — None/missing upstream snapshot → state-dict entry is empty list
 # ---------------------------------------------------------------------------
 
 
@@ -234,7 +108,6 @@ async def test_none_upstream_snapshot_yields_empty_state_entry(tmp_path: Any, mo
         cls=FjordCls_,
         interval=1.0,
         parent_currents=["up"],
-        parent_filters={},  # no filter — pass-through
     )
 
     captured = _install_flush_capture(monkeypatch)
@@ -247,47 +120,7 @@ async def test_none_upstream_snapshot_yields_empty_state_entry(tmp_path: Any, mo
 
 
 # ---------------------------------------------------------------------------
-# Test 5 — validator: malformed parent_filter tuple
-# ---------------------------------------------------------------------------
-
-
-def test_validator_rejects_malformed_parent_filter_tuple() -> None:
-    """parent_filters[key] tuple with non-callable op raises ValueError.
-
-    Note on layering: Pydantic v2's ``tuple[str, Any, Any]`` coercion catches
-    wrong-length tuples FIRST (raising ``ValidationError``), so the model
-    validator only sees 3-element tuples and its job is to enforce
-    ``callable(filter[1])``.  This mirrors Stream's same layering.
-    """
-    with pytest.raises(ValueError, match=r"tuple must be \(attr: str, op: Callable, value: Any\)"):
-        Fjord(
-            name="fjord",
-            cls=FjordCls_,
-            interval=1.0,
-            parent_currents=["up"],
-            parent_filters={"up": ("division", "not-callable", 201)},  # type: ignore[dict-item]
-        )
-
-
-# ---------------------------------------------------------------------------
-# Test 6 — validator: orphan filter key not in parent_currents
-# ---------------------------------------------------------------------------
-
-
-def test_validator_rejects_orphan_filter_key() -> None:
-    """parent_filters key that does not appear in parent_currents raises."""
-    with pytest.raises(ValueError, match=r"parent_filters key 'missing' is not in parent_currents"):
-        Fjord(
-            name="fjord",
-            cls=FjordCls_,
-            interval=1.0,
-            parent_currents=["up"],
-            parent_filters={"missing": ("division", operator.eq, 201)},
-        )
-
-
-# ---------------------------------------------------------------------------
-# Test 7 — Watershed auto-derives hard-gate edges from each parent_currents name
+# Test 2 — Watershed auto-derives one hard-gate edge per parent_currents name
 # ---------------------------------------------------------------------------
 
 
@@ -311,8 +144,8 @@ def test_watershed_auto_derives_edges_from_parent_currents() -> None:
 
     ws = Watershed(window=(start, end), currents=[upstream_a, upstream_b, fjord])
     edge_pairs = {(e.from_name, e.to_name) for e in ws.edges}
-    assert ("up_a", "fjord") in edge_pairs, f"Expected auto-derived edge 'up_a'→'fjord'; got {edge_pairs}"
-    assert ("up_b", "fjord") in edge_pairs, f"Expected auto-derived edge 'up_b'→'fjord'; got {edge_pairs}"
+    assert ("up_a", "fjord") in edge_pairs, f"Expected auto-derived edge 'up_a'->'fjord'; got {edge_pairs}"
+    assert ("up_b", "fjord") in edge_pairs, f"Expected auto-derived edge 'up_b'->'fjord'; got {edge_pairs}"
 
     # Idempotent: explicit depends_on must not duplicate the auto-derived edge
     fjord_with_deps = Fjord(
@@ -325,7 +158,7 @@ def test_watershed_auto_derives_edges_from_parent_currents() -> None:
     )
     ws2 = Watershed(window=(start, end), currents=[upstream_a, fjord_with_deps])
     count = sum(1 for e in ws2.edges if e.from_name == "up_a" and e.to_name == "fjord2")
-    assert count == 1, f"Edge 'up_a'→'fjord2' must appear exactly once; found {count}"
+    assert count == 1, f"Edge 'up_a'->'fjord2' must appear exactly once; found {count}"
 
     # Orphan parent_currents reference must raise
     fjord_orphan = Fjord(

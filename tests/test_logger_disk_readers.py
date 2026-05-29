@@ -88,7 +88,11 @@ async def test_get_rejects_inherited_by_logged_incorporator(
     _write_jsonl(
         error_log,
         [
-            {"level": "ERROR", "msg": "canal reject", "reject": {"source": "ArbitrageFjord", "error_kind": "PenstockLimited"}},
+            {
+                "level": "ERROR",
+                "msg": "canal reject",
+                "reject": {"source": "ArbitrageFjord", "error_kind": "PenstockLimited"},
+            },
         ],
     )
 

@@ -139,9 +139,7 @@ def _stream(name: str, cls: type[Incorporator], interval: float = 0.1) -> Stream
 
 
 @pytest.mark.asyncio
-async def test_chain_with_full_canal_toolkit(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_chain_with_full_canal_toolkit(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """A→B→C chain with the A→B edge carrying Penstock + Reservoir + Spillway + Observer.
 
     A fires at interval=0.1 (~10×/sec) and B's edge penstock allows 2 r/s.
@@ -216,8 +214,7 @@ async def test_chain_with_full_canal_toolkit(
     assert "fire" in event_kinds_on_ab, f"observer must fire on_fire at least once; got {event_kinds_on_ab}"
     assert "skip" in event_kinds_on_ab, f"observer must fire on_skip at least once; got {event_kinds_on_ab}"
     assert "reservoir_level" in event_kinds_on_ab, (
-        f"observer must fire on_reservoir_level at least once after B's first consumption; "
-        f"got {event_kinds_on_ab}"
+        f"observer must fire on_reservoir_level at least once after B's first consumption; got {event_kinds_on_ab}"
     )
 
 
@@ -348,9 +345,7 @@ async def test_fanout_surge_bypass_fires_dependent_under_slow_upstream(
     tides = [tide async for tide in tw.run()]
 
     b_fired = sum(1 for t in tides for n in t.fired if n == "b")
-    skip_ahead_pairs = [
-        (name, reason) for t in tides for name, reason in t.skipped if reason == "skip_ahead"
-    ]
+    skip_ahead_pairs = [(name, reason) for t in tides for name, reason in t.skipped if reason == "skip_ahead"]
     skip_ahead_currents = {name for name, _ in skip_ahead_pairs}
 
     # B fires despite A in-flight (bypass).
@@ -436,9 +431,7 @@ async def test_parallel_phase_offset_staggers_first_ticks(monkeypatch: pytest.Mo
     async for _ in tw.run():
         pass
 
-    assert set(first_spawn) == {"a", "b", "c"}, (
-        f"all three currents should have spawned a tick; got {set(first_spawn)}"
-    )
+    assert set(first_spawn) == {"a", "b", "c"}, f"all three currents should have spawned a tick; got {set(first_spawn)}"
 
     # Anchor against A's first spawn time (phase_offset=0.0).
     delta_a_to_b = first_spawn["b"] - first_spawn["a"]

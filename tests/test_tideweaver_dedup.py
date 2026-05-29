@@ -80,8 +80,7 @@ async def test_hardlock_dedup_fires_once_per_upstream_wave() -> None:
     # never more fires than A produced.  A common pre-fix observation:
     # b_count would be ~20+ here.
     assert b_count <= a_count, (
-        f"HardLock dedup broken: B fired {b_count} times for {a_count} A waves "
-        f"(should be <= {a_count})"
+        f"HardLock dedup broken: B fired {b_count} times for {a_count} A waves (should be <= {a_count})"
     )
 
 
@@ -109,8 +108,7 @@ async def test_weir_dedup_fires_once_per_upstream_wave() -> None:
     b_count = fires.count("b")
     assert a_count >= 2, f"A must fire at least twice in 1.1s at 0.4s interval; got {a_count}"
     assert b_count <= a_count, (
-        f"Weir dedup broken: B fired {b_count} times for {a_count} A waves "
-        f"(should be <= {a_count})"
+        f"Weir dedup broken: B fired {b_count} times for {a_count} A waves (should be <= {a_count})"
     )
 
 

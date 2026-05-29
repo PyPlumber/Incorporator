@@ -62,7 +62,7 @@ async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Res
 # ----------------------------------------------------------------------
 # Outflow fixtures
 # ----------------------------------------------------------------------
-MULTI_OUTFLOW = '''
+MULTI_OUTFLOW = """
 def outflow(state):
     coins = state["Coin"]
     futures = state["BinanceFutures"]
@@ -81,9 +81,9 @@ def outflow(state):
         "SpotOnly":   [{"inc_code": r["inc_code"], "spot": r["spot"]} for r in rows],
         "FuturesOnly":[{"inc_code": r["inc_code"], "futures": r["futures"]} for r in rows],
     }
-'''
+"""
 
-PARTIAL_FAIL_OUTFLOW = '''
+PARTIAL_FAIL_OUTFLOW = """
 def outflow(state):
     # One class produces consistent rows; another produces rows that fail to build.
     return {
@@ -94,12 +94,12 @@ def outflow(state):
         # non-string inc_code.
         "Bad":   [{"inc_code": None, "value": "boom"}],
     }
-'''
+"""
 
-EMPTY_MULTI_OUTFLOW = '''
+EMPTY_MULTI_OUTFLOW = """
 def outflow(state):
     return {}
-'''
+"""
 
 PREDECLARED_OUTFLOW = '''
 from incorporator import Incorporator
@@ -115,16 +115,16 @@ def outflow(state):
     return {"CustomReport": [{"inc_code": c.inc_code, "spot": c.current_price} for c in coins]}
 '''
 
-ORPHAN_KEY_OUTFLOW = '''
+ORPHAN_KEY_OUTFLOW = """
 def outflow(state):
     coins = state["Coin"]
     return {"ProducedClass": [{"inc_code": c.inc_code, "spot": c.current_price} for c in coins]}
-'''
+"""
 
-LIST_OUTFLOW = '''
+LIST_OUTFLOW = """
 def outflow(state):
     return [{"inc_code": c.inc_code, "spot": c.current_price} for c in state["Coin"]]
-'''
+"""
 
 
 def _write_file(tmp_path: Path, source: str, filename: str) -> Path:
@@ -140,7 +140,17 @@ def _find_dynamic_class(class_name: str) -> Optional[Type[Any]]:
     return None
 
 
-_DYNAMIC_NAMES_TO_PURGE = {"Spread", "SpotOnly", "FuturesOnly", "Good", "Bad", "MultiReport", "OneFile", "EmptyTick", "ProducedClass"}
+_DYNAMIC_NAMES_TO_PURGE = {
+    "Spread",
+    "SpotOnly",
+    "FuturesOnly",
+    "Good",
+    "Bad",
+    "MultiReport",
+    "OneFile",
+    "EmptyTick",
+    "ProducedClass",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -171,9 +181,7 @@ async def _drain(gen: AsyncGenerator[Any, None]) -> List[Any]:
 
 
 @pytest.mark.asyncio
-async def test_multi_output_writes_three_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_multi_output_writes_three_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
     outflow_file = _write_file(tmp_path, MULTI_OUTFLOW, "multi_report.py")
@@ -185,12 +193,16 @@ async def test_multi_output_writes_three_files(
         Incorporator.fjord(
             stream_params=[
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
-                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}, "refresh_params": None},
+                {
+                    "cls": BinanceFutures,
+                    "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             export_params={
-                "Spread":      {"file_path": str(spread_file)},
-                "SpotOnly":    {"file_path": str(spot_file)},
+                "Spread": {"file_path": str(spread_file)},
+                "SpotOnly": {"file_path": str(spot_file)},
                 "FuturesOnly": {"file_path": str(fut_file)},
             },
         )
@@ -219,9 +231,7 @@ async def test_multi_output_writes_three_files(
 
 
 @pytest.mark.asyncio
-async def test_multi_output_uses_user_predeclared_subclass(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_multi_output_uses_user_predeclared_subclass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
     outflow_file = _write_file(tmp_path, PREDECLARED_OUTFLOW, "predeclared.py")
@@ -281,9 +291,7 @@ async def test_multi_output_skips_class_with_no_export_match(
 
 
 @pytest.mark.asyncio
-async def test_multi_output_empty_dict_is_quiet(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_multi_output_empty_dict_is_quiet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
     outflow_file = _write_file(tmp_path, EMPTY_MULTI_OUTFLOW, "empty_tick.py")

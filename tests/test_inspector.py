@@ -202,11 +202,11 @@ def test_analyze_data_prints_drill_down_hint_for_nested_arrays(
 @pytest.mark.parametrize(
     "value",
     [
-        "2022-10-05T12:00:00-04:00",   # RFC-3339 with timezone offset (the bug)
-        "2026-05-12T14:32:00Z",         # UTC suffix
-        "2008-09-20T17:23:00.000Z",     # fractional + Z
-        "2008-09-20",                   # plain date
-        "2026-04-22 23:59:59",          # SQL-ish space separator
+        "2022-10-05T12:00:00-04:00",  # RFC-3339 with timezone offset (the bug)
+        "2026-05-12T14:32:00Z",  # UTC suffix
+        "2008-09-20T17:23:00.000Z",  # fractional + Z
+        "2008-09-20",  # plain date
+        "2026-04-22 23:59:59",  # SQL-ish space separator
     ],
 )
 def test_analyze_data_flags_every_datetime_variant_the_runtime_accepts(
@@ -226,9 +226,7 @@ def test_analyze_data_flags_every_datetime_variant_the_runtime_accepts(
 
 
 @pytest.mark.parametrize("junk", ["", "N/A", "n/a", "Unknown", "null", "undefined"])
-def test_analyze_data_does_not_flag_garbage_values_as_dates(
-    capsys: pytest.CaptureFixture[str], junk: str
-) -> None:
+def test_analyze_data_does_not_flag_garbage_values_as_dates(capsys: pytest.CaptureFixture[str], junk: str) -> None:
     """Garbage values must never be suggested for conversion — even in date-named keys."""
     sample = {"id": 1, "created_at": junk, "name": "Sample"}
     analyze_data([sample], provided_kwargs={})

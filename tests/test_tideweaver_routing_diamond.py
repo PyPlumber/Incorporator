@@ -172,9 +172,7 @@ async def _mock_mlb(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
 
 
 @pytest.mark.asyncio
-async def test_diamond_mlb_teams_plus_players_fjord_join(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_diamond_mlb_teams_plus_players_fjord_join(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """MLB diamond: head trigger → [teams, players] middle Streams → roster Fjord tail.
 
     Proves: (a) ``Watershed.diamond`` orchestrates head → two middle → tail
@@ -428,9 +426,7 @@ async def test_diamond_open_library_two_middle_fjords_to_catalog_tail(
     assert all(getattr(b, "title_clean", "") == getattr(b, "title", "").strip() for b in book_rows)
 
     # Middle Fjords each produced their own output class rows.
-    authors_lines = [
-        ln for ln in (tmp_path / "authors.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()
-    ]
+    authors_lines = [ln for ln in (tmp_path / "authors.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert authors_lines, "AuthorIndex Fjord must write rows"
     author_rows = [json.loads(ln) for ln in authors_lines]
     by_author = {r["inc_code"]: r["book_count"] for r in author_rows}
@@ -447,9 +443,7 @@ async def test_diamond_open_library_two_middle_fjords_to_catalog_tail(
     assert by_subject.get("science fiction") == 2, f"sci-fi must appear twice, got {by_subject}"
 
     # Tail Fjord joined BOTH middle Fjord snapshots.
-    catalog_lines = [
-        ln for ln in (tmp_path / "catalog.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()
-    ]
+    catalog_lines = [ln for ln in (tmp_path / "catalog.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert catalog_lines, "BookCatalog tail Fjord must write rows"
     catalog_rows = [json.loads(ln) for ln in catalog_lines]
     # Take the latest summary; the catalog Fjord may emit multiple flushes.

@@ -68,12 +68,6 @@ class Wave(BaseModel):
             tick (Stream with ``parent_current`` set or Fjord with
             ``parent_currents`` populated).  ``None`` for ticks
             without parent-child semantics.
-        filter_match_count: Row count after applying the
-            parent-child filter (``parent_filter`` /
-            ``parent_filters``).  ``None`` when no filter is set
-            or for non-parent-child ticks.  Zero indicates the
-            filter matched no rows — a strong signal that the
-            predicate is misconfigured.
         timestamp: UTC timestamp at which the wave was emitted.
 
     Frozen Pydantic model so instances can be passed around (and
@@ -114,13 +108,6 @@ class Wave(BaseModel):
     parent_snapshot_size: int | None = Field(
         default=None,
         description="Upstream snapshot row count consumed by a parent-child tick; None when not applicable.",
-    )
-    filter_match_count: int | None = Field(
-        default=None,
-        description=(
-            "Row count after applying parent_filter / parent_filters; None when no filter; "
-            "0 signals misconfigured predicate."
-        ),
     )
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

@@ -37,9 +37,9 @@ def test_csv_empty_cells_become_none_by_default(tmp_path: Path) -> None:
 
     rows = CSVHandler().parse(csv_path)
     assert isinstance(rows, list)
-    assert rows[0]["note"] is None                  # blank trailing cell
-    assert rows[1]["name"] is None                  # blank middle cell
-    assert rows[1]["note"] == "absent name"         # non-blank passes through
+    assert rows[0]["note"] is None  # blank trailing cell
+    assert rows[1]["name"] is None  # blank middle cell
+    assert rows[1]["note"] == "absent name"  # non-blank passes through
 
 
 def test_csv_empty_cells_opt_out_keeps_empty_string(tmp_path: Path) -> None:
@@ -49,7 +49,7 @@ def test_csv_empty_cells_opt_out_keeps_empty_string(tmp_path: Path) -> None:
 
     rows = CSVHandler().parse(csv_path, csv_empty_as_none=False)
     assert isinstance(rows, list)
-    assert rows[0]["name"] == ""                    # explicit empty string
+    assert rows[0]["name"] == ""  # explicit empty string
 
 
 # ==========================================
@@ -100,7 +100,7 @@ def test_sqlite_without_bool_kwarg_returns_ints(tmp_path: Path) -> None:
     rows = SQLiteHandler().parse(db_path, sql_query="SELECT * FROM flags")
     assert isinstance(rows, list)
     assert rows[0]["active"] == 1
-    assert isinstance(rows[0]["active"], int)       # NOT bool
+    assert isinstance(rows[0]["active"], int)  # NOT bool
 
 
 # ==========================================
@@ -138,7 +138,7 @@ def test_xml_to_dict_force_list_only_affects_named_tags() -> None:
     xml = "<root><item>a</item><other>b</other></root>"
     result = xml_to_dict(ET.fromstring(xml), force_list={"item"})
     assert isinstance(result["root"]["item"], list)
-    assert result["root"]["other"] == "b"           # other stays scalar
+    assert result["root"]["other"] == "b"  # other stays scalar
 
 
 # Avro field-name round-trip via schema metadata

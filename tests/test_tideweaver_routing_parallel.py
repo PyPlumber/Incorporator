@@ -253,9 +253,7 @@ async def _mock_jsonplaceholder_with_one_500(url: str, *args: Any, **kwargs: Any
 
 
 @pytest.mark.asyncio
-async def test_parallel_isolate_on_error_keeps_siblings_firing(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_parallel_isolate_on_error_keeps_siblings_firing(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """One failing parallel branch does not stop sibling Streams from firing.
 
     Proves: (a) ``on_error="isolate"`` traps an upstream HTTP failure without

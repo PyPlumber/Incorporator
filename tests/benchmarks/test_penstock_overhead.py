@@ -60,12 +60,12 @@ CALL_COUNT = 100_000
 # steady-state ``window_log`` of 1 entry (delta=1.0s > window_sec=0.5s),
 # WindowPenstock's list-comp eviction is roughly the same cost as the
 # other variants — when ``window_log`` grows unbounded it would dominate.
-NULL_FLOOR = 600_000              # NullPenstock — slowest of 3 × 0.7 = 605k
-SUSTAINED_FLOOR = 350_000         # SustainedPenstock — slowest of 3 × 0.7 = 374k
-BURST_FLOOR = 300_000             # BurstPenstock — slowest of 3 × 0.7 = 333k
-WINDOW_FLOOR = 400_000            # WindowPenstock — slowest of 3 × 0.7 = 430k
-SIGNAL_FLOOR = 350_000            # SignalPenstock — slowest of 3 × 0.7 = 378k
-BACKPRESSURE_FLOOR = 500_000      # BackpressurePenstock — slowest of 3 × 0.7 = 512k
+NULL_FLOOR = 600_000  # NullPenstock — slowest of 3 × 0.7 = 605k
+SUSTAINED_FLOOR = 350_000  # SustainedPenstock — slowest of 3 × 0.7 = 374k
+BURST_FLOOR = 300_000  # BurstPenstock — slowest of 3 × 0.7 = 333k
+WINDOW_FLOOR = 400_000  # WindowPenstock — slowest of 3 × 0.7 = 430k
+SIGNAL_FLOOR = 350_000  # SignalPenstock — slowest of 3 × 0.7 = 378k
+BACKPRESSURE_FLOOR = 500_000  # BackpressurePenstock — slowest of 3 × 0.7 = 512k
 
 
 class _MockEdgeState:
@@ -106,10 +106,7 @@ def _drive_penstock(penstock: Any, flow: Any, call_count: int) -> float:
 def _report(name: str, elapsed: float, floor: float) -> float:
     """Compute ops/sec, print, assert floor.  Returns ops/sec."""
     ops_per_sec = CALL_COUNT / elapsed
-    print(
-        f"\n  Penstock {name:<22} {CALL_COUNT:,} consume+post cycles in "
-        f"{elapsed:.3f}s = {ops_per_sec:,.0f} ops/sec"
-    )
+    print(f"\n  Penstock {name:<22} {CALL_COUNT:,} consume+post cycles in {elapsed:.3f}s = {ops_per_sec:,.0f} ops/sec")
     assert ops_per_sec >= floor, (
         f"{name} dropped to {ops_per_sec:,.0f} ops/sec (floor: {floor:,.0f}). "
         "Suggests regression in evaluate/record OR in the shared "

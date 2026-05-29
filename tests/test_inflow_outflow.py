@@ -65,8 +65,7 @@ def test_inflow_calc_reducer_lands_in_csv(tmp_path: Path) -> None:
 
     inflow_py = tmp_path / "inflow.py"
     inflow_py.write_text(
-        "def calculate_bst(stats):\n"
-        "    return sum(s.get('base_stat', 0) for s in stats if isinstance(s, dict))\n",
+        "def calculate_bst(stats):\n    return sum(s.get('base_stat', 0) for s in stats if isinstance(s, dict))\n",
         encoding="utf-8",
     )
 
@@ -111,8 +110,8 @@ def test_inflow_calc_reducer_lands_in_csv(tmp_path: Path) -> None:
     # Verify the calc reducer's INTEGER landed in the CSV — not the raw list.
     # If conv_dict only worked for JSON, this cell would contain
     # "[{'base_stat': 45}, ...]".
-    assert by_name["bulbasaur"]["base_stat_total"] == "94"   # 45 + 49
-    assert by_name["ivysaur"]["base_stat_total"] == "122"   # 60 + 62
+    assert by_name["bulbasaur"]["base_stat_total"] == "94"  # 45 + 49
+    assert by_name["ivysaur"]["base_stat_total"] == "122"  # 60 + 62
 
 
 def test_inflow_module_imported_only_once_across_chunks(tmp_path: Path) -> None:
@@ -154,8 +153,7 @@ def test_inflow_module_imported_only_once_across_chunks(tmp_path: Path) -> None:
 
     counter = sys.modules.get("__inc_import_count__", [])
     assert len(counter) == 1, (
-        f"Expected inflow module to import exactly once across 5 incorp() calls; "
-        f"got {len(counter)} imports."
+        f"Expected inflow module to import exactly once across 5 incorp() calls; got {len(counter)} imports."
     )
 
 
@@ -163,8 +161,7 @@ def test_inflow_kwarg_on_incorp_resolves_string_tokens(tmp_path: Path) -> None:
     """Python users can pass `inflow=` with string-form conv_dict and get callables."""
     inflow_py = tmp_path / "inflow.py"
     inflow_py.write_text(
-        "def double(values):\n"
-        "    return [v * 2 for v in values] if isinstance(values, list) else values\n",
+        "def double(values):\n    return [v * 2 for v in values] if isinstance(values, list) else values\n",
         encoding="utf-8",
     )
 

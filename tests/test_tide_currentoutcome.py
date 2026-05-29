@@ -158,7 +158,6 @@ def test_tide_model_dump_json_serializes_current_outcomes() -> None:
         "in_flight_sec": None,
         "last_wave_at": None,
         "parent_snapshot_size": None,
-        "filter_match_count": None,
     }
 
 
@@ -243,7 +242,6 @@ def test_tide_dataclass_asdict_round_trip() -> None:
         "in_flight_sec": None,
         "last_wave_at": ts,
         "parent_snapshot_size": None,
-        "filter_match_count": None,
     }
 
 

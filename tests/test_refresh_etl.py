@@ -159,8 +159,7 @@ async def test_refresh_replays_persisted_incorp_kwargs() -> None:
 
         refresh_call = mock_fetch.await_args_list[1]
         assert refresh_call.kwargs.get("params") == {"vs_currency": "usd", "per_page": 100, "page": 1}, (
-            "refresh() must replay params= from the original incorp() call; "
-            f"got kwargs={refresh_call.kwargs}"
+            f"refresh() must replay params= from the original incorp() call; got kwargs={refresh_call.kwargs}"
         )
         assert refresh_call.kwargs.get("headers") == {"X-Custom": "from-seed"}
         assert refresh_call.kwargs.get("rec_path") == "results.items"

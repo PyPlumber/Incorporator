@@ -96,7 +96,7 @@ def test_route_reject_json_dump_has_reject_key() -> None:
         exc_info=None,
     )
     record.reject = dump  # type: ignore[attr-defined]
-    record.meta = "class:\"TestLogger\""  # type: ignore[attr-defined]
+    record.meta = 'class:"TestLogger"'  # type: ignore[attr-defined]
     record.is_api = False  # type: ignore[attr-defined]
 
     formatter = JSONFormatter()

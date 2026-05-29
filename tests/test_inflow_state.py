@@ -107,17 +107,17 @@ def inflow(state):
     return overrides
 '''
 
-BROKEN_INFLOW_RAISES = '''
+BROKEN_INFLOW_RAISES = """
 def inflow(state):
     raise ZeroDivisionError("simulated inflow failure")
-'''
+"""
 
-BAD_SHAPE_INFLOW = '''
+BAD_SHAPE_INFLOW = """
 def inflow(state):
     return [1, 2, 3]   # not a dict — engine should raise TypeError
-'''
+"""
 
-ASYNC_INFLOW = '''
+ASYNC_INFLOW = """
 import asyncio
 from incorporator import link_to
 
@@ -132,14 +132,14 @@ async def inflow(state):
             }
         }
     return overrides
-'''
+"""
 
-WINS_INFLOW = '''
+WINS_INFLOW = """
 def inflow(state):
     return {"Person": {"conv_dict": {"name": str.upper}}}
-'''
+"""
 
-OUTFLOW_SOURCE = '''
+OUTFLOW_SOURCE = """
 def outflow(state):
     rows = []
     for p in state["Person"]:
@@ -147,7 +147,7 @@ def outflow(state):
         hw_name = getattr(hw, "inc_name", None) if hw else None
         rows.append({"name": p.inc_name, "homeworld": hw_name})
     return rows
-'''
+"""
 
 
 def _write_file(tmp_path: Path, source: str, filename: str) -> Path:
@@ -196,9 +196,7 @@ async def _drain(gen: AsyncGenerator[Any, None]) -> List[Any]:
 
 
 @pytest.mark.asyncio
-async def test_inflow_state_wires_link_to_against_peers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_inflow_state_wires_link_to_against_peers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Person's conv_dict.homeworld resolves against Planet's live registry."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
@@ -209,9 +207,36 @@ async def test_inflow_state_wires_link_to_against_peers(
     waves = await _drain(
         Incorporator.fjord(
             stream_params=[
-                {"cls": Planet, "incorp_params": {"inc_url": PLANETS_URL, "rec_path": "results", "inc_code": "id", "inc_name": "name"}, "refresh_params": None},
-                {"cls": Film,   "incorp_params": {"inc_url": FILMS_URL,   "rec_path": "results", "inc_code": "id", "inc_name": "title"}, "refresh_params": None},
-                {"cls": Person, "incorp_params": {"inc_url": PEOPLE_URL,  "rec_path": "results", "inc_code": "id", "inc_name": "name"}, "refresh_params": None},
+                {
+                    "cls": Planet,
+                    "incorp_params": {
+                        "inc_url": PLANETS_URL,
+                        "rec_path": "results",
+                        "inc_code": "id",
+                        "inc_name": "name",
+                    },
+                    "refresh_params": None,
+                },
+                {
+                    "cls": Film,
+                    "incorp_params": {
+                        "inc_url": FILMS_URL,
+                        "rec_path": "results",
+                        "inc_code": "id",
+                        "inc_name": "title",
+                    },
+                    "refresh_params": None,
+                },
+                {
+                    "cls": Person,
+                    "incorp_params": {
+                        "inc_url": PEOPLE_URL,
+                        "rec_path": "results",
+                        "inc_code": "id",
+                        "inc_name": "name",
+                    },
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             inflow=inflow_file,
@@ -241,9 +266,7 @@ async def test_inflow_state_wires_link_to_against_peers(
 
 
 @pytest.mark.asyncio
-async def test_inflow_passive_namebag_keeps_parallel_seed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_inflow_passive_namebag_keeps_parallel_seed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Legacy ``inflow.py`` with NO inflow function → parallel seed runs unchanged."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
@@ -253,8 +276,16 @@ async def test_inflow_passive_namebag_keeps_parallel_seed(
     waves = await _drain(
         Incorporator.fjord(
             stream_params=[
-                {"cls": Planet, "incorp_params": {"inc_url": PLANETS_URL, "rec_path": "results", "inc_code": "id"}, "refresh_params": None},
-                {"cls": Person, "incorp_params": {"inc_url": PEOPLE_URL,  "rec_path": "results", "inc_code": "id"}, "refresh_params": None},
+                {
+                    "cls": Planet,
+                    "incorp_params": {"inc_url": PLANETS_URL, "rec_path": "results", "inc_code": "id"},
+                    "refresh_params": None,
+                },
+                {
+                    "cls": Person,
+                    "incorp_params": {"inc_url": PEOPLE_URL, "rec_path": "results", "inc_code": "id"},
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             inflow=passive,
@@ -271,9 +302,7 @@ async def test_inflow_passive_namebag_keeps_parallel_seed(
 
 
 @pytest.mark.asyncio
-async def test_inflow_raises_does_not_crash_engine(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_inflow_raises_does_not_crash_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A user bug in inflow() surfaces as a clean seed-failure wave."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
@@ -283,7 +312,11 @@ async def test_inflow_raises_does_not_crash_engine(
     waves = await _drain(
         Incorporator.fjord(
             stream_params=[
-                {"cls": Planet, "incorp_params": {"inc_url": PLANETS_URL, "rec_path": "results", "inc_code": "id"}, "refresh_params": None},
+                {
+                    "cls": Planet,
+                    "incorp_params": {"inc_url": PLANETS_URL, "rec_path": "results", "inc_code": "id"},
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             inflow=bad_inflow,
@@ -293,8 +326,7 @@ async def test_inflow_raises_does_not_crash_engine(
     # The Planet seed itself fails because inflow(state) raises before it.
     failed = [w for w in waves if w.failed_sources]
     assert failed, "engine should emit a failure wave when inflow() raises"
-    assert any("ZeroDivisionError" in fs or "simulated inflow failure" in fs
-               for w in failed for fs in w.failed_sources)
+    assert any("ZeroDivisionError" in fs or "simulated inflow failure" in fs for w in failed for fs in w.failed_sources)
 
 
 # ======================================================================
@@ -303,9 +335,7 @@ async def test_inflow_raises_does_not_crash_engine(
 
 
 @pytest.mark.asyncio
-async def test_inflow_returns_bad_shape(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_inflow_returns_bad_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """inflow() returning a list (not a dict) raises a clear TypeError-derived failure."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
@@ -315,7 +345,11 @@ async def test_inflow_returns_bad_shape(
     waves = await _drain(
         Incorporator.fjord(
             stream_params=[
-                {"cls": Planet, "incorp_params": {"inc_url": PLANETS_URL, "rec_path": "results", "inc_code": "id"}, "refresh_params": None},
+                {
+                    "cls": Planet,
+                    "incorp_params": {"inc_url": PLANETS_URL, "rec_path": "results", "inc_code": "id"},
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             inflow=bad,
@@ -333,9 +367,7 @@ async def test_inflow_returns_bad_shape(
 
 
 @pytest.mark.asyncio
-async def test_inflow_async_callable_is_awaited(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_inflow_async_callable_is_awaited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An ``async def inflow(state)`` is awaited; conv_dict still wires through."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
@@ -346,8 +378,26 @@ async def test_inflow_async_callable_is_awaited(
     waves = await _drain(
         Incorporator.fjord(
             stream_params=[
-                {"cls": Planet, "incorp_params": {"inc_url": PLANETS_URL, "rec_path": "results", "inc_code": "id", "inc_name": "name"}, "refresh_params": None},
-                {"cls": Person, "incorp_params": {"inc_url": PEOPLE_URL,  "rec_path": "results", "inc_code": "id", "inc_name": "name"}, "refresh_params": None},
+                {
+                    "cls": Planet,
+                    "incorp_params": {
+                        "inc_url": PLANETS_URL,
+                        "rec_path": "results",
+                        "inc_code": "id",
+                        "inc_name": "name",
+                    },
+                    "refresh_params": None,
+                },
+                {
+                    "cls": Person,
+                    "incorp_params": {
+                        "inc_url": PEOPLE_URL,
+                        "rec_path": "results",
+                        "inc_code": "id",
+                        "inc_name": "name",
+                    },
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             inflow=async_inflow,
@@ -368,9 +418,7 @@ async def test_inflow_async_callable_is_awaited(
 
 
 @pytest.mark.asyncio
-async def test_inflow_conv_dict_overrides_stream_params(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_inflow_conv_dict_overrides_stream_params(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Both inflow AND stream_params declare conv_dict.name → inflow wins."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
@@ -381,12 +429,24 @@ async def test_inflow_conv_dict_overrides_stream_params(
     await _drain(
         Incorporator.fjord(
             stream_params=[
-                {"cls": Planet, "incorp_params": {"inc_url": PLANETS_URL, "rec_path": "results", "inc_code": "id", "inc_name": "name"}, "refresh_params": None},
+                {
+                    "cls": Planet,
+                    "incorp_params": {
+                        "inc_url": PLANETS_URL,
+                        "rec_path": "results",
+                        "inc_code": "id",
+                        "inc_name": "name",
+                    },
+                    "refresh_params": None,
+                },
                 {
                     "cls": Person,
                     # Static conv_dict.name = lowercase
                     "incorp_params": {
-                        "inc_url": PEOPLE_URL, "rec_path": "results", "inc_code": "id", "inc_name": "name",
+                        "inc_url": PEOPLE_URL,
+                        "rec_path": "results",
+                        "inc_code": "id",
+                        "inc_name": "name",
                         "conv_dict": {"name": str.lower},
                     },
                     "refresh_params": None,

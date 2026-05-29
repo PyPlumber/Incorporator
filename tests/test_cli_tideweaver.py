@@ -162,14 +162,10 @@ def test_cli_tideweaver_run_drain_timeout_cli_wins(monkeypatch: pytest.MonkeyPat
 
     assert result.exit_code == 0, result.stdout
     assert captured, "Tideweaver.run must have been called"
-    assert captured[0] == pytest.approx(5.0), (
-        f"CLI --drain-timeout 5.0 must override env var 100; got {captured[0]}"
-    )
+    assert captured[0] == pytest.approx(5.0), f"CLI --drain-timeout 5.0 must override env var 100; got {captured[0]}"
 
 
-def test_cli_tideweaver_run_drain_timeout_env_var_used(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_cli_tideweaver_run_drain_timeout_env_var_used(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """INCORPORATOR_DRAIN_TIMEOUT env var is applied when --drain-timeout is absent.
 
     No CLI flag passed; env var set to 42.  The watershed that reaches
@@ -190,14 +186,10 @@ def test_cli_tideweaver_run_drain_timeout_env_var_used(
 
     assert result.exit_code == 0, result.stdout
     assert captured, "Tideweaver.run must have been called"
-    assert captured[0] == pytest.approx(42.0), (
-        f"INCORPORATOR_DRAIN_TIMEOUT=42 must be applied; got {captured[0]}"
-    )
+    assert captured[0] == pytest.approx(42.0), f"INCORPORATOR_DRAIN_TIMEOUT=42 must be applied; got {captured[0]}"
 
 
-def test_cli_tideweaver_run_drain_timeout_default(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_cli_tideweaver_run_drain_timeout_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Without --drain-timeout or INCORPORATOR_DRAIN_TIMEOUT, the watershed default (30s) is used.
 
     Watershed.drain_timeout defaults to 30.0 in the Pydantic field definition.
@@ -219,6 +211,4 @@ def test_cli_tideweaver_run_drain_timeout_default(
 
     assert result.exit_code == 0, result.stdout
     assert captured, "Tideweaver.run must have been called"
-    assert captured[0] == pytest.approx(30.0), (
-        f"Default drain_timeout must be 30.0; got {captured[0]}"
-    )
+    assert captured[0] == pytest.approx(30.0), f"Default drain_timeout must be 30.0; got {captured[0]}"

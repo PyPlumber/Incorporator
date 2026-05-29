@@ -20,9 +20,7 @@ from incorporator.io.pagination import (
 )
 
 
-def _make_response(
-    url: str, body: Any, headers: Optional[Dict[str, str]] = None, status: int = 200
-) -> httpx.Response:
+def _make_response(url: str, body: Any, headers: Optional[Dict[str, str]] = None, status: int = 200) -> httpx.Response:
     """Build an httpx.Response with a real Request attached so .url works downstream."""
     req = httpx.Request("GET", url)
     return httpx.Response(status, text=json.dumps(body), headers=headers or {}, request=req)

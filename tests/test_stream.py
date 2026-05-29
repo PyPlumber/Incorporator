@@ -34,19 +34,14 @@ def stream_target_model() -> Type[LoggedIncorporator]:
 
 
 @pytest.mark.asyncio
-async def test_stream_engine_1_chunking_big_data(
-    tmp_path: Path, stream_target_model: Type[LoggedIncorporator]
-) -> None:
+async def test_stream_engine_1_chunking_big_data(tmp_path: Path, stream_target_model: Type[LoggedIncorporator]) -> None:
     """
     ENGINE 1: stateful_polling = False
     Ensures stream() uses the Paginator to yield strict O(1) memory chunks.
     """
     StreamTargetModel = stream_target_model
     csv_file = tmp_path / "massive_dataset.csv"
-    csv_file.write_text(
-        "id,name\n1,Alice\n2,Bob\n3,Charlie\n4,Diana\n5,Eve\n",
-        encoding="utf-8"
-    )
+    csv_file.write_text("id,name\n1,Alice\n2,Bob\n3,Charlie\n4,Diana\n5,Eve\n", encoding="utf-8")
 
     # Force a chunk size of 2 (5 rows / 2 = 3 chunks)
     paginator = CSVPaginator(file_path=str(csv_file), chunk_size=2)
@@ -55,7 +50,7 @@ async def test_stream_engine_1_chunking_big_data(
         "inc_url": "local_paginator_stream",
         "inc_page": paginator,
         "format_type": FormatType.JSON,
-        "code_attr": "id"
+        "code_attr": "id",
     }
 
     waves: List[Wave] = []
@@ -64,9 +59,7 @@ async def test_stream_engine_1_chunking_big_data(
     # default refresh-after-each-chunk behaviour; this test asserts the
     # pure chunked-pagination yield count.
     async for wave in StreamTargetModel.stream(
-            incorp_params=incorp_params,
-            refresh_params=None,
-            stateful_polling=False
+        incorp_params=incorp_params, refresh_params=None, stateful_polling=False
     ):
         waves.append(wave)
 
@@ -95,13 +88,10 @@ async def test_stream_engine_2_stateful_live_data(
     json_file = tmp_path / "live_data.json"
     json_file.write_text(
         json.dumps([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}, {"id": 3, "name": "Charlie"}]),
-        encoding="utf-8"
+        encoding="utf-8",
     )
 
-    incorp_params = {
-        "inc_file": str(json_file),
-        "code_attr": "id"
-    }
+    incorp_params = {"inc_file": str(json_file), "code_attr": "id"}
 
     waves: List[Wave] = []
 
@@ -110,10 +100,7 @@ async def test_stream_engine_2_stateful_live_data(
     # No export_params either, so the engine emits the seed wave then
     # exits cleanly.
     async for wave in StreamTargetModel.stream(
-            incorp_params=incorp_params,
-            refresh_params=None,
-            stateful_polling=True,
-            poll_interval=None
+        incorp_params=incorp_params, refresh_params=None, stateful_polling=True, poll_interval=None
     ):
         waves.append(wave)
 
@@ -126,9 +113,7 @@ async def test_stream_engine_2_stateful_live_data(
 
 
 @pytest.mark.asyncio
-async def test_stream_engine_2_empty_failsafe(
-    tmp_path: Path, stream_target_model: Type[LoggedIncorporator]
-) -> None:
+async def test_stream_engine_2_empty_failsafe(tmp_path: Path, stream_target_model: Type[LoggedIncorporator]) -> None:
     """
     ENGINE 2: Empty Data Guard
     Ensures the daemon safely exits if initialization fails or yields 0 rows.
@@ -137,16 +122,11 @@ async def test_stream_engine_2_empty_failsafe(
     json_file = tmp_path / "empty_data.json"
     json_file.write_text("[]", encoding="utf-8")
 
-    incorp_params = {
-        "inc_file": str(json_file)
-    }
+    incorp_params = {"inc_file": str(json_file)}
 
     waves: List[Wave] = []
 
-    async for wave in StreamTargetModel.stream(
-            incorp_params=incorp_params,
-            stateful_polling=True
-    ):
+    async for wave in StreamTargetModel.stream(incorp_params=incorp_params, stateful_polling=True):
         waves.append(wave)
 
     # Assert Graceful Shutdown
@@ -209,8 +189,7 @@ async def test_stream_stateful_shim_wave_ops_remapped(
     # per-class-suffixed "fjord_incorp:StreamTargetModel".
     assert len(waves) >= 1
     assert waves[0].operation == "incorp", (
-        f"shim must remap fjord op-strings back to stream's contract; "
-        f"got operation={waves[0].operation!r}"
+        f"shim must remap fjord op-strings back to stream's contract; got operation={waves[0].operation!r}"
     )
     assert not any(w.operation.startswith("fjord_") for w in waves)
     assert not any(":" in w.operation for w in waves)

@@ -170,7 +170,7 @@ async def test_refresh_re_source_mode_repoints_registry_at_new_url(
     assert len(initial) == 2
     assert Coin.inc_dict["btc"].price == 30000.0
     assert Coin.inc_dict["eth"].price == 2000.0
-    assert Coin.inc_url == OLD_URL                         # baseline
+    assert Coin.inc_url == OLD_URL  # baseline
 
     # RE-SOURCE — pass a brand-new URL string as the instance arg.
     refreshed = await Coin.refresh(NEW_URL)

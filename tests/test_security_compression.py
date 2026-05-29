@@ -59,7 +59,7 @@ def test_validate_archive_member_names_accepts_safe_names() -> None:
     _validate_archive_member_names(
         ["data.json", "sub/data.json", "deep/nested/data.json"],
         archive_kind="ZIP",
-    )                                                  # no raise
+    )  # no raise
 
 
 def test_zip_with_traversal_member_rejected_at_decompress() -> None:
@@ -93,7 +93,7 @@ def test_enforce_size_cap_default_limit() -> None:
 
 def test_enforce_size_cap_under_limit_passes() -> None:
     """Payloads under the cap pass through without raising."""
-    _enforce_size_cap(1024, CompressionType.GZIP)       # no raise
+    _enforce_size_cap(1024, CompressionType.GZIP)  # no raise
 
 
 def test_enforce_size_cap_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -108,7 +108,7 @@ def test_enforce_size_cap_invalid_env_falls_back_to_default(
 ) -> None:
     """Garbage env-var values fall back to the default 1 GB cap."""
     monkeypatch.setenv("INCORPORATOR_MAX_DECOMPRESSED_BYTES", "not-a-number")
-    _enforce_size_cap(1024, CompressionType.GZIP)       # still passes (under 1 GB)
+    _enforce_size_cap(1024, CompressionType.GZIP)  # still passes (under 1 GB)
 
 
 # ==========================================
@@ -153,8 +153,8 @@ def test_csv_export_neutralises_formula_cells_by_default(tmp_path: Path) -> None
     )
 
     text = out.read_text(encoding="utf-8")
-    assert "'=cmd|" in text or "\"'=cmd" in text       # prefixed
-    assert "normal value" in text                       # unchanged
+    assert "'=cmd|" in text or "\"'=cmd" in text  # prefixed
+    assert "normal value" in text  # unchanged
 
 
 def test_csv_export_opt_out_writes_raw(tmp_path: Path) -> None:

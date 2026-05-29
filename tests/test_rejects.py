@@ -113,9 +113,7 @@ def test_list_with_structured_rejects_round_trip() -> None:
 
 def test_list_with_legacy_failed_sources_auto_wraps() -> None:
     """Legacy ``failed_sources=[...]`` auto-wraps each string in a minimal entry."""
-    lst: IncorporatorList[Any] = IncorporatorList(
-        _Model, [], failed_sources=["https://a", "https://b"]
-    )
+    lst: IncorporatorList[Any] = IncorporatorList(_Model, [], failed_sources=["https://a", "https://b"])
     entries = lst.rejects
     assert len(entries) == 2
     assert entries[0].source == "https://a"

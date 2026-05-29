@@ -543,6 +543,14 @@ async def _prime_upstreams(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason=(
+        "Phase 2 reverted parent_filter from the framework. This test exercises "
+        "parent_filter through its mock dispatcher; the migration to URL-level "
+        "filtering (?leagueId=103) lands in Phase 3 (tideweaver-code-orchestrator). "
+        "This skip is removed by Phase 3's commit."
+    )
+)
 @pytest.mark.asyncio
 async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """MLB AL East Pulse diamond produces exactly 5 ranked Pulse Cards sorted by power_index desc.

@@ -207,7 +207,9 @@ def test_archive_with_binary_target(tmp_path: Path) -> None:
 
     raw_bytes = zip_file.read_bytes()
 
-    result = decompress_data(raw_bytes, path_hint="archive.zip", active_format=FormatType.SQLITE, archive_target="data.db")
+    result = decompress_data(
+        raw_bytes, path_hint="archive.zip", active_format=FormatType.SQLITE, archive_target="data.db"
+    )
 
     assert isinstance(result, bytes), "Binary format must return bytes, not str"
     assert result == db_content

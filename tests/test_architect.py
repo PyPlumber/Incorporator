@@ -441,18 +441,22 @@ def test_run_end_to_end_local_fixtures(tmp_path: Path) -> None:
     """Probe two small local JSON files, assert ``run(output='json')`` is parseable."""
     a = tmp_path / "users.json"
     a.write_text(
-        json.dumps([
-            {"user_id": "u1", "name": "Ada"},
-            {"user_id": "u2", "name": "Bob"},
-        ]),
+        json.dumps(
+            [
+                {"user_id": "u1", "name": "Ada"},
+                {"user_id": "u2", "name": "Bob"},
+            ]
+        ),
         encoding="utf-8",
     )
     b = tmp_path / "orders.json"
     b.write_text(
-        json.dumps([
-            {"order_id": "o1", "user_id": "u1", "total": "19.99"},
-            {"order_id": "o2", "user_id": "u2", "total": "29.99"},
-        ]),
+        json.dumps(
+            [
+                {"order_id": "o1", "user_id": "u1", "total": "19.99"},
+                {"order_id": "o2", "user_id": "u2", "total": "29.99"},
+            ]
+        ),
         encoding="utf-8",
     )
     buf = io.StringIO()

@@ -71,8 +71,7 @@ HEAVY_FLOOR_PASSES_PER_SEC = 20.0  # N=50 — same as N=5; per-current cost is s
 async def _run_and_count(n_currents: int) -> Tuple[int, float]:
     """Spin a Tideweaver with N zero-work currents; return (tide_count, elapsed_seconds)."""
     streams: List[Stream] = [
-        Stream(name=f"c{i}", cls=_BenchTarget, interval=0.05, incorp_params={})
-        for i in range(n_currents)
+        Stream(name=f"c{i}", cls=_BenchTarget, interval=0.05, incorp_params={}) for i in range(n_currents)
     ]
     ws = Watershed.parallel(currents=streams, window=_window(WINDOW_SECONDS))
     tw = Tideweaver(ws, tick_factory=_noop_tick, pass_interval=0.05)
@@ -96,10 +95,7 @@ async def test_scheduler_pass_overhead_light() -> None:
     """
     tide_count, elapsed = await _run_and_count(n_currents=5)
     passes_per_sec = tide_count / elapsed
-    print(
-        f"\n  Scheduler pass overhead (N=5):  {tide_count} Tides in "
-        f"{elapsed:.2f}s = {passes_per_sec:.1f} passes/sec"
-    )
+    print(f"\n  Scheduler pass overhead (N=5):  {tide_count} Tides in {elapsed:.2f}s = {passes_per_sec:.1f} passes/sec")
     assert passes_per_sec >= LIGHT_FLOOR_PASSES_PER_SEC, (
         f"Scheduler dropped to {passes_per_sec:.1f} passes/sec under 5 "
         "zero-work currents (floor: "
@@ -120,10 +116,7 @@ async def test_scheduler_pass_overhead_heavy() -> None:
     """
     tide_count, elapsed = await _run_and_count(n_currents=50)
     passes_per_sec = tide_count / elapsed
-    print(
-        f"\n  Scheduler pass overhead (N=50): {tide_count} Tides in "
-        f"{elapsed:.2f}s = {passes_per_sec:.1f} passes/sec"
-    )
+    print(f"\n  Scheduler pass overhead (N=50): {tide_count} Tides in {elapsed:.2f}s = {passes_per_sec:.1f} passes/sec")
     assert passes_per_sec >= HEAVY_FLOOR_PASSES_PER_SEC, (
         f"Scheduler dropped to {passes_per_sec:.1f} passes/sec under 50 "
         f"zero-work currents (floor: {HEAVY_FLOOR_PASSES_PER_SEC}).  "

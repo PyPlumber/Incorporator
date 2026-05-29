@@ -62,10 +62,8 @@ _KNOWN_CURRENT_KEYS: frozenset[str] = frozenset(
         "refresh_params",
         "export_params",
         "parent_current",
-        "parent_filter",
         # Fjord
         "parent_currents",
-        "parent_filters",
         # Export (shares export_params with Stream/Fjord)
     }
 )

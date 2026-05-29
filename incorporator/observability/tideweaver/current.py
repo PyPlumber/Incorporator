@@ -16,7 +16,6 @@ models — these models are pure plan, not state.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
@@ -127,20 +126,17 @@ class Stream(Current):
             Current) in the same Watershed whose ``_tideweaver_snapshot``
             supplies ``inc_parent`` at each tick. Setting this field
             auto-derives a hard-gate dependency edge in the Watershed graph.
-        parent_filter: Optional predicate applied to the upstream snapshot
-            before fan-out. Accepts a callable ``(row -> bool)`` or a
-            null-safe 3-tuple ``(attr, op, value)``. Requires
-            ``parent_current`` to be set.
+            The parent declares its row scope at the URL or other source-side
+            filter (e.g., ``?leagueId=103``); the framework does NOT post-filter
+            rows. For row filtering, use URL query params, ``SQLitePaginator``'s
+            ``sql_query`` WHERE, ``outflow(state)`` filtering, or a
+            :class:`CustomCurrent` escape hatch.
     """
 
     incorp_params: dict[str, Any] = Field(default_factory=dict)
     refresh_params: dict[str, Any] | None = None
     export_params: dict[str, Any] | None = None
     parent_current: str | None = None
-    # Loose tuple arm lets Pydantic accept the 3-tuple regardless of element types;
-    # _validate_parent_filter then enforces the callable constraint so the error message
-    # is human-readable rather than Pydantic's generic union-failure text.
-    parent_filter: Callable[[Any], bool] | tuple[str, Any, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -174,16 +170,8 @@ class Stream(Current):
         return data
 
     @model_validator(mode="after")
-    def _validate_parent_filter(self) -> Stream:
-        """Validate parent_filter consistency at construction time."""
-        if isinstance(self.parent_filter, tuple):
-            if len(self.parent_filter) != 3 or not callable(self.parent_filter[1]):
-                raise ValueError(
-                    f"Stream parent_filter tuple must be (attr: str, op: Callable, value: Any); "
-                    f"got {self.parent_filter!r}"
-                )
-        if self.parent_current is None and self.parent_filter is not None:
-            raise ValueError("Stream.parent_filter requires parent_current to be set.")
+    def _validate_parent_current(self) -> Stream:
+        """Validate parent_current consistency at construction time."""
         if "inc_parent" in self.incorp_params and self.parent_current is not None:
             raise ValueError("Stream: pass parent_current= OR inc_parent inside incorp_params, not both.")
         return self
@@ -235,43 +223,18 @@ class Fjord(Current):
             (matching :meth:`Incorporator.fjord`'s shape) when the
             ``outflow(state)`` function returns multiple class rosters.
         parent_currents: Names upstream currents whose
-            ``_tideweaver_snapshot`` rows the scheduler filters and
-            writes into ``state`` before invoking ``outflow(state)``.
-            Empty list (default) preserves the original Fjord behaviour:
-            unfiltered registries flow through.  Setting this field
-            auto-derives one hard-gate dependency edge per named
-            upstream in the Watershed graph.
-        parent_filters: Optional per-upstream predicate, keyed by the
-            upstream's name in ``parent_currents``.  Each value is a
-            callable ``(row -> bool)`` or a null-safe 3-tuple
-            ``(attr, op, value)``.  Upstreams listed in
-            ``parent_currents`` but missing from this dict pass
-            through unfiltered.
+            ``_tideweaver_snapshot`` rows the scheduler writes into
+            ``state`` before invoking ``outflow(state)``.  Empty list
+            (default) preserves the original Fjord behaviour:
+            registries are read via the normal upstream resolution path.
+            Setting this field auto-derives one hard-gate dependency
+            edge per named upstream in the Watershed graph.  Each named
+            upstream's parent declares its row scope at the URL or other
+            source-side filter; the framework does NOT post-filter rows.
     """
 
     export_params: dict[str, Any] = Field(default_factory=dict)
     parent_currents: list[str] = Field(default_factory=list)
-    # Loose tuple arm lets Pydantic accept the 3-tuple regardless of element types;
-    # _validate_fjord_parents then enforces the callable + str-key constraint so the
-    # error message is human-readable rather than Pydantic's generic union-failure text.
-    parent_filters: dict[str, Callable[[Any], bool] | tuple[str, Any, Any]] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def _validate_fjord_parents(self) -> Fjord:
-        """Validate parent_currents / parent_filters consistency at construction."""
-        for key, filter_value in self.parent_filters.items():
-            if key not in self.parent_currents:
-                raise ValueError(
-                    f"Fjord parent_filters key {key!r} is not in parent_currents={self.parent_currents!r}; "
-                    f"every filter must name an upstream listed in parent_currents."
-                )
-            if isinstance(filter_value, tuple):
-                if len(filter_value) != 3 or not callable(filter_value[1]):
-                    raise ValueError(
-                        f"Fjord parent_filters[{key!r}] tuple must be (attr: str, op: Callable, value: Any); "
-                        f"got {filter_value!r}"
-                    )
-        return self
 
 
 class Export(Current):

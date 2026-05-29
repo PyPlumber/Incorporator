@@ -104,9 +104,9 @@ def test_resolve_env_var_other_values_dont_bypass(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setitem(_HOST_PENSTOCKS, "api.example.com", SustainedPenstock(rate_per_sec=0.2))
     for value in ("0", "true", "yes", ""):
         monkeypatch.setenv(_BYPASS_ENV_VAR, value)
-        assert not isinstance(
-            resolve_penstock("https://api.example.com/x").penstock, NullPenstock
-        ), f"env value {value!r} should not bypass"
+        assert not isinstance(resolve_penstock("https://api.example.com/x").penstock, NullPenstock), (
+            f"env value {value!r} should not bypass"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -126,9 +126,7 @@ def test_register_adds_custom_penstock(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_register_accepts_instance_directly(monkeypatch: pytest.MonkeyPatch) -> None:
     """``register_host_penstock`` accepts a Penstock instance (the canonical form)."""
     # Snapshot + restore so the global registry isn't polluted.
-    monkeypatch.setattr(
-        "incorporator.io.penstock._HOST_PENSTOCKS", dict(_HOST_PENSTOCKS), raising=False
-    )
+    monkeypatch.setattr("incorporator.io.penstock._HOST_PENSTOCKS", dict(_HOST_PENSTOCKS), raising=False)
     register_host_penstock("acme.example.com", SustainedPenstock(rate_per_sec=3.3))
     bound = resolve_penstock("https://acme.example.com/x")
     assert isinstance(bound.penstock, SustainedPenstock)
@@ -137,9 +135,7 @@ def test_register_accepts_instance_directly(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_register_accepts_factory_callable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Legacy zero-arg factory callable form is also accepted (back-compat)."""
-    monkeypatch.setattr(
-        "incorporator.io.penstock._HOST_PENSTOCKS", dict(_HOST_PENSTOCKS), raising=False
-    )
+    monkeypatch.setattr("incorporator.io.penstock._HOST_PENSTOCKS", dict(_HOST_PENSTOCKS), raising=False)
     register_host_penstock("factory.example.com", lambda: SustainedPenstock(rate_per_sec=4.4))
     bound = resolve_penstock("https://factory.example.com/x")
     assert isinstance(bound.penstock, SustainedPenstock)

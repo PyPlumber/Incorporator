@@ -532,9 +532,7 @@ async def test_surge_barrier_bypass_forces_pass_under_extreme_upstream() -> None
     # future refactor moves the reject-append before the ``continue``,
     # this assertion catches it.
     bypass_class_rejects = [r for r in tw.rejects if r.error_kind in {"SkipAhead", "SurgeHalted"}]
-    assert not bypass_class_rejects, (
-        f"bypass path must not populate skip-class rejects; got {bypass_class_rejects}"
-    )
+    assert not bypass_class_rejects, f"bypass path must not populate skip-class rejects; got {bypass_class_rejects}"
 
 
 @pytest.mark.asyncio
@@ -726,16 +724,13 @@ async def test_awaiting_upstream_does_not_populate_rejects() -> None:
 
     # Test prerequisite: confirm awaiting_upstream skips were observed
     # in the telemetry stream (otherwise this test trivially passes).
-    awaiting_skips = [
-        reason for tide in tides for _name, reason in tide.skipped if reason == "awaiting_upstream"
-    ]
+    awaiting_skips = [reason for tide in tides for _name, reason in tide.skipped if reason == "awaiting_upstream"]
     assert awaiting_skips, "test prerequisite: must observe at least one 'awaiting_upstream' skip"
 
     # No canal-layer reject should have been recorded — awaiting_upstream
     # is a normal pre-first-wave state, not a failure mode.
     assert not tw.rejects, (
-        f"'awaiting_upstream' is a normal transient and must NOT populate "
-        f"Tideweaver.rejects; got {tw.rejects}"
+        f"'awaiting_upstream' is a normal transient and must NOT populate Tideweaver.rejects; got {tw.rejects}"
     )
 
 
@@ -1555,8 +1550,7 @@ async def test_spillway_fires_when_penstock_and_reservoir_both_active() -> None:
         f"must overflow; got overflow_count={edge_state.overflow_count}"
     )
     assert len(edge_state.waves) == 3, (
-        f"Reservoir bounded at depth=3 post-overflow; got "
-        f"len(waves)={len(edge_state.waves)}"
+        f"Reservoir bounded at depth=3 post-overflow; got len(waves)={len(edge_state.waves)}"
     )
 
     if "_tideweaver_snapshot" in _A.__dict__:
@@ -1835,9 +1829,7 @@ async def test_observer_does_not_fire_on_fire_for_bypassed_edges() -> None:
 
     # The bypass fired (B ticked despite A still running); no on_fire for the bypassed edge.
     fire_events_on_ab = [e for e in events if e[0] == "fire" and e[1] == ("a", "b")]
-    assert fire_events_on_ab == [], (
-        f"Bypassed edges must not emit on_fire events; got {fire_events_on_ab}"
-    )
+    assert fire_events_on_ab == [], f"Bypassed edges must not emit on_fire events; got {fire_events_on_ab}"
 
 
 # ---------------------------------------------------------------------------
@@ -1936,9 +1928,7 @@ async def test_phase_offset_with_hard_gated_upstream() -> None:
     tides = await _collect_tides(tw)
 
     b_skips = [reason for tide in tides for name, reason in tide.skipped if name == "b"]
-    assert "phase_offset" in b_skips, (
-        f"b must emit 'phase_offset' during warm-up; got {b_skips}"
-    )
+    assert "phase_offset" in b_skips, f"b must emit 'phase_offset' during warm-up; got {b_skips}"
     # awaiting_upstream may or may not appear depending on exact scheduling —
     # either gate can be the proximate skip cause on any given early pass.
     # The contract is that b eventually fires once both clear.
@@ -1946,8 +1936,7 @@ async def test_phase_offset_with_hard_gated_upstream() -> None:
     assert b_fires, "b must fire after phase_offset + gate clear"
     first_b = b_fires[0] - start
     assert first_b >= 0.15, (
-        f"b's first fire must be at or after phase_offset_sec=0.2 (allowing "
-        f"~0.05s slop); got {first_b:.3f}s"
+        f"b's first fire must be at or after phase_offset_sec=0.2 (allowing ~0.05s slop); got {first_b:.3f}s"
     )
 
 
@@ -3352,6 +3341,7 @@ async def test_tide_wake_reason_startup_on_first_pass() -> None:
 @pytest.mark.asyncio
 async def test_tide_canal_rejects_from_name_to_name_populated() -> None:
     """Canal-layer rejects carry from_name and to_name identifying the edge."""
+
     async def slow_a(current: Current) -> None:
         if current.name == "a":
             await asyncio.sleep(0.6)

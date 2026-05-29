@@ -125,9 +125,7 @@ def test_setup_class_logger_max_threads_eviction(
     assert "EvictA" not in _ACTIVE_LISTENERS
 
 
-def test_safe_log_filename_default_uses_relative_logs_dir(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_safe_log_filename_default_uses_relative_logs_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """``INCORPORATOR_LOG_DIR`` unset → logs land in ``./logs`` relative to CWD."""
     from incorporator.observability.logger import _safe_log_filename
 
@@ -141,9 +139,7 @@ def test_safe_log_filename_default_uses_relative_logs_dir(
     assert resolved.parent.exists()
 
 
-def test_safe_log_filename_honours_env_var_override(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_safe_log_filename_honours_env_var_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """``INCORPORATOR_LOG_DIR`` set → logs land at that absolute path.
 
     Senior-review pass-2 finding M-DOC2: containerised deployments
@@ -295,7 +291,7 @@ async def test_logged_stream_enable_logging_emits_waves(
     results = []
     async for wave in StreamLogModel.stream(
         incorp_params={"inc_file": str(data_file)},
-        refresh_params=None,                          # one-shot: skip refresh daemon
+        refresh_params=None,  # one-shot: skip refresh daemon
         enable_logging=True,
     ):
         results.append(wave)

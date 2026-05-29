@@ -81,25 +81,25 @@ def outflow(state):
     return rows
 '''
 
-BROKEN_OUTFLOW_SOURCE = '''
+BROKEN_OUTFLOW_SOURCE = """
 def outflow(state):
     raise ZeroDivisionError("simulated outflow failure")
-'''
+"""
 
-BAD_ARITY_OUTFLOW = '''
+BAD_ARITY_OUTFLOW = """
 def outflow(state, extra):
     return []
-'''
+"""
 
-NO_OUTFLOW_SOURCE = '''
+NO_OUTFLOW_SOURCE = """
 def transform(state):
     return []
-'''
+"""
 
-EMPTY_OUTFLOW_SOURCE = '''
+EMPTY_OUTFLOW_SOURCE = """
 def outflow(state):
     return []
-'''
+"""
 
 
 def _write_outflow(tmp_path: Path, source: str = OUTFLOW_SOURCE, filename: str = "coin_market.py") -> Path:
@@ -166,9 +166,7 @@ async def _drain(
 
 
 @pytest.mark.asyncio
-async def test_fjord_one_shot_combines_two_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_fjord_one_shot_combines_two_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Two sources + outflow() → dynamic CoinMarket class built, registry populated, export written."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
@@ -185,7 +183,11 @@ async def test_fjord_one_shot_combines_two_sources(
                 # defaults to {} (refresh runs); tests using one-shot must
                 # opt out explicitly.
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
-                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}, "refresh_params": None},
+                {
+                    "cls": BinanceFutures,
+                    "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             export_params={"file_path": str(out_file)},
@@ -219,9 +221,7 @@ async def test_fjord_one_shot_combines_two_sources(
 
 
 @pytest.mark.asyncio
-async def test_fjord_derives_class_name_from_stem(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_fjord_derives_class_name_from_stem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """outflow ``crypto_spread.py`` → dynamic class is named ``CryptoSpread``."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
@@ -238,7 +238,11 @@ async def test_fjord_derives_class_name_from_stem(
                 # defaults to {} (refresh runs); tests using one-shot must
                 # opt out explicitly.
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
-                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}, "refresh_params": None},
+                {
+                    "cls": BinanceFutures,
+                    "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             export_params={"file_path": str(out_file)},
@@ -252,9 +256,7 @@ async def test_fjord_derives_class_name_from_stem(
 
 
 @pytest.mark.asyncio
-async def test_fjord_empty_outflow_emits_zero_row_wave(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_fjord_empty_outflow_emits_zero_row_wave(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """outflow() returning [] → zero-row wave, no export file written, no dynamic class built."""
     monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
     monkeypatch.chdir(tmp_path)
@@ -271,7 +273,11 @@ async def test_fjord_empty_outflow_emits_zero_row_wave(
                 # defaults to {} (refresh runs); tests using one-shot must
                 # opt out explicitly.
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
-                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}, "refresh_params": None},
+                {
+                    "cls": BinanceFutures,
+                    "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             export_params={"file_path": str(out_file)},
@@ -306,7 +312,11 @@ async def test_fjord_outflow_error_yields_wave_with_failed_sources(
                 # defaults to {} (refresh runs); tests using one-shot must
                 # opt out explicitly.
                 {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
-                {"cls": BinanceFutures, "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"}, "refresh_params": None},
+                {
+                    "cls": BinanceFutures,
+                    "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                    "refresh_params": None,
+                },
             ],
             outflow=outflow_file,
             export_params={"file_path": str(out_file)},
@@ -419,8 +429,8 @@ async def test_fjord_per_stream_export(tmp_path: Path, monkeypatch: pytest.Monke
                     "cls": Coin,
                     "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"},
                     "export_params": {"file_path": str(coin_out)},
-                    "refresh_params": None,                # opt out of refresh daemon
-                    "export_interval": 0.01,               # tight tick — we break after first wave
+                    "refresh_params": None,  # opt out of refresh daemon
+                    "export_interval": 0.01,  # tight tick — we break after first wave
                 },
                 {
                     "cls": BinanceFutures,
@@ -431,7 +441,7 @@ async def test_fjord_per_stream_export(tmp_path: Path, monkeypatch: pytest.Monke
             outflow=outflow_file,
             export_params={"file_path": str(combined_out)},
         ),
-        until_ops={"export:Coin", "outflow:CoinMarket"},      # break once both seen
+        until_ops={"export:Coin", "outflow:CoinMarket"},  # break once both seen
     )
 
     operations = [a.operation for a in waves]
@@ -504,7 +514,7 @@ def test_resolve_per_source_interval_dict_miss_returns_none() -> None:
     from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
 
     entry = {"cls": Coin}
-    top = {"BinanceFutures": 5.0}              # no entry for Coin
+    top = {"BinanceFutures": 5.0}  # no entry for Coin
     assert _resolve_per_source_interval(top, entry, "refresh_interval") is None
 
 

@@ -34,8 +34,8 @@ def test_atomic_write_renames_on_success(tmp_path: Path) -> None:
     """Successful write moves the tempfile to the target path."""
     target = tmp_path / "out.txt"
     with atomic_write_path(target) as tmp:
-        assert tmp != target                            # different path during write
-        assert tmp.parent == target.parent              # sibling, same dir
+        assert tmp != target  # different path during write
+        assert tmp.parent == target.parent  # sibling, same dir
         tmp.write_text("payload", encoding="utf-8")
     assert target.exists()
     assert target.read_text(encoding="utf-8") == "payload"

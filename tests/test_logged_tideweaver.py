@@ -53,7 +53,9 @@ async def test_logged_tideweaver_logging_disabled_matches_base(
     """
     monkeypatch.chdir(tmp_path)
 
-    ws = Watershed.parallel(window=_short_window(0.2), currents=[Stream(name="src", cls=_Src, interval=0.05, incorp_params={})])
+    ws = Watershed.parallel(
+        window=_short_window(0.2), currents=[Stream(name="src", cls=_Src, interval=0.05, incorp_params={})]
+    )
 
     logged_tides: List[Tide] = []
     async for tide in LoggedTideweaver(ws, tick_factory=_noop_tick, pass_interval=0.05, enable_logging=False).run():

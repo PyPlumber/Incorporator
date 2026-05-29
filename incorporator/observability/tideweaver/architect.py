@@ -1589,12 +1589,11 @@ def _tune_parent_child(
     Two layered signals:
 
     1. Wave-field scan (high-confidence, forward-looking): waves with
-       ``filter_match_count == 0`` indicate the parent_filter matched no
-       rows; waves with ``parent_snapshot_size == 0`` indicate the upstream
-       snapshot was empty. The current scheduler returns early BEFORE
-       emitting a Wave on these paths, so this branch is dormant under the
-       v1.2.x scheduler but ready to activate if/when a future chain
-       instruments those fields before early-return.
+       ``parent_snapshot_size == 0`` indicate the upstream snapshot was
+       empty. The current scheduler returns early BEFORE emitting a Wave
+       on these paths, so this branch is dormant under the v1.2.x scheduler
+       but ready to activate if/when a future chain instruments those fields
+       before early-return.
     2. Tide-frequency rule (coarse, currently-actionable): a current that
        fires >= threshold tides AND the wave pool is empty globally signals
        a current is firing without producing waves. Per-current scope.
@@ -1607,7 +1606,7 @@ def _tune_parent_child(
 
     Returns:
         A list of :class:`TuningHint` objects with ``knob`` set to
-        ``"parent_filter"`` or ``"parent_current"``.
+        ``"parent_current"``.
     """
     hints: list[TuningHint] = []
 
@@ -1615,25 +1614,7 @@ def _tune_parent_child(
         return hints
 
     # Wave-field scan (forward-looking — dormant under v1.2.x scheduler).
-    zero_filter_count = sum(1 for w in waves if w.filter_match_count == 0)
     zero_snap_count = sum(1 for w in waves if w.parent_snapshot_size == 0)
-
-    if zero_filter_count > 0:
-        hints.append(
-            TuningHint.model_construct(
-                severity="high",
-                knob="parent_filter",
-                scope={"global": "watershed"},
-                current_value=None,
-                recommended_value=None,
-                signal=f"{zero_filter_count} waves with filter_match_count=0",
-                rationale=(
-                    "parent_filter matched zero rows; check the predicate attribute name "
-                    "and value range — a typo returns None for every row and matches nothing."
-                ),
-                sample_size=zero_filter_count,
-            )
-        )
 
     if zero_snap_count > 0:
         hints.append(
@@ -1673,7 +1654,7 @@ def _tune_parent_child(
                         rationale=(
                             f"Current {name!r} fired {count} times but produced no waves — "
                             f"possible parent-child silent-skip; check parent_current is firing "
-                            f"and parent_filter is not too restrictive."
+                            f"and the parent's source-side filter is not too restrictive."
                         ),
                         sample_size=count,
                     )

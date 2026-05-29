@@ -59,6 +59,7 @@ def reset_active_listeners() -> Generator[None, None, None]:
                         pass
                 del _ACTIVE_LISTENERS[key]
 
+
 # --- JSON FIXTURES ---
 
 

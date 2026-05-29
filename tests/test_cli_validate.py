@@ -106,11 +106,7 @@ def test_validate_fjord_outflow_missing(tmp_path: Path) -> None:
 
 
 def test_validate_fjord_outflow_wrong_arity(tmp_path: Path) -> None:
-    src = (
-        "from incorporator import Incorporator\n"
-        "class A(Incorporator): pass\n"
-        "def outflow(state, extra): return []\n"
-    )
+    src = "from incorporator import Incorporator\nclass A(Incorporator): pass\ndef outflow(state, extra): return []\n"
     cfg, _ = _write_fjord(tmp_path, module_src=src)
     errs = validate_fjord_config(cfg, tmp_path)
     assert any("exactly 1 parameter" in e for e in errs)

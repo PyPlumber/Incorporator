@@ -167,6 +167,7 @@ async def test_web_paginator_penstock_composes_with_host_throttle(
     )
     # Bind the paginator's fetch_func the same way Incorporator.stream would.
     async with httpx.AsyncClient() as client:
+
         async def bound_fetch(url: str, request_params: Any = None, **_: Any) -> httpx.Response:
             return await fetch.execute_request(
                 url=url,
@@ -233,6 +234,7 @@ async def test_default_paginator_unchanged_behavior(
     assert isinstance(paginator.penstock, NullPenstock)
 
     async with httpx.AsyncClient() as client:
+
         async def bound_fetch(url: str, request_params: Any = None, **_: Any) -> httpx.Response:
             return await fetch.execute_request(
                 url=url,

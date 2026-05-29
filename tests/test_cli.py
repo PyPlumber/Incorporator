@@ -145,7 +145,7 @@ def test_cli_fatal_exception_in_stream(tmp_path: Path) -> None:
 # FJORD SUBCOMMAND
 # ==========================================
 
-FJORD_USER_MODULE_SRC = '''
+FJORD_USER_MODULE_SRC = """
 from incorporator import Incorporator
 
 class Coin(Incorporator):
@@ -156,7 +156,7 @@ class BinanceFutures(Incorporator):
 
 def outflow(state):
     return [{"inc_code": "stub", "marker": "ok"}]
-'''
+"""
 
 
 def _write_fjord_fixture(tmp_path: Path) -> tuple[Path, Path]:
@@ -187,12 +187,8 @@ def _write_fjord_fixture(tmp_path: Path) -> tuple[Path, Path]:
 
 async def mock_fjord(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
     """Mocks the fjord async generator to yield two waves and exit."""
-    yield Wave(
-        chunk_index=1, operation="fjord_incorp:Coin", rows_processed=10, processing_time_sec=0.1
-    )
-    yield Wave(
-        chunk_index=1, operation="outflow:CoinMarket", rows_processed=10, processing_time_sec=0.2
-    )
+    yield Wave(chunk_index=1, operation="fjord_incorp:Coin", rows_processed=10, processing_time_sec=0.1)
+    yield Wave(chunk_index=1, operation="outflow:CoinMarket", rows_processed=10, processing_time_sec=0.2)
 
 
 def test_cli_fjord_success(tmp_path: Path) -> None:
@@ -282,9 +278,7 @@ def test_cli_fjord_stream_missing_cls_name(tmp_path: Path) -> None:
 def test_cli_validate_stream_ok(tmp_path: Path) -> None:
     """A well-formed stream config validates cleanly."""
     cfg = tmp_path / "pipeline.json"
-    cfg.write_text(
-        json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8"
-    )
+    cfg.write_text(json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8")
     result = runner.invoke(app, ["validate", str(cfg)])
     assert result.exit_code == 0, result.stdout
     assert "is valid" in result.stdout
@@ -310,9 +304,7 @@ def test_cli_validate_fjord_missing_outflow(tmp_path: Path) -> None:
     """outflow file without a top-level outflow() function fails fjord validation."""
     user_module = tmp_path / "broken_fjord.py"
     user_module.write_text(
-        "from incorporator import Incorporator\n"
-        "class A(Incorporator): pass\n"
-        "# no outflow() defined\n",
+        "from incorporator import Incorporator\nclass A(Incorporator): pass\n# no outflow() defined\n",
         encoding="utf-8",
     )
     cfg = tmp_path / "fjord.json"
@@ -462,9 +454,7 @@ def test_cli_fjord_json_output_emits_ndjson(tmp_path: Path) -> None:
 def test_cli_stream_heartbeat_file_touched(tmp_path: Path) -> None:
     """--heartbeat-file causes the CLI to touch the path after every wave."""
     cfg = tmp_path / "pipeline.json"
-    cfg.write_text(
-        json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8"
-    )
+    cfg.write_text(json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8")
     heartbeat = tmp_path / "hb.beat"
     assert not heartbeat.exists()
 

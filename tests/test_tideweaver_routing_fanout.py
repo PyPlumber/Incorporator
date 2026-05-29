@@ -165,7 +165,13 @@ async def _mock_rick_and_morty_chars(url: str, *args: Any, **kwargs: Any) -> htt
     payload = {
         "info": {"next": None},
         "results": [
-            {"id": 1, "name": "Rick", "status": "Alive", "species": "Human", "episode": ["https://x/e/1", "https://x/e/2"]},
+            {
+                "id": 1,
+                "name": "Rick",
+                "status": "Alive",
+                "species": "Human",
+                "episode": ["https://x/e/1", "https://x/e/2"],
+            },
             {"id": 2, "name": "Morty", "status": "Alive", "species": "Human", "episode": ["https://x/e/1"]},
             {"id": 3, "name": "Birdperson", "status": "Dead", "species": "Bird-Person", "episode": ["https://x/e/2"]},
         ],
@@ -174,9 +180,7 @@ async def _mock_rick_and_morty_chars(url: str, *args: Any, **kwargs: Any) -> htt
 
 
 @pytest.mark.asyncio
-async def test_fanout_one_stream_to_three_heterogeneous_fjords(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_fanout_one_stream_to_three_heterogeneous_fjords(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """One head Stream fans out to three Fjords with different outflow logic.
 
     Proves: (a) ``Watershed.fanout`` produces edges source→each-sink; (b)
@@ -284,9 +288,7 @@ async def test_fanout_one_stream_to_three_heterogeneous_fjords(
     last_alive = json.loads(alive_lines[-1])
     assert last_alive["count"] == 2 and last_alive["total"] == 3, f"alive count mismatch: {last_alive}"
 
-    species_lines = [
-        ln for ln in (tmp_path / "species.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()
-    ]
+    species_lines = [ln for ln in (tmp_path / "species.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert species_lines, "species Fjord must write at least one row"
     species_rows = [json.loads(ln) for ln in species_lines]
     by_species = {r["inc_code"]: r["count"] for r in species_rows}
@@ -302,7 +304,9 @@ async def test_fanout_one_stream_to_three_heterogeneous_fjords(
     # Rick has 2 episodes, Morty has 1, Birdperson has 1 → 4 appearances per flush.
     # The fjord may flush multiple times; sample the LATEST batch's character names.
     unique_chars = {r["character"] for r in appearance_rows}
-    assert unique_chars == {"Rick", "Morty", "Birdperson"}, f"appearances must cover every character, got {unique_chars}"
+    assert unique_chars == {"Rick", "Morty", "Birdperson"}, (
+        f"appearances must cover every character, got {unique_chars}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -321,9 +325,7 @@ async def _mock_albums(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
 
 
 @pytest.mark.asyncio
-async def test_fanout_two_fjords_plus_one_export_share_upstream(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_fanout_two_fjords_plus_one_export_share_upstream(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """A fanout with 2 Fjords + 1 Export — the Export bypasses outflow().
 
     Proves: (a) ``Watershed.fanout`` accepts mixed-verb sinks (Fjord + Export);
@@ -442,20 +444,53 @@ async def _mock_thesportsdb(url: str, *args: Any, **kwargs: Any) -> httpx.Respon
     """Canned TheSportsDB response — EPL roster with mixed positions + stats."""
     payload = {
         "players": [
-            {"idPlayer": "1", "strPlayer": "Harry Kane", "strTeam": "Tottenham", "strPosition": "Forward", "intGoals": "25", "intAssists": "8"},
-            {"idPlayer": "2", "strPlayer": "Mohamed Salah", "strTeam": "Liverpool", "strPosition": "forward", "intGoals": "22", "intAssists": "12"},
-            {"idPlayer": "3", "strPlayer": "Kevin De Bruyne", "strTeam": "Man City", "strPosition": "Midfielder", "intGoals": "10", "intAssists": "20"},
-            {"idPlayer": "4", "strPlayer": "Virgil van Dijk", "strTeam": "Liverpool", "strPosition": "Defender", "intGoals": "3", "intAssists": "1"},
-            {"idPlayer": "5", "strPlayer": "Ruben Dias", "strTeam": "Man City", "strPosition": "Defender", "intGoals": "2", "intAssists": "0"},
+            {
+                "idPlayer": "1",
+                "strPlayer": "Harry Kane",
+                "strTeam": "Tottenham",
+                "strPosition": "Forward",
+                "intGoals": "25",
+                "intAssists": "8",
+            },
+            {
+                "idPlayer": "2",
+                "strPlayer": "Mohamed Salah",
+                "strTeam": "Liverpool",
+                "strPosition": "forward",
+                "intGoals": "22",
+                "intAssists": "12",
+            },
+            {
+                "idPlayer": "3",
+                "strPlayer": "Kevin De Bruyne",
+                "strTeam": "Man City",
+                "strPosition": "Midfielder",
+                "intGoals": "10",
+                "intAssists": "20",
+            },
+            {
+                "idPlayer": "4",
+                "strPlayer": "Virgil van Dijk",
+                "strTeam": "Liverpool",
+                "strPosition": "Defender",
+                "intGoals": "3",
+                "intAssists": "1",
+            },
+            {
+                "idPlayer": "5",
+                "strPlayer": "Ruben Dias",
+                "strTeam": "Man City",
+                "strPosition": "Defender",
+                "intGoals": "2",
+                "intAssists": "0",
+            },
         ]
     }
     return httpx.Response(200, text=json.dumps(payload), request=httpx.Request("GET", url))
 
 
 @pytest.mark.asyncio
-async def test_fanout_thesportsdb_epl_top_lists(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_fanout_thesportsdb_epl_top_lists(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """TheSportsDB EPL roster fans out to top-scorers / top-assists / top-defenders.
 
     Proves: (a) fanout works against a third sports-API shape (TheSportsDB
@@ -553,9 +588,7 @@ async def test_fanout_thesportsdb_epl_top_lists(
     )
 
     # Top scorers Fjord ranked by goals.
-    scorer_lines = [
-        ln for ln in (tmp_path / "scorers.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()
-    ]
+    scorer_lines = [ln for ln in (tmp_path / "scorers.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert scorer_lines, "top_scorers Fjord must write rows"
     # Each flush emits 3 rows (top 3). Take the LAST 3 as the latest flush.
     latest_scorers = [json.loads(ln) for ln in scorer_lines[-3:]]
@@ -563,12 +596,12 @@ async def test_fanout_thesportsdb_epl_top_lists(
     assert latest_scorers[0]["goals"] == 25
 
     # Top assists Fjord ranked by assists.
-    assist_lines = [
-        ln for ln in (tmp_path / "assists.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()
-    ]
+    assist_lines = [ln for ln in (tmp_path / "assists.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert assist_lines, "top_assists Fjord must write rows"
     latest_assists = [json.loads(ln) for ln in assist_lines[-3:]]
-    assert latest_assists[0]["inc_code"] == "Kevin De Bruyne", f"top assister must be KDB (20 assists): {latest_assists}"
+    assert latest_assists[0]["inc_code"] == "Kevin De Bruyne", (
+        f"top assister must be KDB (20 assists): {latest_assists}"
+    )
 
     # Top defenders Fjord filtered by position.
     defender_lines = [

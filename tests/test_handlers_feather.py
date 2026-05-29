@@ -37,7 +37,9 @@ def test_feather_write_then_parse_round_trip(tmp_path: Path) -> None:
     """Write 3 rows, parse back, every field intact."""
     feather_path = tmp_path / "users.feather"
     handler = FeatherHandler()
-    handler.write(DUMMY_DATA, feather_path, pydantic_schema=SCHEMA_HINT, all_field_names=list(SCHEMA_HINT["properties"]))
+    handler.write(
+        DUMMY_DATA, feather_path, pydantic_schema=SCHEMA_HINT, all_field_names=list(SCHEMA_HINT["properties"])
+    )
     assert feather_path.exists()
 
     rows = handler.parse(feather_path)
@@ -64,7 +66,9 @@ def test_feather_parse_from_bytes(tmp_path: Path) -> None:
     """Bytes-source parse path must work (e.g. from an HTTP response)."""
     feather_path = tmp_path / "src.feather"
     handler = FeatherHandler()
-    handler.write(DUMMY_DATA, feather_path, pydantic_schema=SCHEMA_HINT, all_field_names=list(SCHEMA_HINT["properties"]))
+    handler.write(
+        DUMMY_DATA, feather_path, pydantic_schema=SCHEMA_HINT, all_field_names=list(SCHEMA_HINT["properties"])
+    )
     raw = feather_path.read_bytes()
     rows = handler.parse(raw)
     assert len(rows) == 3

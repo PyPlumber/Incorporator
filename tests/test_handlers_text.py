@@ -202,7 +202,6 @@ def test_xml_parse_recovery_from_whitespace(mock_no_speedups, monkeypatch: pytes
     assert "recovered" in str(result)
 
 
-
 # ==========================================
 # Auto-mkdir on export (handler dispatcher behaviour)
 # ==========================================
@@ -241,10 +240,6 @@ async def test_write_destination_data_creates_missing_parent_dir(tmp_path: Path)
     # bytes.
     import json as _stdlib_json
 
-    rows = [
-        _stdlib_json.loads(line)
-        for line in target.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    rows = [_stdlib_json.loads(line) for line in target.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert {r["id"] for r in rows} == {"X", "Y"}
     assert {r["v"] for r in rows} == {1, 2}

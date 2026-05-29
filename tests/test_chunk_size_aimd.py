@@ -93,7 +93,9 @@ async def _collect_waves(
     )
 
     with ctx:
-        with patch("incorporator.observability.pipeline.chunked._enrich_and_load", new=AsyncMock(side_effect=_noop_enrich)):
+        with patch(
+            "incorporator.observability.pipeline.chunked._enrich_and_load", new=AsyncMock(side_effect=_noop_enrich)
+        ):
             gen: AsyncGenerator[Wave, None] = _run_chunking_engine(
                 cls=_MockCls,
                 incorp_params={},

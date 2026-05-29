@@ -83,8 +83,10 @@ async def test_incorp_inc_file_accepts_pathlib_path(tmp_path: Path) -> None:
 
     src = tmp_path / "coins.ndjson"
     src.write_text(
-        json.dumps({"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}) + "\n"
-        + json.dumps({"id": "ethereum", "symbol": "eth", "name": "Ethereum"}) + "\n",
+        json.dumps({"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"})
+        + "\n"
+        + json.dumps({"id": "ethereum", "symbol": "eth", "name": "Ethereum"})
+        + "\n",
         encoding="utf-8",
     )
 
@@ -246,9 +248,7 @@ async def test_fetch_concurrent_non_429_error_does_not_cancel_siblings(
 
     call_count = {"value": 0}
 
-    async def fake_process_single(
-        src: str, is_file_mode: bool, client: Any, rate_limiter: Any, **_kw: Any
-    ) -> list:
+    async def fake_process_single(src: str, is_file_mode: bool, client: Any, rate_limiter: Any, **_kw: Any) -> list:
         call_count["value"] += 1
         if "bad" in src:
             raise IncorporatorNetworkError(f"HTTP error 503 on {src}")
@@ -717,7 +717,9 @@ async def test_rec_path_integer_index_drills_nested_array(
     payload = {"records": [{"teamRecords": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]}]}
     monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
 
-    result = await _Team.incorp(inc_url="https://api.example.com/teams", inc_code="id", rec_path="records.0.teamRecords")
+    result = await _Team.incorp(
+        inc_url="https://api.example.com/teams", inc_code="id", rec_path="records.0.teamRecords"
+    )
     assert len(result) == 2
     assert result.inc_dict[1].name == "a"
     assert result.inc_dict[2].name == "b"
@@ -865,9 +867,7 @@ async def test_rec_path_dict_only_smoke_post_drill_path_refactor(
     payload = {"data": {"items": [{"id": 10}, {"id": 20}]}}
     monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
 
-    result = await _Item.incorp(
-        inc_url="https://api.example.com/items", inc_code="id", rec_path="data.items"
-    )
+    result = await _Item.incorp(inc_url="https://api.example.com/items", inc_code="id", rec_path="data.items")
     assert len(result) == 2
     assert result.inc_dict[10].id == 10
     assert result.inc_dict[20].id == 20

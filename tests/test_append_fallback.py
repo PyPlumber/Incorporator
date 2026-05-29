@@ -75,15 +75,9 @@ def test_resolver_user_override_always_wins() -> None:
     """Explicit if_exists from the user beats every other branch."""
     # Monolithic format + user says append → user wins (caller will see
     # the handler's IncorporatorFormatError, that's fine — they asked for it).
-    assert (
-        _resolve_if_exists_for_export("out.parquet", force_append=True, user_override="append")
-        == "append"
-    )
+    assert _resolve_if_exists_for_export("out.parquet", force_append=True, user_override="append") == "append"
     # Append-friendly + user says replace → user wins.
-    assert (
-        _resolve_if_exists_for_export("out.ndjson", force_append=True, user_override="replace")
-        == "replace"
-    )
+    assert _resolve_if_exists_for_export("out.ndjson", force_append=True, user_override="replace") == "replace"
 
 
 def test_resolver_first_tick_returns_none() -> None:
@@ -95,18 +89,18 @@ def test_resolver_first_tick_returns_none() -> None:
 def test_resolver_subsequent_tick_append_friendly_returns_append() -> None:
     """Subsequent ticks on NDJSON / CSV / SQLite / Avro inject 'append'."""
     for path in ("out.ndjson", "out.csv", "out.tsv", "out.psv", "out.sqlite", "out.avro"):
-        assert (
-            _resolve_if_exists_for_export(path, force_append=True, user_override=None) == "append"
-        ), f"{path} should append on subsequent ticks"
+        assert _resolve_if_exists_for_export(path, force_append=True, user_override=None) == "append", (
+            f"{path} should append on subsequent ticks"
+        )
 
 
 def test_resolver_subsequent_tick_monolithic_returns_replace() -> None:
     """Subsequent ticks on monolithic formats downgrade to 'replace' so the
     file always holds the latest snapshot rather than crashing."""
     for path in ("out.parquet", "out.feather", "out.orc", "out.xlsx", "out.xml", "out.json"):
-        assert (
-            _resolve_if_exists_for_export(path, force_append=True, user_override=None) == "replace"
-        ), f"{path} should replace on subsequent ticks"
+        assert _resolve_if_exists_for_export(path, force_append=True, user_override=None) == "replace", (
+            f"{path} should replace on subsequent ticks"
+        )
 
 
 # ==========================================
@@ -126,9 +120,7 @@ async def test_enrich_and_load_append_friendly_format_appends() -> None:
         export_params={"file_path": "/tmp/out.ndjson"},
         force_append=True,
     )
-    cls.export.assert_awaited_once_with(
-        instance=[{"id": 1}], file_path="/tmp/out.ndjson", if_exists="append"
-    )
+    cls.export.assert_awaited_once_with(instance=[{"id": 1}], file_path="/tmp/out.ndjson", if_exists="append")
 
 
 @pytest.mark.asyncio
@@ -144,9 +136,7 @@ async def test_enrich_and_load_monolithic_format_replaces() -> None:
         export_params={"file_path": "/tmp/out.parquet"},
         force_append=True,
     )
-    cls.export.assert_awaited_once_with(
-        instance=[{"id": 1}], file_path="/tmp/out.parquet", if_exists="replace"
-    )
+    cls.export.assert_awaited_once_with(instance=[{"id": 1}], file_path="/tmp/out.parquet", if_exists="replace")
 
 
 # ==========================================

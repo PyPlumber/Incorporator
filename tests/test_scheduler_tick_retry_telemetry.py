@@ -50,9 +50,7 @@ async def _collect_tides(tw: Tideweaver) -> list[Any]:
 
 
 @pytest.mark.asyncio
-async def test_restart_exhausted_attempt_number_on_exception(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-) -> None:
+async def test_restart_exhausted_attempt_number_on_exception(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """on_error=restart _tick_wrapper attaches _incorporator_attempt_number=5 to the exception.
 
     Calls _tick_wrapper directly (not through the full run loop) and captures
@@ -107,9 +105,7 @@ async def test_restart_exhausted_attempt_number_on_exception(
     await tw._tick_wrapper(stream, consumed_snapshot={})
 
     assert len(captured_attempt) == 1, f"logger.error must be called exactly once; got {captured_attempt}"
-    assert captured_attempt[0] == 5, (
-        f"Expected attempt_number=5 after stop_after_attempt(5); got {captured_attempt[0]}"
-    )
+    assert captured_attempt[0] == 5, f"Expected attempt_number=5 after stop_after_attempt(5); got {captured_attempt[0]}"
     assert call_count == 5, f"Expected 5 call attempts; got {call_count}"
 
 
@@ -119,9 +115,7 @@ async def test_restart_exhausted_attempt_number_on_exception(
 
 
 @pytest.mark.asyncio
-async def test_isolate_path_does_not_crash_siblings(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-) -> None:
+async def test_isolate_path_does_not_crash_siblings(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """on_error=isolate: failing current is contained; healthy siblings keep firing.
 
     The isolate path catches the exception inside the per-current try/except
@@ -172,9 +166,7 @@ async def test_isolate_path_does_not_crash_siblings(
 
 
 @pytest.mark.asyncio
-async def test_restart_success_does_not_crash(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-) -> None:
+async def test_restart_success_does_not_crash(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """on_error=restart current that succeeds on first attempt runs normally.
 
     Verifies that the retrying hoist change does not break the happy path —

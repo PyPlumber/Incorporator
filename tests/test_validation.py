@@ -399,10 +399,7 @@ async def test_effective_conv_cache_invalidates_on_schema_union_growth(tmp_path:
 
     # Key embeds len(schema_union); v2 added the "extra" field so the
     # union grew → key differs → cache rebuilt.
-    assert key_v1 != key_v2, (
-        f"cache key should change when schema_union grows; "
-        f"got identical keys {key_v1} == {key_v2}"
-    )
+    assert key_v1 != key_v2, f"cache key should change when schema_union grows; got identical keys {key_v1} == {key_v2}"
 
     # Behavioral check: the cached TUPLE-AS-A-WHOLE must be a fresh
     # object after the rebuild.  The cache-write site at factory.py

@@ -43,8 +43,8 @@ RESERVOIR_DEPTH = 10
 # Measurements on commodity hardware: DropOldest ~1.2-1.5M ops/sec,
 # RaiseOverflow ~700-840k ops/sec (with WARN suppressed at the logger
 # level — see the RaiseOverflow test docstring for rationale).
-DROP_OLDEST_FLOOR_OPS_PER_SEC = 800_000      # deque-only — slowest of 3 × 0.7 = 864k → 800k
-RAISE_OVERFLOW_FLOOR_OPS_PER_SEC = 500_000   # WARN-suppressed dispatch — slowest of 3 × 0.7 = 500k
+DROP_OLDEST_FLOOR_OPS_PER_SEC = 800_000  # deque-only — slowest of 3 × 0.7 = 864k → 800k
+RAISE_OVERFLOW_FLOOR_OPS_PER_SEC = 500_000  # WARN-suppressed dispatch — slowest of 3 × 0.7 = 500k
 
 
 def _build_mock_wave(idx: int) -> List[int]:
@@ -87,9 +87,7 @@ def test_reservoir_drop_oldest_throughput() -> None:
     edge = ("up", "down")
 
     t0 = time.perf_counter()
-    overflow_count = _push_with_spillway(
-        waves, spillway, edge, push_count=PUSH_COUNT, depth=RESERVOIR_DEPTH
-    )
+    overflow_count = _push_with_spillway(waves, spillway, edge, push_count=PUSH_COUNT, depth=RESERVOIR_DEPTH)
     elapsed = time.perf_counter() - t0
 
     expected_overflow = PUSH_COUNT - RESERVOIR_DEPTH
@@ -97,10 +95,7 @@ def test_reservoir_drop_oldest_throughput() -> None:
     assert len(waves) == RESERVOIR_DEPTH
 
     ops_per_sec = PUSH_COUNT / elapsed
-    print(
-        f"\n  Reservoir (DropOldest):    {PUSH_COUNT:,} pushes in "
-        f"{elapsed:.3f}s = {ops_per_sec:,.0f} ops/sec"
-    )
+    print(f"\n  Reservoir (DropOldest):    {PUSH_COUNT:,} pushes in {elapsed:.3f}s = {ops_per_sec:,.0f} ops/sec")
 
     assert ops_per_sec >= DROP_OLDEST_FLOOR_OPS_PER_SEC, (
         f"Reservoir throughput dropped to {ops_per_sec:,.0f} ops/sec "
@@ -135,9 +130,7 @@ def test_reservoir_raise_overflow_throughput() -> None:
     flow_logger.setLevel(logging.CRITICAL)
     try:
         t0 = time.perf_counter()
-        overflow_count = _push_with_spillway(
-            waves, spillway, edge, push_count=PUSH_COUNT, depth=RESERVOIR_DEPTH
-        )
+        overflow_count = _push_with_spillway(waves, spillway, edge, push_count=PUSH_COUNT, depth=RESERVOIR_DEPTH)
         elapsed = time.perf_counter() - t0
     finally:
         flow_logger.setLevel(prev_level)
@@ -146,10 +139,7 @@ def test_reservoir_raise_overflow_throughput() -> None:
     assert overflow_count == expected_overflow
 
     ops_per_sec = PUSH_COUNT / elapsed
-    print(
-        f"\n  Reservoir (RaiseOverflow): {PUSH_COUNT:,} pushes in "
-        f"{elapsed:.3f}s = {ops_per_sec:,.0f} ops/sec"
-    )
+    print(f"\n  Reservoir (RaiseOverflow): {PUSH_COUNT:,} pushes in {elapsed:.3f}s = {ops_per_sec:,.0f} ops/sec")
 
     assert ops_per_sec >= RAISE_OVERFLOW_FLOOR_OPS_PER_SEC, (
         f"Reservoir throughput with WARN-log spillway dropped to "

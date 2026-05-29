@@ -121,9 +121,7 @@ async def _mock_jsonplaceholder_chain(url: str, *args: Any, **kwargs: Any) -> ht
 
 
 @pytest.mark.asyncio
-async def test_chain_three_streams_apply_conv_dict_in_order(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_chain_three_streams_apply_conv_dict_in_order(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Three Streams in a weir-mode chain each apply conv_dict independently.
 
     Uses ``Watershed.chain(..., gate_mode="weir")`` — the third gating
@@ -177,9 +175,7 @@ async def test_chain_three_streams_apply_conv_dict_in_order(
     # not gated on upstream waves. This lets all three fire on their own
     # cadence within a tight test window. Test 2 below exercises hard-chain
     # ordering with three currents (chars → eps → joined Fjord).
-    ws = Watershed.chain(
-        window=_short_window(8.0), currents=[users, posts, comments], gate_mode="weir"
-    )
+    ws = Watershed.chain(window=_short_window(8.0), currents=[users, posts, comments], gate_mode="weir")
     tw = Tideweaver(ws, pass_interval=0.05)
     tides = [tide async for tide in tw.run()]
 
@@ -224,15 +220,30 @@ async def _mock_rick_and_morty(url: str, *args: Any, **kwargs: Any) -> httpx.Res
             "info": {"next": None},
             "results": [
                 {"id": 1, "name": "Rick Sanchez", "status": "Alive", "episode": ["https://x/episode/1"]},
-                {"id": 2, "name": "Morty Smith", "status": "Alive", "episode": ["https://x/episode/1", "https://x/episode/2"]},
+                {
+                    "id": 2,
+                    "name": "Morty Smith",
+                    "status": "Alive",
+                    "episode": ["https://x/episode/1", "https://x/episode/2"],
+                },
             ],
         }
     elif "/episode" in url:
         payload = {
             "info": {"next": None},
             "results": [
-                {"id": 1, "name": "Pilot", "air_date": "December 2, 2013", "characters": ["https://x/character/1", "https://x/character/2"]},
-                {"id": 2, "name": "Lawnmower Dog", "air_date": "December 9, 2013", "characters": ["https://x/character/2"]},
+                {
+                    "id": 1,
+                    "name": "Pilot",
+                    "air_date": "December 2, 2013",
+                    "characters": ["https://x/character/1", "https://x/character/2"],
+                },
+                {
+                    "id": 2,
+                    "name": "Lawnmower Dog",
+                    "air_date": "December 9, 2013",
+                    "characters": ["https://x/character/2"],
+                },
             ],
         }
     else:

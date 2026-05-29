@@ -77,7 +77,9 @@ async def test_enrich_and_load_refresh_only() -> None:
     cls.refresh = AsyncMock()
     dataset: List[Any] = [{"id": 1}]
 
-    await _enrich_and_load(cls, dataset, refresh_params={"new_url": "https://x"}, export_params=None, force_append=False)
+    await _enrich_and_load(
+        cls, dataset, refresh_params={"new_url": "https://x"}, export_params=None, force_append=False
+    )
 
     cls.refresh.assert_awaited_once_with(instance=dataset, new_url="https://x")
 
@@ -117,7 +119,7 @@ async def test_enrich_and_load_force_append_falls_back_to_replace_for_monolithic
     cls = MagicMock()
     cls.export = AsyncMock()
     dataset: List[Any] = [{"id": 1}]
-    original_params = {"file_path": "/tmp/out.json"}                # monolithic JSON
+    original_params = {"file_path": "/tmp/out.json"}  # monolithic JSON
 
     await _enrich_and_load(cls, dataset, refresh_params=None, export_params=original_params, force_append=True)
 
@@ -154,7 +156,9 @@ async def test_refresh_daemon_single_run_enqueues_wave() -> None:
     q: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
     shutdown = asyncio.Event()
 
-    await _refresh_daemon(cls, dataset_ref, refresh_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, r_interval=None)
+    await _refresh_daemon(
+        cls, dataset_ref, refresh_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, r_interval=None
+    )
 
     assert dataset_ref[0] == refreshed
     assert q.qsize() == 1
@@ -175,7 +179,9 @@ async def test_refresh_daemon_error_enqueues_failure_result() -> None:
     q: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
     shutdown = asyncio.Event()
 
-    await _refresh_daemon(cls, dataset_ref, refresh_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, r_interval=None)
+    await _refresh_daemon(
+        cls, dataset_ref, refresh_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, r_interval=None
+    )
 
     wave = q.get_nowait()
     assert wave is not None
@@ -200,7 +206,13 @@ async def test_export_daemon_single_run_enqueues_wave() -> None:
     shutdown = asyncio.Event()
 
     await _export_daemon(
-        cls, dataset_ref, export_params={"file_path": "/tmp/x"}, lock=lock, wave_queue=q, shutdown_event=shutdown, e_interval=None
+        cls,
+        dataset_ref,
+        export_params={"file_path": "/tmp/x"},
+        lock=lock,
+        wave_queue=q,
+        shutdown_event=shutdown,
+        e_interval=None,
     )
 
     cls.export.assert_awaited_once()
@@ -241,7 +253,7 @@ async def test_export_daemon_stateful_does_not_append_on_subsequent_ticks() -> N
         _export_daemon(
             cls=cls,
             dataset_ref=dataset_ref,
-            export_params={"file_path": "/tmp/snapshot.ndjson"},   # append-friendly fmt
+            export_params={"file_path": "/tmp/snapshot.ndjson"},  # append-friendly fmt
             lock=lock,
             wave_queue=q,
             shutdown_event=shutdown,
@@ -282,7 +294,7 @@ async def test_export_daemon_user_can_opt_into_append() -> None:
         lock=lock,
         wave_queue=q,
         shutdown_event=shutdown,
-        e_interval=None,   # single-shot
+        e_interval=None,  # single-shot
     )
 
     cls.export.assert_awaited_once()
@@ -300,7 +312,9 @@ async def test_export_daemon_error_enqueues_failure_result() -> None:
     q: asyncio.Queue[Optional[Wave]] = asyncio.Queue()
     shutdown = asyncio.Event()
 
-    await _export_daemon(cls, dataset_ref, export_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, e_interval=None)
+    await _export_daemon(
+        cls, dataset_ref, export_params={}, lock=lock, wave_queue=q, shutdown_event=shutdown, e_interval=None
+    )
 
     wave = q.get_nowait()
     assert wave is not None

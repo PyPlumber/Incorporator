@@ -64,6 +64,4 @@ async def test_json_streaming_throughput(tmp_path: Path) -> None:
     # File must be a valid JSON array
     assert out_path.read_text(encoding="utf-8").lstrip().startswith("[")
 
-    assert throughput >= 50_000, (
-        f"JSON throughput {throughput:,.0f} rows/sec is below 50k floor."
-    )
+    assert throughput >= 50_000, f"JSON throughput {throughput:,.0f} rows/sec is below 50k floor."

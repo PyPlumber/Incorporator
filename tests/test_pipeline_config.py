@@ -64,25 +64,19 @@ def test_stream_rejects_incorp_params_without_source_key() -> None:
 def test_stream_rejects_non_dict_refresh_params() -> None:
     """``refresh_params``, if present, must be a JSON object."""
     with pytest.raises(ValidationError, match="refresh_params"):
-        StreamConfig.model_validate(
-            {"incorp_params": {"inc_url": "x"}, "refresh_params": "nope"}
-        )
+        StreamConfig.model_validate({"incorp_params": {"inc_url": "x"}, "refresh_params": "nope"})
 
 
 def test_stream_rejects_non_dict_export_params() -> None:
     """``export_params``, if present, must be a JSON object."""
     with pytest.raises(ValidationError, match="export_params"):
-        StreamConfig.model_validate(
-            {"incorp_params": {"inc_url": "x"}, "export_params": "nope"}
-        )
+        StreamConfig.model_validate({"incorp_params": {"inc_url": "x"}, "export_params": "nope"})
 
 
 def test_stream_rejects_string_poll_interval() -> None:
     """``poll_interval`` must be numeric — strings are rejected."""
     with pytest.raises(ValidationError, match="poll_interval"):
-        StreamConfig.model_validate(
-            {"incorp_params": {"inc_url": "x"}, "poll_interval": "soon"}
-        )
+        StreamConfig.model_validate({"incorp_params": {"inc_url": "x"}, "poll_interval": "soon"})
 
 
 def test_stream_accepts_dict_refresh_interval() -> None:
@@ -110,9 +104,7 @@ def test_stream_rejects_dict_refresh_interval_non_numeric_value() -> None:
 def test_stream_rejects_outflow_without_stateful_polling() -> None:
     """``outflow`` on stream requires ``stateful_polling=True``."""
     with pytest.raises(ValidationError, match="stateful_polling"):
-        StreamConfig.model_validate(
-            {"incorp_params": {"inc_url": "x"}, "outflow": "outflow.py"}
-        )
+        StreamConfig.model_validate({"incorp_params": {"inc_url": "x"}, "outflow": "outflow.py"})
 
 
 def test_stream_accepts_outflow_with_stateful_polling() -> None:

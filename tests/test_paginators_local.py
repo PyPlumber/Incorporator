@@ -187,11 +187,7 @@ async def test_csv_paginator_truncated_midrow(tmp_path: Path) -> None:
     csv_path = tmp_path / "truncated.csv"
     # Three full rows + one row missing the last column (no trailing newline).
     csv_path.write_text(
-        "id,name,score\n"
-        "1,alice,90\n"
-        "2,bob,80\n"
-        "3,carol,70\n"
-        "4,dave",  # missing "score" column and trailing newline
+        "id,name,score\n1,alice,90\n2,bob,80\n3,carol,70\n4,dave",  # missing "score" column and trailing newline
         encoding="utf-8",
     )
 

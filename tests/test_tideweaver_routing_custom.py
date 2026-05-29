@@ -157,9 +157,7 @@ async def _mock_mlb_players(url: str, *args: Any, **kwargs: Any) -> httpx.Respon
 
 
 @pytest.mark.asyncio
-async def test_custom_mlb_leaderboard_three_hop_fjord_cascade(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_custom_mlb_leaderboard_three_hop_fjord_cascade(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Three-hop Fjord-to-Fjord cascade: players → normalize → rank → summary.
 
     Proves: (a) a custom DAG can chain three Fjords in series with the
@@ -263,12 +261,8 @@ async def test_custom_mlb_leaderboard_three_hop_fjord_cascade(
     normalized_lines = [
         ln for ln in (tmp_path / "normalized.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()
     ]
-    ranked_lines = [
-        ln for ln in (tmp_path / "ranked.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()
-    ]
-    summary_lines = [
-        ln for ln in (tmp_path / "summary.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()
-    ]
+    ranked_lines = [ln for ln in (tmp_path / "ranked.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()]
+    summary_lines = [ln for ln in (tmp_path / "summary.ndjson").read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert normalized_lines, "F_normalize must export rows"
     assert ranked_lines, "F_rank must export rows"
     assert summary_lines, "F_summary must export rows"
@@ -284,9 +278,7 @@ async def test_custom_mlb_leaderboard_three_hop_fjord_cascade(
     # Take the most recent flush's 3 rows.
     last_rank = ranked_rows[-3:]
     avgs_in_order = [r["avg"] for r in last_rank]
-    assert avgs_in_order == sorted(avgs_in_order, reverse=True), (
-        f"rank must be desc-sorted by avg, got {avgs_in_order}"
-    )
+    assert avgs_in_order == sorted(avgs_in_order, reverse=True), f"rank must be desc-sorted by avg, got {avgs_in_order}"
     assert last_rank[0]["name"] == "Player A", f"top-rank must be Player A (.320), got {last_rank[0]}"
 
     # F_summary read F_rank's snapshot and produced league-wide aggregate.
@@ -315,9 +307,7 @@ async def _mock_httpbin(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
 
 
 @pytest.mark.asyncio
-async def test_custom_mixed_modes_with_drain_timeout(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_custom_mixed_modes_with_drain_timeout(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Custom DAG with mixed hard/soft edges + drain_timeout cancels mid-tick.
 
     Proves: (a) ``Watershed(...)`` with explicit mixed-mode edges

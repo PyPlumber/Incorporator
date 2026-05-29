@@ -54,9 +54,7 @@ async def _noop(current: Current) -> None:
 
 
 @pytest.mark.asyncio
-async def test_penstock_limited_reject_telemetry(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_penstock_limited_reject_telemetry(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """PenstockLimited rejects carry cooldown_sec≈1/rate, attempt_number=1, duration_sec>0.
 
     A throttled SustainedPenstock(rate_per_sec=2) on the A→B edge with a
@@ -106,9 +104,7 @@ async def test_penstock_limited_reject_telemetry(
 
 
 @pytest.mark.asyncio
-async def test_eligibility_start_perf_reset_after_fire(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_eligibility_start_perf_reset_after_fire(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """eligibility_start_perf is None after _tick_wrapper.finally resets it on successful fire.
 
     Run a two-current chain just long enough for B to fire at least once.

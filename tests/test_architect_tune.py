@@ -471,7 +471,9 @@ def test_tune_retry_policy_http_error_shape_unchanged() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_tideweaver_summary_uses_self_rejects(monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
+def test_tideweaver_summary_uses_self_rejects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+) -> None:
     """Tideweaver.summary() passes self.rejects to tune() so total_rejects matches."""
     monkeypatch.chdir(tmp_path)
 

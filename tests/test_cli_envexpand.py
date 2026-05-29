@@ -81,9 +81,7 @@ def test_expand_env_preserves_non_string_leaves() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_secrets_root_rejects_path_outside_sandbox(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_secrets_root_rejects_path_outside_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Sandbox active + ``${file:...}`` points OUTSIDE root → ``EnvExpansionError``.
 
     The check happens BEFORE any file open, so a hostile config that uses
@@ -102,9 +100,7 @@ def test_secrets_root_rejects_path_outside_sandbox(
         expand_env({"x": f"${{file:{outside}}}"})
 
 
-def test_secrets_root_accepts_path_inside_sandbox(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_secrets_root_accepts_path_inside_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Sandbox active + ``${file:...}`` points INSIDE root → resolves normally."""
     sandbox = tmp_path / "secrets"
     sandbox.mkdir()
@@ -117,9 +113,7 @@ def test_secrets_root_accepts_path_inside_sandbox(
     assert out == {"headers": {"Authorization": "Bearer legitimate-token"}}
 
 
-def test_secrets_root_unset_falls_back_to_permissive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_secrets_root_unset_falls_back_to_permissive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Sandbox env-var unset → no path-traversal check; any readable file works.
 
     Preserves the legacy permissive behaviour for users who haven't opted in
@@ -162,9 +156,7 @@ def test_drain_timeout_resolver_precedence_chain(monkeypatch: pytest.MonkeyPatch
     assert _resolve_drain_timeout(None) is None
 
 
-def test_secrets_root_rejects_directory_traversal_attempt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_secrets_root_rejects_directory_traversal_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``../`` traversal from inside the sandbox to outside is rejected.
 
     Uses an absolute path that contains traversal segments resolving to a

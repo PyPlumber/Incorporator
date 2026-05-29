@@ -197,8 +197,8 @@ def _report(name: str, n: int, m: int, per_row: float, batch: float) -> Tuple[fl
     rows_per_sec_batch = n / batch
     print(
         f"\n  {name:<22} N={n:>7,} M={m:>2}: "
-        f"per-row={per_row*1000:6.1f}ms ({rows_per_sec_per_row:>10,.0f} rows/sec), "
-        f"batch={batch*1000:6.1f}ms ({rows_per_sec_batch:>10,.0f} rows/sec), "
+        f"per-row={per_row * 1000:6.1f}ms ({rows_per_sec_per_row:>10,.0f} rows/sec), "
+        f"batch={batch * 1000:6.1f}ms ({rows_per_sec_batch:>10,.0f} rows/sec), "
         f"speedup={speedup:.2f}×"
     )
     return per_row, batch, speedup
