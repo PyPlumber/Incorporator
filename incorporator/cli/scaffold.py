@@ -168,7 +168,7 @@ TIDEWEAVER_TEMPLATE_JSON = """{
         "inc_url": "https://api.example.com/source_b",
         "inc_code": "id"
       },
-      "_comment_parent_": "Optional: set parent_current + parent_filter to fan-out per upstream row.",
+      "_comment_parent_": "Optional: parent_current declares a parent-child dependency; scope rows at the URL.",
       "parent_current": "head"
     },
     {
