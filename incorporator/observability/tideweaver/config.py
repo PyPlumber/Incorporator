@@ -223,9 +223,16 @@ def _build_current(
             incorp_params=entry.get("incorp_params", {}),
             refresh_params=entry.get("refresh_params"),
             export_params=entry.get("export_params"),
+            parent_current=entry.get("parent_current"),
+            parent_filter=entry.get("parent_filter"),
         )
     if verb == "fjord":
-        return Fjord(**common, export_params=entry.get("export_params", {}))
+        return Fjord(
+            **common,
+            export_params=entry.get("export_params", {}),
+            parent_currents=entry.get("parent_currents", []),
+            parent_filters=entry.get("parent_filters", {}),
+        )
     if verb == "export":
         return Export(**common, export_params=entry.get("export_params", {}))
     raise ValueError(

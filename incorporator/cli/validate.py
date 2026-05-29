@@ -30,6 +30,7 @@ cover.
 from __future__ import annotations
 
 import importlib.util
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -38,7 +39,36 @@ from pydantic import ValidationError
 from ..base import Incorporator
 from ._pipeline_config import parse_pipeline_config
 
+logger = logging.getLogger(__name__)
+
 ConfigType = Literal["stream", "fjord", "tideweaver"]
+
+# All recognised per-current keys. Keys not in this set and not starting with
+# '_' trigger a WARNING so users discover typos before they become silent no-ops.
+_KNOWN_CURRENT_KEYS: frozenset[str] = frozenset(
+    {
+        # Current base
+        "name",
+        "class",
+        "verb",
+        "interval",
+        "depends_on",
+        "on_error",
+        "phase_offset_sec",
+        "inflow",
+        "outflow",
+        # Stream
+        "incorp_params",
+        "refresh_params",
+        "export_params",
+        "parent_current",
+        "parent_filter",
+        # Fjord
+        "parent_currents",
+        "parent_filters",
+        # Export (shares export_params with Stream/Fjord)
+    }
+)
 
 
 def autodetect_type(config: dict[str, Any]) -> ConfigType:
@@ -173,6 +203,33 @@ def validate_fjord_config(config: dict[str, Any], config_dir: Path) -> list[str]
 # ---------------------------------------------------------------------------
 
 
+def _collect_current_entries(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract all per-current entry dicts from a raw watershed config.
+
+    Args:
+        raw: The top-level watershed config dict (after env-expand; before
+            or after token resolution — key names are unchanged either way).
+
+    Returns:
+        A flat list of every current entry dict found under the
+        recognised positional keys (``head``, ``tail``, ``source`` as
+        single-dict entries; ``middle``, ``sinks``, ``currents`` as list
+        entries).
+    """
+    entries: list[dict[str, Any]] = []
+    for key in ("head", "tail", "source"):
+        value = raw.get(key)
+        if isinstance(value, dict):
+            entries.append(value)
+    for key in ("middle", "sinks", "currents"):
+        value = raw.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    entries.append(item)
+    return entries
+
+
 def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[str]:
     """Structural validation for an ``incorporator tideweaver`` watershed.json.
 
@@ -201,6 +258,19 @@ def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[
     except (FileNotFoundError, ValueError, KeyError, TypeError, ValidationError) as exc:
         errors.append(str(exc))
         return errors
+
+    # Unknown-key WARNING: walk every current entry and warn on keys that are
+    # not in _KNOWN_CURRENT_KEYS and do not start with '_' (comment/doc keys).
+    for entry in _collect_current_entries(config):
+        name = entry.get("name", "<unknown>")
+        for key in entry:
+            if not key.startswith("_") and key not in _KNOWN_CURRENT_KEYS:
+                logger.warning(
+                    "watershed current %r has unrecognised key %r — possible typo; "
+                    "the key was silently ignored by build_watershed.",
+                    name,
+                    key,
+                )
 
     # Arity check for Fjord currents — build_watershed loaded the module via
     # load_user_module which doesn't validate ``outflow(state)`` arity; do

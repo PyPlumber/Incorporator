@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import operator
 import re
 from datetime import date, datetime, time
 from typing import Any
@@ -121,6 +122,15 @@ _ALLOWED_NAMES: dict[str, Any] = {
     "True": True,
     "False": False,
     "new": new,  # incorporator schema "any-type" sentinel
+    # Comparison operators for parent_filter 3-tuple form.
+    # Use via @-sigil in JSON: ["division_id", "@operator_eq", 201]
+    "operator_eq": operator.eq,
+    "operator_ne": operator.ne,
+    "operator_lt": operator.lt,
+    "operator_le": operator.le,
+    "operator_gt": operator.gt,
+    "operator_ge": operator.ge,
+    "operator_contains": operator.contains,
 }
 
 # A string looks like a call-grammar token only if it matches a Python call.
