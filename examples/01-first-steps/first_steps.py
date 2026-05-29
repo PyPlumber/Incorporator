@@ -36,8 +36,8 @@ async def incorp_demo() -> None:
     coins = await Coin.incorp(
         inc_url="https://api.coingecko.com/api/v3/coins/markets",
         params={"vs_currency": "usd", "per_page": 100, "page": 1},
-        inc_code="id",                              # primary key for the registry
-        inc_name="name",                            # display label
+        inc_code="id",  # primary key for the registry
+        inc_name="name",  # display label
     )
     print(f"✅ Loaded {len(coins)} coins.\n")
 

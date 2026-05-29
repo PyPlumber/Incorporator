@@ -52,7 +52,7 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
         binance_key = f"{symbol}USDT"
         pair = pairs.inc_dict.get(binance_key)
         if pair is None:
-            continue                                            # CoinGecko coin not traded on Binance
+            continue  # CoinGecko coin not traded on Binance
 
         try:
             gecko_usd = float(getattr(coin, "current_price", 0) or 0)
@@ -66,12 +66,14 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
         # Basis points: 1 bp = 0.01%.  Positive = Binance higher than CoinGecko.
         spread_bps = round(((binance_usdt - gecko_usd) / gecko_usd) * 10_000, 2)
 
-        rows.append({
-            "symbol": symbol,
-            "coingecko_usd": gecko_usd,
-            "binance_usdt": binance_usdt,
-            "spread_bps": spread_bps,
-            "fused_at": now,
-        })
+        rows.append(
+            {
+                "symbol": symbol,
+                "coingecko_usd": gecko_usd,
+                "binance_usdt": binance_usdt,
+                "spread_bps": spread_bps,
+                "fused_at": now,
+            }
+        )
 
     return rows

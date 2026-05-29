@@ -1,4 +1,4 @@
-"""Outflow logic and class definitions for the MLB AL East Pulse Tideweaver diamond.
+"""Outflow logic and class definitions for the MLB AL Pulse Tideweaver diamond.
 
 Defines the six ``Incorporator`` subclasses referenced from ``watershed.json``
 and ``mlb_pulse.py``, plus named module-level helpers and the ``outflow(state)``
@@ -8,6 +8,11 @@ Imported by both the Python entry (``mlb_pulse.py``) and the CLI form
 (``incorporator tideweaver run watershed.json``), so host-throttle registration
 lives here as well as in the entry script.  Both import paths must register the
 penstock independently.
+
+Row filtering: the parent ``al_teams`` Stream uses URL-level filtering
+(``?sportId=1&leagueId=103``) to scope to the 15 American League teams
+server-side. No post-fetch row filter is applied here — the outflow joins
+across whatever the parent's scope produced.
 
 Run from repo root:
 
@@ -31,12 +36,6 @@ from incorporator import Incorporator, SustainedPenstock, register_host_penstock
 register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))
 
 # ---------------------------------------------------------------------------
-# AL East division ID (MLB Stats API constant, does not change season-to-season)
-# ---------------------------------------------------------------------------
-
-_AL_EAST_DIVISION_ID = 201
-
-# ---------------------------------------------------------------------------
 # Incorporator subclasses — one per stream node + two derived output classes
 # ---------------------------------------------------------------------------
 
@@ -46,28 +45,33 @@ class MLBSchedule(Incorporator):
 
 
 class MLBAllTeam(Incorporator):
-    """All MLB teams from /api/v1/teams — rec_path 'teams'."""
+    """American League teams from /api/v1/teams?sportId=1&leagueId=103 — rec_path 'teams'.
+
+    URL-level filtering (``?leagueId=103``) scopes the parent to the 15 AL teams
+    server-side. This is the framework's preferred row-filter primitive; see the
+    README sidebar for the row-filter decision tree.
+    """
 
 
 class MLBStandings(Incorporator):
-    """AL East standings record from /api/v1/standings — rec_path 'records'.
+    """AL division standings record from /api/v1/standings?leagueId=103 — rec_path 'records'.
 
-    Live probe confirmed ``inc_code='division.id'`` produces ``inc_code=201``
-    for the AL East record.  The ``teamRecords`` list is accessed directly from
-    the raw instance attribute in ``outflow()``; no conv_dict entry needed.
+    Returns one record per AL division (East/Central/West). Each carries its
+    own ``teamRecords`` list. ``outflow()`` iterates ALL records to build a
+    league-wide leaderboard.
     """
 
 
 class MLBHitting(Incorporator):
-    """Per-team season hitting stats — populated by Stream(parent_current='all_teams') T5 drills."""
+    """Per-team season hitting stats — populated by Stream(parent_current='al_teams') T5 drills."""
 
 
 class MLBPitching(Incorporator):
-    """Per-team season pitching stats — populated by Stream(parent_current='all_teams') T5 drills."""
+    """Per-team season pitching stats — populated by Stream(parent_current='al_teams') T5 drills."""
 
 
 class TeamPulseCard(Incorporator):
-    """Derived AL East Pulse Card — one row per team, produced by outflow(state)."""
+    """Derived AL Pulse Card — one row per team, produced by outflow(state)."""
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +83,7 @@ def derive_power_index(ops: float, era: float, mean_ops: float, mean_era: float)
     """Peer-relative composite metric: (OPS / mean_OPS) × (mean_ERA / ERA).
 
     Higher is better.  Teams with OPS above average AND ERA below average score
-    above 1.0.  Division-mean normalisation makes the metric comparable across
+    above 1.0.  League-mean normalisation makes the metric comparable across
     different scoring environments and seasons.
     """
     ops_ratio = ops / mean_ops if mean_ops > 0 else 0.0
@@ -126,7 +130,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Join standings + hitting + pitching + team metadata into one Pulse Card per AL East team.
+    """Join standings + hitting + pitching + team metadata into one Pulse Card per AL team.
 
     Args:
         state: Keyed by upstream ``Incorporator`` subclass name; maps to a list
@@ -134,12 +138,10 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
             via ``_tideweaver_snapshot`` strong-refs.
 
     Returns:
-        Five rows sorted by ``power_index`` descending, one per AL East team,
+        Up to 15 rows sorted by ``power_index`` descending, one per AL team,
         or an empty list when any required upstream hasn't fired yet.
     """
-    teams_by_id = {
-        t.inc_code: t for t in state.get("MLBAllTeam", []) if getattr(t, "division_id", 0) == _AL_EAST_DIVISION_ID
-    }
+    teams_by_id = {t.inc_code: t for t in state.get("MLBAllTeam", [])}
     hitting_by_id = {h.inc_code: h for h in state.get("MLBHitting", [])}
     pitching_by_id = {p.inc_code: p for p in state.get("MLBPitching", [])}
 
@@ -147,18 +149,51 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     if not hitting_by_id or not pitching_by_id:
         return []
 
-    standings_row = next(
-        (r for r in state.get("MLBStandings", []) if r.inc_code == _AL_EAST_DIVISION_ID),
-        None,
-    )
-    if standings_row is None:
+    standings_records = state.get("MLBStandings", [])
+    if not standings_records:
         return []
 
-    # teamRecords may be a list attribute (Stream materialised it) or missing.
-    team_records: list[Any] = getattr(standings_row, "teamRecords", None) or []
-
     rows: list[dict[str, Any]] = []
-    for tr in team_records:
+    # Iterate ALL AL division standings (East/Central/West) — the al_teams URL
+    # already scoped the parent set, so any team appearing in standings + teams
+    # + hitting + pitching is in scope.
+    for standings_row in standings_records:
+        team_records: list[Any] = getattr(standings_row, "teamRecords", None) or []
+        for tr in team_records:
+            rows.extend(_build_team_row_or_skip(tr, teams_by_id, hitting_by_id, pitching_by_id))
+
+    if not rows:
+        return []
+
+    # League-wide means for Power Index normalisation (spans all returned AL teams).
+    mean_ops = sum(r["ops"] for r in rows) / len(rows)
+    mean_era = sum(r["era"] for r in rows) / len(rows)
+
+    for r in rows:
+        r["power_index"] = derive_power_index(r["ops"], r["era"], mean_ops, mean_era)
+        r["pythag_delta"] = round(r["pythag"] - r["win_pct"], 4)
+
+    rows.sort(key=operator.itemgetter("power_index"), reverse=True)
+
+    for rank, r in enumerate(rows, start=1):
+        r["power_rank"] = rank
+
+    return rows
+
+
+def _build_team_row_or_skip(
+    tr: Any,
+    teams_by_id: dict[Any, Any],
+    hitting_by_id: dict[Any, Any],
+    pitching_by_id: dict[Any, Any],
+) -> list[dict[str, Any]]:
+    """Build a single team row from a teamRecord; return [] when any input is missing.
+
+    Wraps the per-team extraction logic so the outer outflow can simply
+    ``extend`` regardless of whether this row qualifies.
+    """
+    rows: list[dict[str, Any]] = []
+    for _ in (None,):  # single-iteration loop to allow `continue` semantics
         # teamRecord.team may be a sub-Incorporator instance OR a raw dict
         # depending on how MLBStandings' nested list is materialised.
         team_sub = getattr(tr, "team", None)
@@ -234,27 +269,10 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
                 "games_back": games_back,
                 "ops": ops,
                 "era": era,
-                "power_index": 0.0,  # filled after division means computed
+                "power_index": 0.0,  # filled after league means computed
                 "pythag": pythag,
                 "pythag_delta": 0.0,  # filled after power_index pass
                 "power_rank": 0,  # filled after sort
             }
         )
-
-    if not rows:
-        return []
-
-    # Compute division means for Power Index normalisation.
-    mean_ops = sum(r["ops"] for r in rows) / len(rows)
-    mean_era = sum(r["era"] for r in rows) / len(rows)
-
-    for r in rows:
-        r["power_index"] = derive_power_index(r["ops"], r["era"], mean_ops, mean_era)
-        r["pythag_delta"] = round(r["pythag"] - r["win_pct"], 4)
-
-    rows.sort(key=operator.itemgetter("power_index"), reverse=True)
-
-    for rank, r in enumerate(rows, start=1):
-        r["power_rank"] = rank
-
     return rows

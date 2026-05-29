@@ -58,9 +58,7 @@ async def main():
     print(f"   ✅ Read {len(sql_users)} users from SQLite.")
 
     # B. Read directly from Avro
-    avro_users = await User.incorp(
-        inc_file=str(avro_path), format_type=FormatType.AVRO, inc_code="id", inc_name="name"
-    )
+    avro_users = await User.incorp(inc_file=str(avro_path), format_type=FormatType.AVRO, inc_code="id", inc_name="name")
     print(f"   ✅ Read {len(avro_users)} users from Avro.")
 
     # Let's prove Incorporator flawlessly un-flattened the nested data AND

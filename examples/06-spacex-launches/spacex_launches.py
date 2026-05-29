@@ -86,11 +86,7 @@ async def parent_child_demo() -> None:
         rocket_name = rocket.name if rocket else "?"
         pad_name = (pad.name if pad else "?")[:20]
         region = (pad.region if pad else "?")[:12]
-        success = (
-            f"{pad.launch_successes}/{pad.launch_attempts}"
-            if pad and pad.launch_attempts
-            else "—"
-        )
+        success = f"{pad.launch_successes}/{pad.launch_attempts}" if pad and pad.launch_attempts else "—"
         name = (launch.name or "Unknown")[:32]
         print(f"{name:<32} {rocket_name:<14} {pad_name:<20} {region:<12} {success:>8}")
 
@@ -120,9 +116,9 @@ async def streaming_demo() -> None:
             "inc_name": "name",
         },
         stateful_polling=True,
-        refresh_interval=120,        # poll every 2 min
+        refresh_interval=120,  # poll every 2 min
         export_params={"file_path": str(OUT / "launches.ndjson")},
-        export_interval=300,         # flush every 5 min
+        export_interval=300,  # flush every 5 min
         enable_logging=True,
     ):
         if wave.failed_sources:

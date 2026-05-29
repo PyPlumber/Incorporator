@@ -88,7 +88,7 @@ async def snapshot_parquet(coins, data_dir: Path) -> None:
             parquet_compression="snappy",
         )
         print(f"📊 Wrote Parquet snapshot ({out.stat().st_size} bytes).")
-    except Exception as e:                                  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         print(f"⚠️  Parquet export skipped ({e!s}) — install incorporator[parquet]")
 
 

@@ -1,6 +1,6 @@
 """
-Appendix — Advanced Tideweaver: MLB AL East Pulse
---------------------------------------------------
+Appendix — Advanced Tideweaver: MLB AL Pulse
+--------------------------------------------
 Companion script for ``examples/appendix/mlb-pulse/README.md``.
 
 Full developer loop in one script: **probe → run → tune → leaderboard**.
@@ -14,7 +14,12 @@ Phases:
        tail   : TeamPulseCard Fjord (joins 4 graph maps via outflow(state))
   3. Post-run ``architect.tune()`` feedback — emits concrete knob hints or
      "No tuning hints" on a clean run.
-  4. Fixed-width console leaderboard of the five ranked AL East Pulse Cards.
+  4. Fixed-width console leaderboard of the 15 ranked AL Pulse Cards.
+
+Row filtering: the parent ``al_teams`` Stream uses URL-level filtering
+(``?sportId=1&leagueId=103``) to scope to the 15 American League teams
+server-side. This is the framework's preferred row-filter primitive — see
+the row-filter decision tree in the README sidebar.
 
 Run with:
     python examples/appendix/mlb-pulse/mlb_pulse.py
@@ -24,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import operator
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -53,7 +57,6 @@ if str(HERE) not in sys.path:
 # Import class definitions + outflow() from the shared sidecar so both the
 # Python entry and the CLI watershed.json form stay in lockstep.
 from pulse_outflow import (  # noqa: E402
-    _AL_EAST_DIVISION_ID,
     MLBAllTeam,
     MLBHitting,
     MLBPitching,
@@ -70,11 +73,12 @@ from pulse_outflow import (  # noqa: E402
 register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))
 
 # ---------------------------------------------------------------------------
-# MLB Stats API endpoints
+# MLB Stats API endpoints — URL-level filtering scopes the parent to the
+# 15 American League teams (leagueId=103). Children naturally drill that scope.
 # ---------------------------------------------------------------------------
 
 _SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
-_TEAMS_URL = "https://statsapi.mlb.com/api/v1/teams?sportId=1"
+_TEAMS_URL = "https://statsapi.mlb.com/api/v1/teams?sportId=1&leagueId=103"
 _STANDINGS_URL = "https://statsapi.mlb.com/api/v1/standings?leagueId=103"
 _HITTING_SAMPLE_URL = "https://statsapi.mlb.com/api/v1/teams/147/stats?group=hitting&stats=season&season=2026"
 _HITTING_URL = "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=hitting&stats=season&season=2026"
@@ -94,7 +98,7 @@ async def _probe() -> None:
             "inc_url": _SCHEDULE_URL,
             "rec_path": "dates.0.games",
         },
-        "all_teams": {
+        "al_teams": {
             "inc_url": _TEAMS_URL,
             "rec_path": "teams",
         },
@@ -124,7 +128,7 @@ async def _probe() -> None:
 
 async def _run() -> list[dict]:
     """Build and run the Watershed diamond; return parsed output rows."""
-    out_file = OUT / "al_east_pulse.ndjson"
+    out_file = OUT / "al_pulse.ndjson"
 
     now = datetime.now(timezone.utc)
     window = (now, now + timedelta(seconds=25))
@@ -143,19 +147,19 @@ async def _run() -> list[dict]:
             "inc_name": "teams.home.team.name",
         },
     )
-    all_teams_stream = Stream(
-        name="all_teams",
+    al_teams_stream = Stream(
+        name="al_teams",
         cls=MLBAllTeam,
         interval=20.0,
         on_error="isolate",
+        # No conv_dict: the URL filter (?leagueId=103) scopes to the 15 AL teams
+        # server-side, so no post-fetch row filtering is needed. outflow() reads
+        # the parent's snapshot directly for team-name lookups.
         incorp_params={
             "inc_url": _TEAMS_URL,
             "rec_path": "teams",
             "inc_code": "id",
             "inc_name": "name",
-            # Only ``division_id`` needs coercion — the AL East filter in
-            # outflow() compares against the literal int 201.
-            "conv_dict": {"division_id": calc(int, "division.id", default=0, target_type=int)},
         },
     )
     standings_stream = Stream(
@@ -177,8 +181,7 @@ async def _run() -> list[dict]:
         cls=MLBHitting,
         interval=6.0,
         on_error="isolate",
-        parent_current="all_teams",
-        parent_filter=("division_id", operator.eq, _AL_EAST_DIVISION_ID),
+        parent_current="al_teams",
         incorp_params={
             "inc_url": _HITTING_URL,
             "inc_child": "inc_code",
@@ -192,8 +195,7 @@ async def _run() -> list[dict]:
         cls=MLBPitching,
         interval=6.0,
         on_error="isolate",
-        parent_current="all_teams",
-        parent_filter=("division_id", operator.eq, _AL_EAST_DIVISION_ID),
+        parent_current="al_teams",
         incorp_params={
             "inc_url": _PITCHING_URL,
             "inc_child": "inc_code",
@@ -217,7 +219,7 @@ async def _run() -> list[dict]:
     watershed = Watershed.diamond(
         window=window,
         head=schedule_stream,
-        middle=[all_teams_stream, standings_stream, hitting_stream, pitching_stream],
+        middle=[al_teams_stream, standings_stream, hitting_stream, pitching_stream],
         tail=pulse_fjord,
         outflow=OUTFLOW_PATH,
         gate_mode="weir",
@@ -265,7 +267,7 @@ def _print_leaderboard(rows: list[dict]) -> None:
     sep = "=" * 94
     thin = "-" * 94
     print(sep)
-    print("  AL East Pulse — 2026 season (live MLB Stats API)")
+    print("  AL Pulse — 2026 season (live MLB Stats API)")
     print(sep)
     print(
         f"  {'Rank':<6}{'Team':<32}{'W-L':<8}{'PCT':<7}{'GB':<6}"

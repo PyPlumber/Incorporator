@@ -1,22 +1,21 @@
-"""T-Tutorial smoke test for the MLB AL East Pulse Tideweaver appendix.
+"""T-Tutorial smoke test for the MLB AL Pulse Tideweaver appendix.
 
 Patches ``execute_request`` to return canned MLB Stats API payloads and drives
-the diamond end-to-end (head + 4 middles + tail Fjord).  hitting_stream and
-pitching_stream use Stream(parent_current='all_teams', parent_filter=...) —
-the mock tick dispatcher resolves parent snapshots the same way the real
-scheduler does.
+the diamond end-to-end (head + 4 middles + tail Fjord). hitting_stream and
+pitching_stream use ``Stream(parent_current='al_teams')`` for T5 fan-out.
+Row filtering is server-side at the al_teams URL (``?leagueId=103``), so no
+post-fetch filter is applied — the parent's 15 AL teams ARE the scope.
 
 Asserts:
-- Exactly 5 output rows (one per AL East team)
+- 15 output rows (one per AL team) on the final flush
 - Sorted by power_index descending
-- All 5 inc_codes in {139, 141, 147, 110, 111}
+- All inc_codes in the AL team set
 - Presence of power_index, pythag, pythag_delta fields
 """
 
 from __future__ import annotations
 
 import json
-import operator
 import sys
 from pathlib import Path
 from typing import Any
@@ -46,7 +45,6 @@ if str(_SIDECAR_DIR) not in sys.path:
     sys.path.insert(0, str(_SIDECAR_DIR))
 
 from pulse_outflow import (  # noqa: E402
-    _AL_EAST_DIVISION_ID,
     MLBAllTeam,
     MLBHitting,
     MLBPitching,
@@ -58,10 +56,13 @@ from pulse_outflow import (  # noqa: E402
 from incorporator.schema.converters import calc  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# AL East team IDs the brief specifies
+# AL team IDs by division (canonical, season-stable)
 # ---------------------------------------------------------------------------
 
-_AL_EAST_IDS = {139, 141, 147, 110, 111}
+_AL_EAST_IDS = {110, 111, 139, 141, 147}  # BAL, BOS, TBR, TOR, NYY
+_AL_CENTRAL_IDS = {114, 116, 118, 142, 145}  # CLE, DET, KCR, MIN, CWS
+_AL_WEST_IDS = {108, 117, 133, 136, 140}  # LAA, HOU, OAK, SEA, TEX
+_AL_TEAM_IDS = _AL_EAST_IDS | _AL_CENTRAL_IDS | _AL_WEST_IDS
 
 # ---------------------------------------------------------------------------
 # Canned response payloads
@@ -85,65 +86,56 @@ _SCHEDULE_PAYLOAD = {
     ]
 }
 
+
+def _make_team(team_id: int, name: str, abbr: str, short: str, division_id: int) -> dict:
+    return {
+        "id": team_id,
+        "name": name,
+        "abbreviation": abbr,
+        "teamName": name.split()[-1],
+        "shortName": short,
+        "division": {"id": division_id},
+        "league": {"id": 103},
+    }
+
+
 _TEAMS_PAYLOAD = {
     "teams": [
-        {
-            "id": 139,
-            "name": "Tampa Bay Rays",
-            "abbreviation": "TB",
-            "teamName": "Rays",
-            "shortName": "Tampa Bay",
-            "division": {"id": 201},
-            "league": {"id": 103},
-        },
-        {
-            "id": 141,
-            "name": "Toronto Blue Jays",
-            "abbreviation": "TOR",
-            "teamName": "Blue Jays",
-            "shortName": "Toronto",
-            "division": {"id": 201},
-            "league": {"id": 103},
-        },
-        {
-            "id": 147,
-            "name": "New York Yankees",
-            "abbreviation": "NYY",
-            "teamName": "Yankees",
-            "shortName": "NY Yankees",
-            "division": {"id": 201},
-            "league": {"id": 103},
-        },
-        {
-            "id": 110,
-            "name": "Baltimore Orioles",
-            "abbreviation": "BAL",
-            "teamName": "Orioles",
-            "shortName": "Baltimore",
-            "division": {"id": 201},
-            "league": {"id": 103},
-        },
-        {
-            "id": 111,
-            "name": "Boston Red Sox",
-            "abbreviation": "BOS",
-            "teamName": "Red Sox",
-            "shortName": "Boston",
-            "division": {"id": 201},
-            "league": {"id": 103},
-        },
-        # Non-AL-East team (should be filtered out in outflow)
-        {
-            "id": 116,
-            "name": "Detroit Tigers",
-            "abbreviation": "DET",
-            "teamName": "Tigers",
-            "shortName": "Detroit",
-            "division": {"id": 205},
-            "league": {"id": 103},
-        },
+        # AL East (201)
+        _make_team(110, "Baltimore Orioles", "BAL", "Baltimore", 201),
+        _make_team(111, "Boston Red Sox", "BOS", "Boston", 201),
+        _make_team(139, "Tampa Bay Rays", "TB", "Tampa Bay", 201),
+        _make_team(141, "Toronto Blue Jays", "TOR", "Toronto", 201),
+        _make_team(147, "New York Yankees", "NYY", "NY Yankees", 201),
+        # AL Central (202)
+        _make_team(114, "Cleveland Guardians", "CLE", "Cleveland", 202),
+        _make_team(116, "Detroit Tigers", "DET", "Detroit", 202),
+        _make_team(118, "Kansas City Royals", "KCR", "Kansas City", 202),
+        _make_team(142, "Minnesota Twins", "MIN", "Minnesota", 202),
+        _make_team(145, "Chicago White Sox", "CWS", "Chicago", 202),
+        # AL West (200)
+        _make_team(108, "Los Angeles Angels", "LAA", "LA Angels", 200),
+        _make_team(117, "Houston Astros", "HOU", "Houston", 200),
+        _make_team(133, "Athletics", "ATH", "Athletics", 200),
+        _make_team(136, "Seattle Mariners", "SEA", "Seattle", 200),
+        _make_team(140, "Texas Rangers", "TEX", "Texas", 200),
     ]
 }
+
+
+def _team_rec(team_id: int, name: str, wins: int, losses: int, gb: float, rs: int, ra: int) -> dict:
+    pct = f"{wins / max(wins + losses, 1):.3f}"
+    return {
+        "team": {"id": team_id, "name": name},
+        "wins": wins,
+        "losses": losses,
+        "winningPercentage": pct,
+        "gamesBack": f"{gb:.1f}",
+        "runsScored": rs,
+        "runsAllowed": ra,
+        "leagueRecord": {"wins": wins, "losses": losses, "pct": pct},
+    }
+
 
 _STANDINGS_PAYLOAD = {
     "records": [
@@ -151,229 +143,92 @@ _STANDINGS_PAYLOAD = {
             "division": {"id": 201, "name": "American League East"},
             "lastUpdated": "2026-05-28T12:00:00Z",
             "teamRecords": [
-                {
-                    "team": {"id": 147, "name": "New York Yankees"},
-                    "wins": 32,
-                    "losses": 18,
-                    "winningPercentage": ".640",
-                    "gamesBack": "0.0",
-                    "runsScored": 280,
-                    "runsAllowed": 195,
-                    "leagueRecord": {"wins": 32, "losses": 18, "pct": ".640"},
-                },
-                {
-                    "team": {"id": 110, "name": "Baltimore Orioles"},
-                    "wins": 28,
-                    "losses": 22,
-                    "winningPercentage": ".560",
-                    "gamesBack": "4.0",
-                    "runsScored": 240,
-                    "runsAllowed": 210,
-                    "leagueRecord": {"wins": 28, "losses": 22, "pct": ".560"},
-                },
-                {
-                    "team": {"id": 111, "name": "Boston Red Sox"},
-                    "wins": 25,
-                    "losses": 25,
-                    "winningPercentage": ".500",
-                    "gamesBack": "7.0",
-                    "runsScored": 220,
-                    "runsAllowed": 220,
-                    "leagueRecord": {"wins": 25, "losses": 25, "pct": ".500"},
-                },
-                {
-                    "team": {"id": 139, "name": "Tampa Bay Rays"},
-                    "wins": 24,
-                    "losses": 26,
-                    "winningPercentage": ".480",
-                    "gamesBack": "8.0",
-                    "runsScored": 200,
-                    "runsAllowed": 215,
-                    "leagueRecord": {"wins": 24, "losses": 26, "pct": ".480"},
-                },
-                {
-                    "team": {"id": 141, "name": "Toronto Blue Jays"},
-                    "wins": 20,
-                    "losses": 30,
-                    "winningPercentage": ".400",
-                    "gamesBack": "12.0",
-                    "runsScored": 185,
-                    "runsAllowed": 230,
-                    "leagueRecord": {"wins": 20, "losses": 30, "pct": ".400"},
-                },
+                _team_rec(147, "New York Yankees", 32, 18, 0.0, 280, 195),
+                _team_rec(110, "Baltimore Orioles", 28, 22, 4.0, 240, 210),
+                _team_rec(111, "Boston Red Sox", 25, 25, 7.0, 220, 220),
+                _team_rec(139, "Tampa Bay Rays", 24, 26, 8.0, 200, 215),
+                _team_rec(141, "Toronto Blue Jays", 20, 30, 12.0, 185, 230),
             ],
         },
         {
             "division": {"id": 202, "name": "American League Central"},
             "lastUpdated": "2026-05-28T12:00:00Z",
-            "teamRecords": [],
+            "teamRecords": [
+                _team_rec(114, "Cleveland Guardians", 30, 20, 0.0, 260, 200),
+                _team_rec(142, "Minnesota Twins", 27, 23, 3.0, 235, 215),
+                _team_rec(116, "Detroit Tigers", 24, 26, 6.0, 210, 225),
+                _team_rec(118, "Kansas City Royals", 22, 28, 8.0, 195, 230),
+                _team_rec(145, "Chicago White Sox", 18, 32, 12.0, 170, 250),
+            ],
+        },
+        {
+            "division": {"id": 200, "name": "American League West"},
+            "lastUpdated": "2026-05-28T12:00:00Z",
+            "teamRecords": [
+                _team_rec(117, "Houston Astros", 31, 19, 0.0, 270, 200),
+                _team_rec(136, "Seattle Mariners", 28, 22, 3.0, 245, 215),
+                _team_rec(140, "Texas Rangers", 26, 24, 5.0, 230, 220),
+                _team_rec(108, "Los Angeles Angels", 22, 28, 9.0, 200, 235),
+                _team_rec(133, "Athletics", 19, 31, 12.0, 180, 245),
+            ],
         },
     ]
 }
 
 
+# Distinguishable OPS/ERA per team so power_index ordering is unambiguous.
+_TEAM_STATS: dict[int, tuple[str, str]] = {
+    # AL East
+    147: ("0.770", "3.14"),
+    110: ("0.773", "3.87"),
+    111: ("0.764", "4.21"),
+    139: ("0.701", "4.05"),
+    141: ("0.741", "4.42"),
+    # AL Central
+    114: ("0.755", "3.50"),
+    142: ("0.742", "3.78"),
+    116: ("0.720", "4.10"),
+    118: ("0.705", "4.30"),
+    145: ("0.688", "4.65"),
+    # AL West
+    117: ("0.768", "3.32"),
+    136: ("0.751", "3.65"),
+    140: ("0.735", "3.95"),
+    108: ("0.712", "4.15"),
+    133: ("0.690", "4.55"),
+}
+
+
 def _hitting_payload(team_id: int) -> dict:
     """Return a canned hitting-stats payload for the given team ID."""
-    stats_by_team = {
-        147: {
-            "ops": "0.770",
-            "obp": "0.340",
-            "slg": "0.430",
-            "avg": "0.255",
-            "homeRuns": 85,
-            "rbi": 280,
-            "strikeOuts": 510,
-            "baseOnBalls": 195,
-        },
-        110: {
-            "ops": "0.773",
-            "obp": "0.342",
-            "slg": "0.431",
-            "avg": "0.257",
-            "homeRuns": 88,
-            "rbi": 283,
-            "strikeOuts": 505,
-            "baseOnBalls": 192,
-        },
-        111: {
-            "ops": "0.764",
-            "obp": "0.337",
-            "slg": "0.427",
-            "avg": "0.253",
-            "homeRuns": 80,
-            "rbi": 265,
-            "strikeOuts": 520,
-            "baseOnBalls": 185,
-        },
-        139: {
-            "ops": "0.701",
-            "obp": "0.315",
-            "slg": "0.386",
-            "avg": "0.240",
-            "homeRuns": 65,
-            "rbi": 230,
-            "strikeOuts": 540,
-            "baseOnBalls": 165,
-        },
-        141: {
-            "ops": "0.741",
-            "obp": "0.328",
-            "slg": "0.413",
-            "avg": "0.248",
-            "homeRuns": 72,
-            "rbi": 248,
-            "strikeOuts": 530,
-            "baseOnBalls": 175,
-        },
+    ops, _era = _TEAM_STATS.get(team_id, ("0.700", "5.00"))
+    s = {
+        "ops": ops,
+        "obp": "0.330",
+        "slg": "0.410",
+        "avg": "0.250",
+        "homeRuns": 80,
+        "rbi": 260,
+        "strikeOuts": 510,
+        "baseOnBalls": 180,
     }
-    s = stats_by_team.get(
-        team_id,
-        {
-            "ops": "0.700",
-            "obp": "0.310",
-            "slg": "0.390",
-            "avg": "0.240",
-            "homeRuns": 60,
-            "rbi": 220,
-            "strikeOuts": 550,
-            "baseOnBalls": 160,
-        },
-    )
-    return {
-        "stats": [
-            {
-                "splits": [
-                    {
-                        "season": "2026",
-                        "team": {"id": team_id},
-                        "stat": s,
-                    }
-                ]
-            }
-        ]
-    }
+    return {"stats": [{"splits": [{"season": "2026", "team": {"id": team_id}, "stat": s}]}]}
 
 
 def _pitching_payload(team_id: int) -> dict:
     """Return a canned pitching-stats payload for the given team ID."""
-    stats_by_team = {
-        147: {
-            "era": "3.14",
-            "whip": "1.12",
-            "wins": 32,
-            "losses": 18,
-            "strikeOuts": 480,
-            "baseOnBalls": 155,
-            "inningsPitched": "446.0",
-            "earnedRuns": 156,
-        },
-        110: {
-            "era": "3.87",
-            "whip": "1.25",
-            "wins": 28,
-            "losses": 22,
-            "strikeOuts": 440,
-            "baseOnBalls": 170,
-            "inningsPitched": "440.0",
-            "earnedRuns": 190,
-        },
-        111: {
-            "era": "4.21",
-            "whip": "1.32",
-            "wins": 25,
-            "losses": 25,
-            "strikeOuts": 415,
-            "baseOnBalls": 180,
-            "inningsPitched": "435.0",
-            "earnedRuns": 204,
-        },
-        139: {
-            "era": "4.05",
-            "whip": "1.28",
-            "wins": 24,
-            "losses": 26,
-            "strikeOuts": 420,
-            "baseOnBalls": 175,
-            "inningsPitched": "438.0",
-            "earnedRuns": 197,
-        },
-        141: {
-            "era": "4.42",
-            "whip": "1.38",
-            "wins": 20,
-            "losses": 30,
-            "strikeOuts": 395,
-            "baseOnBalls": 190,
-            "inningsPitched": "428.0",
-            "earnedRuns": 210,
-        },
+    _ops, era = _TEAM_STATS.get(team_id, ("0.700", "5.00"))
+    s = {
+        "era": era,
+        "whip": "1.25",
+        "wins": 25,
+        "losses": 25,
+        "strikeOuts": 430,
+        "baseOnBalls": 170,
+        "inningsPitched": "440.0",
+        "earnedRuns": 200,
     }
-    s = stats_by_team.get(
-        team_id,
-        {
-            "era": "5.00",
-            "whip": "1.50",
-            "wins": 18,
-            "losses": 32,
-            "strikeOuts": 380,
-            "baseOnBalls": 200,
-            "inningsPitched": "420.0",
-            "earnedRuns": 233,
-        },
-    )
-    return {
-        "stats": [
-            {
-                "splits": [
-                    {
-                        "season": "2026",
-                        "team": {"id": team_id},
-                        "stat": s,
-                    }
-                ]
-            }
-        ]
-    }
+    return {"stats": [{"splits": [{"season": "2026", "team": {"id": team_id}, "stat": s}]}]}
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +245,6 @@ async def _mock_mlb_pulse(url: str, *args: Any, **kwargs: Any) -> httpx.Response
     elif "standings" in url:
         payload = _STANDINGS_PAYLOAD
     elif "group=hitting" in url:
-        # Extract team_id from URL: /api/v1/teams/{team_id}/stats?...
         try:
             team_id = int(url.split("/teams/")[1].split("/")[0])
         except (IndexError, ValueError):
@@ -433,8 +287,9 @@ def _make_pulse_tick(tw: Tideweaver, strong_refs: dict, currents_by_name: dict[s
     """Build a tick dispatcher that handles Stream and Fjord nodes.
 
     For Stream nodes with ``parent_current`` set, mirrors the real scheduler's
-    ``_tick_stream`` logic (scheduler.py:942-958): resolve parent snapshot,
-    apply parent_filter, call ``cls.incorp(inc_parent=filtered, ...)``.
+    ``_tick_stream`` logic (scheduler.py): resolve parent snapshot, call
+    ``cls.incorp(inc_parent=<snapshot>, ...)``. No post-fetch filter — the
+    parent's URL already scoped the row set.
 
     For the Fjord branch: propagates strong-ref snapshots onto class attributes
     so ``_tick_fjord`` can find them when parent-current Streams haven't been
@@ -448,16 +303,7 @@ def _make_pulse_tick(tw: Tideweaver, strong_refs: dict, currents_by_name: dict[s
                 pre_snap = getattr(parent_current.cls, "_tideweaver_snapshot", None) if parent_current else None
                 if not pre_snap:
                     return
-                if isinstance(current.parent_filter, tuple):
-                    attr, op, value = current.parent_filter
-                    filtered = [r for r in pre_snap if op(getattr(r, attr, None), value)]
-                elif callable(current.parent_filter):
-                    filtered = [r for r in pre_snap if current.parent_filter(r)]
-                else:
-                    filtered = list(pre_snap)
-                if not filtered:
-                    return
-                result = await current.cls.incorp(inc_parent=filtered, **current.incorp_params)
+                result = await current.cls.incorp(inc_parent=list(pre_snap), **current.incorp_params)
             else:
                 result = await current.cls.incorp(**current.incorp_params)
             if isinstance(result, list):
@@ -490,7 +336,7 @@ def _make_pulse_tick(tw: Tideweaver, strong_refs: dict, currents_by_name: dict[s
 async def _prime_upstreams(
     strong_refs: dict,
     schedule_stream: Stream,
-    all_teams_stream: Stream,
+    al_teams_stream: Stream,
     standings_stream: Stream,
     hitting_stream: Stream,
     pitching_stream: Stream,
@@ -503,19 +349,18 @@ async def _prime_upstreams(
     Streams have populated MLBHitting/MLBPitching.
     """
     # 1. Simple streams — incorp + park snapshot
-    for stream in (schedule_stream, all_teams_stream, standings_stream):
+    for stream in (schedule_stream, al_teams_stream, standings_stream):
         result = await stream.cls.incorp(**stream.incorp_params)
         rows = list(result) if isinstance(result, list) else ([result] if result is not None else [])
         strong_refs[stream.cls] = rows
         stream.cls._tideweaver_snapshot = rows  # type: ignore[attr-defined]
 
-    # 2. Parent-current Streams — resolve upstream snapshot, apply parent_filter, fan-out.
-    # Lookup table mirrors scheduler._tick_stream's self._currents_by_name[current.parent_current]
-    # (incorporator/observability/tideweaver/scheduler.py:944) — KeyError surfaces if a future
-    # child Stream names an unknown parent, instead of silently shadowing onto all_teams.
+    # 2. Parent-current Streams — resolve upstream snapshot, fan-out.
+    # Lookup table mirrors scheduler._tick_stream's self._currents_by_name[current.parent_current];
+    # KeyError surfaces if a future child Stream names an unknown parent.
     by_name = {
         "schedule": schedule_stream,
-        "all_teams": all_teams_stream,
+        "al_teams": al_teams_stream,
         "standings": standings_stream,
     }
     for stream in (hitting_stream, pitching_stream):
@@ -523,16 +368,7 @@ async def _prime_upstreams(
         pre_snap = getattr(upstream.cls, "_tideweaver_snapshot", None)
         if not pre_snap:
             continue
-        if isinstance(stream.parent_filter, tuple):
-            attr, op, value = stream.parent_filter
-            filtered = [r for r in pre_snap if op(getattr(r, attr, None), value)]
-        elif callable(stream.parent_filter):
-            filtered = [r for r in pre_snap if stream.parent_filter(r)]
-        else:
-            filtered = list(pre_snap)
-        if not filtered:
-            continue
-        result = await stream.cls.incorp(inc_parent=filtered, **stream.incorp_params)
+        result = await stream.cls.incorp(inc_parent=list(pre_snap), **stream.incorp_params)
         rows = list(result) if isinstance(result, list) else ([result] if result is not None else [])
         strong_refs[stream.cls] = rows
         stream.cls._tideweaver_snapshot = rows  # type: ignore[attr-defined]
@@ -543,23 +379,15 @@ async def _prime_upstreams(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason=(
-        "Phase 2 reverted parent_filter from the framework. This test exercises "
-        "parent_filter through its mock dispatcher; the migration to URL-level "
-        "filtering (?leagueId=103) lands in Phase 3 (tideweaver-code-orchestrator). "
-        "This skip is removed by Phase 3's commit."
-    )
-)
 @pytest.mark.asyncio
-async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """MLB AL East Pulse diamond produces exactly 5 ranked Pulse Cards sorted by power_index desc.
+async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MLB AL Pulse diamond produces 15 ranked Pulse Cards sorted by power_index desc.
 
     Proves:
-    - Exactly 5 output rows (one per AL East team)
+    - 15 output rows (one per AL team) on the final flush
     - Sorted by power_index descending
-    - All 5 inc_codes belong to {139, 141, 147, 110, 111}
-    - power_index, pythag, and pythag_delta fields are present and numeric
+    - All inc_codes in the AL team set (5 East + 5 Central + 5 West)
+    - power_index, pythag, and pythag_delta fields present and numeric
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
@@ -567,7 +395,7 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
     _reset_all()
     strong_refs: dict = {}
 
-    out_file = tmp_path / "al_east_pulse.ndjson"
+    out_file = tmp_path / "al_pulse.ndjson"
     outflow_path = _SIDECAR_DIR / "pulse_outflow.py"
 
     from datetime import datetime, timedelta, timezone
@@ -580,7 +408,6 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
         cls=MLBSchedule,
         interval=0.5,
         on_error="isolate",
-        # No conv_dict — outflow() does not read any MLBSchedule field.
         incorp_params={
             "inc_url": "https://statsapi.mlb.com/api/v1/schedule?sportId=1",
             "rec_path": "dates.0.games",
@@ -588,18 +415,17 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
             "inc_name": "teams.home.team.name",
         },
     )
-    all_teams_stream = Stream(
-        name="all_teams",
+    al_teams_stream = Stream(
+        name="al_teams",
         cls=MLBAllTeam,
         interval=0.5,
         on_error="isolate",
+        # No conv_dict — URL filter (?leagueId=103) scopes server-side.
         incorp_params={
-            "inc_url": "https://statsapi.mlb.com/api/v1/teams?sportId=1",
+            "inc_url": "https://statsapi.mlb.com/api/v1/teams?sportId=1&leagueId=103",
             "rec_path": "teams",
             "inc_code": "id",
             "inc_name": "name",
-            # Only division_id needs coercion for the AL East filter.
-            "conv_dict": {"division_id": calc(int, "division.id", default=0, target_type=int)},
         },
     )
     standings_stream = Stream(
@@ -607,7 +433,6 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
         cls=MLBStandings,
         interval=0.5,
         on_error="isolate",
-        # No conv_dict — outflow() reads teamRecords via local _safe_* helpers.
         incorp_params={
             "inc_url": "https://statsapi.mlb.com/api/v1/standings?leagueId=103",
             "rec_path": "records",
@@ -620,8 +445,7 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
         cls=MLBHitting,
         interval=0.3,
         on_error="isolate",
-        parent_current="all_teams",
-        parent_filter=("division_id", operator.eq, _AL_EAST_DIVISION_ID),
+        parent_current="al_teams",
         incorp_params={
             "inc_url": "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=hitting&stats=season&season=2026",
             "inc_child": "inc_code",
@@ -635,8 +459,7 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
         cls=MLBPitching,
         interval=0.3,
         on_error="isolate",
-        parent_current="all_teams",
-        parent_filter=("division_id", operator.eq, _AL_EAST_DIVISION_ID),
+        parent_current="al_teams",
         incorp_params={
             "inc_url": "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=pitching&stats=season&season=2026",
             "inc_child": "inc_code",
@@ -660,7 +483,7 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
     ws = Watershed.diamond(
         window=window,
         head=schedule_stream,
-        middle=[all_teams_stream, standings_stream, hitting_stream, pitching_stream],
+        middle=[al_teams_stream, standings_stream, hitting_stream, pitching_stream],
         tail=pulse_fjord,
         outflow=outflow_path,
         gate_mode="weir",
@@ -671,10 +494,8 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
     monkeypatch.setattr(tw, "_invoke_tick", _make_pulse_tick(tw, strong_refs, currents_by_name))
 
     # Pre-prime all upstream snapshots so the first Fjord flush has data.
-    # Without this, the Fjord (interval=0.2) fires before the parent-current
-    # Streams (interval=0.3) and outflow(state) returns [] — no file written.
     await _prime_upstreams(
-        strong_refs, schedule_stream, all_teams_stream, standings_stream, hitting_stream, pitching_stream
+        strong_refs, schedule_stream, al_teams_stream, standings_stream, hitting_stream, pitching_stream
     )
 
     [_ async for _ in tw.run()]
@@ -682,33 +503,31 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
     # --- Assertions ---
 
     # 1. Output file written
-    assert out_file.exists(), "pulse Fjord must have written al_east_pulse.ndjson"
+    assert out_file.exists(), "pulse Fjord must have written al_pulse.ndjson"
     lines = [ln for ln in out_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert lines, "output file must not be empty"
     rows = [json.loads(ln) for ln in lines]
 
-    # The Fjord may flush multiple ticks; take the last complete flush
-    # (the final contiguous block of 5 rows sharing the same flush).
-    # Simplest approach: find the last 5 rows.
-    assert len(rows) >= 5, f"expected at least 5 rows, got {len(rows)}"
-    last_five = rows[-5:]
+    # The Fjord may flush multiple ticks; take the final 15 rows (final flush).
+    assert len(rows) >= 15, f"expected at least 15 rows, got {len(rows)}"
+    last_fifteen = rows[-15:]
 
-    # 2. Exactly 5 rows when we look at the final flush
-    assert len(last_five) == 5, f"final flush must have 5 rows, got {len(last_five)}"
+    # 2. Exactly 15 rows in the final flush
+    assert len(last_fifteen) == 15, f"final flush must have 15 rows, got {len(last_fifteen)}"
 
-    # 3. All inc_codes in the AL East set
-    codes = {r["inc_code"] for r in last_five}
-    assert codes == _AL_EAST_IDS, f"inc_codes must be exactly the AL East set, got {codes}"
+    # 3. All inc_codes in the AL team set
+    codes = {r["inc_code"] for r in last_fifteen}
+    assert codes == _AL_TEAM_IDS, f"inc_codes must be exactly the AL team set, got {codes}"
 
     # 4. Sorted by power_index descending
-    power_indices = [r["power_index"] for r in last_five]
+    power_indices = [r["power_index"] for r in last_fifteen]
     assert power_indices == sorted(power_indices, reverse=True), (
         f"rows must be sorted by power_index desc, got {power_indices}"
     )
 
     # 5. Required derived fields present and numeric
-    for r in last_five:
+    for r in last_fifteen:
         assert isinstance(r.get("power_index"), float), f"power_index must be float in {r}"
         assert isinstance(r.get("pythag"), float), f"pythag must be float in {r}"
         assert isinstance(r.get("pythag_delta"), float), f"pythag_delta must be float in {r}"
-        assert r.get("power_rank") in range(1, 6), f"power_rank must be 1-5 in {r}"
+        assert r.get("power_rank") in range(1, 16), f"power_rank must be 1-15 in {r}"

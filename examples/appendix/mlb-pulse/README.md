@@ -1,6 +1,6 @@
 ***
 
-> 📎 **Appendix — Full Incorporator + Tideweaver showcase: MLB AL East Pulse.**
+> 📎 **Appendix — Full Incorporator + Tideweaver showcase: MLB AL Pulse.**
 > A single runnable script that walks every major framework capability
 > in one coherent narrative — pre-flight schema probes, a Tideweaver
 > `diamond` orchestrating four concurrent middles (including two
@@ -12,9 +12,9 @@
 
 ***
 
-# ⚾ Advanced Tideweaver: MLB AL East Pulse
+# ⚾ Advanced Tideweaver: MLB AL Pulse
 
-One 25-second run, five ranked "Pulse Cards" for the AL East division —
+One ~30-second run, fifteen ranked "Pulse Cards" for the American League —
 each composed live from four MLB Stats API endpoints joined inside a
 single Tideweaver diamond. The cards carry **two independent composite
 metrics side-by-side** (Power Index + Pythagorean win expectation) so
@@ -32,33 +32,33 @@ measure → tune**.
 
 🌀 Phase 2 — Building Watershed.diamond...
   Tide   1 | fired: schedule                                          | skipped:  4 | 0.412s
-  Tide   2 | fired: schedule,all_teams                                | skipped:  3 | 0.531s
+  Tide   2 | fired: schedule,al_teams                                 | skipped:  3 | 0.531s
   Tide   3 | fired: schedule,standings                                | skipped:  3 | 0.241s
-  Tide   4 | fired: schedule,hitting,pitching                         | skipped:  2 | 5.193s
+  Tide   4 | fired: schedule,hitting,pitching                         | skipped:  2 | 15.6s
   Tide   5 | fired: schedule,standings,pulse                          | skipped:  2 | 3.018s
   ...
 
-✅ Wrote 15 Pulse Card rows to out/al_east_pulse.ndjson
+✅ Wrote 15 Pulse Card rows to out/al_pulse.ndjson
 
 🔧 Phase 3 — Post-run feedback via architect.tune()...
   ✅ No tuning hints — all knobs look well-tuned for this run.
 
 ══════════════════════════════════════════════════════════════════════════════════════════════
-  🏟️  AL East Pulse — 2026 season (live MLB Stats API)
+  🏟️  AL Pulse — 2026 season (live MLB Stats API)
 ══════════════════════════════════════════════════════════════════════════════════════════════
   Rank  Team                            W-L    PCT    GB    OPS   ERA  PowerIdx  Pythag      ±
   ──────────────────────────────────────────────────────────────────────────────────────────────
-  1     Baltimore Orioles            91-71  0.562   0.0  0.773  3.87     1.247   0.558  -0.004
-  2     New York Yankees             89-73  0.549   2.0  0.799  3.79     1.283   0.572  +0.023
-  3     Toronto Blue Jays            74-88  0.457  17.0  0.741  4.42     0.671   0.464  +0.007
-  4     Tampa Bay Rays               80-82  0.494  11.0  0.701  4.05     0.812   0.479  -0.015
-  5     Boston Red Sox               78-84  0.481  13.0  0.764  4.21     0.871   0.500  +0.019
+  1     New York Yankees             89-73  0.549   0.0  0.799  3.79     1.283   0.572  +0.023
+  2     Houston Astros               87-75  0.537   0.0  0.768  3.32     1.272   0.560  +0.023
+  3     Cleveland Guardians          85-77  0.525   0.0  0.755  3.50     1.221   0.548  +0.023
+  4     Baltimore Orioles            91-71  0.562   2.0  0.773  3.87     1.184   0.558  -0.004
+  …    (12 more rows, all 15 AL teams ranked by Power Index desc)
 ══════════════════════════════════════════════════════════════════════════════════════════════
-  ± column: pythag − win_pct (positive = unlucky, negative = over-performing)
+  +/- column: pythag - win_pct (positive = unlucky, negative = over-performing)
 ```
 
 > **Why two metrics?** The Power Index measures *peer-relative* team
-> strength (how OPS/ERA stack up against the division mean), while
+> strength (how OPS/ERA stack up against the league mean), while
 > Pythagorean win expectation is a *self-relative* sabermetric (how
 > many wins the run differential predicts). When they agree, you've
 > found a genuinely strong team. When they disagree — Power Index
@@ -67,17 +67,46 @@ measure → tune**.
 
 ---
 
+## 🔎 Row filtering: pick the right primitive
+
+This appendix's load-bearing lesson: **filter at the source**. The
+framework has no `parent_filter` / `parent_filters` field. The
+declarative dependency primitive is `Stream(parent_current="<name>")`
++ the parent's own URL declaring its scope.
+
+| Priority | Primitive | Where it runs | Use when |
+|---|---|---|---|
+| 1 | **URL query params** (`?leagueId=103`, `?status=active`) | HTTP server | Upstream API exposes the filter as a query param |
+| 2 | **`SQLitePaginator(sql_query="...WHERE...")`** | Database | Source is SQL |
+| 3 | **`outflow(state)` return-list filter** | User callable at fjord/stateful emit | Filter belongs with aggregation logic |
+| 4 | **Separate URL-filtered parent Streams** | One parent per filter | Multi-child case with different filters |
+| 5 | **`CustomCurrent`** (escape hatch) | User-overridden `tick()` | Computed-field filter the URL can't express |
+
+This appendix uses **option 1**: the `al_teams` Stream's URL —
+`?sportId=1&leagueId=103` — produces exactly the 15 American League
+teams server-side, so the children just declare
+`parent_current="al_teams"` and naturally drill that scope. No
+post-fetch row filtering. No JSON sigils. No `import operator`.
+
+The same idiom across the framework: T11 Kraken `?pair=XBTUSD,ETHUSD`;
+crypto-graph `?vs_currency=usd&order=market_cap_desc&per_page=100`;
+pokeapi `?limit=50&offset=0`; the same MLB appendix's `_STANDINGS_URL`
+`?leagueId=103`.
+
+---
+
 ## 🎯 What this appendix demonstrates
 
 | Capability | How |
 |---|---|
-| **Diamond shape** with **4 concurrent middles** | `Watershed.diamond(head, middle=[all_teams, standings, hitting, pitching], tail=pulse, gate_mode="weir")` — every middle ticks on its own interval; `weir` lets them progress without hard-mode in-flight starvation. |
-| **T5 parent-child drilling** inside Stream parent-current drill | Two `Stream` nodes (`hitting`, `pitching`) with `parent_current="all_teams"` and `parent_filter=("division_id", operator.eq, 201)` read the upstream `all_teams` snapshot at tick time, filter to the 5 AL East teams, and fan-out `MLBHitting.incorp(inc_parent=filtered, inc_child="inc_code", inc_url="...{}/stats?group=...")` — five concurrent child fetches per stream. Two streams firing in parallel = **10 concurrent T5 child calls** per tick. Parent list comes from the upstream `all_teams` Stream's `_tideweaver_snapshot`, never hardcoded. |
-| **Six graph maps in state** | `MLBSchedule` (head) + `MLBAllTeam` (middle) + `MLBStandings` (middle) + `MLBHitting` (Stream, parent_current="all_teams") + `MLBPitching` (Stream, parent_current="all_teams") + `TeamPulseCard` (output). The Fjord's `outflow(state)` reads five of them. |
-| **`conv_dict` with callable kinds, lambda-free** | Builtins (`str.lower`), `operator.itemgetter` (nested field drill), two named module-level helpers (`derive_ops`, `above_power_threshold`), and named id-extractors (`_home_team_id`, `_away_team_id`). **Zero lambdas anywhere** — see [AGENTS.md H3 idiom](../../../AGENTS.md). |
-| **Schema discovery** via `Incorporator.architect()` + per-class `test()` | Pre-flight probe profiles all 5 source endpoints in parallel, prints schemas + field counts, and fails loudly BEFORE the 25-second diamond run if any `rec_path` or field is missing. No registry pollution — `test()` stops at the schema. |
+| **Diamond shape** with **4 concurrent middles** | `Watershed.diamond(head, middle=[al_teams, standings, hitting, pitching], tail=pulse, gate_mode="weir")` — every middle ticks on its own interval; `weir` lets them progress without hard-mode in-flight starvation. |
+| **URL-level row filtering** | `al_teams` Stream's `inc_url` is `?sportId=1&leagueId=103` — server-side filter scopes to the 15 American League teams. Children drill that scope directly via `parent_current="al_teams"`. No post-fetch filter primitive. See "Row filtering" section above for the decision tree. |
+| **T5 parent-child drilling** via `Stream(parent_current=...)` | Two `Stream` nodes (`hitting`, `pitching`) with `parent_current="al_teams"` read the upstream snapshot at tick time and fan-out `cls.incorp(inc_parent=<snapshot>, inc_child="inc_code", inc_url="...{}/stats?group=...")` — 15 concurrent child fetches per stream. Two streams firing in parallel = **30 concurrent T5 child calls** per tick. Parent list comes from the upstream `al_teams` Stream's `_tideweaver_snapshot`, never hardcoded. |
+| **Six graph maps in state** | `MLBSchedule` (head) + `MLBAllTeam` (middle) + `MLBStandings` (middle) + `MLBHitting` (Stream, parent_current="al_teams") + `MLBPitching` (Stream, parent_current="al_teams") + `TeamPulseCard` (output). The Fjord's `outflow(state)` reads five of them. |
+| **`conv_dict` with named primitives, lambda-free** | Two `calc(float, "stat.ops", default=0.0)` / `calc(float, "stat.era", default=9.99)` calls — coercion only, no row predicates. Zero lambdas. See [AGENTS.md H3 idiom](../../../AGENTS.md). |
+| **Schema discovery** via `Incorporator.architect()` + per-class `test()` | Pre-flight probe profiles all 4 source endpoints in parallel, prints schemas + field counts, and fails loudly BEFORE the 25-second diamond run if any `rec_path` or field is missing. No registry pollution — `test()` stops at the schema. |
 | **`LoggedTideweaver`** runtime telemetry | Drops in for `Tideweaver`; routes each `Tide` and every canal-layer `RejectEntry` to disk JSONL via the queue-handler-backed logger thread. Inspect `out/logs/MLBPulse_error.log` + `out/logs/MLBPulse_debug.log` after the run. |
-| **`architect.tune()`** post-run feedback | After the run, accumulated outcome records feed `architect.tune(rejects, tides, waves, pass_interval)` which emits concrete knob-tuning hints (or "no tuning needed" on a clean run — also a valid outcome). Closes the developer loop: **probe → run → measure → tune**. |
+| **`architect.tune()`** post-run feedback | After the run, accumulated outcome records feed `architect.tune(rejects, tides, pass_interval)` which emits concrete knob-tuning hints (or "no tuning needed" on a clean run — also a valid outcome). Closes the developer loop: **probe → run → measure → tune**. |
 | **Polite host throttle** | `register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))` at module top — 1 req/sec = 60 req/min, comfortably under any unstated MLB Stats API courtesy cap. |
 | **Composite analytics** | Per-team Power Index AND Pythagorean win expectation computed in `outflow(state)`, joined across 4 upstream graph maps, pre-sorted by Power Index. Same insight in `pandas` = ~60 lines of merges + manual normalization + Pythag calc. |
 
@@ -90,11 +119,11 @@ measure → tune**.
                                   │
         ┌─────────┬───────────────┼───────────────┬─────────┐
         ▼         ▼               ▼               ▼         ▼
-   all_teams  standings    hitting (Stream)  pitching (Stream)
-   Stream     Stream       parent_current=  parent_current=
-   (1 tick:   (live,       "all_teams"      "all_teams"
-    30 teams) ~4 ticks)    T5 drills 5      T5 drills 5
-                           hitting calls)   pitching calls)
+   al_teams   standings    hitting (Stream)  pitching (Stream)
+   Stream     Stream       parent_current=   parent_current=
+   (?leagueId (?leagueId   "al_teams"        "al_teams"
+   =103;      =103;        T5 drills 15      T5 drills 15
+   15 teams)  3 records)   hitting calls     pitching calls
         │         │               │               │
         └─────────┴───────┬───────┴───────────────┘
                           ▼
@@ -102,11 +131,11 @@ measure → tune**.
         (joins 4 graph maps; Power Index + Pythagorean)
                           │
                           ▼
-                 out/al_east_pulse.ndjson
+                 out/al_pulse.ndjson
                  (+ console-printed leaderboard)
 ```
 
-`Watershed.diamond(window, head, middle=[all_teams_stream, standings_stream, hitting_stream, pitching_stream], tail=pulse, gate_mode="weir")` — per [Tutorial 11](../../11-tideweaver/README.md), `diamond` is the canonical multi-source-into-one-aggregator shape.
+`Watershed.diamond(window, head, middle=[al_teams_stream, standings_stream, hitting_stream, pitching_stream], tail=pulse, gate_mode="weir")` — per [Tutorial 11](../../11-tideweaver/README.md), `diamond` is the canonical multi-source-into-one-aggregator shape.
 
 ---
 
@@ -121,9 +150,11 @@ register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))
 
 MLB Stats API is unauthenticated and publishes no rate limit — 1 req/sec
 (60 req/min) is the polite default. Total wire time for this demo:
-**~22 calls @ 1.0 r/s = ~22 seconds**, fits comfortably in the
-25-second window with `gate_mode="weir"` letting middles progress in
-parallel.
+**~31 calls @ 1.0 r/s ≈ 31 seconds**, which slightly exceeds the
+25-second window. With `gate_mode="weir"` letting middles progress in
+parallel, the first full hitting + pitching pass typically completes
+within the window and the leaderboard prints from that pass. Stretching
+the window to 35 seconds is the common live-run tweak.
 
 If you bump the throttle higher than 1.0 r/s without testing,
 `architect.tune()` will tell you in Phase 3 — that's the post-run
@@ -142,7 +173,7 @@ Artifacts produced (all under `out/`, gitignored by repo policy):
 
 | File | What |
 |---|---|
-| `out/al_east_pulse.ndjson` | 5 ranked Pulse Cards, sorted by Power Index descending — the headline deliverable |
+| `out/al_pulse.ndjson` | 15 ranked Pulse Cards, sorted by Power Index descending — the headline deliverable |
 | `out/logs/MLBPulse_error.log` | INFO/ERROR Tides from `LoggedTideweaver` (one line per scheduler pass) |
 | `out/logs/MLBPulse_debug.log` | DEBUG Tides (no-op passes between firings) |
 
@@ -163,7 +194,7 @@ examples/appendix/mlb-pulse/
   pulse_outflow.py           (Incorporator classes + outflow(state) join)
   watershed.json             (CLI-equivalent declarative form)
   out/                       (runtime artifacts; gitignored)
-    al_east_pulse.ndjson
+    al_pulse.ndjson
     logs/
       MLBPulse_error.log
       MLBPulse_debug.log
@@ -178,8 +209,8 @@ Matches the [Tutorial 11](../../11-tideweaver/) + [`nascar-tideweaver`](../nasca
 
 ## ✋ What this appendix does NOT demonstrate
 
-- **Per-player drilling.** Capping the demo at team-level stats (5 hitting + 5 pitching calls per drill) keeps the budget tight. Adding `/people/{id}?hydrate=stats` per player would be a third T5 layer; left as a follow-up appendix.
-- **All 30 teams.** Scoped to AL East to keep the demo runnable in 25 seconds; the same shape extends to other divisions by changing `division_id` filter + league ID.
+- **Per-player drilling.** Capping the demo at team-level stats (15 hitting + 15 pitching calls per drill) keeps the budget tight. Adding `/people/{id}?hydrate=stats` per player would be a third T5 layer; left as a follow-up appendix.
+- **All 30 teams.** Scoped to the American League (15 teams) via `?leagueId=103` to keep the demo runnable in ~30 seconds; the same shape extends to the National League by changing the URL filter to `?leagueId=104`.
 - **Historical comparisons.** Current-season snapshot only.
 - **The `tests/test_tideweaver_routing_diamond.py` companion.** That test runs the same diamond shape with mocked endpoints + assertion-driven correctness checks. This appendix is the live-API counterpart; the test is the regression-prevention counterpart. They're complementary.
 

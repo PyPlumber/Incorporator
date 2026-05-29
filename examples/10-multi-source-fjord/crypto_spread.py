@@ -75,13 +75,13 @@ async def main() -> None:
         ],
         outflow=str(HERE / "outflow.py"),
         export_params={"file_path": str(OUT / "crypto_spread.ndjson")},
-        refresh_interval={                                  # per-source cadences
-            "CoinGecko": 60,                                # CoinGecko's free tier is rate-limited
-            "BinancePair": 30,                              # Binance is faster
+        refresh_interval={  # per-source cadences
+            "CoinGecko": 60,  # CoinGecko's free tier is rate-limited
+            "BinancePair": 30,  # Binance is faster
         },
-        export_interval=60.0,                               # fused output: every 60 s
+        export_interval=60.0,  # fused output: every 60 s
     ):
-        op = wave.operation                                 # e.g. "fjord_refresh:CoinGecko"
+        op = wave.operation  # e.g. "fjord_refresh:CoinGecko"
         if wave.failed_sources:
             # Surface the reason fjord might abort — empty seeds (geo-blocks,
             # rate limits, transient outages) cause the engine to bail early.

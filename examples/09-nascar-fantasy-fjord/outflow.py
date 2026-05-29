@@ -104,9 +104,9 @@ def inflow(state: Dict[str, Any]) -> Dict[str, Any]:
     if "Track" in state and "Driver" in state:
         overrides["Race"] = {
             "conv_dict": {
-                "track_id":              link_to(state["Track"]),
+                "track_id": link_to(state["Track"]),
                 "pole_winner_driver_id": link_to(state["Driver"], extractor=_driver_id_or_none),
-                "winner_driver_id":      link_to(state["Driver"], extractor=_driver_id_or_none),
+                "winner_driver_id": link_to(state["Driver"], extractor=_driver_id_or_none),
                 **{key: inc(datetime) for key in _DATE_FIELDS},
             }
         }
@@ -175,25 +175,27 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
         track = getattr(race, "track", None) or getattr(race, "track_id", None)
         playoff_round = getattr(race, "playoff_round", 0) or 0
 
-        monthly.append({
-            "race_id":     race.inc_code,
-            "date":        dt.strftime("%Y-%m-%d"),
-            "race_name":   getattr(race, "race_name", "TBD"),
-            "track":       getattr(track, "inc_name", "Unknown") if track else "Unknown",
-            "track_type":  getattr(track, "track_type", "Unknown") if track else "Unknown",
-            "track_miles": getattr(track, "length", None) if track else None,
-            "track_loc":   _track_loc(track),
-            "pole_winner": getattr(pole, "Full_Name", None) if pole else None,
-            # NASCAR returns 0.0 for races whose pole hasn't been set
-            # (same sentinel pattern as pole_winner_driver_id) — promote
-            # to None so consumers can show "TBD" without checking magic
-            # numbers.
-            "pole_speed":  (getattr(race, "pole_winner_speed", None) or None) if pole else None,
-            "winner":      getattr(winner, "Full_Name", None) if winner else None,
-            "cars":        getattr(race, "number_of_cars_in_field", 0),
-            "tv":          getattr(race, "television_broadcaster", "TBD") or "TBD",
-            "playoff":     bool(playoff_round),
-        })
+        monthly.append(
+            {
+                "race_id": race.inc_code,
+                "date": dt.strftime("%Y-%m-%d"),
+                "race_name": getattr(race, "race_name", "TBD"),
+                "track": getattr(track, "inc_name", "Unknown") if track else "Unknown",
+                "track_type": getattr(track, "track_type", "Unknown") if track else "Unknown",
+                "track_miles": getattr(track, "length", None) if track else None,
+                "track_loc": _track_loc(track),
+                "pole_winner": getattr(pole, "Full_Name", None) if pole else None,
+                # NASCAR returns 0.0 for races whose pole hasn't been set
+                # (same sentinel pattern as pole_winner_driver_id) — promote
+                # to None so consumers can show "TBD" without checking magic
+                # numbers.
+                "pole_speed": (getattr(race, "pole_winner_speed", None) or None) if pole else None,
+                "winner": getattr(winner, "Full_Name", None) if winner else None,
+                "cars": getattr(race, "number_of_cars_in_field", 0),
+                "tv": getattr(race, "television_broadcaster", "TBD") or "TBD",
+                "playoff": bool(playoff_round),
+            }
+        )
     monthly.sort(key=lambda r: r["date"])
 
     # ════════════════════════════════════════════════════════════════
@@ -205,7 +207,7 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     for team in league:
         team_cd = team.team_id
         league_teams[team_cd] = {}
-        for pick in (team.roster or []):
+        for pick in team.roster or []:
             sid = int(getattr(pick, "series_id", 0))
             did = int(getattr(pick, "driver_id", 0))
             driver_obj = drivers.inc_dict.get(did)
@@ -213,19 +215,17 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
                 league_teams[team_cd].setdefault(sid, []).append(driver_obj)
         for sid in (1, 2, 3):
             if sid in league_teams[team_cd]:
-                league_teams[team_cd][sid].sort(
-                    key=lambda d: int(getattr(d, "Badge", 0) or 0)
-                )
+                league_teams[team_cd][sid].sort(key=lambda d: int(getattr(d, "Badge", 0) or 0))
 
     fantasy: List[Dict[str, Any]] = []
     for team_cd, roster in league_teams.items():
         team_obj: Dict[str, Any] = {
-            "team_id":          team_cd,
-            "roster":           [],
-            "points":           [],
+            "team_id": team_cd,
+            "roster": [],
+            "points": [],
             "manufacturer_mix": {},
-            "total_wins":       0,
-            "total_score":      0,
+            "total_wins": 0,
+            "total_score": 0,
         }
         team_score = 0
         per_series: Dict[int, int] = {}
@@ -247,41 +247,48 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
                 # Manufacturer can live on either the driver record or
                 # the standings row.  Prefer the standings copy (it's
                 # season-current) and fall back to the driver record.
-                mfg = (getattr(stnd, "manufacturer", "") if stnd else "") or \
-                      getattr(driver, "Manufacturer", "") or "Unknown"
+                mfg = (
+                    (getattr(stnd, "manufacturer", "") if stnd else "")
+                    or getattr(driver, "Manufacturer", "")
+                    or "Unknown"
+                )
                 mfg = mfg.strip() or "Unknown"
                 mfg_counter[mfg] += 1
 
-                team_obj["roster"].append({
-                    "series":       series_name,
-                    "car_idx":      car_idx,
-                    "name":         getattr(driver, "inc_name", "Unknown").strip(),
-                    "car":          getattr(driver, "Badge", "N/A"),
-                    "team":         (getattr(driver, "Team", "") or "Unknown").strip(),
-                    "manufacturer": mfg,
-                    "hometown":     _hometown(driver),
-                    "rank":         getattr(stnd, "position", None) if stnd else None,
-                    "wins":         wins,
-                    "t10":          getattr(stnd, "top_10", 0) if stnd else 0,
-                    "top_5":        getattr(stnd, "top_5", 0) if stnd else 0,
-                    "laps_led":     getattr(stnd, "laps_led", 0) if stnd else 0,
-                    "points":       pts,
-                    # ``delta_leader`` is signed in the raw feed (negative
-                    # for drivers behind the leader, 0 for the leader).
-                    # Fantasy UX wants "points behind leader" as a
-                    # positive number — abs() makes the column intuitive
-                    # without altering the underlying truth.
-                    "points_back":  abs(getattr(stnd, "delta_leader", 0) or 0) if stnd else None,
-                })
+                team_obj["roster"].append(
+                    {
+                        "series": series_name,
+                        "car_idx": car_idx,
+                        "name": getattr(driver, "inc_name", "Unknown").strip(),
+                        "car": getattr(driver, "Badge", "N/A"),
+                        "team": (getattr(driver, "Team", "") or "Unknown").strip(),
+                        "manufacturer": mfg,
+                        "hometown": _hometown(driver),
+                        "rank": getattr(stnd, "position", None) if stnd else None,
+                        "wins": wins,
+                        "t10": getattr(stnd, "top_10", 0) if stnd else 0,
+                        "top_5": getattr(stnd, "top_5", 0) if stnd else 0,
+                        "laps_led": getattr(stnd, "laps_led", 0) if stnd else 0,
+                        "points": pts,
+                        # ``delta_leader`` is signed in the raw feed (negative
+                        # for drivers behind the leader, 0 for the leader).
+                        # Fantasy UX wants "points behind leader" as a
+                        # positive number — abs() makes the column intuitive
+                        # without altering the underlying truth.
+                        "points_back": abs(getattr(stnd, "delta_leader", 0) or 0) if stnd else None,
+                    }
+                )
             team_score += per_series[series_id]
 
         for series_id, series_name in enumerate(_SERIES_LIST, start=1):
             pts = per_series[series_id]
-            team_obj["points"].append({
-                "series":     series_name,
-                "points":     pts,
-                "percentage": round(pts / team_score, 4) if team_score else 0,
-            })
+            team_obj["points"].append(
+                {
+                    "series": series_name,
+                    "points": pts,
+                    "percentage": round(pts / team_score, 4) if team_score else 0,
+                }
+            )
         team_obj["points"].append({"series": "GRAND TOTAL", "points": team_score, "percentage": 1.0})
         team_obj["total_score"] = team_score
         team_obj["total_wins"] = total_wins
@@ -308,21 +315,23 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     manufacturer_rows: List[Dict[str, Any]] = []
     for mfg, rows in mfg_buckets.items():
         if mfg == "Unknown":
-            continue                                  # skip the catch-all bucket
+            continue  # skip the catch-all bucket
         top = max(rows, key=lambda s: getattr(s, "points", 0))
-        manufacturer_rows.append({
-            "manufacturer":  mfg,
-            "drivers":       len(rows),
-            "total_points":  sum(getattr(s, "points", 0) for s in rows),
-            "total_wins":    sum(getattr(s, "wins", 0) for s in rows),
-            "playoff_seats": sum(1 for s in rows if getattr(s, "playoff_eligible", 0)),
-            "top_driver":    getattr(top, "inc_name", "Unknown"),
-            "top_points":    getattr(top, "points", 0),
-        })
+        manufacturer_rows.append(
+            {
+                "manufacturer": mfg,
+                "drivers": len(rows),
+                "total_points": sum(getattr(s, "points", 0) for s in rows),
+                "total_wins": sum(getattr(s, "wins", 0) for s in rows),
+                "playoff_seats": sum(1 for s in rows if getattr(s, "playoff_eligible", 0)),
+                "top_driver": getattr(top, "inc_name", "Unknown"),
+                "top_points": getattr(top, "points", 0),
+            }
+        )
     manufacturer_rows.sort(key=lambda r: -r["total_points"])
 
     return {
-        "MonthlyRaceSchedule":     monthly,
-        "FantasyTeam":             fantasy,
+        "MonthlyRaceSchedule": monthly,
+        "FantasyTeam": fantasy,
         "ManufacturerLeaderboard": manufacturer_rows,
     }

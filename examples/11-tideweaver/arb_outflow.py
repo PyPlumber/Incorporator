@@ -117,15 +117,9 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
         ``spread_bps > 5``.
     """
     quotes: List[Tuple[str, float, float, str]] = []
-    quotes += _venue_quotes(
-        state.get("BinanceBook", []), "symbol", "bidPrice", "askPrice", "binance"
-    )
-    quotes += _venue_quotes(
-        state.get("CoinbaseTicker", []), "product_id", "bid", "ask", "coinbase"
-    )
-    quotes += _venue_quotes(
-        state.get("KrakenTicker", []), "_key", "b", "a", "kraken"
-    )
+    quotes += _venue_quotes(state.get("BinanceBook", []), "symbol", "bidPrice", "askPrice", "binance")
+    quotes += _venue_quotes(state.get("CoinbaseTicker", []), "product_id", "bid", "ask", "coinbase")
+    quotes += _venue_quotes(state.get("KrakenTicker", []), "_key", "b", "a", "kraken")
 
     by_asset: Dict[str, List[Tuple[float, float, str]]] = {}
     for asset, bid, ask, venue in quotes:
@@ -133,12 +127,8 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     rows: List[Dict[str, Any]] = []
     for asset, venues in by_asset.items():
-        best_bid_price, best_bid_venue = max(
-            ((b, v) for b, _, v in venues), default=(0.0, "")
-        )
-        best_ask_price, best_ask_venue = min(
-            ((a, v) for _, a, v in venues), default=(0.0, "")
-        )
+        best_bid_price, best_bid_venue = max(((b, v) for b, _, v in venues), default=(0.0, ""))
+        best_ask_price, best_ask_venue = min(((a, v) for _, a, v in venues), default=(0.0, ""))
         if not (best_bid_price and best_ask_price):
             continue
         mid = (best_bid_price + best_ask_price) / 2

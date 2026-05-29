@@ -115,12 +115,7 @@ async def main() -> None:
         homepage_list = getattr(links_obj, "homepage", []) if links_obj else []
         homepage = (homepage_list[0] if homepage_list else "")[:38]
         genesis = getattr(detail, "genesis_date", None) or "—"
-        print(
-            f"{coin.name:<14} "
-            f"${coin.current_price:>12,.2f} "
-            f"{genesis:<12} "
-            f"{homepage}"
-        )
+        print(f"{coin.name:<14} ${coin.current_price:>12,.2f} {genesis:<12} {homepage}")
 
     # Failed sources surface on each result list for reject-retry workflows.
     # Structured view (preferred): ``details.rejects`` carries per-source

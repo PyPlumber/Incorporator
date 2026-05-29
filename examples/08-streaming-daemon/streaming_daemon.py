@@ -70,10 +70,7 @@ async def stateful_demo() -> None:
         if wave.failed_sources:
             print(f"⚠️  {wave.operation} chunk {wave.chunk_index}: {wave.failed_sources}")
         else:
-            print(
-                f"✅ {wave.operation} chunk {wave.chunk_index}: "
-                f"{wave.rows_processed} pairs"
-            )
+            print(f"✅ {wave.operation} chunk {wave.chunk_index}: {wave.rows_processed} pairs")
 
 
 # ----------------------------------------------------------------------
@@ -102,7 +99,7 @@ async def chunking_demo(max_pages: int = 3) -> None:
 
     out = OUT / "coins_full.ndjson"
     if out.exists():
-        out.unlink()                                # start fresh
+        out.unlink()  # start fresh
 
     async for wave in CoinPage.stream(
         incorp_params={
@@ -113,7 +110,7 @@ async def chunking_demo(max_pages: int = 3) -> None:
             "inc_page": paginator,
             "excl_lst": ["image"],
         },
-        refresh_params=None,                # chunking mode: opt out of per-chunk refresh
+        refresh_params=None,  # chunking mode: opt out of per-chunk refresh
         export_params={
             "file_path": out,
             "if_exists": "append",
@@ -125,7 +122,7 @@ async def chunking_demo(max_pages: int = 3) -> None:
         else:
             print(f"📦 page {wave.chunk_index}: {wave.rows_processed} coins")
         if wave.chunk_index >= max_pages:
-            break                            # demo cap; remove for full drain
+            break  # demo cap; remove for full drain
 
     if out.exists():
         print(f"\n✅ Drain complete. Output: {out} ({out.stat().st_size:,} bytes)")

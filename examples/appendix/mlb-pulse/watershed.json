@@ -1,14 +1,14 @@
 {
-  "_comment_1_": "CLI-declarative form of the MLB AL East Pulse diamond.",
+  "_comment_1_": "CLI-declarative form of the MLB AL Pulse diamond.",
   "_comment_2_": "Relative outflow path is resolved against this JSON's parent directory,",
   "_comment_3_": "so the example runs from any working directory:",
   "_comment_4_": "  incorporator validate examples/appendix/mlb-pulse/watershed.json",
   "_comment_5_": "  incorporator tideweaver run examples/appendix/mlb-pulse/watershed.json",
   "_comment_6_": "Override the default window with env vars: PULSE_START / PULSE_END (ISO 8601, UTC).",
-  "_comment_7_": "hitting and pitching nodes use verb: stream with parent_current='all_teams' for",
-  "_comment_8_": "T5 parent-child fan-out. conv_dict values are call-grammar strings resolved by",
-  "_comment_9_": "incorporator/cli/tokens.py at load time: 'calc(float, \"stat.ops\", default=0.0)'",
-  "_comment_10_": "parses to a real CalcOp instance via the safe-eval allow-list.",
+  "_comment_7_": "hitting and pitching nodes use verb: stream with parent_current='al_teams' for",
+  "_comment_8_": "T5 parent-child fan-out. The al_teams parent's inc_url scopes server-side via",
+  "_comment_9_": "?sportId=1&leagueId=103, so no post-fetch row filter is needed — see the README",
+  "_comment_10_": "row-filter decision tree (URL filter is the framework's preferred primitive).",
   "window": {
     "start": "${PULSE_START:-2026-05-28T00:00:00+00:00}",
     "end":   "${PULSE_END:-2026-05-28T00:00:25+00:00}"
@@ -35,19 +35,16 @@
 
   "middle": [
     {
-      "name": "all_teams",
+      "name": "al_teams",
       "class": "MLBAllTeam",
       "verb": "stream",
       "interval": 20,
       "on_error": "isolate",
       "incorp_params": {
-        "inc_url": "https://statsapi.mlb.com/api/v1/teams?sportId=1",
+        "inc_url": "https://statsapi.mlb.com/api/v1/teams?sportId=1&leagueId=103",
         "rec_path": "teams",
         "inc_code": "id",
-        "inc_name": "name",
-        "conv_dict": {
-          "division_id": "calc(int, 'division.id', default=0)"
-        }
+        "inc_name": "name"
       }
     },
     {
@@ -69,8 +66,7 @@
       "verb": "stream",
       "interval": 6,
       "on_error": "isolate",
-      "parent_current": "all_teams",
-      "parent_filter": ["division_id", "@operator_eq", 201],
+      "parent_current": "al_teams",
       "incorp_params": {
         "inc_url": "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=hitting&stats=season&season=2026",
         "inc_child": "inc_code",
@@ -87,8 +83,7 @@
       "verb": "stream",
       "interval": 6,
       "on_error": "isolate",
-      "parent_current": "all_teams",
-      "parent_filter": ["division_id", "@operator_eq", 201],
+      "parent_current": "al_teams",
       "incorp_params": {
         "inc_url": "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=pitching&stats=season&season=2026",
         "inc_child": "inc_code",
@@ -108,7 +103,7 @@
     "interval": 4,
     "on_error": "isolate",
     "export_params": {
-      "file_path": "out/al_east_pulse.ndjson",
+      "file_path": "out/al_pulse.ndjson",
       "format": "ndjson",
       "if_exists": "replace"
     }
