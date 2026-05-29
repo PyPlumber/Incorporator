@@ -1,9 +1,10 @@
 """T-Tutorial smoke test for the MLB AL East Pulse Tideweaver appendix.
 
 Patches ``execute_request`` to return canned MLB Stats API payloads and drives
-the diamond end-to-end (head + 4 middles + tail Fjord).  CustomCurrents
-(HittingDrillCurrent, PitchingDrillCurrent) are exercised directly via their
-``tick()`` methods after the upstream MLBAllTeam snapshot is parked manually.
+the diamond end-to-end (head + 4 middles + tail Fjord).  hitting_stream and
+pitching_stream use Stream(parent_current='all_teams', parent_filter=...) —
+the mock tick dispatcher resolves parent snapshots the same way the real
+scheduler does.
 
 Asserts:
 - Exactly 5 output rows (one per AL East team)
@@ -15,6 +16,7 @@ Asserts:
 from __future__ import annotations
 
 import json
+import operator
 import sys
 from pathlib import Path
 from typing import Any
@@ -43,17 +45,17 @@ _SIDECAR_DIR = _HERE.parents[3] / "examples" / "appendix" / "mlb-pulse"
 if str(_SIDECAR_DIR) not in sys.path:
     sys.path.insert(0, str(_SIDECAR_DIR))
 
-from incorporator.schema.converters import calc  # noqa: E402
 from pulse_outflow import (  # noqa: E402
-    HittingDrillCurrent,
+    _AL_EAST_DIVISION_ID,
     MLBAllTeam,
     MLBHitting,
     MLBPitching,
     MLBSchedule,
     MLBStandings,
-    PitchingDrillCurrent,
     TeamPulseCard,
 )
+
+from incorporator.schema.converters import calc  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # AL East team IDs the brief specifies
@@ -427,19 +429,37 @@ def _reset_all() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_pulse_tick(tw: Tideweaver, strong_refs: dict) -> Any:
-    """Build a tick dispatcher that handles Stream, Fjord, and CustomCurrent nodes.
+def _make_pulse_tick(tw: Tideweaver, strong_refs: dict, currents_by_name: dict[str, Any]) -> Any:
+    """Build a tick dispatcher that handles Stream and Fjord nodes.
 
-    For the Fjord branch: if the CustomCurrents haven't fired yet (no snapshot
-    on MLBHitting / MLBPitching), the Fjord would return empty rows and skip
-    writing the output file.  The guard propagates the strong-ref snapshots from
-    ``strong_refs`` onto the class attributes so ``_tick_fjord`` can find them
-    even when the CustomCurrents haven't been scheduled yet this pass.
+    For Stream nodes with ``parent_current`` set, mirrors the real scheduler's
+    ``_tick_stream`` logic (scheduler.py:942-958): resolve parent snapshot,
+    apply parent_filter, call ``cls.incorp(inc_parent=filtered, ...)``.
+
+    For the Fjord branch: propagates strong-ref snapshots onto class attributes
+    so ``_tick_fjord`` can find them when parent-current Streams haven't been
+    scheduled yet this pass.
     """
 
     async def tick(current: Current) -> None:
         if isinstance(current, Stream):
-            result = await current.cls.incorp(**current.incorp_params)
+            if current.parent_current is not None:
+                parent_current = currents_by_name.get(current.parent_current)
+                pre_snap = getattr(parent_current.cls, "_tideweaver_snapshot", None) if parent_current else None
+                if not pre_snap:
+                    return
+                if isinstance(current.parent_filter, tuple):
+                    attr, op, value = current.parent_filter
+                    filtered = [r for r in pre_snap if op(getattr(r, attr, None), value)]
+                elif callable(current.parent_filter):
+                    filtered = [r for r in pre_snap if current.parent_filter(r)]
+                else:
+                    filtered = list(pre_snap)
+                if not filtered:
+                    return
+                result = await current.cls.incorp(inc_parent=filtered, **current.incorp_params)
+            else:
+                result = await current.cls.incorp(**current.incorp_params)
             if isinstance(result, list):
                 strong_refs[current.cls] = list(result)
             elif result is not None:
@@ -447,7 +467,7 @@ def _make_pulse_tick(tw: Tideweaver, strong_refs: dict) -> Any:
             current.cls._tideweaver_snapshot = list(strong_refs.get(current.cls, []))  # type: ignore[attr-defined]
         elif isinstance(current, Fjord):
             # Propagate any pre-primed strong-refs onto class snapshots so the
-            # real _tick_fjord can find them even when CustomCurrents haven't
+            # real _tick_fjord can find them when parent-current Streams haven't
             # been scheduled this pass yet.
             for cls_ref, rows in strong_refs.items():
                 if not getattr(cls_ref, "_tideweaver_snapshot", None) and rows:
@@ -463,16 +483,6 @@ def _make_pulse_tick(tw: Tideweaver, strong_refs: dict) -> Any:
             params = dict(current.export_params)
             params.setdefault("instance", instance)
             await current.cls.export(**params)
-        elif hasattr(current, "tick"):
-            # CustomCurrent — call tick() directly with a sentinel scheduler.
-            # The CustomCurrents only use the scheduler for type annotation;
-            # they don't call scheduler methods.
-            await current.tick(None)
-            # Park snapshot for whichever output class this current drives.
-            for driven_cls in (MLBHitting, MLBPitching):
-                snap = getattr(driven_cls, "_tideweaver_snapshot", None)
-                if snap:
-                    strong_refs[driven_cls] = list(snap)
 
     return tick
 
@@ -482,30 +492,41 @@ async def _prime_upstreams(
     schedule_stream: Stream,
     all_teams_stream: Stream,
     standings_stream: Stream,
-    hitting_current: Any,
-    pitching_current: Any,
+    hitting_stream: Stream,
+    pitching_stream: Stream,
 ) -> None:
     """Prime all upstream snapshots before the scheduler run.
 
-    Drives Stream.incorp() calls and CustomCurrent.tick() directly so that
-    when the scheduler's first Fjord flush fires, the state dict is already
-    populated with real data.  This avoids the race where the Fjord fires
-    before the CustomCurrents have a chance to populate MLBHitting/MLBPitching.
+    Drives Stream.incorp() calls directly so that when the scheduler's first
+    Fjord flush fires, the state dict is already populated with real data.
+    This avoids the race where the Fjord fires before the parent-current
+    Streams have populated MLBHitting/MLBPitching.
     """
-    # 1. Streams — incorp + park snapshot
+    # 1. Simple streams — incorp + park snapshot
     for stream in (schedule_stream, all_teams_stream, standings_stream):
         result = await stream.cls.incorp(**stream.incorp_params)
         rows = list(result) if isinstance(result, list) else ([result] if result is not None else [])
         strong_refs[stream.cls] = rows
         stream.cls._tideweaver_snapshot = rows  # type: ignore[attr-defined]
 
-    # 2. CustomCurrents — tick() depends on MLBAllTeam snapshot being parked first
-    for cc in (hitting_current, pitching_current):
-        await cc.tick(None)
-    for driven_cls in (MLBHitting, MLBPitching):
-        snap = getattr(driven_cls, "_tideweaver_snapshot", None)
-        if snap:
-            strong_refs[driven_cls] = list(snap)
+    # 2. Parent-current Streams — resolve all_teams snapshot, apply parent_filter, fan-out
+    for stream in (hitting_stream, pitching_stream):
+        pre_snap = getattr(stream.parent_current and all_teams_stream.cls, "_tideweaver_snapshot", None)
+        if not pre_snap:
+            continue
+        if isinstance(stream.parent_filter, tuple):
+            attr, op, value = stream.parent_filter
+            filtered = [r for r in pre_snap if op(getattr(r, attr, None), value)]
+        elif callable(stream.parent_filter):
+            filtered = [r for r in pre_snap if stream.parent_filter(r)]
+        else:
+            filtered = list(pre_snap)
+        if not filtered:
+            continue
+        result = await stream.cls.incorp(inc_parent=filtered, **stream.incorp_params)
+        rows = list(result) if isinstance(result, list) else ([result] if result is not None else [])
+        strong_refs[stream.cls] = rows
+        stream.cls._tideweaver_snapshot = rows  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -577,17 +598,35 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
             "inc_name": "division.name",
         },
     )
-    hitting_current = HittingDrillCurrent(
+    hitting_stream = Stream(
         name="hitting",
         cls=MLBHitting,
         interval=0.3,
         on_error="isolate",
+        parent_current="all_teams",
+        parent_filter=("division_id", operator.eq, _AL_EAST_DIVISION_ID),
+        incorp_params={
+            "inc_url": "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=hitting&stats=season&season=2026",
+            "inc_child": "inc_code",
+            "rec_path": "stats.0.splits.0",
+            "inc_code": "team.id",
+            "conv_dict": {"ops": calc(float, "stat.ops", default=0.0, target_type=float)},
+        },
     )
-    pitching_current = PitchingDrillCurrent(
+    pitching_stream = Stream(
         name="pitching",
         cls=MLBPitching,
         interval=0.3,
         on_error="isolate",
+        parent_current="all_teams",
+        parent_filter=("division_id", operator.eq, _AL_EAST_DIVISION_ID),
+        incorp_params={
+            "inc_url": "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=pitching&stats=season&season=2026",
+            "inc_child": "inc_code",
+            "rec_path": "stats.0.splits.0",
+            "inc_code": "team.id",
+            "conv_dict": {"era": calc(float, "stat.era", default=9.99, target_type=float)},
+        },
     )
     pulse_fjord = Fjord(
         name="pulse",
@@ -604,20 +643,21 @@ async def test_mlb_pulse_etl_produces_five_ranked_al_east_cards(tmp_path: Any, m
     ws = Watershed.diamond(
         window=window,
         head=schedule_stream,
-        middle=[all_teams_stream, standings_stream, hitting_current, pitching_current],
+        middle=[all_teams_stream, standings_stream, hitting_stream, pitching_stream],
         tail=pulse_fjord,
         outflow=outflow_path,
         gate_mode="weir",
         drain_timeout=8.0,
     )
     tw = Tideweaver(ws, pass_interval=0.05)
-    monkeypatch.setattr(tw, "_invoke_tick", _make_pulse_tick(tw, strong_refs))
+    currents_by_name = {c.name: c for c in ws.currents}
+    monkeypatch.setattr(tw, "_invoke_tick", _make_pulse_tick(tw, strong_refs, currents_by_name))
 
     # Pre-prime all upstream snapshots so the first Fjord flush has data.
-    # Without this, the Fjord (interval=0.2) fires before the CustomCurrents
-    # (interval=0.3) and outflow(state) returns [] — no file written.
+    # Without this, the Fjord (interval=0.2) fires before the parent-current
+    # Streams (interval=0.3) and outflow(state) returns [] — no file written.
     await _prime_upstreams(
-        strong_refs, schedule_stream, all_teams_stream, standings_stream, hitting_current, pitching_current
+        strong_refs, schedule_stream, all_teams_stream, standings_stream, hitting_stream, pitching_stream
     )
 
     [_ async for _ in tw.run()]

@@ -5,14 +5,11 @@
   "_comment_4_": "  incorporator validate examples/appendix/mlb-pulse/watershed.json",
   "_comment_5_": "  incorporator tideweaver run examples/appendix/mlb-pulse/watershed.json",
   "_comment_6_": "Override the default window with env vars: PULSE_START / PULSE_END (ISO 8601, UTC).",
-  "_comment_7_": "CustomCurrent nodes (hitting, pitching) are loaded from pulse_outflow.py via the",
-  "_comment_8_": "class field referencing HittingDrillCurrent / PitchingDrillCurrent defined there.",
-  "_comment_9_": "conv_dict values are call-grammar strings resolved by incorporator/cli/tokens.py at",
-  "_comment_10_": "load time: 'calc(int, \"division.id\", default=0)' parses to a real CalcOp instance",
-  "_comment_11_": "via the safe-eval allow-list. The Python entry (mlb_pulse.py) declares the same",
-  "_comment_12_": "minimal conv_dict inline at the Stream call site. Only division_id needs coercion —",
-  "_comment_13_": "the AL East filter compares it to the literal int 201.",
-  "_doc_limitation_": "CUSTOMCURRENT VERB NOT YET SUPPORTED BY JSON LOADER: incorporator/observability/tideweaver/config.py::_build_current dispatches on verb in {'stream', 'fjord', 'export'}; 'custom' raises ValueError, and its `class` reference must resolve to an Incorporator subclass (not a CustomCurrent subclass). The hitting/pitching nodes below will not load via the CLI today. Use the Python entry (mlb_pulse.py) for a full run. Adding `verb: 'custom'` support to the JSON loader is a separate framework follow-up.",
+  "_comment_7_": "hitting and pitching nodes use verb: stream with parent_current='all_teams' for",
+  "_comment_8_": "T5 parent-child fan-out. conv_dict values are call-grammar strings resolved by",
+  "_comment_9_": "incorporator/cli/tokens.py at load time: 'calc(float, \"stat.ops\", default=0.0)'",
+  "_comment_10_": "parses to a real CalcOp instance via the safe-eval allow-list.",
+  "_doc_limitation_": "CLI form limitations: (1) _build_current in config.py does not yet forward parent_current/parent_filter from JSON nodes to Stream() — needs a separate framework follow-up. (2) parent_filter tuple form can't be expressed via call-grammar today because operator.eq is not in tokens.py _ALLOWED_NAMES. The all_teams parent has 30 teams; without the filter, hitting/pitching would fan-out 30 T5 calls each instead of 5. The Python entry (mlb_pulse.py) declares parent_filter inline and works fully. Use it for live runs until the framework gaps land.",
 
   "window": {
     "start": "${PULSE_START:-2026-05-28T00:00:00+00:00}",
@@ -70,17 +67,37 @@
     },
     {
       "name": "hitting",
-      "class": "HittingDrillCurrent",
-      "verb": "custom",
+      "class": "MLBHitting",
+      "verb": "stream",
       "interval": 6,
-      "on_error": "isolate"
+      "on_error": "isolate",
+      "parent_current": "all_teams",
+      "incorp_params": {
+        "inc_url": "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=hitting&stats=season&season=2026",
+        "inc_child": "inc_code",
+        "rec_path": "stats.0.splits.0",
+        "inc_code": "team.id",
+        "conv_dict": {
+          "ops": "calc(float, 'stat.ops', default=0.0)"
+        }
+      }
     },
     {
       "name": "pitching",
-      "class": "PitchingDrillCurrent",
-      "verb": "custom",
+      "class": "MLBPitching",
+      "verb": "stream",
       "interval": 6,
-      "on_error": "isolate"
+      "on_error": "isolate",
+      "parent_current": "all_teams",
+      "incorp_params": {
+        "inc_url": "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=pitching&stats=season&season=2026",
+        "inc_child": "inc_code",
+        "rec_path": "stats.0.splits.0",
+        "inc_code": "team.id",
+        "conv_dict": {
+          "era": "calc(float, 'stat.era', default=9.99)"
+        }
+      }
     }
   ],
 

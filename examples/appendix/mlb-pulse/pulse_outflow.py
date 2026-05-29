@@ -1,8 +1,8 @@
 """Outflow logic and class definitions for the MLB AL East Pulse Tideweaver diamond.
 
-Defines the six ``Incorporator`` subclasses and two ``CustomCurrent`` subclasses
-referenced from ``watershed.json`` and ``mlb_pulse.py``, plus named module-level
-helpers and the ``outflow(state)`` function the tail Fjord calls each tick.
+Defines the six ``Incorporator`` subclasses referenced from ``watershed.json``
+and ``mlb_pulse.py``, plus named module-level helpers and the ``outflow(state)``
+function the tail Fjord calls each tick.
 
 Imported by both the Python entry (``mlb_pulse.py``) and the CLI form
 (``incorporator tideweaver run watershed.json``), so host-throttle registration
@@ -21,8 +21,6 @@ import operator
 from typing import Any
 
 from incorporator import Incorporator, SustainedPenstock, register_host_penstock
-from incorporator.observability.tideweaver import CustomCurrent
-from incorporator.schema.converters import calc
 
 # ---------------------------------------------------------------------------
 # Host throttle — 1 req/sec = 60 req/min, well under any undocumented MLB cap.
@@ -61,11 +59,11 @@ class MLBStandings(Incorporator):
 
 
 class MLBHitting(Incorporator):
-    """Per-team season hitting stats — populated by HittingDrillCurrent T5 drills."""
+    """Per-team season hitting stats — populated by Stream(parent_current='all_teams') T5 drills."""
 
 
 class MLBPitching(Incorporator):
-    """Per-team season pitching stats — populated by PitchingDrillCurrent T5 drills."""
+    """Per-team season pitching stats — populated by Stream(parent_current='all_teams') T5 drills."""
 
 
 class TeamPulseCard(Incorporator):
@@ -123,81 +121,6 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 
 # ---------------------------------------------------------------------------
-# CustomCurrent subclasses — T5 parent-child drill nodes
-# ---------------------------------------------------------------------------
-
-_HITTING_URL = "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=hitting&stats=season&season=2026"
-_PITCHING_URL = "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=pitching&stats=season&season=2026"
-
-
-class HittingDrillCurrent(CustomCurrent):
-    """T5 drill: reads MLBAllTeam snapshot, filters to AL East, fires 5 hitting-stat fetches.
-
-    Must park ``_tideweaver_snapshot`` after the incorp call so the tail
-    Fjord's ``outflow(state)`` can read ``state['MLBHitting']``.  Without
-    the explicit park the WeakValueDictionary GC race empties the registry
-    between ticks.
-    """
-
-    async def tick(self, scheduler: Any) -> None:
-        """Filter upstream MLBAllTeam to AL East; fire T5 hitting drills; park snapshot."""
-        snapshot = getattr(MLBAllTeam, "_tideweaver_snapshot", None)
-        if not snapshot:
-            return  # all_teams hasn't fired yet — skip silently
-        al_east = [t for t in snapshot if getattr(t, "division_id", 0) == _AL_EAST_DIVISION_ID]
-        if not al_east:
-            return
-        result = await MLBHitting.incorp(
-            inc_parent=al_east,
-            inc_child="inc_code",
-            inc_url=_HITTING_URL,
-            rec_path="stats.0.splits.0",
-            inc_code="team.id",
-            # Only ``ops`` is load-bearing — ``derive_power_index`` reads it as a float.
-            conv_dict={"ops": calc(float, "stat.ops", default=0.0, target_type=float)},
-        )
-        MLBHitting._tideweaver_snapshot = (
-            list(result)
-            if isinstance(result, list)
-            # type: ignore[attr-defined]
-            else ([result] if result is not None else [])
-        )
-
-
-class PitchingDrillCurrent(CustomCurrent):
-    """T5 drill: reads MLBAllTeam snapshot, filters to AL East, fires 5 pitching-stat fetches.
-
-    Same snapshot-parking pattern as HittingDrillCurrent — required so
-    ``state['MLBPitching']`` is non-empty when the tail Fjord flushes.
-    """
-
-    async def tick(self, scheduler: Any) -> None:
-        """Filter upstream MLBAllTeam to AL East; fire T5 pitching drills; park snapshot."""
-        snapshot = getattr(MLBAllTeam, "_tideweaver_snapshot", None)
-        if not snapshot:
-            return  # all_teams hasn't fired yet — skip silently
-        al_east = [t for t in snapshot if getattr(t, "division_id", 0) == _AL_EAST_DIVISION_ID]
-        if not al_east:
-            return
-        result = await MLBPitching.incorp(
-            inc_parent=al_east,
-            inc_child="inc_code",
-            inc_url=_PITCHING_URL,
-            rec_path="stats.0.splits.0",
-            inc_code="team.id",
-            # Only ``era`` is load-bearing — ``derive_power_index`` reads it as a float.
-            # default=9.99 so garbage rows sort to bottom of Power Index.
-            conv_dict={"era": calc(float, "stat.era", default=9.99, target_type=float)},
-        )
-        MLBPitching._tideweaver_snapshot = (
-            list(result)
-            if isinstance(result, list)
-            # type: ignore[attr-defined]
-            else ([result] if result is not None else [])
-        )
-
-
-# ---------------------------------------------------------------------------
 # Outflow function — joins 4 upstream graph maps into ranked Pulse Cards
 # ---------------------------------------------------------------------------
 
@@ -220,7 +143,7 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     hitting_by_id = {h.inc_code: h for h in state.get("MLBHitting", [])}
     pitching_by_id = {p.inc_code: p for p in state.get("MLBPitching", [])}
 
-    # Guard: CustomCurrents may not have fired on the first few ticks.
+    # Guard: parent-current Streams may not have fired on the first few ticks.
     if not hitting_by_id or not pitching_by_id:
         return []
 

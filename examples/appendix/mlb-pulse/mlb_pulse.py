@@ -10,7 +10,7 @@ Phases:
      rec_paths and field shapes before committing to the 25-second diamond run.
   2. ``LoggedTideweaver`` diamond:
        head   : MLBSchedule (today's game schedule)
-       middle : [MLBAllTeam, MLBStandings, HittingDrillCurrent, PitchingDrillCurrent]
+       middle : [MLBAllTeam, MLBStandings, hitting_stream, pitching_stream]
        tail   : TeamPulseCard Fjord (joins 4 graph maps via outflow(state))
   3. Post-run ``architect.tune()`` feedback — emits concrete knob hints or
      "No tuning hints" on a clean run.
@@ -24,13 +24,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import operator
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from incorporator import Incorporator, SustainedPenstock, register_host_penstock
 from incorporator.observability.tideweaver import (
-    CustomCurrent,  # noqa: F401 — re-exported for sidecar
     Fjord,
     LoggedTideweaver,
     Stream,
@@ -50,17 +50,15 @@ OUT.mkdir(exist_ok=True)
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-# Import class definitions + CustomCurrent subclasses + outflow() from the
-# shared sidecar so both the Python entry and the CLI watershed.json form stay
-# in lockstep.
+# Import class definitions + outflow() from the shared sidecar so both the
+# Python entry and the CLI watershed.json form stay in lockstep.
 from pulse_outflow import (  # noqa: E402
-    HittingDrillCurrent,
+    _AL_EAST_DIVISION_ID,
     MLBAllTeam,
     MLBHitting,
     MLBPitching,
     MLBSchedule,
     MLBStandings,
-    PitchingDrillCurrent,
     TeamPulseCard,
 )
 
@@ -79,6 +77,8 @@ _SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
 _TEAMS_URL = "https://statsapi.mlb.com/api/v1/teams?sportId=1"
 _STANDINGS_URL = "https://statsapi.mlb.com/api/v1/standings?leagueId=103"
 _HITTING_SAMPLE_URL = "https://statsapi.mlb.com/api/v1/teams/147/stats?group=hitting&stats=season&season=2026"
+_HITTING_URL = "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=hitting&stats=season&season=2026"
+_PITCHING_URL = "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=pitching&stats=season&season=2026"
 
 
 # ---------------------------------------------------------------------------
@@ -172,17 +172,35 @@ async def _run() -> list[dict]:
             "inc_name": "division.name",
         },
     )
-    hitting_current = HittingDrillCurrent(
+    hitting_stream = Stream(
         name="hitting",
         cls=MLBHitting,
         interval=6.0,
         on_error="isolate",
+        parent_current="all_teams",
+        parent_filter=("division_id", operator.eq, _AL_EAST_DIVISION_ID),
+        incorp_params={
+            "inc_url": _HITTING_URL,
+            "inc_child": "inc_code",
+            "rec_path": "stats.0.splits.0",
+            "inc_code": "team.id",
+            "conv_dict": {"ops": calc(float, "stat.ops", default=0.0, target_type=float)},
+        },
     )
-    pitching_current = PitchingDrillCurrent(
+    pitching_stream = Stream(
         name="pitching",
         cls=MLBPitching,
         interval=6.0,
         on_error="isolate",
+        parent_current="all_teams",
+        parent_filter=("division_id", operator.eq, _AL_EAST_DIVISION_ID),
+        incorp_params={
+            "inc_url": _PITCHING_URL,
+            "inc_child": "inc_code",
+            "rec_path": "stats.0.splits.0",
+            "inc_code": "team.id",
+            "conv_dict": {"era": calc(float, "stat.era", default=9.99, target_type=float)},
+        },
     )
     pulse_fjord = Fjord(
         name="pulse",
@@ -199,7 +217,7 @@ async def _run() -> list[dict]:
     watershed = Watershed.diamond(
         window=window,
         head=schedule_stream,
-        middle=[all_teams_stream, standings_stream, hitting_current, pitching_current],
+        middle=[all_teams_stream, standings_stream, hitting_stream, pitching_stream],
         tail=pulse_fjord,
         outflow=OUTFLOW_PATH,
         gate_mode="weir",
@@ -223,7 +241,7 @@ async def _run() -> list[dict]:
         rows = [json.loads(ln) for ln in lines]
         print(f"\n  Wrote {len(rows)} Pulse Card rows to {out_file}\n")
     else:
-        print("\n  (no output file produced — CustomCurrents may not have fired)\n")
+        print("\n  (no output file produced — hitting/pitching streams may not have fired)\n")
 
     # Phase 3 — Post-run tuning feedback
     print("Phase 3 — Post-run feedback via architect.tune()...\n")

@@ -4,7 +4,7 @@
 > A single runnable script that walks every major framework capability
 > in one coherent narrative — pre-flight schema probes, a Tideweaver
 > `diamond` orchestrating four concurrent middles (including two
-> `CustomCurrent` T5 drills), live disk-JSONL telemetry, and a post-run
+> `Stream(parent_current=...)` T5 drills), live disk-JSONL telemetry, and a post-run
 > tuning feedback loop. If you're new to Tideweaver, read
 > [Tutorial 11 — Tideweaver Diamond](../../11-tideweaver/README.md)
 > first; if you're new to parent-child drilling, read
@@ -72,8 +72,8 @@ measure → tune**.
 | Capability | How |
 |---|---|
 | **Diamond shape** with **4 concurrent middles** | `Watershed.diamond(head, middle=[all_teams, standings, hitting, pitching], tail=pulse, gate_mode="weir")` — every middle ticks on its own interval; `weir` lets them progress without hard-mode in-flight starvation. |
-| **T5 parent-child drilling** inside Tideweaver | Two `CustomCurrent` subclasses (`HittingDrillCurrent`, `PitchingDrillCurrent`) read `MLBAllTeam.inc_dict` at tick time, filter to AL East by `division_id == 201`, and fire `MLBHitting.incorp(inc_parent=al_east, inc_child="inc_code", inc_url="...{}/stats?group=...")` — five concurrent child fetches per drill. Two drills firing in parallel = **10 concurrent T5 child calls** per tick. Parent list comes from the upstream `all_teams` Stream's registry, never hardcoded. |
-| **Six graph maps in state** | `MLBSchedule` (head) + `MLBAllTeam` (middle) + `MLBStandings` (middle) + `MLBHitting` (CustomCurrent) + `MLBPitching` (CustomCurrent) + `TeamPulseCard` (output). The Fjord's `outflow(state)` reads five of them. |
+| **T5 parent-child drilling** inside Stream parent-current drill | Two `Stream` nodes (`hitting`, `pitching`) with `parent_current="all_teams"` and `parent_filter=("division_id", operator.eq, 201)` read the upstream `all_teams` snapshot at tick time, filter to the 5 AL East teams, and fan-out `MLBHitting.incorp(inc_parent=filtered, inc_child="inc_code", inc_url="...{}/stats?group=...")` — five concurrent child fetches per stream. Two streams firing in parallel = **10 concurrent T5 child calls** per tick. Parent list comes from the upstream `all_teams` Stream's `_tideweaver_snapshot`, never hardcoded. |
+| **Six graph maps in state** | `MLBSchedule` (head) + `MLBAllTeam` (middle) + `MLBStandings` (middle) + `MLBHitting` (Stream, parent_current="all_teams") + `MLBPitching` (Stream, parent_current="all_teams") + `TeamPulseCard` (output). The Fjord's `outflow(state)` reads five of them. |
 | **`conv_dict` with callable kinds, lambda-free** | Builtins (`str.lower`), `operator.itemgetter` (nested field drill), two named module-level helpers (`derive_ops`, `above_power_threshold`), and named id-extractors (`_home_team_id`, `_away_team_id`). **Zero lambdas anywhere** — see [AGENTS.md H3 idiom](../../../AGENTS.md). |
 | **Schema discovery** via `Incorporator.architect()` + per-class `test()` | Pre-flight probe profiles all 5 source endpoints in parallel, prints schemas + field counts, and fails loudly BEFORE the 25-second diamond run if any `rec_path` or field is missing. No registry pollution — `test()` stops at the schema. |
 | **`LoggedTideweaver`** runtime telemetry | Drops in for `Tideweaver`; routes each `Tide` and every canal-layer `RejectEntry` to disk JSONL via the queue-handler-backed logger thread. Inspect `out/logs/MLBPulse_error.log` + `out/logs/MLBPulse_debug.log` after the run. |
@@ -90,12 +90,11 @@ measure → tune**.
                                   │
         ┌─────────┬───────────────┼───────────────┬─────────┐
         ▼         ▼               ▼               ▼         ▼
-   all_teams  standings    hitting (Custom)  pitching (Custom)
-   Stream     Stream       Current           Current
-   (1 tick:   (live,       (filters          (filters
-    30 teams) ~4 ticks)     MLBAllTeam,       MLBAllTeam,
-                            T5 drills 5      T5 drills 5
-                            hitting calls)   pitching calls)
+   all_teams  standings    hitting (Stream)  pitching (Stream)
+   Stream     Stream       parent_current=  parent_current=
+   (1 tick:   (live,       "all_teams"      "all_teams"
+    30 teams) ~4 ticks)    T5 drills 5      T5 drills 5
+                           hitting calls)   pitching calls)
         │         │               │               │
         └─────────┴───────┬───────┴───────────────┘
                           ▼
@@ -107,7 +106,7 @@ measure → tune**.
                  (+ console-printed leaderboard)
 ```
 
-`Watershed.diamond(window, head, middle=[all_teams, standings, hitting, pitching], tail=pulse, gate_mode="weir")` — per [Tutorial 11](../../11-tideweaver/README.md), `diamond` is the canonical multi-source-into-one-aggregator shape.
+`Watershed.diamond(window, head, middle=[all_teams_stream, standings_stream, hitting_stream, pitching_stream], tail=pulse, gate_mode="weir")` — per [Tutorial 11](../../11-tideweaver/README.md), `diamond` is the canonical multi-source-into-one-aggregator shape.
 
 ---
 
@@ -189,7 +188,7 @@ Matches the [Tutorial 11](../../11-tideweaver/) + [`nascar-tideweaver`](../nasca
 ## 🔗 See also
 
 - [Tutorial 11 — Tideweaver Diamond](../../11-tideweaver/README.md) — canonical introduction to the `Watershed.diamond` shape
-- [Tutorial 5 — Parent-Child Drilling](../../05-parent-child-drilling/README.md) — the T5 `inc_parent` + `inc_child` pattern this appendix uses inside CustomCurrents
+- [Tutorial 5 — Parent-Child Drilling](../../05-parent-child-drilling/README.md) — the T5 `inc_parent` + `inc_child` pattern this appendix uses via `Stream(parent_current=...)` nodes
 - [`nascar-tideweaver` appendix](../nascar-tideweaver/) — diamond across race telemetry
 - [`pokeapi-etl` appendix](../pokeapi-etl/) — the other big T5-drill demo (PokéAPI, 150 children)
 - [`tests/test_tideweaver_routing_diamond.py`](../../../tests/test_tideweaver_routing_diamond.py) — mocked counterpart with assertion-driven correctness checks
