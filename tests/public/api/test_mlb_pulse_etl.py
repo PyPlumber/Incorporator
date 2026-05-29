@@ -509,9 +509,18 @@ async def _prime_upstreams(
         strong_refs[stream.cls] = rows
         stream.cls._tideweaver_snapshot = rows  # type: ignore[attr-defined]
 
-    # 2. Parent-current Streams — resolve all_teams snapshot, apply parent_filter, fan-out
+    # 2. Parent-current Streams — resolve upstream snapshot, apply parent_filter, fan-out.
+    # Lookup table mirrors scheduler._tick_stream's self._currents_by_name[current.parent_current]
+    # (incorporator/observability/tideweaver/scheduler.py:944) — KeyError surfaces if a future
+    # child Stream names an unknown parent, instead of silently shadowing onto all_teams.
+    by_name = {
+        "schedule": schedule_stream,
+        "all_teams": all_teams_stream,
+        "standings": standings_stream,
+    }
     for stream in (hitting_stream, pitching_stream):
-        pre_snap = getattr(stream.parent_current and all_teams_stream.cls, "_tideweaver_snapshot", None)
+        upstream = by_name[stream.parent_current]
+        pre_snap = getattr(upstream.cls, "_tideweaver_snapshot", None)
         if not pre_snap:
             continue
         if isinstance(stream.parent_filter, tuple):
