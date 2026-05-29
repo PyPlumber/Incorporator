@@ -904,13 +904,18 @@ class Tideweaver:
     # ------------------------------------------------------------------
 
     async def _tick_stream(self, current: Stream) -> None:
-        """One chunking-mode drain of ``cls.stream(...)``.
+        """One chunking-mode drain of ``cls.stream(...)`` or a parent-child incorp() fan-out.
 
         Incorporator's ``inc_dict`` is a ``WeakValueDictionary`` — without an
         external strong reference, instances die before a downstream Fjord
         flush can read them.  We park a strong-ref snapshot on the class as
         ``_tideweaver_snapshot`` so the registry stays alive between ticks;
         the Fjord flush reads through to that attribute when present.
+
+        When ``current.parent_current`` is set, the stream acts as a child
+        drill: filter the parent's ``_tideweaver_snapshot``, then call
+        ``cls.incorp(inc_parent=filtered, ...)`` directly instead of
+        running ``cls.stream()``.
 
         The snapshot must be accumulated WHILE the chunked engine is still
         iterating, not after.  The chunked engine ``del``s its per-chunk
@@ -933,6 +938,26 @@ class Tideweaver:
         else:
             pooled = self._get_or_create_client(incorp_params)
             params_with_client = {**incorp_params, "_client": pooled}
+
+        if current.parent_current is not None:
+            upstream_current = self._currents_by_name[current.parent_current]
+            pre_snap = getattr(upstream_current.cls, "_tideweaver_snapshot", None)
+            if not pre_snap:
+                return
+            if callable(current.parent_filter):
+                filtered = [r for r in pre_snap if current.parent_filter(r)]
+            elif current.parent_filter is not None:
+                attr, op, value = current.parent_filter
+                filtered = [r for r in pre_snap if op(getattr(r, attr, None), value)]
+            else:
+                filtered = list(pre_snap)
+            if not filtered:
+                return
+            incorp_call_params = {**params_with_client, "inc_parent": cast(Any, filtered)}
+            await current.cls.incorp(**incorp_call_params)
+            cast(Any, current.cls)._tideweaver_snapshot = list(current.cls.inc_dict.values())
+            return
+
         kwargs: dict[str, Any] = {
             "incorp_params": params_with_client,
             "poll_interval": None,

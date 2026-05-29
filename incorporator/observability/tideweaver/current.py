@@ -112,19 +112,35 @@ class Stream(Current):
     the two intent-aware alternatives.
 
     Attributes:
-        incorp_params: Forwarded to :meth:`Incorporator.stream` as the
-            ``incorp_params`` dict (``inc_url``, ``inc_code``, headers,
-            params, paginator, etc.).
+        incorp_params: When ``parent_current`` is ``None``, forwarded to
+            :meth:`Incorporator.stream` as the ``incorp_params`` dict
+            (``inc_url``, ``inc_code``, headers, params, paginator, etc.).
+            When ``parent_current`` is set, injected into
+            :meth:`Incorporator.incorp` as ``incorp(inc_parent=<row>,
+            **incorp_params)`` once per upstream row at tick time.
         refresh_params: Optional override of refresh-time kwargs. Rarely
             needed inside a Watershed since Tideweaver controls cadence.
         export_params: Optional per-tick export target. Most pipelines
             leave this empty and let a downstream :class:`Fjord` or
             :class:`Export` current handle persistence.
+        parent_current: Names an upstream :class:`Stream` (or other
+            Current) in the same Watershed whose ``_tideweaver_snapshot``
+            supplies ``inc_parent`` at each tick. Setting this field
+            auto-derives a hard-gate dependency edge in the Watershed graph.
+        parent_filter: Optional predicate applied to the upstream snapshot
+            before fan-out. Accepts a callable ``(row -> bool)`` or a
+            null-safe 3-tuple ``(attr, op, value)``. Requires
+            ``parent_current`` to be set.
     """
 
     incorp_params: dict[str, Any] = Field(default_factory=dict)
     refresh_params: dict[str, Any] | None = None
     export_params: dict[str, Any] | None = None
+    parent_current: str | None = None
+    # Loose tuple arm lets Pydantic accept the 3-tuple regardless of element types;
+    # _validate_parent_filter then enforces the callable constraint so the error message
+    # is human-readable rather than Pydantic's generic union-failure text.
+    parent_filter: Callable[[Any], bool] | tuple[str, Any, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -156,6 +172,25 @@ class Stream(Current):
                 "ticks for the flush to read."
             )
         return data
+
+    @model_validator(mode="after")
+    def _validate_parent_filter(self) -> Stream:
+        """Validate parent_filter consistency at construction time."""
+        if isinstance(self.parent_filter, tuple):
+            if (
+                len(self.parent_filter) != 3
+                or not isinstance(self.parent_filter[0], str)
+                or not callable(self.parent_filter[1])
+            ):
+                raise ValueError(
+                    f"Stream parent_filter tuple must be (attr: str, op: Callable, value: Any); "
+                    f"got {self.parent_filter!r}"
+                )
+        if self.parent_current is None and self.parent_filter is not None:
+            raise ValueError("Stream.parent_filter requires parent_current to be set.")
+        if "inc_parent" in self.incorp_params and self.parent_current is not None:
+            raise ValueError("Stream: pass parent_current= OR inc_parent inside incorp_params, not both.")
+        return self
 
 
 class Fjord(Current):
@@ -314,102 +349,3 @@ class CustomCurrent(Current):
             f"Subclass CustomCurrent and implement the tick coroutine, "
             f"or use Stream/Fjord/Export for the standard verb tick bodies."
         )
-
-
-class FilteredDrillCurrent(CustomCurrent):
-    """Declarative T5-drill-with-filter primitive.
-
-    Filters an upstream class's parked ``_tideweaver_snapshot`` by a
-    predicate, then fan-outs a ``cls.incorp(inc_parent=filtered, ...)``
-    call.  ``CustomCurrent._run_tick`` auto-parks the downstream
-    ``_tideweaver_snapshot`` automatically — no manual park required.
-
-    Predicate forms:
-
-    - **Callable**: ``lambda row: row.division_id == 201``.  Receives the
-      row object; returns ``bool``.
-    - **Structured tuple**: ``(attr_name, op, value)``, e.g.
-      ``("division_id", operator.eq, 201)``.  Reads ``getattr(row, attr,
-      None)`` then calls ``op(value_or_none, value)``.
-
-    Null safety of structured-tuple form: ``operator.eq(None, x)`` and
-    ``operator.ne(None, x)`` are safe — they return ``False`` / ``True``
-    respectively.  **Ordered operators** (``operator.lt``, ``operator.le``,
-    ``operator.gt``, ``operator.ge``) raise ``TypeError`` when one operand
-    is ``None`` — this is intentional fail-fast behavior; do not wrap in
-    try/except.  Use the callable form if you need null-safe ordered
-    comparisons.
-
-    First-tick / no-upstream-data: if the parent's
-    ``_tideweaver_snapshot`` is ``None`` (Tideweaver hasn't reached the
-    upstream yet) or ``[]``, ``tick()`` silently returns.
-
-    Empty filtered list: if the predicate rejects every row, ``tick()``
-    returns without making an ``incorp()`` call (no wire traffic).
-
-    Example::
-
-        FilteredDrillCurrent(
-            name="hitting_drill",
-            cls=MLBHitting,
-            interval=30.0,
-            parent=MLBAllTeam,
-            predicate=("division_id", operator.eq, 201),
-            inc_url="https://statsapi.mlb.com/api/v1/teams/{}/stats?...",
-            inc_child="inc_code",
-            rec_path="stats.0.splits.0",
-            incorp_code="team.id",
-            conv_dict=HITTING_CONV,
-        )
-    """
-
-    parent: type[Incorporator]
-    # Loose tuple arm lets Pydantic accept the 3-tuple regardless of element types;
-    # _validate_predicate then enforces the callable constraint so the error message
-    # is human-readable rather than Pydantic's generic union-failure text.
-    predicate: Callable[[Any], bool] | tuple[str, Any, Any]
-    inc_url: str
-    inc_child: str = "inc_code"
-    rec_path: str | None = None
-    incorp_code: str | None = None
-    conv_dict: dict[str, Any] | None = None
-
-    @model_validator(mode="after")
-    def _validate_predicate(self) -> FilteredDrillCurrent:
-        """Validate the structured-tuple predicate form at construction time."""
-        if isinstance(self.predicate, tuple):
-            if len(self.predicate) != 3 or not isinstance(self.predicate[0], str) or not callable(self.predicate[1]):
-                raise ValueError(
-                    f"FilteredDrillCurrent predicate tuple must be "
-                    f"(attr: str, op: Callable, value: Any); got {self.predicate!r}"
-                )
-        return self
-
-    async def tick(self, scheduler: Any) -> None:
-        """Filter the parent snapshot and fan-out incorp() for matching rows.
-
-        Args:
-            scheduler: The :class:`~.scheduler.Tideweaver` instance driving
-                this current (not used directly; present for interface
-                compatibility).
-        """
-        pre_snap = getattr(self.parent, "_tideweaver_snapshot", None)
-        if not pre_snap:
-            return
-        if callable(self.predicate):
-            filtered = [row for row in pre_snap if self.predicate(row)]
-        else:
-            attr, op, value = self.predicate
-            filtered = [row for row in pre_snap if op(getattr(row, attr, None), value)]
-        if not filtered:
-            return
-        await self.cls.incorp(
-            # cast: filtered is list[Incorporator] at runtime; IncorporatorList is list[T] subclass
-            inc_parent=cast(Any, filtered),
-            inc_child=self.inc_child,
-            inc_url=self.inc_url,
-            inc_code=self.incorp_code,
-            conv_dict=self.conv_dict,
-            rec_path=self.rec_path,
-        )
-        # _run_tick auto-parks _tideweaver_snapshot via auto_park_snapshot=True.

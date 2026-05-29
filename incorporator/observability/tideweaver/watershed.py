@@ -23,7 +23,7 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-from .current import Current
+from .current import Current, Stream
 from .flow import FlowControl, GateMode, flow_from_mode
 
 
@@ -207,6 +207,17 @@ class Watershed(BaseModel):
                 if (dep, c.name) not in existing:
                     self.edges.append(Edge(from_name=dep, to_name=c.name))
                     existing.add((dep, c.name))
+
+        for c in self.currents:
+            if isinstance(c, Stream) and c.parent_current is not None:
+                if c.parent_current not in name_set:
+                    raise ValueError(
+                        f"Stream {c.name!r}: parent_current={c.parent_current!r} "
+                        f"does not match any current in the watershed."
+                    )
+                if (c.parent_current, c.name) not in existing:
+                    self.edges.append(Edge(from_name=c.parent_current, to_name=c.name))
+                    existing.add((c.parent_current, c.name))
 
         for e in self.edges:
             if e.from_name not in name_set:
