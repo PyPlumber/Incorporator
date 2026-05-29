@@ -21,13 +21,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import ConfigDict, ValidationError
+from pydantic import ConfigDict
 
 from incorporator import Incorporator
 from incorporator.observability.tideweaver import Stream, Watershed
 from incorporator.observability.tideweaver.current import Stream as StreamCls
-from incorporator.observability.tideweaver.watershed import Edge
-
 
 # ---------------------------------------------------------------------------
 # Module-level Incorporator subclasses
@@ -218,9 +216,7 @@ async def test_empty_filtered_list_short_circuits(tmp_path: Any, monkeypatch: py
 
 
 @pytest.mark.asyncio
-async def test_none_or_empty_upstream_snapshot_silently_skips(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_none_or_empty_upstream_snapshot_silently_skips(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """When the upstream _tideweaver_snapshot is None or absent, incorp() is not called.
 
     Proves first-tick safety: when Tideweaver hasn't reached the parent

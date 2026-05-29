@@ -13,13 +13,12 @@ Four tests validate the ``_tick_raised`` suppression logic and the
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, ClassVar, List
+from typing import Any, ClassVar
 
 import pytest
 
 from incorporator import Incorporator, Tideweaver, Watershed
 from incorporator.observability.tideweaver import CustomCurrent, Edge
-
 
 # ---------------------------------------------------------------------------
 # Module-level Incorporator subclasses
@@ -109,8 +108,7 @@ async def test_empty_tick_with_nonempty_upstream_emits_warning(
 
     warn_records = [r for r in caplog.records if "produced empty output" in r.message]
     assert len(warn_records) >= 1, (
-        f"expected at least one 'produced empty output' WARNING; got records: "
-        f"{[r.message for r in caplog.records]}"
+        f"expected at least one 'produced empty output' WARNING; got records: {[r.message for r in caplog.records]}"
     )
     assert "DownstreamFilter" in warn_records[0].getMessage(), (
         f"warning message must interpolate the current name; got: {warn_records[0].getMessage()}"
@@ -166,8 +164,7 @@ async def test_empty_tick_with_empty_upstream_no_warning(
 
     warn_records = [r for r in caplog.records if "produced empty output" in r.message]
     assert len(warn_records) == 0, (
-        f"expected no 'produced empty output' WARNING when upstream is empty; "
-        f"got: {[r.message for r in warn_records]}"
+        f"expected no 'produced empty output' WARNING when upstream is empty; got: {[r.message for r in warn_records]}"
     )
 
 
@@ -193,7 +190,7 @@ async def test_tick_with_data_no_warning(
     UpstreamNode._tideweaver_snapshot = [up1]  # type: ignore[attr-defined]
 
     # Keep strong references to prevent WeakValueDictionary GC.
-    strong_refs: List[DownstreamNode] = []
+    strong_refs: list[DownstreamNode] = []
 
     class ProductiveUpstream(CustomCurrent):
         auto_park_snapshot: ClassVar[bool] = False
@@ -263,9 +260,7 @@ async def test_raising_tick_suppresses_empty_output_warning(
             raise RuntimeError("deliberate tick failure")
 
     up_current = StableUpstream(name="upstream4", cls=UpstreamNode, interval=10.0)
-    dn_current = BoomDownstream(
-        name="downstream4", cls=DownstreamNode, interval=0.05, on_error="isolate"
-    )
+    dn_current = BoomDownstream(name="downstream4", cls=DownstreamNode, interval=0.05, on_error="isolate")
 
     ws = Watershed(
         window=_short_window(200),
@@ -282,10 +277,8 @@ async def test_raising_tick_suppresses_empty_output_warning(
     empty_output_records = [r for r in caplog.records if "produced empty output" in r.message]
 
     assert len(isolated_records) >= 1, (
-        f"expected at least one 'isolated tick failure' WARNING; "
-        f"got records: {[r.message for r in caplog.records]}"
+        f"expected at least one 'isolated tick failure' WARNING; got records: {[r.message for r in caplog.records]}"
     )
     assert len(empty_output_records) == 0, (
-        f"_tick_raised must suppress empty-output WARNING; "
-        f"got: {[r.message for r in empty_output_records]}"
+        f"_tick_raised must suppress empty-output WARNING; got: {[r.message for r in empty_output_records]}"
     )

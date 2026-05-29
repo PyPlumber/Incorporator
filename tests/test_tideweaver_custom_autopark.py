@@ -17,7 +17,6 @@ import pytest
 from incorporator import Incorporator
 from incorporator.observability.tideweaver import CustomCurrent
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -94,9 +93,7 @@ async def test_manual_park_wins_over_autopark(tmp_path: Any, monkeypatch: pytest
     await drill._run_tick(object())
 
     snapshot = getattr(Target, "_tideweaver_snapshot", None)
-    assert snapshot == ["sentinel"], (
-        f"manual park must be preserved; auto-park must not overwrite it, got {snapshot}"
-    )
+    assert snapshot == ["sentinel"], f"manual park must be preserved; auto-park must not overwrite it, got {snapshot}"
 
 
 # ---------------------------------------------------------------------------
@@ -105,9 +102,7 @@ async def test_manual_park_wins_over_autopark(tmp_path: Any, monkeypatch: pytest
 
 
 @pytest.mark.asyncio
-async def test_autopark_disabled_leaves_snapshot_untouched(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_autopark_disabled_leaves_snapshot_untouched(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """``auto_park_snapshot = False`` prevents any snapshot assignment.
 
     Proves that a subclass with ``auto_park_snapshot = False`` and an empty
