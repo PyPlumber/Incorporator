@@ -1,11 +1,15 @@
 """Unit tests for ``CustomCurrent.auto_park_snapshot`` and ``_run_tick``.
 
-Three tests verify the auto-park semantics introduced in v1.1.3:
+Four tests verify the auto-park semantics introduced in v1.1.3:
 
 1. Default auto-park fires when user ``tick()`` populates ``inc_dict``
    without manually assigning ``_tideweaver_snapshot``.
 2. Manual assignment inside ``tick()`` wins — auto-park is skipped.
 3. ``auto_park_snapshot = False`` opts out — snapshot is never touched.
+4. Re-assigning the *same* list object inside ``tick()`` defeats the
+   identity check — auto-park overwrites. Documents the limit at
+   ``CustomCurrent._run_tick``'s docstring; the test's assertion can
+   be flipped if a future change tightens the check.
 """
 
 from __future__ import annotations
@@ -123,4 +127,52 @@ async def test_autopark_disabled_leaves_snapshot_untouched(tmp_path: Any, monkey
 
     assert getattr(Target, "_tideweaver_snapshot", None) is None, (
         "auto_park_snapshot=False must leave _tideweaver_snapshot unset"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 4 — same-list-object reassignment defeats the identity check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_same_list_reassignment_defeats_identity_check(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Re-assigning the same list object inside ``tick()`` is silently overwritten.
+
+    The auto-park guard at ``CustomCurrent._run_tick`` uses ``is pre`` (object
+    identity) to detect a manual override. If ``tick()`` re-binds the
+    pre-existing list to ``cls._tideweaver_snapshot`` instead of assigning a
+    new list, ``is pre`` evaluates to ``True`` and auto-park overwrites the
+    manual value with ``list(cls.inc_dict.values())``.
+
+    This test locks the current behavior so a future fix that tightens the
+    identity check (e.g. by snapshotting ``id(pre)`` AND a value hash) can
+    flip the assertion. Documents the limit named in the ``_run_tick``
+    docstring: "assign a NEW list to opt out."
+    """
+    monkeypatch.chdir(tmp_path)
+    _reset_registries(Target)
+
+    instance = Target(inc_code=42)
+    Target.inc_dict[instance.inc_code] = instance
+
+    pre_list = ["pre-existing"]
+    Target._tideweaver_snapshot = pre_list  # type: ignore[attr-defined]
+
+    class Drill(CustomCurrent):
+        async def tick(self, scheduler: Any) -> None:
+            # Identity rebinding: the same list object, NOT a new list.
+            Target._tideweaver_snapshot = Target._tideweaver_snapshot  # type: ignore[attr-defined]
+
+    drill = Drill(name="drill", cls=Target, interval=1.0)
+    await drill._run_tick(object())
+
+    snapshot = getattr(Target, "_tideweaver_snapshot", None)
+    assert snapshot == [instance], (
+        f"identity rebinding defeats the `is pre` check; auto-park is expected to overwrite "
+        f"pre_list with list(inc_dict.values()); got {snapshot}"
+    )
+    assert snapshot is not pre_list, (
+        "auto-park must replace the manual list with a fresh list(inc_dict.values()); "
+        "the pre-existing list object must NOT be preserved"
     )
