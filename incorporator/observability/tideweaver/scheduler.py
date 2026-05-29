@@ -943,6 +943,13 @@ class Tideweaver:
             upstream_current = self._currents_by_name[current.parent_current]
             pre_snap = getattr(upstream_current.cls, "_tideweaver_snapshot", None)
             if not pre_snap:
+                logger.warning(
+                    "Tideweaver: Stream %r parent_current=%r snapshot is empty; "
+                    "skipping tick (no rows to drill). Fires each tick while the "
+                    "condition persists — confirm the parent's tick is firing.",
+                    current.name,
+                    current.parent_current,
+                )
                 return
             if callable(current.parent_filter):
                 filtered = [r for r in pre_snap if current.parent_filter(r)]
@@ -952,6 +959,14 @@ class Tideweaver:
             else:
                 filtered = list(pre_snap)
             if not filtered:
+                logger.warning(
+                    "Tideweaver: Stream %r parent_filter matched 0 of %d rows from %r; "
+                    "skipping tick. Check the predicate attribute name and value range — "
+                    "a typo in the filter attribute returns None for every row and matches nothing.",
+                    current.name,
+                    len(pre_snap),
+                    current.parent_current,
+                )
                 return
             incorp_call_params = {**params_with_client, "inc_parent": cast(Any, filtered)}
             await current.cls.incorp(**incorp_call_params)
@@ -1030,12 +1045,31 @@ class Tideweaver:
                 rows: list[Any] = list(snapshot) if snapshot is not None else list(dep.cls.inc_dict.values())
                 filter_spec = current.parent_filters.get(up_name)
                 if filter_spec is None:
-                    state[dep.cls.__name__] = rows
+                    filtered_rows = rows
                 elif callable(filter_spec):
-                    state[dep.cls.__name__] = [r for r in rows if filter_spec(r)]
+                    filtered_rows = [r for r in rows if filter_spec(r)]
                 else:
                     attr, op, value = filter_spec
-                    state[dep.cls.__name__] = [r for r in rows if op(getattr(r, attr, None), value)]
+                    filtered_rows = [r for r in rows if op(getattr(r, attr, None), value)]
+                state[dep.cls.__name__] = filtered_rows
+                if not rows:
+                    logger.warning(
+                        "Tideweaver: Fjord %r parent_currents=%r upstream snapshot is empty; "
+                        "state[%r] is [] this tick — confirm the parent's tick is firing.",
+                        current.name,
+                        up_name,
+                        dep.cls.__name__,
+                    )
+                elif filter_spec is not None and not filtered_rows:
+                    logger.warning(
+                        "Tideweaver: Fjord %r parent_filters[%r] matched 0 of %d rows; "
+                        "state[%r] is [] this tick. Check the predicate attribute name and "
+                        "value range — a typo returns None for every row and matches nothing.",
+                        current.name,
+                        up_name,
+                        len(rows),
+                        dep.cls.__name__,
+                    )
                 continue
             edge_state = self._edge_state.get((up_name, current.name))
             if edge_state is not None and edge_state.waves:

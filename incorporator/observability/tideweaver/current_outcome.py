@@ -36,6 +36,23 @@ class CurrentOutcome:
             the monotonic start timestamp is recorded.
         last_wave_at: UTC timestamp of the most recent wave emitted by
             this current.  ``None`` if the current has never fired.
+        parent_snapshot_size: Upstream snapshot row count consumed by
+            a parent-child tick (Stream with ``parent_current`` set or
+            Fjord with ``parent_currents`` populated).  ``None`` for
+            ticks without parent-child semantics.
+        filter_match_count: Row count after applying the parent-child
+            filter (``parent_filter`` / ``parent_filters``).  ``None``
+            when no filter is set or for non-parent-child ticks.  Zero
+            indicates the filter matched no rows.
+
+    Additional ``reason`` values introduced by the parent-child audit
+    surface (Chain 2 of the parent-child parity plan):
+
+    - ``"parent_snapshot_empty"`` — upstream snapshot was None or empty;
+      the tick body silently skipped because there was nothing to drill.
+    - ``"filter_matched_zero"`` — upstream had rows but the filter
+      matched zero of them; the tick body silently skipped after
+      applying the predicate.
     """
 
     name: str
@@ -44,6 +61,8 @@ class CurrentOutcome:
     bypassed_edges: tuple[str, ...] = ()
     in_flight_sec: float | None = None
     last_wave_at: datetime | None = None
+    parent_snapshot_size: int | None = None
+    filter_match_count: int | None = None
 
     def __str__(self) -> str:
         """Compact log-friendly representation.
