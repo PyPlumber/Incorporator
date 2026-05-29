@@ -234,9 +234,44 @@ class Fjord(Current):
             case, or a multi-output dict keyed by derived class name
             (matching :meth:`Incorporator.fjord`'s shape) when the
             ``outflow(state)`` function returns multiple class rosters.
+        parent_currents: Names upstream currents whose
+            ``_tideweaver_snapshot`` rows the scheduler filters and
+            writes into ``state`` before invoking ``outflow(state)``.
+            Empty list (default) preserves the original Fjord behaviour:
+            unfiltered registries flow through.  Setting this field
+            auto-derives one hard-gate dependency edge per named
+            upstream in the Watershed graph.
+        parent_filters: Optional per-upstream predicate, keyed by the
+            upstream's name in ``parent_currents``.  Each value is a
+            callable ``(row -> bool)`` or a null-safe 3-tuple
+            ``(attr, op, value)``.  Upstreams listed in
+            ``parent_currents`` but missing from this dict pass
+            through unfiltered.
     """
 
     export_params: dict[str, Any] = Field(default_factory=dict)
+    parent_currents: list[str] = Field(default_factory=list)
+    # Loose tuple arm lets Pydantic accept the 3-tuple regardless of element types;
+    # _validate_fjord_parents then enforces the callable + str-key constraint so the
+    # error message is human-readable rather than Pydantic's generic union-failure text.
+    parent_filters: dict[str, Callable[[Any], bool] | tuple[str, Any, Any]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_fjord_parents(self) -> Fjord:
+        """Validate parent_currents / parent_filters consistency at construction."""
+        for key, filter_value in self.parent_filters.items():
+            if key not in self.parent_currents:
+                raise ValueError(
+                    f"Fjord parent_filters key {key!r} is not in parent_currents={self.parent_currents!r}; "
+                    f"every filter must name an upstream listed in parent_currents."
+                )
+            if isinstance(filter_value, tuple):
+                if len(filter_value) != 3 or not callable(filter_value[1]):
+                    raise ValueError(
+                        f"Fjord parent_filters[{key!r}] tuple must be (attr: str, op: Callable, value: Any); "
+                        f"got {filter_value!r}"
+                    )
+        return self
 
 
 class Export(Current):

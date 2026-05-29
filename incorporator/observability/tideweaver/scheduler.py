@@ -1017,11 +1017,26 @@ class Tideweaver:
         direct_upstreams = {up_name for up_name, _flow in self._upstream[current.name]}
         all_upstreams = self._transitive_upstreams(current.name)
 
-        # Direct: edge reservoir → class snapshot → inc_dict fallback.
+        # Direct: parent_currents filter → edge reservoir → class snapshot → inc_dict fallback.
         for up_name in all_upstreams:
             if up_name not in direct_upstreams:
                 continue
             dep = self._currents_by_name[up_name]
+            if up_name in current.parent_currents:
+                # parent_currents semantics: name an upstream by current-name and read its
+                # registry snapshot, then optionally filter — bypasses the reservoir/wave path
+                # because parent-child drills want full per-current state, not the last edge wave.
+                snapshot = getattr(dep.cls, "_tideweaver_snapshot", None)
+                rows: list[Any] = list(snapshot) if snapshot is not None else list(dep.cls.inc_dict.values())
+                filter_spec = current.parent_filters.get(up_name)
+                if filter_spec is None:
+                    state[dep.cls.__name__] = rows
+                elif callable(filter_spec):
+                    state[dep.cls.__name__] = [r for r in rows if filter_spec(r)]
+                else:
+                    attr, op, value = filter_spec
+                    state[dep.cls.__name__] = [r for r in rows if op(getattr(r, attr, None), value)]
+                continue
             edge_state = self._edge_state.get((up_name, current.name))
             if edge_state is not None and edge_state.waves:
                 state[dep.cls.__name__] = list(edge_state.waves[-1])
