@@ -52,8 +52,10 @@ def test_route_reject_http_error() -> None:
     with patch("logging.getLogger", return_value=mock_logger):
         _route_reject_to_log("TestLogger", reject)
 
-    mock_logger.error.assert_called_once()
-    msg = mock_logger.error.call_args[0][0]
+    mock_logger.log.assert_called_once()
+    level_arg = mock_logger.log.call_args[0][0]
+    assert level_arg == logging.ERROR
+    msg = mock_logger.log.call_args[0][1]
     assert "[HTTP 429]" in msg
     assert "HTTPStatusError" in msg
 
@@ -75,8 +77,10 @@ def test_route_reject_canal_with_edge() -> None:
     with patch("logging.getLogger", return_value=mock_logger):
         _route_reject_to_log("TestLogger", reject)
 
-    mock_logger.error.assert_called_once()
-    msg = mock_logger.error.call_args[0][0]
+    mock_logger.log.assert_called_once()
+    level_arg = mock_logger.log.call_args[0][0]
+    assert level_arg == logging.ERROR
+    msg = mock_logger.log.call_args[0][1]
     assert "(prices->arb)" in msg
     assert "PenstockLimited" in msg
 
@@ -124,8 +128,10 @@ def test_route_reject_meta_has_all_fields() -> None:
     with patch("logging.getLogger", return_value=mock_logger):
         _route_reject_to_log("MyClass", reject)
 
-    mock_logger.error.assert_called_once()
-    extra = mock_logger.error.call_args[1]["extra"]
+    mock_logger.log.assert_called_once()
+    level_arg = mock_logger.log.call_args[0][0]
+    assert level_arg == logging.ERROR
+    extra = mock_logger.log.call_args[1]["extra"]
     meta = extra["meta"]
 
     assert 'class:"MyClass"' in meta
@@ -153,6 +159,8 @@ def test_route_reject_no_edge_no_status() -> None:
     with patch("logging.getLogger", return_value=mock_logger):
         _route_reject_to_log("TestLogger", reject)
 
-    mock_logger.error.assert_called_once()
-    msg = mock_logger.error.call_args[0][0]
+    mock_logger.log.assert_called_once()
+    level_arg = mock_logger.log.call_args[0][0]
+    assert level_arg == logging.ERROR
+    msg = mock_logger.log.call_args[0][1]
     assert "GateBlocked: SomeClass" == msg

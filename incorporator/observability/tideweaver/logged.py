@@ -29,8 +29,9 @@ Example::
         print(tide.fired, tide.duration_sec)
 
     # Later — read structured pass records from disk:
-    # logs/PriceSession_error.log  (canal rejects + error-class skips)
-    # logs/PriceSession_debug.log  (all passes including no-ops)
+    # logs/PriceSession_tide.log   (all tides — single-file source for get_tides())
+    # logs/PriceSession_error.log  (canal rejects + error-class skips; fired tides also here)
+    # logs/PriceSession_debug.log  (superset — all passes including no-ops)
 """
 
 from __future__ import annotations
@@ -140,17 +141,19 @@ class LoggedTideweaver(Tideweaver):
 
     @classmethod
     async def get_tides(cls, logger_name: str) -> list[dict[str, Any]]:
-        """Return all tide records from error.log AND debug.log for ``logger_name``.
+        """Return all tide records from ``tide.log`` for ``logger_name``.
 
-        Deduped by ``tide_number``, sorted ascending.  Tides land in
-        ``error.log`` when severity is ERROR/INFO and in ``debug.log`` when
-        severity is DEBUG (no-op passes).  Both files must be read to recover
-        the full population of tide records for a given session.
+        Reads the dedicated ``<logger_name>_tide.log`` file written by
+        :class:`~incorporator.observability.logger.TideFilter` — both fired
+        (INFO/ERROR) and no-op (DEBUG) tides land there, so a single-file
+        read suffices.  A defensive sort by ``tide_number`` guards against
+        subtle interleave when two :class:`LoggedTideweaver` instances share
+        the same ``logger_name`` (documented behaviour — see class docstring).
 
         Args:
             logger_name: The name used when the :class:`LoggedTideweaver` was
                 constructed (e.g. ``"PriceSession"``).  Controls which
-                ``logs/<logger_name>_*.log`` files are read.
+                ``logs/<logger_name>_tide.log`` file is read.
 
         Returns:
             List of tide-record dicts sorted ascending by ``tide_number``.
@@ -165,30 +168,19 @@ class LoggedTideweaver(Tideweaver):
                 t = rec["tide"]
                 print(t["tide_number"], t["fired"], t["duration_sec"])
         """
-
-        def _read_both() -> list[dict[str, Any]]:
-            error_file = _safe_log_filename(logger_name, "error.log")
-            debug_file = _safe_log_filename(logger_name, "debug.log")
-            all_records = _read_filtered(error_file, "tide") + _read_filtered(debug_file, "tide")
-            # Dedupe by tide_number (monotonic, deterministic ordering).
-            by_number: dict[int, dict[str, Any]] = {}
-            for rec in all_records:
-                t = rec.get("tide", {})
-                tn = t.get("tide_number")
-                if isinstance(tn, int):
-                    by_number[tn] = rec
-            return [by_number[n] for n in sorted(by_number)]
-
-        return await asyncio.to_thread(_read_both)
+        filename = _safe_log_filename(logger_name, "tide.log")
+        records = await asyncio.to_thread(_read_filtered, filename, "tide")
+        return sorted(records, key=lambda r: r.get("tide", {}).get("tide_number", 0))
 
     @classmethod
     async def get_rejects(cls, logger_name: str) -> list[dict[str, Any]]:
-        """Return all reject records from error.log for ``logger_name``.
+        """Return all reject records from ``error.log`` for ``logger_name``.
 
         Overrides :meth:`~incorporator.observability.logger.LoggingMixin.get_rejects`
-        — :class:`LoggedTideweaver` uses an instance-level ``logger_name``
-        rather than ``cls.__name__``, so the correct log file cannot be
-        determined from the class alone.
+        solely for name resolution: :class:`LoggedTideweaver` uses an
+        instance-level ``logger_name`` rather than ``cls.__name__``, so the
+        correct log file cannot be determined from the class alone.  The
+        underlying read is identical — ``_read_filtered(<name>_error.log, "reject")``.
 
         Args:
             logger_name: The name used when the :class:`LoggedTideweaver` was

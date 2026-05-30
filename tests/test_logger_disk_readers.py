@@ -122,46 +122,38 @@ async def test_get_rejects_returns_empty_when_no_log_file(
 
 
 @pytest.mark.asyncio
-async def test_get_tides_reads_error_and_debug_logs(
+async def test_get_tides_reads_tide_log(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     reset_active_listeners: None,
 ) -> None:
-    """get_tides() merges tide records from both error.log and debug.log.
+    """get_tides() reads from tide.log and returns records sorted by tide_number.
 
-    Tides at INFO/ERROR level land in error.log; no-op DEBUG tides land
-    in debug.log.  get_tides() must return a combined, deduped, ascending
-    list of all tide records.
+    All tides — fired (INFO/ERROR) and no-op (DEBUG) — land in the dedicated
+    tide.log via TideFilter.  get_tides() reads a single file and returns the
+    records sorted ascending by tide_number.
     """
     monkeypatch.chdir(tmp_path)
 
-    error_log = tmp_path / "logs" / "TidesSession_error.log"
-    debug_log = tmp_path / "logs" / "TidesSession_debug.log"
+    tide_log = tmp_path / "logs" / "TidesSession_tide.log"
 
     _write_jsonl(
-        error_log,
+        tide_log,
         [
             {"level": "INFO", "msg": "tide 1", "tide": {"tide_number": 1, "fired": ["prices"]}},
             {"level": "ERROR", "msg": "tide 3", "tide": {"tide_number": 3, "canal_rejects_added": 1}},
-        ],
-    )
-    _write_jsonl(
-        debug_log,
-        [
             {"level": "DEBUG", "msg": "tide 2", "tide": {"tide_number": 2, "fired": []}},
-            # Duplicate of tide 1 — deduped; debug.log entry wins because it is
-            # appended after error.log in the merge list, so the dict update lands last.
-            {"level": "DEBUG", "msg": "tide 1 dup", "tide": {"tide_number": 1, "fired": [], "dup": True}},
         ],
     )
 
     result = await LoggedTideweaver.get_tides("TidesSession")
 
     tide_numbers = [r["tide"]["tide_number"] for r in result]
-    # Sorted ascending, deduped — 3 unique tides.
+    # Sorted ascending — 3 unique tides from a single file.
     assert tide_numbers == [1, 2, 3]
-    # Tide 1 duplicate: debug.log entry is last in the all_records list, so it wins.
-    assert result[0]["tide"].get("dup") is True
+    assert result[0]["tide"]["fired"] == ["prices"]
+    assert result[1]["tide"]["fired"] == []
+    assert result[2]["tide"]["canal_rejects_added"] == 1
 
 
 @pytest.mark.asyncio
@@ -170,7 +162,7 @@ async def test_get_tides_empty_returns_empty_list(
     tmp_path: Path,
     reset_active_listeners: None,
 ) -> None:
-    """get_tides() returns [] when neither log file exists."""
+    """get_tides() returns [] when the tide.log file does not exist."""
     monkeypatch.chdir(tmp_path)
 
     result = await LoggedTideweaver.get_tides("NoSuchSession")

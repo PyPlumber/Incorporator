@@ -415,7 +415,7 @@ async def test_route_wave_to_log_writes_structured_wave_to_get_error(
         processing_time_sec=0.5,
         failed_sources=["https://dead.example.com/x?api_key=should_be_redacted"],
     )
-    _route_wave_to_log(WaveLogModel, wave)
+    _route_wave_to_log(WaveLogModel.__name__, wave)
 
     # Flush the queue to disk so get_error can read.
     _ACTIVE_LISTENERS["WaveLogModel"].stop()
@@ -449,7 +449,7 @@ def test_route_wave_to_log_skips_zero_row_no_failure(
     setup_class_logger(QuietModel)
 
     _route_wave_to_log(
-        QuietModel,
+        QuietModel.__name__,
         Wave(chunk_index=1, operation="chunk", rows_processed=0, processing_time_sec=0.01),
     )
 

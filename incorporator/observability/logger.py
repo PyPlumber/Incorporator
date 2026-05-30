@@ -61,7 +61,45 @@ def _redact(text: str) -> str:
     return _REDACT_QS_PATTERN.sub(r"\1=***REDACTED***", text)
 
 
-def _route_wave_to_log(cls: type[Any], wave: Wave) -> None:
+def _emit_payload(
+    logger_name: str,
+    level: int,
+    msg: str,
+    payload_key: str,
+    payload: dict[str, Any],
+    meta: str,
+    *,
+    is_api: bool = False,
+    is_tide: bool = False,
+) -> None:
+    """Shared emission tail for _route_wave / _route_tide / _route_reject.
+
+    Builds the ``extra`` dict, checks ``isEnabledFor``, and emits the record.
+    Callers supply the resolved ``logger_name`` so this function has no
+    dependency on any class reference.
+
+    Args:
+        logger_name: Name passed to :func:`logging.getLogger`.
+        level: ``logging`` level constant (e.g. ``logging.ERROR``).
+        msg: Human-readable log message.
+        payload_key: Top-level JSON key for the structured payload (``"wave"``,
+            ``"tide"``, or ``"reject"``).
+        payload: The serialised model dict to attach under ``payload_key``.
+        meta: Flat ``key:"value"`` summary string for the ``meta`` field.
+        is_api: When ``True``, routes the record to ``api.log`` via
+            :class:`APIFilter`.
+        is_tide: When ``True``, adds ``is_tide=True`` so :class:`TideFilter`
+            routes the record to ``tide.log``.
+    """
+    extra: dict[str, Any] = {"meta": meta, payload_key: payload, "is_api": is_api}
+    if is_tide:
+        extra["is_tide"] = True
+    logger = logging.getLogger(logger_name)
+    if logger.isEnabledFor(level):
+        logger.log(level, msg, extra=extra)
+
+
+def _route_wave_to_log(cls_name: str, wave: Wave) -> None:
     """Route a single Wave to the appropriate log level based on its outcome.
 
     Shared adapter used by :meth:`LoggedIncorporator.stream` and ``fjord``. The
@@ -77,29 +115,23 @@ def _route_wave_to_log(cls: type[Any], wave: Wave) -> None:
     Applies :func:`_redact` to the human-readable message *and* the
     ``failed_sources`` list inside the dumped wave. The ``Wave`` yielded back to
     the caller is untouched.
+
+    Args:
+        cls_name: Logger name — ``cls.__name__`` from the calling verb wrapper.
+        wave: The :class:`Wave` record yielded by the pipeline.
     """
     dump = wave.model_dump(mode="json")
     dump["failed_sources"] = [_redact(s) for s in dump.get("failed_sources", [])]
 
-    extra = {
-        "meta": wave.log_meta(),
-        "wave": dump,
-        "is_api": False,
-    }
-
     if wave.failed_sources:
         msg = f"{wave.operation} chunk {wave.chunk_index} encountered failures: {dump['failed_sources']}"
-        cls_logger = cls._get_cls_logger() if hasattr(cls, "_get_cls_logger") else logging.getLogger(cls.__name__)
-        if cls_logger.isEnabledFor(logging.ERROR):
-            cls_logger.error(msg, extra=extra)
+        _emit_payload(cls_name, logging.ERROR, msg, "wave", dump, wave.log_meta())
     elif wave.rows_processed > 0:
         msg = (
             f"{wave.operation} chunk {wave.chunk_index} complete: "
             f"{wave.rows_processed} rows in {wave.processing_time_sec:.3f}s."
         )
-        cls_logger = cls._get_cls_logger() if hasattr(cls, "_get_cls_logger") else logging.getLogger(cls.__name__)
-        if cls_logger.isEnabledFor(logging.INFO):
-            cls_logger.info(msg, extra=extra)
+        _emit_payload(cls_name, logging.INFO, msg, "wave", dump, wave.log_meta())
 
 
 def _route_tide_to_log(cls_name: str, tide: Tide) -> None:
@@ -113,35 +145,33 @@ def _route_tide_to_log(cls_name: str, tide: Tide) -> None:
     - Passes where at least one current fired → ``info``.
     - No-op passes (nothing fired, no errors) → ``debug``.
 
-    Attaches the structured ``tide`` dump as a record extra so
-    :class:`JSONFormatter` writes it as a top-level JSON key.
+    All tide records also carry ``is_tide=True`` so :class:`TideFilter` routes
+    them to ``tide.log`` for single-file readback by :meth:`LoggedTideweaver.get_tides`.
+    Tide records continue to flow into ``debug.log`` and (when fired/errored)
+    ``error.log`` — ``debug.log`` remains the superset.
 
     Args:
         cls_name: Logger name — typically ``LoggedTideweaver._logger_name``.
         tide: The :class:`Tide` record yielded by :meth:`Tideweaver.run`.
     """
     dump = tide.model_dump(mode="json")
-    extra = {"meta": tide.log_meta(), "tide": dump, "is_api": False}
+    meta = tide.log_meta()
 
     has_error_skips = any(reason in ("surge_halted", "skip_ahead") for _, reason in tide.skipped)
-    logger = logging.getLogger(cls_name)
 
     if tide.canal_rejects_added > 0 or has_error_skips:
         error_reasons = [reason for _, reason in tide.skipped if reason in ("surge_halted", "skip_ahead")]
         msg = f"tide {tide.tide_number}: {tide.canal_rejects_added} canal reject(s), skipped reasons {error_reasons}"
-        if logger.isEnabledFor(logging.ERROR):
-            logger.error(msg, extra=extra)
+        _emit_payload(cls_name, logging.ERROR, msg, "tide", dump, meta, is_tide=True)
     elif len(tide.fired) > 0:
         msg = (
             f"tide {tide.tide_number}: fired {len(tide.fired)}, skipped {len(tide.skipped)}, "
             f"rejects {tide.canal_rejects_added}, duration {tide.duration_sec:.3f}s"
         )
-        if logger.isEnabledFor(logging.INFO):
-            logger.info(msg, extra=extra)
+        _emit_payload(cls_name, logging.INFO, msg, "tide", dump, meta, is_tide=True)
     else:
         msg = f"tide {tide.tide_number}: no-op pass (nothing fired), duration {tide.duration_sec:.3f}s"
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(msg, extra=extra)
+        _emit_payload(cls_name, logging.DEBUG, msg, "tide", dump, meta, is_tide=True)
 
 
 def _route_reject_to_log(cls_name: str, reject: RejectEntry) -> None:
@@ -165,11 +195,7 @@ def _route_reject_to_log(cls_name: str, reject: RejectEntry) -> None:
     maybe_edge = f" ({reject.from_name}->{reject.to_name})" if reject.from_name else ""
     maybe_status = f" [HTTP {reject.status_code}]" if reject.status_code else ""
     msg = f"{reject.error_kind}: {reject.source}{maybe_edge}{maybe_status}"
-    extra = {"meta": meta, "reject": reject.model_dump(mode="json"), "is_api": False}
-
-    logger = logging.getLogger(cls_name)
-    if logger.isEnabledFor(logging.ERROR):
-        logger.error(msg, extra=extra)
+    _emit_payload(cls_name, logging.ERROR, msg, "reject", reject.model_dump(mode="json"), meta)
 
 
 def _cleanup_listeners() -> None:
@@ -308,6 +334,21 @@ class StandardFilter(logging.Filter):
         return not bool(getattr(record, "is_api", False))
 
 
+class TideFilter(logging.Filter):
+    """Routes ``is_tide=True`` records to ``tide.log`` for single-file :meth:`LoggedTideweaver.get_tides` reads.
+
+    Mirrors the :class:`APIFilter` / :class:`StandardFilter` pattern.
+    Activated by the ``is_tide: True`` extra that :func:`_route_tide_to_log`
+    attaches to every tide record.  Tide records continue to flow into
+    ``debug.log`` (superset) and ``error.log`` (fired/errored tides) —
+    this filter only selects them for an additional dedicated file that
+    eliminates the cross-file dedup loop in ``get_tides()``.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return bool(getattr(record, "is_tide", False))
+
+
 def setup_class_logger(cls: str | type[Any]) -> None:
     """Configures JSON-formatted, non-blocking logging for a dynamic subclass or named logger.
 
@@ -371,6 +412,16 @@ def setup_class_logger(cls: str | type[Any]) -> None:
     api_fh.addFilter(APIFilter())
     api_fh.setFormatter(formatter)
 
+    tide_fh = RotatingFileHandler(
+        _safe_log_filename(cls_name, "tide.log"),
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    tide_fh.setLevel(logging.DEBUG)
+    tide_fh.addFilter(TideFilter())
+    tide_fh.setFormatter(formatter)
+
     # 3. Multi-Threading Queue Setup (Non-Blocking Event Loop)
     log_queue: queue.SimpleQueue[Any] = queue.SimpleQueue()
     queue_handler = QueueHandler(log_queue)
@@ -395,7 +446,7 @@ def setup_class_logger(cls: str | type[Any]) -> None:
             except Exception:  # noqa: S110, BLE001 — see comment above
                 pass
 
-    listener = QueueListener(log_queue, debug_fh, error_fh, api_fh, respect_handler_level=True)
+    listener = QueueListener(log_queue, debug_fh, error_fh, api_fh, tide_fh, respect_handler_level=True)
     listener.start()
 
     _ACTIVE_LISTENERS[cls_name] = listener
@@ -970,7 +1021,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
                 target_max_sec=target_max_sec,
             ):
                 if enable_logging:
-                    _route_wave_to_log(cls, wave)
+                    _route_wave_to_log(cls.__name__, wave)
 
                 # Yield downstream to the caller natively
                 yield wave
@@ -1049,7 +1100,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
                 inflow=inflow,
             ):
                 if enable_logging:
-                    _route_wave_to_log(cls, wave)
+                    _route_wave_to_log(cls.__name__, wave)
 
                 yield wave
 
