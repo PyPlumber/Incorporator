@@ -19,6 +19,7 @@ from __future__ import annotations
 
 __version__ = "1.2.2"
 
+from ._deps import Category, DepInfo, install_hint, list_deps
 from .base import Incorporator
 from .exceptions import (
     IncorporatorError,
@@ -129,4 +130,9 @@ __all__ = [
     "Fjord",
     "Export",
     "Tide",
+    # Optional-dependency introspection
+    "Category",
+    "DepInfo",
+    "install_hint",
+    "list_deps",
 ]

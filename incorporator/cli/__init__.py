@@ -269,6 +269,21 @@ if typer:
             fg=typer.colors.WHITE,
         )
 
+    from .deps import render_deps as _render_deps
+
+    @app.command("deps")  # type: ignore[untyped-decorator]
+    def deps(
+        missing: bool = typer.Option(  # noqa: B008
+            False, "--missing", help="Show only optional deps that are NOT installed."
+        ),
+        category: str | None = typer.Option(  # noqa: B008
+            None, "--category", help="Filter by category (speedup, format, orchestrate, platform_fix)."
+        ),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON array (for scripting)."),  # noqa: B008
+    ) -> None:
+        """List optional dependencies and their install status."""
+        _render_deps(missing=missing, category=category, as_json=json_output)
+
 
 def main() -> None:
     """Entry point for the setup.py / pyproject.toml console script."""

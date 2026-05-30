@@ -742,6 +742,75 @@ For the full method-level signature of `fjord()`, see the pdoc-built
 
 ---
 
+## 10. The `deps` Subcommand — Optional-Dependency Introspection
+
+The `deps` subcommand lists every registered optional dependency and its install status. Use it to audit your environment, generate install commands, or pipe a machine-readable manifest into CI tooling.
+
+```bash
+incorporator deps
+```
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--missing` | `False` | Show only deps that are **not** installed |
+| `--category` | (all) | Filter to one category: `speedup`, `format`, `orchestrate`, `platform_fix` |
+| `--json` | `False` | Emit a JSON array instead of a human-readable table |
+
+### Sample output (tabular)
+
+```
+NAME      CATEGORY      EXTRA        STATUS              INSTALL
+--------  ------------  -----------  ------------------  -----------------------------
+orjson    speedup       speedups     ✓ 3.9.15            pip install incorporator[speedups]
+lxml      format        formats      ✓ 5.3.0             pip install incorporator[formats]
+cramjam   speedup       speedups     ✗ not installed     pip install incorporator[speedups]
+tzdata    platform_fix  parquet      n/a (platform)      pip install incorporator[parquet]
+```
+
+The `STATUS` column is colour-coded: green for installed, red for missing, yellow for platform-gated deps (`n/a (platform)`) that cannot be installed on the current OS.
+
+### Sample output (JSON)
+
+```bash
+incorporator deps --json
+```
+
+```json
+[
+  {
+    "name": "orjson",
+    "extra": "speedups",
+    "category": "speedup",
+    "description": "Fast JSON serialiser/deserialiser (Rust-backed, GIL-free)",
+    "version_spec": ">=3.9",
+    "is_available": true,
+    "installed_version": "3.9.15",
+    "platform_marker": null,
+    "include_in_all": true
+  }
+]
+```
+
+> The `module` field is intentionally excluded from JSON output — it is not serialisable and exposes internal structure.
+
+### Show only missing deps
+
+```bash
+incorporator deps --missing
+incorporator deps --missing --json   # machine-readable for CI scripts
+```
+
+### Filter by category
+
+```bash
+incorporator deps --category speedup
+incorporator deps --category format --json
+```
+
+---
+
 ## Where to Go Next
 
 | Goal | Read |

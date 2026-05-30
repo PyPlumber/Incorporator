@@ -46,6 +46,11 @@ The same seven verbs — `incorp / test / refresh / export / stream / fjord / di
 - [Class-attribute reference](#class-attribute-reference)
 - [Shared kwargs glossary](#shared-kwargs-glossary)
 - [FormatType](#formattype)
+- [Optional-dependency introspection](#optional-dependency-introspection)
+  - [`list_deps`](#list_deps---listdepinfo)
+  - [`install_hint`](#install_hintdep_name-str---str)
+  - [`Category` enum](#category-enum)
+  - [`DepInfo` fields](#depinfo-fields)
 - [Where to Go Next](#where-to-go-next)
 
 ---
@@ -1165,6 +1170,57 @@ if not fmt.is_append_safe:
 **See also**
 [Formats & Compression](./formats_and_compression.md) ·
 [Appendix — Tideweaver Parquet Snapshots](../examples/appendix/tideweaver-parquet-snapshots/README.md)
+
+---
+
+## Optional-dependency introspection
+
+**When to reach for it:** inspect which optional packages are available at runtime, generate install hints, or surface a machine-readable dependency manifest for CI health checks.
+
+**Import**
+```python
+from incorporator import list_deps, install_hint, Category, DepInfo
+```
+
+### `list_deps() -> list[DepInfo]`
+
+Returns one `DepInfo` record for every registered optional dependency, in declaration order. Modules are imported lazily inside the function — no circular-import risk.
+
+### `install_hint(dep_name: str) -> str`
+
+Returns a `pip install incorporator[<extra>]` string for the named package, or `pip install <dep_name>` when the package is not registered.
+
+### `Category` enum
+
+| Value | Extra | Purpose |
+|---|---|---|
+| `SPEEDUP` | `speedups` | Faster JSON / compression (orjson, lxml, cramjam) |
+| `FORMAT` | `avro / parquet / xlsx` | Additional file-format support (fastavro, pyarrow, openpyxl) |
+| `ORCHESTRATE` | `orchestrate` | CLI + Prefect integration (typer, prefect) |
+| `PLATFORM_FIX` | `parquet` | Windows-only compat shims (tzdata) |
+
+### `DepInfo` fields
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `str` | PyPI package name |
+| `extra` | `str` | `[project.optional-dependencies]` key |
+| `category` | `Category` | Functional grouping |
+| `description` | `str` | One-line human summary |
+| `version_spec` | `str` | Minimum version constraint |
+| `is_available` | `bool` | `True` when importable at runtime |
+| `module` | `Any` | The imported module, or `None` |
+| `platform_marker` | `str \| None` | PEP 508 marker when platform-gated |
+| `include_in_all` | `bool` | Whether this dep is in the `[all]` extra |
+
+**Runnable example — iterate missing deps with install hints**
+```python
+from incorporator import list_deps, install_hint
+
+for dep in list_deps():
+    if not dep.is_available:
+        print(f"Missing: {dep.name}  →  {install_hint(dep.name)}")
+```
 
 ---
 
