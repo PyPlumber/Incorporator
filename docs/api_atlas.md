@@ -701,9 +701,11 @@ class FlowControl(BaseModel):
 
 
 # Gate — pass / hold decision per upstream
-class HardLock(Gate): ...    # block until a fresh upstream wave arrived
-class SoftPass(Gate): ...    # fire on own cadence regardless of upstream
-class Weir(Gate): ...        # gate on wave freshness, no skip-ahead
+# All three subclasses inherit gate_reason() from Gate and override ClassVar
+# check flags (_check_in_flight, _check_freshness, _check_consumed: bool).
+class HardLock(Gate): ...    # all checks True (inherits base defaults)
+class SoftPass(Gate): ...    # all checks False — always returns None
+class Weir(Gate): ...        # _check_in_flight=False; freshness + consumed checks True
 
 # SurgeBarrier — conditional override when upstream runs long
 class SurgeBarrier(BaseModel):

@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
@@ -83,9 +83,24 @@ class Gate(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    def gate_reason(self, ctx: GateContext) -> str | None:
+    _check_in_flight: ClassVar[bool] = True
+    _check_freshness: ClassVar[bool] = True
+    _check_consumed: ClassVar[bool] = True
+
+    def gate_reason(self, ctx: GateContext) -> SkipReason | None:
         """Return a skip reason, or ``None`` to allow firing."""
-        raise NotImplementedError
+        if self._check_in_flight and ctx.up_in_flight:
+            return SkipReason.AWAITING_UPSTREAM
+        if self._check_freshness and ctx.up_last_wave_at is None:
+            return SkipReason.AWAITING_UPSTREAM
+        if (
+            self._check_consumed
+            and ctx.last_consumed is not None
+            and ctx.up_last_wave_at is not None
+            and ctx.last_consumed >= ctx.up_last_wave_at
+        ):
+            return SkipReason.AWAITING_UPSTREAM
+        return None
 
 
 class HardLock(Gate):
@@ -93,23 +108,15 @@ class HardLock(Gate):
 
     type: Literal["hard"] = "hard"
 
-    def gate_reason(self, ctx: GateContext) -> str | None:
-        if ctx.up_in_flight:
-            return SkipReason.AWAITING_UPSTREAM
-        if ctx.up_last_wave_at is None:
-            return SkipReason.AWAITING_UPSTREAM
-        if ctx.last_consumed is not None and ctx.last_consumed >= ctx.up_last_wave_at:
-            return SkipReason.AWAITING_UPSTREAM
-        return None
-
 
 class SoftPass(Gate):
     """Open channel: no gating; downstream fires on its own cadence."""
 
     type: Literal["soft"] = "soft"
 
-    def gate_reason(self, ctx: GateContext) -> str | None:
-        return None
+    _check_in_flight: ClassVar[bool] = False
+    _check_freshness: ClassVar[bool] = False
+    _check_consumed: ClassVar[bool] = False
 
 
 class Weir(Gate):
@@ -117,12 +124,7 @@ class Weir(Gate):
 
     type: Literal["weir"] = "weir"
 
-    def gate_reason(self, ctx: GateContext) -> str | None:
-        if ctx.up_last_wave_at is None:
-            return SkipReason.AWAITING_UPSTREAM
-        if ctx.last_consumed is not None and ctx.last_consumed >= ctx.up_last_wave_at:
-            return SkipReason.AWAITING_UPSTREAM
-        return None
+    _check_in_flight: ClassVar[bool] = False
 
 
 # ---------------------------------------------------------------------------
