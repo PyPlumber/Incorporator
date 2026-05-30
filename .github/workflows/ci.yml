@@ -22,6 +22,8 @@ jobs:
         run: ruff format --check incorporator/
       - name: black --check
         run: black --check incorporator/
+      - name: Sync pyproject check
+        run: python tools/sync_pyproject.py --check
 
   typecheck:
     runs-on: ubuntu-latest

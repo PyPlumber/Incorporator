@@ -51,6 +51,8 @@ dependencies =[
 Repository = "https://github.com/PyPlumber/incorporator"
 "Bug Tracker" = "https://github.com/PyPlumber/incorporator/issues"
 [project.optional-dependencies]
+# >>> AUTO-GENERATED OPTIONAL DEPENDENCIES (sync via tools/sync_pyproject.py)
+# Development / CI tooling
 dev =[
     "pytest>=7.0",
     "pytest-asyncio>=0.21.0",
@@ -61,11 +63,19 @@ dev =[
     "black>=24.0"
 ]
 # The GIL-releasing C/Rust upgrades
-speedups =["orjson>=3.9", "lxml>=4.9", "cramjam>=2.7"]
+speedups =[
+    "orjson>=3.9",
+    "lxml>=4.9",
+    "cramjam>=2.7"
+]
 # Big Data Formats
-avro =["fastavro>=1.8"]
+avro =[
+    "fastavro>=1.8"
+]
 # Business spreadsheets — pure Python, ~250 KB, fits the microclient identity
-xlsx =["openpyxl>=3.1"]
+xlsx =[
+    "openpyxl>=3.1"
+]
 # Columnar format for data lakes / warehouses. Pyarrow is ~30 MB — deliberately
 # NOT included in [all] to keep the "everything reasonable" install lean.
 # tzdata is required on Windows for pyarrow's ORC reader, which hardcodes
@@ -74,7 +84,7 @@ xlsx =["openpyxl>=3.1"]
 # installs.
 parquet =[
     "pyarrow>=14.0",
-    "tzdata>=2024.1; sys_platform == 'win32'",
+    "tzdata>=2024.1; sys_platform == 'win32'"
 ]
 # The v2.0 Pipeline Orchestration Upgrades
 orchestrate =[
@@ -82,7 +92,9 @@ orchestrate =[
     "prefect>=2.10.0"
 ]
 # Documentation generation (contributor-only — NOT added to [all])
-docs =["pdoc>=14.0"]
+docs =[
+    "pdoc>=14.0"
+]
 # The developer "install everything reasonable" flag.
 # NOTE: heavyweight deps (e.g. pyarrow for Parquet, ~50 MB) are intentionally
 # excluded — users opt into those explicitly via incorporator[parquet] etc.
@@ -95,6 +107,7 @@ all =[
     "typer>=0.9.0",
     "prefect>=2.10.0"
 ]
+# <<< END AUTO-GENERATED
 
 [project.scripts]
 # Exposes the Typer application to the terminal
