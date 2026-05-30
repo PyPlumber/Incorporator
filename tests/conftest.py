@@ -5,8 +5,6 @@ import os
 import sys
 from pathlib import Path
 from typing import Generator
-from unittest.mock import patch
-
 import pytest
 
 
@@ -120,12 +118,18 @@ def xml_catalog_payload() -> str:
 
 
 @pytest.fixture
-def mock_no_speedups():
+def mock_no_speedups(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """
     Forces Incorporator to use the Python Standard Library fallbacks
-    by pretending the Rust/C extensions are not installed.
+    by setting the _deps module constants to None.
     """
-    hidden_modules = {"orjson": None, "lxml": None, "cramjam": None, "fastavro": None}
+    from incorporator._deps import cramjam as _cramjam_mod
+    from incorporator._deps import fastavro as _fastavro_mod
+    from incorporator._deps import lxml as _lxml_mod
+    from incorporator._deps import orjson as _orjson_mod
 
-    with patch.dict(sys.modules, hidden_modules):
-        yield
+    monkeypatch.setattr(_orjson_mod, "ORJSON", None)
+    monkeypatch.setattr(_lxml_mod, "LXML_ETREE", None)
+    monkeypatch.setattr(_cramjam_mod, "CRAMJAM", None)
+    monkeypatch.setattr(_fastavro_mod, "FASTAVRO", None)
+    yield

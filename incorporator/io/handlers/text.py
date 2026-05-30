@@ -8,42 +8,19 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, TextIO, cast
 
+from ..._deps import lxml as _lxml_mod
+from ..._deps import orjson as _orjson_mod
 from ...exceptions import IncorporatorFormatError
 from ..formats import check_xml_security, ensure_bytes, ensure_string, serialize_nested, xml_to_dict
 from ._base import BaseFormatHandler, _raise_if_append_unsupported, atomic_write_path
 
 logger = logging.getLogger(__name__)
 
-# ── Speedup probes (runtime-aware) ─────────────────────────────────────
-# JSON and XML each support an optional fast path (orjson / lxml) that
-# falls back to the stdlib when the dep is missing.  These helpers
-# re-import per call — after the first import the lookup is a
-# sub-microsecond ``sys.modules`` dict hit, so the cost is negligible
-# and tests can transparently force the fallback path via
-# ``patch.dict(sys.modules, {"orjson": None, "lxml": None})``.
-
-
-def _try_import_orjson() -> Any:
-    try:
-        import orjson  # type: ignore[import-untyped, import-not-found, unused-ignore]
-
-        return orjson
-    except ImportError:
-        return None
-
-
-def _try_import_lxml_etree() -> Any:
-    try:
-        import lxml.etree as lxml_etree  # type: ignore[import-untyped, import-not-found, unused-ignore]
-
-        return lxml_etree
-    except ImportError:
-        return None
-
 
 def _dumps_json_bytes(item: Any, *, indent: int) -> bytes:
     """Serialise one JSON record to bytes, preferring orjson when available."""
-    orjson = _try_import_orjson()
+    # Read constant inside function body so monkeypatch.setattr is effective per call.
+    orjson = _orjson_mod.ORJSON
     if orjson is not None:
         opt = orjson.OPT_INDENT_2 if indent else 0
         return cast(bytes, orjson.dumps(item, option=opt))
@@ -52,7 +29,8 @@ def _dumps_json_bytes(item: Any, *, indent: int) -> bytes:
 
 def _loads_json(raw: bytes | str) -> Any:
     """Decode a JSON document, preferring orjson when available."""
-    orjson = _try_import_orjson()
+    # Read constant inside function body so monkeypatch.setattr is effective per call.
+    orjson = _orjson_mod.ORJSON
     if orjson is not None:
         return orjson.loads(raw)
     if isinstance(raw, bytes):
@@ -69,7 +47,8 @@ def _parse_xml(raw_bytes: bytes, raw_str: str) -> Any:
     Both branches transparently retry on ``ParseError`` after ``.strip()``
     to handle XML payloads with whitespace preambles.
     """
-    lxml_etree = _try_import_lxml_etree()
+    # Read constant inside function body so monkeypatch.setattr is effective per call.
+    lxml_etree = _lxml_mod.LXML_ETREE
     if lxml_etree is not None:
         parser = lxml_etree.XMLParser(resolve_entities=False, no_network=True)
         try:
@@ -92,7 +71,8 @@ def _xml_parse_error_types() -> tuple[type, ...]:
     type-name in error messages.
     """
     types: list[type] = []
-    lxml_etree = _try_import_lxml_etree()
+    # Read constant inside function body so monkeypatch.setattr is effective per call.
+    lxml_etree = _lxml_mod.LXML_ETREE
     if lxml_etree is not None:
         types.append(lxml_etree.ParseError)
     import xml.etree.ElementTree as ET
@@ -142,7 +122,7 @@ class JSONHandler(BaseFormatHandler):
         # orjson formats with a 2-space indent (its only indent option); the
         # stdlib path stays at the historical 4-space default — both produce
         # valid JSON, the difference is purely cosmetic.
-        indent = 2 if _try_import_orjson() is not None else 4
+        indent = 2 if _orjson_mod.ORJSON is not None else 4
 
         # Streaming JSON array: write one record at a time — no full-list
         # materialisation.  Atomic write: build to a sibling tempfile then
@@ -352,7 +332,8 @@ class XMLHandler(BaseFormatHandler):
         # ElementTree cannot write a streaming element tree incrementally.
         data_list: list[dict[str, Any]] = list(data)
         path = _resolved_path(file_path)
-        lxml_etree = _try_import_lxml_etree()
+        # Read constant inside function body so monkeypatch.setattr is effective per call.
+        lxml_etree = _lxml_mod.LXML_ETREE
         try:
             with atomic_write_path(path) as tmp_path:
                 if lxml_etree is not None:

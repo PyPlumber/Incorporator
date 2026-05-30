@@ -17,10 +17,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-try:
-    import typer as _typer
-except ImportError:  # pragma: no cover — orchestrate extra is optional
-    _typer = None  # type: ignore[assignment]
+from incorporator._deps.typer import TYPER as _typer
 
 from ..observability.tideweaver import Tide, Tideweaver
 from ..observability.tideweaver.config import build_watershed

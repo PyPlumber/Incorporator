@@ -16,10 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-try:
-    import typer as _typer
-except ImportError:  # pragma: no cover — orchestrate extra is optional
-    _typer = None  # type: ignore[assignment]
+from incorporator._deps.typer import TYPER as _typer
 
 from .. import Incorporator, LoggedIncorporator
 from ._pipeline_config import parse_pipeline_config

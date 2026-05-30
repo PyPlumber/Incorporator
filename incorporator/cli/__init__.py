@@ -16,10 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-try:
-    import typer
-except ImportError:
-    typer = None  # type: ignore[assignment]
+from incorporator._deps.typer import TYPER as typer
 
 from .. import Incorporator, LoggedIncorporator, __version__  # re-exports preserved for test patching
 from .runners import (

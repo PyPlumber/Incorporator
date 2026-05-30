@@ -10,6 +10,7 @@ import sqlite3
 from collections.abc import AsyncGenerator
 from typing import IO, Any, ClassVar
 
+from ..._deps import fastavro as _fastavro_mod
 from ..penstock import Penstock
 from .base import AsyncPaginator, _deserialize_row
 
@@ -316,10 +317,9 @@ class AvroPaginator(_LocalChunkedPaginator):
         self._reader: Any | None = None
 
     def _fetch_chunk(self) -> list[dict[str, Any]]:
-        try:
-            import fastavro
-        except ImportError:
-            raise RuntimeError("fastavro not installed.") from None
+        fastavro = _fastavro_mod.FASTAVRO
+        if fastavro is None:
+            raise RuntimeError("fastavro not installed. Run: pip install incorporator[avro]")
 
         if not self._file:
             self._file = open(self.file_path, "rb")

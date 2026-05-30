@@ -16,14 +16,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from incorporator import LoggedIncorporator
+from incorporator._deps.prefect import PREFECT
 from incorporator.observability.logger import Wave
 
-try:
-    from prefect import flow, get_run_logger, task
+HAS_PREFECT = PREFECT is not None
 
-    HAS_PREFECT = True
-except ImportError:
-    HAS_PREFECT = False
+if HAS_PREFECT:
+    from prefect import flow, get_run_logger, task  # type: ignore[import-not-found, import-untyped, unused-ignore]
 
 # Assign fallbacks as variables instead of redefining functions
 if not HAS_PREFECT:

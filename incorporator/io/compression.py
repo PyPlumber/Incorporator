@@ -18,6 +18,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+from .._deps import cramjam as _cramjam_mod
 from ..exceptions import IncorporatorFormatError
 from .formats import FormatType
 
@@ -304,34 +305,30 @@ def _decompress_cramjam(
     archive_target: str | None,
 ) -> str | bytes:
     """Lazy-loads Cramjam Rust bindings with structural binary bypass."""
-    try:
-        import cramjam  # type: ignore[import-not-found, import-untyped, unused-ignore]
+    cramjam = _cramjam_mod.CRAMJAM
+    if cramjam is None:
+        raise IncorporatorFormatError(f"{comp_type.value} requires cramjam. Run: pip install incorporator[cramjam]")
 
-        module_name = _CRAMJAM_MODULE_MAP.get(comp_type)
-        if not module_name:
-            raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
-        cj_module = getattr(cramjam, module_name, None)
-        if not cj_module:
-            raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
+    module_name = _CRAMJAM_MODULE_MAP.get(comp_type)
+    if not module_name:
+        raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
+    cj_module = getattr(cramjam, module_name, None)
+    if not cj_module:
+        raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
 
-        is_bin = _is_binary(active_format)
+    is_bin = _is_binary(active_format)
 
-        if isinstance(data, str):
-            with open(Path(data).resolve(), "rb") as f:
-                # cramjam ≥2.x returns a Buffer object, not plain bytes — wrap in bytes()
-                raw_bytes = bytes(cj_module.decompress(f.read()))
-            _enforce_size_cap(len(raw_bytes), comp_type)
-            return raw_bytes if is_bin else raw_bytes.decode("utf-8")
-
-        # cramjam ≥2.x returns a Buffer object, not plain bytes — wrap in bytes()
-        raw_bytes = bytes(cj_module.decompress(data))
+    if isinstance(data, str):
+        with open(Path(data).resolve(), "rb") as f:
+            # cramjam ≥2.x returns a Buffer object, not plain bytes — wrap in bytes()
+            raw_bytes = bytes(cj_module.decompress(f.read()))
         _enforce_size_cap(len(raw_bytes), comp_type)
         return raw_bytes if is_bin else raw_bytes.decode("utf-8")
 
-    except ImportError:
-        raise IncorporatorFormatError(
-            f"{comp_type.value} requires cramjam. Run: pip install incorporator[cramjam]"
-        ) from None
+    # cramjam ≥2.x returns a Buffer object, not plain bytes — wrap in bytes()
+    raw_bytes = bytes(cj_module.decompress(data))
+    _enforce_size_cap(len(raw_bytes), comp_type)
+    return raw_bytes if is_bin else raw_bytes.decode("utf-8")
 
 
 # ==========================================
@@ -369,38 +366,36 @@ def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> 
     OOM Safe Implementation: Uses 1MB chunked reading with Cramjam's streaming
     Compressor objects if available, gracefully degrading if required.
     """
-    try:
-        import cramjam
-
-        module_name = _CRAMJAM_MODULE_MAP.get(comp_type)
-        if not module_name:
-            raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
-        cj_module = getattr(cramjam, module_name, None)
-        if not cj_module:
-            raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
-
-        with open(src, "rb") as f_in, open(out_path, "wb") as f_out:
-            if hasattr(cj_module, "Compressor"):
-                compressor = cj_module.Compressor()
-                while chunk := f_in.read(1024 * 1024):  # 1MB Chunks
-                    # cramjam ≥2.x: compress() returns int (bytes consumed), not bytes.
-                    # Compressed output is retrieved via finish() / flush() at the end.
-                    compressor.compress(chunk)
-
-                # Drain the compressor output buffer
-                if hasattr(compressor, "finish"):
-                    f_out.write(bytes(compressor.finish()))
-                elif hasattr(compressor, "flush"):
-                    f_out.write(bytes(compressor.flush()))
-            else:
-                # Fallback for older cramjam installations
-                f_out.write(cast(bytes, cj_module.compress(f_in.read())))
-
-    except ImportError:
+    cramjam = _cramjam_mod.CRAMJAM
+    if cramjam is None:
         raise IncorporatorFormatError(
             f"{_CRAMJAM_MODULE_MAP.get(comp_type, comp_type.value)} requires cramjam. "
             f"Run: pip install incorporator[cramjam]"
-        ) from None
+        )
+
+    module_name = _CRAMJAM_MODULE_MAP.get(comp_type)
+    if not module_name:
+        raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
+    cj_module = getattr(cramjam, module_name, None)
+    if not cj_module:
+        raise IncorporatorFormatError(f"Unsupported cramjam format: {comp_type}")
+
+    with open(src, "rb") as f_in, open(out_path, "wb") as f_out:
+        if hasattr(cj_module, "Compressor"):
+            compressor = cj_module.Compressor()
+            while chunk := f_in.read(1024 * 1024):  # 1MB Chunks
+                # cramjam ≥2.x: compress() returns int (bytes consumed), not bytes.
+                # Compressed output is retrieved via finish() / flush() at the end.
+                compressor.compress(chunk)
+
+            # Drain the compressor output buffer
+            if hasattr(compressor, "finish"):
+                f_out.write(bytes(compressor.finish()))
+            elif hasattr(compressor, "flush"):
+                f_out.write(bytes(compressor.flush()))
+        else:
+            # Fallback for older cramjam installations
+            f_out.write(cast(bytes, cj_module.compress(f_in.read())))
 
 
 # ==========================================

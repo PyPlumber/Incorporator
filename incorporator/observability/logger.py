@@ -14,6 +14,7 @@ from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from .._deps import orjson as _orjson_mod
 from ..base import _UNSET, Incorporator
 from ..list import IncorporatorList
 from .wave import Wave  # re-exported — ``from .logger import Wave`` keeps working
@@ -266,10 +267,10 @@ def _read_filtered(filename: str, key: str) -> list[dict[str, Any]]:
             for line in f:
                 if line.strip():
                     try:
-                        rec = json.loads(line)
+                        rec = _orjson_mod.loads(line)
                         if key in rec:
                             records.append(rec)
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, ValueError):
                         pass
     except OSError:
         pass
@@ -305,7 +306,7 @@ class JSONFormatter(logging.Formatter):
             log_obj["reject"] = record.reject
         if record.exc_info:
             log_obj["exc_info"] = self.formatException(record.exc_info)
-        return json.dumps(log_obj)
+        return _orjson_mod.dumps_str(log_obj)
 
 
 class APIFilter(logging.Filter):
@@ -531,8 +532,8 @@ class LoggingMixin:
                     for line in f:
                         if line.strip():
                             try:
-                                errors.append(json.loads(line))
-                            except json.JSONDecodeError:
+                                errors.append(_orjson_mod.loads(line))
+                            except (json.JSONDecodeError, ValueError):
                                 pass
             except OSError:
                 pass  # Treat disk read failures as "no errors yet"
