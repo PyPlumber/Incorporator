@@ -11,6 +11,12 @@ spreads. Three exchanges — Binance.us, Coinbase Advanced Trade, Kraken — eac
 ticking at its own cadence, converging on one fused "best bid / best ask /
 spread / opportunity flag" tail.
 
+Each exchange current runs the same schema-free `incorp()` call from Tutorial 1
+— no Pydantic models, no exchange-specific parsers. The `BinanceBook`,
+`CoinbaseTicker`, and `KrakenTicker` classes are all empty subclasses, and the
+orchestrator inherits every primitive you already know: the same `Wave`,
+`RejectEntry`, and `FlowControl` that appear in a single-source fetch.
+
 **Tideweaver** lets you declare it instead of writing the async scheduler
 yourself: one `Watershed.diamond()`, three exchange currents, one `Fjord`
 current that snapshots them all and writes the consolidated arb signal. No
@@ -21,7 +27,7 @@ downstream work until upstream produces fresh data.
 
 > **CCXT comparison.** Real arb bots are usually built on
 > [CCXT](https://github.com/ccxt/ccxt) with hand-rolled `asyncio` glue.  If you
-> need 100+ exchange support out of the box, CCXT is the standard library.
+> need 100+ exchange support available immediately, CCXT is the standard library.
 > Incorporator targets the case where you want a typed object graph +
 > declarative orchestration + the same verbs your single-source pipelines
 > already use.
@@ -68,11 +74,11 @@ from incorporator import Incorporator, Tideweaver
 
 # Probe N sources; architect picks intervals and shape from response signals.
 plan = await Incorporator.architect(
-    inc_url=[
-        "https://api.binance.us/api/v3/depth?symbol=BTCUSDT",
-        "https://api.exchange.coinbase.com/products/BTC-USD/book?level=1",
-        "https://api.kraken.com/0/public/Depth?pair=XBTUSD",
-    ],
+    sources={
+        "binance":  "https://api.binance.us/api/v3/depth?symbol=BTCUSDT",
+        "coinbase": "https://api.exchange.coinbase.com/products/BTC-USD/book?level=1",
+        "kraken":   "https://api.kraken.com/0/public/Depth?pair=XBTUSD",
+    },
     output="plan",
 )
 
@@ -91,7 +97,7 @@ full control over per-current intervals, `on_error` policies, or custom
 inspect-ability for round-trip-ability: `"report"` (terminal review),
 `"python"` (paste-ready module body), `"json"` (round-trippable
 `watershed.json`), `"plan"` (the in-memory handoff shown above).  After a
-run, `architect.tune()` closes the loop — see [Post-run tuning](#post-run-tuning)
+run, `tune()` closes the loop — see [Post-run tuning](#post-run-tuning)
 below.
 
 ---
@@ -213,7 +219,7 @@ spread, and flags any opportunity where the spread crosses a threshold (basis po
 > **`stateful_polling=True` is rejected inside a Watershed.**
 > Tideweaver does its own per-tick scheduling, so a `Stream` current with
 > `stateful_polling=True` would conflict with the orchestrator's interval
-> clock and is **rejected at construction time** (AGENTS.md GOTCHA #9).
+> clock and is **rejected at construction time**.
 > Inside a Watershed, every `Stream` current is a chunking-mode `incorp()`
 > call per tick.  If you want stateful behaviour across ticks (live
 > `inc_dict` accumulating between Tides), put a `Fjord` current
@@ -335,7 +341,7 @@ ask across venues.
 
 ```python
 # arb_outflow.py
-from typing import Any, Dict, List
+from typing import Any
 
 
 # Map exchange-native symbols to a canonical asset code.  Real scanners
@@ -368,14 +374,14 @@ def _venue_quotes(rows, symbol_attr: str, bid_attr: str, ask_attr: str, venue: s
     return out
 
 
-def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     quotes = []
     quotes += _venue_quotes(state.get("BinanceBook", []),    "symbol",   "bidPrice", "askPrice", "binance")
     quotes += _venue_quotes(state.get("CoinbaseTicker", []), "product_id", "bid",    "ask",      "coinbase")
     quotes += _venue_quotes(state.get("KrakenTicker", []),   "_key",     "b",        "a",        "kraken")
 
     # Group by canonical asset.
-    by_asset: Dict[str, List[tuple]] = {}
+    by_asset: dict[str, list[tuple]] = {}
     for asset, bid, ask, venue in quotes:
         by_asset.setdefault(asset, []).append((bid, ask, venue))
 
@@ -499,6 +505,63 @@ print(report.render())                       # hint blocks, sorted by severity
 `tw.summary(tides=tides)` returns the same report via instance method.  Each
 `tide.current_outcomes` is a `list[CurrentOutcome]` with per-current `status`
 / `reason` / `in_flight_sec` — which currents fired, which skipped, per pass.
+
+`tune()` runs up to seven rule functions and skips rules whose required inputs
+are absent — pass only what you have:
+
+| Rule | Requires | What it checks |
+|---|---|---|
+| `_tune_chunk_size` | `waves=` | p50 / p99 chunk latency; suggests smaller chunks under backpressure |
+| `_tune_penstock_rate` | `rejects=` | per-edge and per-host rate-limit patterns |
+| `_tune_surge_threshold` | `rejects=` + `tides=` | surge-barrier threshold relative to actual skip volume |
+| `_tune_pass_interval` | `tides=` + `pass_interval=` | saturation (all passes == pass_interval) or heap-empty waste |
+| `_tune_retry_policy` | `rejects=` | retry budget exhaustion and compound-retry cost |
+| `_tune_compound_budget` | `pass_interval=` | aggregate retry ceiling vs window duration |
+| `_tune_parent_child` | `tides=` + `waves=` | silent-skip rate on parent→child current pairs |
+
+### Replaying a session from disk
+
+`LoggedTideweaver.get_tides()` and `get_rejects()` read the `QueueHandler`
+log files produced during a previous run — useful when you want to analyse a
+completed overnight window without rerunning it:
+
+```python
+from incorporator.observability.tideweaver import LoggedTideweaver, tune
+
+# Read records written during a previous run.
+tides   = await LoggedTideweaver.get_tides("ArbSession")
+rejects = await LoggedTideweaver.get_rejects("ArbSession")
+
+# Each element is a raw dict; the Tide data is under rec["tide"].
+for rec in tides:
+    t = rec["tide"]
+    print(t["tide_number"], t["fired"], t["duration_sec"])
+```
+
+`get_tides()` reads both `_error.log` and `_debug.log` (tides land in both
+depending on severity) and deduplicates by `tide_number`.  `get_rejects()`
+reads `_error.log` only — each dict has a top-level `"reject"` key.
+
+### Green-wave coordination with `phase_offset_sec`
+
+When three exchange currents all have the same `interval`, they compete for the
+first scheduler pass and most of them emit `"awaiting_upstream"` skips on
+pass 1.  `phase_offset_sec` on `Current` staggers the first tick of each
+current to land just after the upstream it depends on:
+
+```python
+Stream(
+    name="coinbase",
+    cls=CoinbaseTicker,
+    interval=30,
+    phase_offset_sec=5.0,          # first tick fires 5 s after run start
+    incorp_params={"inc_url": "..."},
+)
+```
+
+The default is `0.0` — first tick fires immediately.  A stagger of
+`~1 × expected_upstream_latency` typically eliminates most warm-up skips
+without adding meaningful wall-clock latency to the window.
 
 ---
 

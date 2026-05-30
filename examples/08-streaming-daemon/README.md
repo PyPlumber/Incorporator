@@ -1,6 +1,6 @@
 ***
 
-# 🌊 Tutorial 8 — Streaming Daemon: Paginated Bulk Export at O(1) Memory
+# Tutorial 8 — Streaming Daemon: Paginated Bulk Export at O(1) Memory
 
 You're building a historical crypto warehouse and need to walk every coin CoinGecko
 knows about, not just the top-100.  At `per_page=250` that's 40+ pages.  You don't
@@ -10,8 +10,9 @@ your event loop, with peak memory pinned at one page.
 
 `incorp()` fetches once.  `refresh()` refreshes a live registry once.  `stream()` is
 the long-running pipeline — a paginator drives waves through the chunking engine
-until the source exhausts, every wave written through the same crash-safe export
-machinery as one-shot `export()`.  The kwargs *are* the pipeline definition.
+until the source exhausts, every wave written through the same export machinery as
+one-shot `export()`.  The kwargs *are* the pipeline definition, and they're the same
+kwargs you already know from Tutorial 1: schema-free, no class definitions required.
 
 **The Goal:**
 
@@ -32,7 +33,7 @@ machinery as one-shot `export()`.  The kwargs *are* the pipeline definition.
 > That's what `stream()` is built for.
 
 > **Vocabulary anchor for the daemon family.**  Three long-running shapes
-> share the same wave queue + LoggedIncorporator plumbing under the hood;
+> share the same Wave telemetry + LoggedIncorporator plumbing under the hood;
 > the curriculum names them consistently:
 > - **chunking-mode `stream()`** (Part 1 below) — paginated O(1) bulk drain.
 > - **stateful single-source shim** (`stream(stateful_polling=True)`, Part 2) —
@@ -79,7 +80,7 @@ async def main() -> None:
         # No refresh_interval / export_interval — chunking is event-driven by the paginator.
         enable_logging=True,
     ):
-        print(f"📦 page {wave.chunk_index}: {wave.rows_processed} coins")
+        print(f"page {wave.chunk_index}: {wave.rows_processed} coins")
 ```
 
 **What runs:**
@@ -105,8 +106,8 @@ is **no**.
 ### Adaptive chunk sizing
 
 `adapt_chunk_size=True` lets `stream()` resize `paginator.chunk_size` between
-chunks via AIMD (additive-increase / multiplicative-decrease), bounded by
-`chunk_size_min` / `chunk_size_max` and the latency window
+chunks via multiplicative-increase / multiplicative-decrease (20% growth, 50%
+shrink), bounded by `chunk_size_min` / `chunk_size_max` and the latency window
 `[target_min_sec, target_max_sec]`:
 
 ```python
@@ -119,6 +120,12 @@ async for wave in CoinPage.stream(
     ...
 ```
 
+> **Local paginators only.** `adapt_chunk_size` resizes `paginator.chunk_size` in
+> place. `SQLitePaginator`, `CSVPaginator`, and `AvroPaginator` expose this
+> attribute — web paginators (`PageNumberPaginator`, `NextUrlPaginator`, etc.) do
+> not. Enabling the flag with a web paginator is a silent no-op: the engine logs a
+> DEBUG message and continues without adaptation.
+
 ---
 
 ## What `stream()` is doing under the hood
@@ -126,15 +133,20 @@ async for wave in CoinPage.stream(
 1. **Pipeline routing.**  `run_pipeline()` picks the chunking engine when
    `stateful_polling` is left at its default of `False` (and the fjord engine
    otherwise — see Part 2).
-2. **Wave queue.**  The engine writes Waves into one `asyncio.Queue`.  Your
-   `async for` loop drains it.
+2. **Wave generator.**  The chunking engine is a plain `AsyncGenerator` that
+   yields one `Wave` per chunk directly to your `async for` loop.  No internal
+   queue — `asyncio.Queue` is used only in the fjord engine.
 3. **Shared HTTP/2 client.**  All page requests share one connection pool; Tenacity
    retries transient HTTP errors transparently.
-4. **Atomic export writes.**  Every export path goes through the same crash-safe
-   tempfile + `os.replace()` machinery as one-shot `export()`.  Appends are
-   line-anchored so a kill mid-write never produces a torn record.
+4. **NDJSON append writes.**  In append mode, `NDJSONHandler` opens the target file
+   in binary append mode (`ab`) and writes each record as a JSON line followed by
+   `\n`.  A kill mid-write may leave a partial trailing line; prior records remain
+   intact.  Non-append formats (JSON, XML) go through `atomic_write_path` —
+   a sibling tempfile renamed on success.
 5. **Graceful drain.**  Ctrl+C / SIGTERM triggers ordered shutdown — in-flight
-   page completes, export drains, file is sealed.
+   page completes, export drains, file is sealed.  When running via the CLI runner
+   the signal handler is wired automatically; for bare `asyncio.run(main())`
+   you need to install your own SIGTERM handler.
 
 For the full engine breakdown see the [streaming & pagination
 guide](../../docs/streaming_and_pagination.md) and the
@@ -149,13 +161,35 @@ passes `enable_logging=True`.  Every wave is routed through a `QueueHandler`
 background thread into rotating JSON-line log files:
 
 ```
-logs/api.log      # successful chunks
-logs/error.log    # failed_sources entries (URLs redacted)
-logs/debug.log    # internal lifecycle events
+logs/CoinPage_api.log    # HTTP audit traces only (is_api=True records)
+logs/CoinPage_error.log  # all chunk waves — successful (INFO) and failed (ERROR) — URLs redacted
+logs/CoinPage_debug.log  # superset of error.log + api.log + lifecycle events
 ```
 
-Post-process with `jq`, ship to a log aggregator, or `tail -f` — disk I/O never
-blocks the event loop.
+Each wave record carries the full `Wave` payload as a structured `wave` JSON key,
+so you can post-process with `jq` by any field:
+
+```bash
+jq 'select(.wave.rows_processed > 0) | .wave | {chunk_index, rows_processed,
+    bytes_processed, http_retry_count, schema_cache_hit, conv_dict_time_sec}' \
+    logs/CoinPage_error.log
+```
+
+The fields available per wave are:
+
+| Field | Description |
+|---|---|
+| `rows_processed` | Records ingested this chunk |
+| `bytes_processed` | Raw HTTP response size in bytes |
+| `http_retry_count` | Tenacity retries beyond the first |
+| `schema_cache_hit` | `True` when schema compiled class was reused |
+| `validation_error_count` | Pydantic rows rejected this chunk |
+| `conv_dict_time_sec` | Seconds in the converter/ETL pass |
+| `processing_time_sec` | Total wall-clock seconds for the chunk |
+| `failed_sources` | Source URIs that errored (empty on success) |
+
+Disk I/O never blocks the event loop — the `QueueHandler` flushes in a background
+thread.  Ship the log files to any aggregator or `tail -f` during a drain.
 
 ---
 
@@ -196,9 +230,9 @@ async def main() -> None:
         enable_logging=True,                      # JSON-line logs to disk
     ):
         if wave.failed_sources:
-            print(f"⚠️  {wave.operation} chunk {wave.chunk_index}: {wave.failed_sources}")
+            print(f"  {wave.operation} chunk {wave.chunk_index}: {wave.failed_sources}")
         else:
-            print(f"✅ {wave.operation} chunk {wave.chunk_index}: {wave.rows_processed} pairs")
+            print(f"  {wave.operation} chunk {wave.chunk_index}: {wave.rows_processed} pairs")
 
 
 if __name__ == "__main__":
@@ -235,7 +269,7 @@ instead.
 
 ---
 
-## 🐳 Run it from the CLI
+## Run it from the CLI
 
 Both engines have CLI equivalents driven by `pipeline.json`.
 
@@ -280,7 +314,7 @@ incorporator validate pipeline.json
 incorporator stream pipeline.json --logs
 ```
 
-The `--logs` flag swaps in `LoggedIncorporator` automatically.  Add
+The `--logs` flag enables disk logging inside `LoggedIncorporator`.  Add
 `--heartbeat-file /tmp/inc.beat` and your Docker `HEALTHCHECK` (already baked into
 the ship-with-the-repo `Dockerfile`) will restart the container if the daemon
 hangs.  See the [deployment guide](../../docs/deployment.md) for the full Compose
@@ -290,7 +324,7 @@ hangs.  See the [deployment guide](../../docs/deployment.md) for the full Compos
 
 ## Where to Go Next
 
-> 👉 **Up next: [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md).**  T10 is about to introduce `fjord()` for coordinated multi-source refresh — the canonical stateful-daemon pattern that supersedes the `stateful_polling=True` shim shown above.  T9 gives you the shape first on a real fantasy-sports scoring problem: pull driver standings concurrently from Cup, Xfinity, and Truck series; join with track + driver master data; produce a weekly fantasy-points table.  Its state-aware `inflow()` even previews T10's `depends_on` graph.  Runs in ~8 s.
+> **Up next: [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md).**  T10 is about to introduce `fjord()` for coordinated multi-source refresh — the canonical stateful-daemon pattern that supersedes the `stateful_polling=True` shim shown above.  T9 gives you the shape first on a real fantasy-sports scoring problem: pull driver standings concurrently from Cup, Xfinity, and Truck series; join with track + driver master data; produce a weekly fantasy-points table.  Its state-aware `inflow()` even previews T10's `depends_on` graph.  Runs in ~8 s.
 
 | Goal | Read |
 |---|---|

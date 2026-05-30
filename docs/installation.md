@@ -63,7 +63,7 @@ pip install incorporator[parquet]
 pip install incorporator[orchestrate]
 ```
 **What this installs:** `typer`, `prefect`.
-* **Why you need it:** Unlocks the `incorporator stream`, `incorporator fjord`, and `incorporator tideweaver` CLI subcommands plus the pre-built Prefect `@flow` wrappers (see `deployment.md`).
+* **Why you need it:** Unlocks the `incorporator stream`, `incorporator fjord`, `incorporator tideweaver`, `incorporator validate`, and `incorporator init` CLI subcommands plus the pre-built Prefect `@flow` wrappers (see `deployment.md`).
 
 ### 📖 The Docs Flag (Contributors Only)
 ```bash
@@ -75,7 +75,7 @@ pip install incorporator[docs]
 ---
 
 ## 3. The "Install Everything" Flag
-If you are developing locally or running on a cloud server without strict dependency constraints, you can install the bundled enterprise tools at once:
+If you are developing locally or running on a cloud server without strict dependency constraints, you can install all optional extras at once:
 
 ```bash
 pip install incorporator[all]

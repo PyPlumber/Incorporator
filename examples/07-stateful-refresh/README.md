@@ -1,6 +1,6 @@
 ***
 
-# 🔄 Tutorial 7 — Stateful Refresh: Keeping Binance Tickers Live
+# Tutorial 7 — Stateful Refresh: Keeping Binance Tickers Live
 
 **Prerequisites:** [Tutorial 1](../01-first-steps/README.md) (`incorp()`, `test()`, `inc_dict`),
 [Tutorial 5](../05-parent-child-drilling/README.md) (two-registries mental model),
@@ -9,23 +9,17 @@
 Your dashboard reads `Pair.inc_dict['BTCUSDT'].lastPrice` every render. You need that
 value to be no more than 30 seconds stale, without rebuilding the whole registry from
 scratch every refresh. That's the `refresh()` verb's job: one call, re-fetches the
-source, mutates the existing instances in place under the same primary keys.
+source, and replaces the registry entries under the same primary keys.
+
+`Pair(Incorporator): pass` — no field declarations, no schema file. The class absorbs
+whatever Binance returns: 80-column tickers today, 82-column tickers next quarter.
+That schema-free property is why a single `refresh()` keeps working across API shape
+changes without a migration step.
 
 Three resolution modes — in-state, re-source, targeted — cover every refresh shape
 you'll need. By the end of this tutorial you'll know which to reach for, plus the
 identity-mapping memory that makes `refresh()` ergonomic and the HTTP-dedup behaviour
 that makes it cheap.
-
-The contract underneath: `refresh()` re-fetches and updates the registry — each
-existing instance under `Class.inc_dict[<key>]` has its fields mutated in place via
-Pydantic field updates, so a local variable bound before the refresh continues to
-read the new values without reassignment. The canonical view is still
-`Class.inc_dict[<key>]`, but `pair = Pair.inc_dict["BTCUSDT"]` captured once works
-just as well across subsequent refreshes.
-
-This tutorial uses Binance's public `/api/v3/ticker/24hr` endpoint (no auth, ~1,900
-pairs in one HTTP call) — a real live-data feed where the values move every few
-seconds.
 
 ---
 
@@ -33,7 +27,39 @@ seconds.
 > in [Tutorial 1](../01-first-steps/README.md#step-3-apply-the-recommendations-with-incorp).
 > For refresh, the same binding is what keeps the registry alive between
 > waves: drop the strong reference and the next `refresh()` has an empty
-> `inc_dict` to refresh.
+> `inc_dict` to work with.
+
+---
+
+## How `refresh()` Updates the Registry
+
+`refresh()` re-fetches the source and calls `build_instances`, which creates
+**new** objects via Pydantic's `adapter.validate_python()`. Those new objects
+replace the old entries in `Class.inc_dict`.
+
+This means: **a local variable captured before the refresh still points to
+the old object.** After calling `refresh()`, re-read from `Class.inc_dict`
+to get the latest values.
+
+```python
+pairs = await Pair.incorp(
+    inc_url="https://api.binance.us/api/v3/ticker/24hr",
+    inc_code="symbol",
+)
+
+# Capturing a local variable here — this holds the OLD object.
+old_ref = Pair.inc_dict["BTCUSDT"]
+
+await asyncio.sleep(2)
+await Pair.refresh()   # replaces inc_dict["BTCUSDT"] with a new instance
+
+# old_ref.lastPrice is STALE — it still points to the pre-refresh object.
+# Re-read from inc_dict to get the new value:
+btc_latest = Pair.inc_dict["BTCUSDT"].lastPrice
+```
+
+The safe pattern after any `refresh()` call: **read via `Class.inc_dict[key]`**,
+not via a reference you captured before the call.
 
 ---
 
@@ -63,14 +89,12 @@ btc_before = Pair.inc_dict["BTCUSDT"].lastPrice
 await asyncio.sleep(2)
 await Pair.refresh()                              # no args — uses cls.inc_url
 
-# Refresh mutates the existing instance in place, so reading via
-# inc_dict (or via a local ref captured before the refresh) returns
-# the latest values.
+# Re-read via inc_dict to get the refreshed instance:
 btc_after = Pair.inc_dict["BTCUSDT"].lastPrice
 assert btc_before != btc_after                    # Binance moved on us
 ```
 
-### 2. Re-source — `refresh(new_url)`
+### 2. Re-source — `refresh(instance="new_url")`
 
 Re-fetches the registry from a brand-new source. If the string starts
 with `http` it's a URL; otherwise it's a local file path. Useful when
@@ -82,6 +106,9 @@ for the lighter `price` endpoint when you only need the latest price.
 await Pair.refresh("https://api.binance.us/api/v3/ticker/price")
 ```
 
+Subsequent `refresh()` calls with no args will use the new URL — the
+class's stored `inc_url` is updated on re-source.
+
 ### 3. Targeted — `refresh(instance=[obj, obj, ...])`
 
 Refresh a specific list of instances. Useful when your business logic
@@ -91,6 +118,8 @@ and you'd rather not refresh all 1,900.
 ```python
 my_holdings = [Pair.inc_dict[s] for s in ("BTCUSDT", "ETHUSDT", "SOLUSDT")]
 await Pair.refresh(instance=my_holdings)
+# After refresh, re-read from inc_dict:
+btc = Pair.inc_dict["BTCUSDT"].lastPrice
 ```
 
 > **Note on targeted mode**: when a class was loaded from a *single* URL,
@@ -106,11 +135,11 @@ await Pair.refresh(instance=my_holdings)
 
 **Call `refresh()` with no arguments and the framework re-fetches
 with the exact same URL, query params, headers, and converters you
-declared on `incorp()`** — no boilerplate, no re-passing.  The class
+declared on `incorp()`** — no boilerplate, no re-passing. The class
 silently remembers its first call-context (`inc_code`, `inc_name`,
 `params`, `headers`, `rec_path`, `conv_dict`, `excl_lst`, `name_chg`,
 `payload_list`, `sql_query`, `parquet_decimal_columns`, …) and merges
-it under whatever you supply to `refresh()`.  Concretely:
+it under whatever you supply to `refresh()`. Concretely:
 
 ```python
 class Pair(Incorporator):
@@ -130,16 +159,24 @@ await Pair.refresh()    # replays params + headers + rec_path + conv_dict
 
 Without this auto-replay, the refresh would hit the bare
 `/coins/markets` URL with no `?vs_currency=usd` and CoinGecko would
-return a 422.  The framework persists the context as
+return a 422. The framework persists the context as
 `Pair._incorp_kwargs` and merges it under your explicit refresh
 kwargs.
 
-If you want to change any kwarg on a specific refresh wave (rare),
-pass it explicitly to `refresh()` — caller-supplied kwargs **win on
-key conflict**:
+**Caller-supplied kwargs always win on key conflict.** Pass any kwarg
+explicitly to `refresh()` and it overrides the stored value for that
+call only:
 
 ```python
 await Pair.refresh(params={"vs_currency": "eur"})   # one-off override
+```
+
+This includes `inc_page=` — useful when you want to re-source with
+pagination in a single refresh call without restructuring the original
+`incorp()`:
+
+```python
+await Pair.refresh(inc_page=PageNumberPaginator(page_param="page"))
 ```
 
 ---
@@ -168,6 +205,10 @@ and "user clicked refresh" UI flows even on six-figure registries.
 and export intervals. If you find yourself writing
 `while True: await Pair.refresh(); await asyncio.sleep(60)` — switch
 to `stream()` (next tutorial).
+
+The same `refresh()` verb that runs here in a single-source loop
+becomes one current inside a Tideweaver window when you need N sources
+on independent cadences — the primitives do not change.
 
 ---
 
@@ -198,9 +239,8 @@ async def main():
     #    inc_code, conv_dict (none here), and any headers/params.
     await Pair.refresh()
 
-    # 4. Read the latest value via inc_dict — refresh mutates the
-    #    existing instances in place, so a local ref bound before the
-    #    refresh stays live.
+    # 4. Re-read via inc_dict — refresh() replaces registry entries with
+    #    new instances. Re-reading here gives you the current values.
     price_after = Pair.inc_dict["BTCUSDT"].lastPrice
     print(f"BTCUSDT lastPrice after:   {price_after}")
 
@@ -209,7 +249,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-Two verbs, one shared registry, zero stale references.
+Two verbs, one shared registry, one read pattern: always re-read via `Class.inc_dict[key]` after refresh.
 
 ---
 
@@ -224,12 +264,19 @@ Two verbs, one shared registry, zero stale references.
 
 Transient HTTP errors are handled by the same Tenacity retry policy
 `incorp()` uses; permanent failures surface via
-`refreshed.failed_sources` for DLQ-style retry workflows (see the
-[Production Debugging](../../docs/debugging.md) reference).  For
-structured per-source error data (exception type, `Retry-After`
-hint, parent wave index), reach for `refreshed.rejects:
-list[RejectEntry]` — same population as `failed_sources` but keyed
-on `error_kind` rather than the bare string.
+`refreshed.failed_sources` (a flat list of URL strings) or the richer
+`refreshed.rejects` (a `list[RejectEntry]`). Each `RejectEntry` carries
+its own `error_kind` field — the list is not keyed on `error_kind`; you
+iterate it and inspect each entry:
+
+```python
+refreshed = await Pair.refresh()
+for entry in refreshed.rejects:
+    print(entry.error_kind, entry.source, entry.cooldown_sec)
+```
+
+See the [Production Debugging](../../docs/debugging.md) reference for
+structured retry orchestration via `RejectEntry`.
 
 ---
 
@@ -239,20 +286,20 @@ The next tutorial wraps `refresh()` in a daemon — and that's where
 you'll learn the `stateful_polling` choice:
 
 * **`stateful_polling=True`** keeps doing what we did in this tutorial:
-  one live registry, refreshed in place every N seconds.  This is the
+  one live registry, refreshed every N seconds. This is the
   mark-to-market dashboard / portfolio NAV / slow-indicator pattern.
 * **`stateful_polling=False`** (the default) turns `stream()` into a
-  paginator-driven O(1) ingestion loop for bulk data that doesn't fit
+  paginator-driven ingestion loop for bulk data that doesn't fit
   in memory — historical backfills, warehouse seeds, multi-page pulls.
 
-Same verb (`stream()`), two engines.  T8 walks both modes
+Same verb (`stream()`), two engines. T8 walks both modes
 back-to-back with a decision matrix at the close.
 
 ---
 
 ## Where to Go Next
 
-> 👉 **Up next: [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md).**  T7 ran `refresh()` manually three ways; T8 wraps it in a long-lived daemon with periodic export — the production shape for live dashboards.
+> **Up next: [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md).** T7 ran `refresh()` manually three ways; T8 wraps it in a long-lived daemon with periodic export — the production shape for live dashboards.
 
 | Goal | Read |
 |---|---|

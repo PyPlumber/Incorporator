@@ -2,7 +2,7 @@
 
 When dealing with massive datasets (10M+ rows) or heavily paginated REST APIs, loading everything into RAM at once will cause your server to crash with an Out-Of-Memory (OOM) error.
 
-Incorporator solves this natively using **Stateful Paginators**. By passing a paginator to the `inc_page` parameter, the framework shifts into a strict **O(1) Memory Chunking** mode. It fetches a chunk, processes it, saves it to disk, and triggers Python's Garbage Collector before moving to the next chunk.
+Incorporator solves this natively using **Stateful Paginators**. By passing a paginator to the `inc_page` parameter, the framework shifts into a strict **O(1) Memory Chunking** mode. It fetches a chunk, processes it, saves it to disk, and releases the chunk via `del`, allowing Python's reference-counting to reclaim it immediately before moving to the next chunk.
 
 > **Three daemon shapes share this engine — pick the one that matches your data:**
 >
@@ -25,7 +25,7 @@ Incorporator treats massive local files exactly like paginated web APIs. These p
 
 ```python
 import asyncio
-from incorporator import LoggedIncorporator, FormatType
+from incorporator import LoggedIncorporator
 from incorporator.io.pagination import SQLitePaginator
 
 class User(LoggedIncorporator): pass
@@ -43,7 +43,6 @@ async def run_massive_export():
         incorp_params={
             "inc_url": "local_database_stream", # Satisfies origin tracking
             "inc_page": db_streamer,            # Hands control to the Paginator
-            "format_type": FormatType.JSON,     # Local paginators yield JSON bytes
         },
         export_params={
             "file_path": "output/users_export.csv"
@@ -101,7 +100,7 @@ asyncio.run(scrape_api())
 
 Whether you use a Web Paginator or a Local Paginator, the internal mechanics are identical:
 
-1.  **State Retention:** The `AsyncPaginator` class holds variables like `self.offset`, `self.current_cursor`, or `self._reader` in its `__init__` method.
+1.  **State Retention:** The `AsyncPaginator` class holds variables like `self.current_offset`, `self.current_cursor`, or `self._reader` in its `__init__` method.
 2.  **O(1) Orchestration:** `.stream()` drives the paginator one chunk at a time — exactly one page is fetched, materialised, exported, and released before the next iteration begins.
 3.  **Daemon Reset:** If you are running an infinite stream with `--poll 3600` (1 hour), the orchestrator automatically calls `paginator.reset()` when it wakes up, starting the extraction loop back at row/page 1 to check for new data.
 
@@ -162,10 +161,10 @@ async for wave in Cls.stream(
 ```
 
 The starting `chunk_size` comes from the paginator; the engine applies
-AIMD (additive-increase / multiplicative-decrease) between chunks —
-growing when the observed time falls below `target_min_sec`, shrinking
-when it exceeds `target_max_sec`, clamped to `[chunk_size_min,
-chunk_size_max]`.  There is no single `target_window` kwarg — the pair
+multiplicative-increase / multiplicative-decrease (20% growth, 50% shrink)
+between chunks — growing when the observed time falls below
+`target_min_sec`, shrinking when it exceeds `target_max_sec`, clamped to
+`[chunk_size_min, chunk_size_max]`.  There is no single `target_window` kwarg — the pair
 of bounds is the window.
 
 Useful when per-chunk cost is dominated by something the caller can't
@@ -355,7 +354,7 @@ matrix.
 | Pick the right polling mode for your pipeline | [Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md) |
 | Snapshot millions of rows into a warehouse without OOM | [Tutorial 3 — Universal Formats](../examples/03-universal-formats/README.md) |
 | Tune chunk size against memory + throughput | [Performance Guide](./performance.md) |
-| Land columnar Parquet at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](./appendix/tideweaver_parquet_snapshots.md) |
+| Land columnar Parquet at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../examples/appendix/tideweaver-parquet-snapshots/README.md) |
 | Get structured error logs from a chunked daemon | [Production Debugging](./debugging.md) |
 
 ---

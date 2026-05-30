@@ -209,8 +209,8 @@ extracted parent value:
 inc_url="https://api.example.com/users/{}/profile"
 
 # When the parent field is already a full URL (HATEOAS pattern),
-# leave inc_url empty and the framework uses the URL as-is.
-inc_url=""  # implicit when inc_child="self_url"
+# omit inc_url entirely — the framework uses the URL extracted via
+# inc_child as-is.
 ```
 
 For URL fragments stored as `_links.detail.href` deep in the parent schema, use a

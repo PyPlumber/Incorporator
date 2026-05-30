@@ -1,25 +1,44 @@
-# 🐘 Tutorial 2 — Data Lake Pivot: From SaaS Roster to BI-Ready Columnar
+# Tutorial 2 — Data Lake Pivot: From SaaS Roster to BI-Ready Columnar
 
-Your SaaS roster lives in Auth0 or Okta as deeply nested JSON. BI wants it in Avro + SQLite by 7 AM tomorrow. Two calls — `incorp()` then `export()` — and the nested `address` and `company` dicts flatten correctly, types infer to strict Avro (`int` → `long`) and SQLite columns, and the round-trip rehydrates the full Pydantic object graph. No schema, no ORM, no Hadoop serializer.
+Your SaaS roster lives in Auth0 or Okta as deeply nested JSON. BI wants it in Avro + SQLite by 7 AM. Two calls — `incorp()` then `export()` — and the nested `address` and `company` dicts flatten correctly, types infer to strict Avro (`int` → `long`) and SQLite columns, and the round-trip rehydrates the full object graph. No schema file, no ORM, no Avro schema definition.
 
 **Prerequisites:** [Tutorial 1 — First Steps](../01-first-steps/README.md) (`incorp()`, `test()`, `inc_dict`).
 
 **File:** [`data_lake_pivot.py`](./data_lake_pivot.py)
 
-This tutorial walks that arc on a SaaS-style `/users` endpoint.  `jsonplaceholder.typicode.com/users` stands in for any rostered REST source (Auth0, Okta, Workday, BambooHR, internal LDAP exports).  The endpoint returns heavily nested `address` and `company` dictionaries — the kind of payload that usually requires manual schema definitions, type mapping, and flattening logic.
+This tutorial walks that arc on a SaaS-style `/users` endpoint. `jsonplaceholder.typicode.com/users` stands in for any rostered REST source (Auth0, Okta, Workday, BambooHR, internal LDAP exports). The endpoint returns heavily nested `address` and `company` dictionaries — the kind of payload that usually requires manual schema definitions, type mapping, and flattening logic.
 
-## 💡 What this tutorial proves
-1. **Automatic Schema Translation:** Incorporator infers types from the JSON API and natively maps them to strict Avro types (e.g., `int` to `long`) and SQLite columns.
-2. **Nested Data Flattening:** It safely flattens nested JSON objects (like an `address` dictionary) into strings for binary/SQL storage, preventing database crashes.
-3. **Universal Memory Mapping:** The exact same `inc_code` syntax that maps a JSON key to the in-memory registry (`inc_dict`) also keys SQLite columns and Avro fields — one declaration, three storage shapes.
-4. **Flawless Reconstruction:** When reading back from SQL or Avro, Incorporator detects the flattened strings and magically reconstructs the full Pydantic object graph, allowing instant dot-notation (`.address.city`).
+## What this tutorial proves
+
+1. **Schema-free ingestion:** Define an empty class and `incorp()` absorbs the nested JSON payload — no Pydantic field declarations, no mapping file.
+2. **Automatic type translation:** Incorporator infers types from the JSON and maps them to strict Avro types (e.g., `int` → `long`) and SQLite columns.
+3. **Nested data flattening:** Nested dicts (like an `address` dictionary) are serialised for binary/SQL storage and rehydrated on read-back to dot-notation objects.
+4. **One vocabulary, three storage shapes:** The same `inc_code` that keys the in-memory registry also keys SQLite columns and Avro fields — one declaration, three targets.
 
 ---
 
 ## The Code Walkthrough
 
+### 0. Discover first with test()
+
+If this were an unknown endpoint, start here before writing any `incorp()` call:
+
+```python
+from incorporator import Incorporator
+
+class User(Incorporator): pass
+
+sample = await User.test(inc_url="https://jsonplaceholder.typicode.com/users")
+# Prints the payload tree, primary-key candidates, type-cast candidates,
+# and the exact inc_code / inc_name / conv_dict to paste into incorp().
+# Returns a 3-record preview — safe to run against live endpoints.
+```
+
+`test()` caps itself at one page and a 5-second timeout. Paste the suggested kwargs into step 1 and move on. (`base.py:1613`)
+
 ### 1. Ingest the Nested JSON API
-First, we fetch a list of users from a public API. Notice that this API returns heavily nested `address` and `company` dictionaries. Incorporator digests them effortlessly and registers them in memory by their `"id"`.
+
+With the suggestions from `test()` confirmed, fetch the full list. Notice that the class body is empty — Incorporator absorbs arbitrary nested JSON without field declarations.
 
 ```python
 from incorporator import Incorporator, FormatType
@@ -28,13 +47,14 @@ class User(Incorporator): pass
 
 users = await User.incorp(
     inc_url="https://jsonplaceholder.typicode.com/users",
-    inc_code="id",  # Maps the JSON key to the O(1) Memory Registry
-    inc_name="name" # Maps the JSON key to a human-readable label
+    inc_code="id",    # keys the O(1) in-memory registry
+    inc_name="name"
 )
 ```
 
-### 2. Export directly to Local SQLite
-With a single command, Incorporator creates the `employees` table, infers the column types, flattens the nested dictionaries, and executes a C-speed bulk insert.
+### 2. Export to SQLite
+
+A single call creates the `employees` table, infers column types, serialises nested dicts, and streams rows to the C driver one-by-one — keeping memory O(1) regardless of row count.
 
 ```python
 await User.export(
@@ -45,8 +65,11 @@ await User.export(
 )
 ```
 
-### 3. Export directly to Apache Avro (Binary)
-Avro requires a highly strict schema definition. Incorporator dynamically generates the Avro schema from the Pydantic models in memory, enforces type-casting, and writes the binary stream.
+The entire DROP + CREATE + INSERT sequence runs inside a `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` transaction. A mid-write crash rolls back the DROP, so the old table survives intact. (`binary.py:139-184`)
+
+### 3. Export to Apache Avro (Binary)
+
+Avro requires a strict schema. Incorporator generates it dynamically from the inferred model and writes a binary Avro file via `fastavro`.
 
 ```python
 await User.export(
@@ -56,31 +79,35 @@ await User.export(
 )
 ```
 
+Avro field names must match `[A-Za-z_][A-Za-z0-9_]*`. When a SaaS source returns hyphenated keys (e.g., `user-id`), Incorporator sanitises them to `user_id` on write and stores the original names in the schema's `__incorporator_original_names__` attribute — so the read path restores the original key names transparently. (`binary.py:20-27`)
+
 ### 4. The Round Trip (Reading from Binary)
-The true magic of Incorporator is that **the syntax never changes**. To read the data back from SQLite or Avro, we just call `incorp()` again, passing `inc_code` to bind the Database columns and Binary fields directly into our memory registry.
+
+The ingestion vocabulary does not change across storage targets. Read back from SQLite or Avro with the same `incorp()` call:
 
 ```python
 # Read from SQLite
 sql_users = await User.incorp(
-    inc_file="users_warehouse.db", 
+    inc_file="users_warehouse.db",
     sql_query="SELECT * FROM employees",
-    inc_code="id",    # 🛡️ THE MAGIC: Maps the SQLite Column to the Memory Registry!
+    inc_code="id",
     inc_name="name"
 )
 
-# Read from Avro
+# Read from Apache Avro binary file
 avro_users = await User.incorp(
-    inc_file="users_datalake.avro", 
+    inc_file="users_datalake.avro",
     format_type=FormatType.AVRO,
-    inc_code="id",    # 🛡️ THE MAGIC: Maps the Avro Field to the Memory Registry!
+    inc_code="id",
     inc_name="name"
 )
 ```
 
 ### 5. Verifying the O(1) Object Graph
-Because we passed `inc_code="id"`, we don't have to write loops or slice arrays to find our data. We can instantly query user ID `1` from the JSON, SQL, and Avro datasets in exactly O(1) time. 
 
-Furthermore, we can see that Incorporator flawlessly un-flattened the nested `address` data back into native Python objects.
+Because we passed `inc_code="id"`, no loops or array slices are needed. User ID `1` is accessible in O(1) time from all three registries.
+
+The nested `address` dict — stored as a serialised string in SQLite and Avro — is re-inferred back into dot-notation objects on read:
 
 ```python
 target_id = 1
@@ -89,7 +116,7 @@ print(f"Original JSON Name: {users.inc_dict[target_id].inc_name}")
 print(f"SQLite Read Name:   {sql_users.inc_dict[target_id].inc_name}")
 print(f"Avro Read Name:     {avro_users.inc_dict[target_id].inc_name}")
 
-# Prove that the nested Pydantic objects were reconstructed from the binary/SQL text
+# Nested object reconstructed from binary/SQL text
 print(f"Original JSON City: {users.inc_dict[target_id].address.city}")
 print(f"SQLite Read City:   {sql_users.inc_dict[target_id].address.city}")
 print(f"Avro Read City:     {avro_users.inc_dict[target_id].address.city}")
@@ -100,14 +127,17 @@ print(f"Avro Read City:     {avro_users.inc_dict[target_id].address.city}")
 # Avro Read City:     Gwenborough
 ```
 
-### 🎯 The Enterprise Advantage
-We went from a nested JSON Web Payload ➡️ Relational SQLite Database ➡️ Binary Hadoop Stream ➡️ and back to fully reconstructed Python Objects using exactly **two methods** (`incorp` and `export`). 
+Note: SQLite has no native boolean type — `True`/`False` are stored as integers `1`/`0`. Pass `sql_bool_columns=["col_name"]` on read to recover the original bool semantics. (`binary.py:53-68`)
 
-Because the data is safely parked in the `.inc_dict` registries, you can immediately use `link_to(sql_users)` or `link_to(avro_users)` to fuse this data with live REST API responses—without writing a single Database Mapper (ORM) or Hadoop Serializer.
+### Putting It Together
+
+We went from a nested JSON web payload → relational SQLite → Apache Avro binary file → back to fully reconstructed Python objects using exactly two methods (`incorp` and `export`).
+
+Because the data is parked in `.inc_dict` registries, you can immediately use `link_to(sql_users)` or `link_to(avro_users)` to fuse this data with live REST API responses — no ORM or Avro schema file required.
 
 ---
 
-## 🐳 Run it from the CLI
+## Run it from the CLI
 
 This is the simplest CLI case — fetch JSON, write to SQLite (or Avro, or Parquet, or any other supported format). Pure JSON, no sidecar file needed:
 
@@ -134,17 +164,17 @@ incorporator stream pipeline.json
 * `users.parquet` → Parquet *(requires `pip install incorporator[parquet]`)*
 * `users.ndjson` / `.csv` / `.xlsx` → all native
 
-For a Dockerised daemon that polls + refreshes on a schedule, see [`examples/cli-templates/daemon-mode.json`](../../examples/cli-templates/daemon-mode.json) and [the deployment guide](../../../docs/deployment.md).
+For a containerised daemon that polls + refreshes on a schedule, see [`examples/cli-templates/daemon-mode.json`](../../examples/cli-templates/daemon-mode.json) and [the deployment guide](../../docs/deployment.md).
 
 ---
 
 ## Where to Go Next
 
-> 👉 **Up next: [Tutorial 3 — Universal Formats](../03-universal-formats/README.md).**  T2 showed the pivot arc on one source; T3 expands it into a five-format snapshot warehouse round-trip on a typed CoinGecko payload.
+> **Up next: [Tutorial 3 — Universal Formats](../03-universal-formats/README.md).** T2 showed the pivot arc on one source; T3 expands it into a multi-format snapshot warehouse round-trip on a typed CoinGecko payload.
 
 | Goal | Read |
 |---|---|
-| Build a per-tick snapshot warehouse across five formats | [Tutorial 3 — Universal Formats](../03-universal-formats/README.md) |
+| Build a per-tick snapshot warehouse across multiple formats | [Tutorial 3 — Universal Formats](../03-universal-formats/README.md) |
 | Audit a warehouse against a federal source | [Tutorial 4 — XML Post Audit](../04-xml-post-audit/README.md) |
 | Land Parquet artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md) |
 | Stream massive files through chunking + paginators | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |

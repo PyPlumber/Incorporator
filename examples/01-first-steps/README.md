@@ -301,7 +301,7 @@ And the discovery loop you ran *before* that:
   `rec_path`.  It's safe to run against production endpoints (one page, 5-second
   timeout).
 * **Errors** — failed sources surface on `coins.failed_sources`.  For durable error logs
-  and DLQ retry, see [Production Debugging](../../docs/debugging.md).
+  and a structured retry loop via RejectEntry, see [Production Debugging](../../docs/debugging.md).
 
 ---
 

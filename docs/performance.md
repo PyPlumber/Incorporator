@@ -50,7 +50,7 @@ conservative CI floors so regressions are caught on every PR.
 
 A surprise worth calling out: **on dict-shaped output, JSON / NDJSON
 parse beat the columnar formats**. The reason is that Incorporator
-materialises results to `List[Dict]` to keep dot-notation access cheap.
+materialises results to `list[Dict]` to keep dot-notation access cheap.
 If you keep data in Arrow form downstream (pyarrow, polars), you skip
 that materialisation and the columnar formats reclaim the speed lead.
 For the storage-and-go case the project optimises for, dict-native
@@ -107,7 +107,7 @@ burn budget on permanent failures.
 **Pydantic validation is batched.** Rows are validated 1,000 at a
 time, which lets Pydantic's Rust core amortise field-offset lookups
 across the batch. The cost is invisible to callers — you see
-`List[Incorporator]` either way — but it's why the framework keeps
+`list[Incorporator]` either way — but it's why the framework keeps
 up with orjson's parse rate on JSON workloads.
 
 ---
@@ -280,7 +280,7 @@ extras — there's usually a missing speedup install behind it.
 Honest about the limits:
 
 - **Columnar end-to-end.** Parquet → ETL → Parquet currently
-  round-trips through `List[Dict]`. The parse-rate gap to NDJSON in
+  round-trips through `list[Dict]`. The parse-rate gap to NDJSON in
   the matrix above comes from this materialisation, not from
   pyarrow itself. A future `return_arrow=True` opt-in mode could
   preserve Arrow form across the pipeline; for now, if you need
@@ -317,7 +317,7 @@ Honest about the limits:
   Pydantic's Rust core.
 - **`incorp()` peak memory is O(N), not O(chunk_size).** As of v1.2.1
   (A-F-4), `incorp()` validates the full payload in a single
-  `TypeAdapter(List[Cls]).validate_python(rows)` call — measured
+  `TypeAdapter(list[Cls]).validate_python(rows)` call — measured
   1.3-2.0× faster than the prior row-by-row loop (per
   [`tests/benchmarks/test_validate_batch_vs_per_row.py`](../tests/benchmarks/test_validate_batch_vs_per_row.py)),
   but it materialises all N instances simultaneously. For payloads

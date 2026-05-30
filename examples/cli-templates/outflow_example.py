@@ -5,7 +5,7 @@ The fjord engine builds the dynamic output class from this file's stem
 the output class ``OutflowExample``.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 from incorporator import Incorporator
 
@@ -22,7 +22,7 @@ class SpaceXRocket(Incorporator):
     pass
 
 
-def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Join the latest launch with its matching rocket record.
 
     ``state["SpaceXLaunch"]`` is the latest-launch instance (single object).

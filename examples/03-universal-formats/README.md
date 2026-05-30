@@ -2,7 +2,7 @@
 
 # 📦 Tutorial 3 — Universal Formats: Build a Crypto Snapshot Warehouse
 
-Every hour, snapshot CoinGecko's top-100 markets into a multi-format warehouse — NDJSON / CSV / SQLite for the time-series log, Parquet for the hourly artifact. One `Coin(Incorporator)` class, one schema inference pass, five storage substrates. The framework auto-detects format from the file extension; the `incorp()` and `export()` calls stay identical across all of them.
+Every hour, snapshot CoinGecko's top-100 markets into a multi-format warehouse — NDJSON / CSV / SQLite for the time-series log, Parquet for the hourly artifact. One `Coin(Incorporator)` class, one schema inference pass, four storage substrates. The framework auto-detects format from the file extension; the `incorp()` and `export()` calls stay identical across all of them.
 
 **Prerequisites:** [Tutorial 1 — First Steps](../01-first-steps/README.md) (`incorp()`, `test()`,
 `inc_dict`, basic schema inference); [Tutorial 2 — Data Lake Pivot](../02-data-lake-pivot/README.md)
@@ -126,7 +126,7 @@ Run `snapshot()` and `append_log()` on a cron / interval; the files grow linearl
 
 ---
 
-## Step 3: Upsert into SQLite (Append-Friendly Warehouse)
+## Step 3: Append into SQLite (Append-Friendly Warehouse)
 
 SQLite uses `if_exists="append"` too, but the framework also supports
 `if_exists="replace"` (drop the table and rewrite) and the more interesting upsert
@@ -235,8 +235,7 @@ files larger than RAM, use the **local paginators** in
 [`incorporator.io.pagination`](../../docs/streaming_and_pagination.md):
 
 ```python
-from incorporator.io.pagination import SQLitePaginator
-from incorporator.io.penstock import SustainedPenstock
+from incorporator import SQLitePaginator, SustainedPenstock
 
 # Yields one chunk at a time; peak memory is one chunk.
 db_streamer = SQLitePaginator(

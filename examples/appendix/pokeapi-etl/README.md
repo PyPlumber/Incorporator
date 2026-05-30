@@ -15,7 +15,7 @@ PokéAPI's `/pokemon/?offset=` paginates 1,025 records 20 at a time, and each Po
 
 Traditional Pydantic setups force you to define strict sub-models for `Stat`, `StatDetail`, and `TypeInfo` — just so you can write a `@property` later to calculate the sum. **Incorporator eliminates that overhead.** Using `calc()` and explicit `inc_parent` / `inc_child` routing, you concurrently fetch deep URLs, intercept raw JSON arrays, and reduce them into clean Python properties *before* the objects are even fully instantiated.
 
-Verified: 150 Pokémon discovered + drilled, leaderboard rendered, ~3-minute wall-clock.
+Verified: 150 Pokémon discovered + drilled, leaderboard rendered, ~100 s wall-clock.
 
 ---
 
@@ -88,8 +88,7 @@ suggestions verbatim, swap `test()` for `incorp()`, paste the kwargs.
 ```python
 import asyncio
 from typing import Any
-from incorporator import Incorporator, NextUrlPaginator
-from incorporator.schema.converters import calc
+from incorporator import Incorporator, NextUrlPaginator, calc
 
 # --- EXPLICIT SUBCLASSING ---
 class Nav(Incorporator): pass
@@ -201,7 +200,7 @@ Before `calc` or auto-nesting fires, `excl_lst` runs:
 ```python
 excl_lst=["sprites", "moves", "game_indices", "held_items"]
 ```
-PokéAPI returns massive base64 strings and thousand-item lists for `moves`. Excluding them deletes the keys the millisecond they're received, sparing pydantic any wasted CPU on data you'll never touch.
+PokéAPI returns massive base64 strings and thousand-item lists for `moves`. Excluding them deletes the keys the millisecond they're received, sparing Pydantic any wasted CPU on data you'll never touch.
 
 ---
 

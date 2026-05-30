@@ -29,8 +29,7 @@ Build a Unified Stablecoin Liquidity Dashboard. For the top 100 cryptocurrencies
 
 ```python
 import asyncio
-from incorporator import Incorporator, link_to
-from incorporator.schema.converters import calc
+from incorporator import Incorporator, link_to, calc
 
 # ==========================================
 # 1. DECLARATIVE ETL FACTORY
@@ -81,8 +80,8 @@ async def main() -> None:
         }
     )
 
-    # 3. Sort by Global Price Descending
-    assets.sort(key=lambda a: getattr(a, "current_price", 0), reverse=True)
+    # 3. Sort by Market Cap Rank Ascending
+    assets.sort(key=lambda a: getattr(a, "market_cap_rank", 0))
 
     # 4. Traverse the Unified Graph
     def extract_market_data(stats_obj, book_obj):
@@ -119,7 +118,7 @@ Look at the execution order. **Incorporator makes 3 API calls total:**
 2. The entire global Binance Order Book registry (1 call).
 3. The 100 CoinGecko assets (1 call).
 
-When it hits the `link_to` configuration, **it disconnects from the network.** It synthesizes the target string (e.g., `"BTCUSDT"`) and searches Incorporator's internal RAM registry (`inc_dict`). All 400 mappings execute as `O(1)` memory lookups, completely bypassing server rate limits.
+When it hits the `link_to` configuration, **it disconnects from the network.** It synthesizes the target string (e.g., `"BTCUSDT"`) and searches Incorporator's internal RAM registry (`inc_dict`). All 400 mappings execute as `O(1)` dict lookups, completely bypassing server rate limits.
 
 > **Strong-ref note.** `inc_dict` is a `WeakValueDictionary` ([T1's runtime contract](../../01-first-steps/README.md#step-3-apply-the-recommendations-with-incorp) has the canonical lifecycle treatment). As long as `binance_stats` and `binance_books` are held in `main()`'s local scope (they are — by the `await` returns), every record stays resident and `link_to` resolves cleanly. Drop those references and the registries can be garbage-collected mid-traversal.
 
@@ -136,9 +135,9 @@ In crypto, highly liquid coins trade against everything — but newer tokens mig
 `link_to` is natively null-safe: if it searches the registry for `NEWCOINUSDC` and fails, it attaches `None` to `asset.stats_usdc`. It **never** raises `AttributeError`. You use `getattr(..., None)` in your print loop and display `"N/A"`.
 
 ### 4. Database-Like Querying (`.sort()`)
-Because Incorporator transforms raw JSON into strict, flat Python objects *during* ingestion, the final `assets` list behaves like a clean database result:
+Because Incorporator infers the schema and transforms raw JSON into Python objects *during* ingestion, the final `assets` list behaves like a clean database result:
 ```python
-assets.sort(key=lambda a: getattr(a, "current_price", 0), reverse=True)
+assets.sort(key=lambda a: getattr(a, "market_cap_rank", 0))
 ```
 No nightmare dict lookups — standard Python `.sort()`, `filter()`, and comprehensions across your dynamically mapped graph using dot-notation.
 

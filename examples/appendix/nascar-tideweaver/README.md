@@ -20,7 +20,7 @@ The cadence map:
 * **Flag events** fire on no fixed cadence (green / yellow / red / white).
 * **Driver state** — the fused output — wants all three combined on a steady interval so a downstream dashboard sees a coherent per-driver snapshot.
 
-Three Stream currents feed one Fjord tail. Same shape as the crypto arb scanner; different sources, different outflow logic, same five-name vocabulary. Verified: a 15-second window emits ~15 Tides and writes 100 driver-state rows to NDJSON.
+Three Stream currents feed one Fjord tail. Same shape as the crypto arb scanner; different sources, different outflow logic, same five-name vocabulary. Verified: a 15-second window emits ~15 Tides and writes ~20-25 driver-state rows to NDJSON.
 
 > **Two entry points in this directory.** `nascar_tideweaver.py` is the
 > standalone Python runner — defines `Lap` / `Pit` / `Flag` source
@@ -184,7 +184,7 @@ scheduler runs:
 | Hook | Fires when | Default level (configurable) |
 |---|---|---|
 | `on_fire` | Edge consumed an upstream wave and the downstream tick fired | `info` |
-| `on_skip(reason)` | Edge skipped (e.g. `"penstock_limited"`, `"hard_lock"`) | `debug` |
+| `on_skip(reason)` | Edge skipped (e.g. `"penstock_limited"`, `"awaiting_upstream"`) | `debug` |
 | `on_spillway(displaced, count)` | Reservoir overflowed and the spillway evicted a wave | `warning` |
 | `on_reservoir_level(used, capacity)` | After each successful consume — useful for capacity tracking | `debug` |
 

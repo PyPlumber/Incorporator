@@ -7,7 +7,7 @@ Two `incorp()` calls build two registries — lightweight market rows
 (parent) and full per-coin detail records (child) — then join them by
 ID in O(1).  The framework dedups parent IDs, fans out the children
 concurrently through one shared HTTP/2 client, retries on transient
-failure, and surfaces any DLQ entries on `failed_sources`.
+failure, and surfaces any RejectEntry records on `.rejects`.
 
 **Rate-limit note.**  CoinGecko's free public tier is 5–15 requests
 per *minute* (not per second).  The framework ships no implicit

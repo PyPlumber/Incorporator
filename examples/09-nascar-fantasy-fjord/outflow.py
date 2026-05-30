@@ -22,7 +22,7 @@ fanout — fjord handles all of it.
 
 from collections import Counter, defaultdict
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 from incorporator import Incorporator, inc, link_to
 

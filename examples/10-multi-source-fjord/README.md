@@ -84,7 +84,7 @@ of dicts for the output class.
 ```python
 # examples/10-multi-source-fjord/outflow.py
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
 from incorporator import Incorporator
 
@@ -97,7 +97,7 @@ class BinancePair(Incorporator):
     """Source B — Binance USDT-quoted prices."""
 
 
-def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Join CoinGecko USD vs Binance USDT for overlapping symbols."""
     # Either source can be ``None`` if its initial seed returned no rows
     # (geo-block, transient outage, etc.).  ``coins`` uses ``or []`` to
@@ -256,10 +256,10 @@ if __name__ == "__main__":
 > **Production observability — `LoggedIncorporator` for disk-readable
 > logs.** Subclass the source classes from `LoggedIncorporator` and
 > pass `enable_logging=True` on the fjord call; every successful wave
-> and every `RejectEntry` lands in `logs/<ClassName>_{api,error}.log`
+> and every `RejectEntry` lands in `logs/<ClassName>_{api,error,debug}.log`
 > via a non-blocking `QueueHandler`.  Replay with
 > `await ClassName.get_error()` from any other process — see
-> [docs/debugging.md](../../docs/debugging.md) for the DLQ-retry pattern.
+> [docs/debugging.md](../../docs/debugging.md) for the retry loop via RejectEntry.
 
 ---
 

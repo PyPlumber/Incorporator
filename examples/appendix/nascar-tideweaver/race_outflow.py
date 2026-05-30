@@ -15,7 +15,7 @@ Run paths inside the JSON config are relative to the *current working
 directory* of the CLI process — invoke from the repo root.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 from incorporator import Incorporator
 
@@ -42,7 +42,7 @@ class DriverState(Incorporator):
     """
 
 
-def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Join laps + pits + flags into one row per driver.
 
     ``state`` is keyed by each upstream ``Incorporator`` subclass name
@@ -55,7 +55,7 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     pits = state.get("PitStops", [])
     flags = state.get("FlagEvents", [])
 
-    by_driver: Dict[str, Dict[str, Any]] = {}
+    by_driver: dict[str, dict[str, Any]] = {}
     for lap in laps:
         driver = getattr(lap, "driver", None) or getattr(lap, "inc_code", None)
         if driver is None:

@@ -12,7 +12,7 @@ Dynamic output class is built from this file's stem —
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
 from incorporator import Incorporator
 
@@ -25,7 +25,7 @@ class BinancePair(Incorporator):
     """Source B — Binance current USDT-quoted prices for every pair."""
 
 
-def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Join CoinGecko USD vs Binance USDT for overlapping symbols.
 
     For each CoinGecko coin where a matching ``{SYMBOL}USDT`` pair
@@ -33,7 +33,7 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     and the basis-point spread.
 
     ``state`` is a snapshot of each source by class name, taken under
-    the engine's shared lock. Return ``List[dict]``; fjord handles the
+    the engine's shared lock. Return ``list[dict]``; fjord handles the
     export.
     """
     coins = state["CoinGecko"] or []
@@ -41,7 +41,7 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     if pairs is None:
         return []
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     now = datetime.now(timezone.utc).isoformat()
 
     for coin in coins:

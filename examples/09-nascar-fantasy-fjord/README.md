@@ -6,7 +6,7 @@
 
 You're the commissioner of an 8-team NASCAR fantasy league.  Every Sunday morning before the green flag drops you need three derived analytical views on the same desk: **this month's Cup schedule** (so the group chat knows what's worth tuning in for), **the league scoreboard** (so trash talk is correctly calibrated), and **the manufacturer leaderboard** (so the Chevy-vs-Ford bet has a settled score).  All three live behind the same six NASCAR APIs and one hand-maintained roster file.  Wired naively this is an eight-script crontab.  Wired through fjord it's a single async-for loop and one outflow function.
 
-T8 introduced streaming polling on single-source registries.  T9 walks the *full* multi-source production shape — concurrent seed of independent sources, sequential seed where state matters, sentinel-ID filtering at the graph boundary, and a single outflow returning a `dict` whose keys become three derived classes, three NDJSON files.  T10 will introduce `fjord()` formally on the minimum-viable two-source case.  You're getting the production shape first, the abstraction next.
+T8 introduced streaming polling on single-source registries.  T9 walks the *full* multi-source production shape — schema-free ingestion of seven heterogeneous JSON endpoints and one local file into seven bare `class Foo(Incorporator): pass` subclasses (no field declarations, no Pydantic schemas hand-written), tiered-parallel seed via `depends_on`, sentinel-ID filtering at the graph boundary, and a single outflow returning a `dict` whose keys become three derived classes, three NDJSON files.  T10 will introduce `fjord()` formally on the minimum-viable two-source case.  You're getting the production shape first, the abstraction next.
 
 ---
 
@@ -40,7 +40,7 @@ fixtures/league_teams.json                                  →  LeagueRoster   
 
 **`LeagueRoster`** is the seventh source — a hand-curated JSON file that lives next to the outflow code.  Fjord's handler dispatch routes `inc_file=` and `inc_url=` through the same code path, so the file source registers as a normal `Incorporator` subclass indistinguishable from the API-fed ones.
 
-Fjord's parallel-seed phase loads any source whose `inflow(state)` return doesn't reference its peers; the ones that do reference peers wait.  Six of the seven (`Track`, `Driver`, `LeagueRoster`, and the three Standings classes) load concurrently; `Race` waits for `Track` + `Driver` so its three `link_to(state["…"])` resolvers land correctly.
+With `inflow=` set, fjord seeds sources sequentially by default — each source calls `inflow(state)` and the state dict grows one entry at a time.  Adding `depends_on=["Track", "Driver"]` to the `Race` entry switches the engine into **tiered-parallel seed**: tier 0 contains all sources with no declared dependencies (`Track`, `Driver`, `LeagueRoster`, and the three Standings) and they all fire concurrently via `asyncio.gather`; tier 1 contains `Race` alone, and it waits for tier 0 to populate state before its `inflow(state)` call runs, so the `link_to(state["Track"])` and `link_to(state["Driver"])` closures resolve against live registries.
 
 ---
 
@@ -195,7 +195,7 @@ Each fjord source needs its own subclass so the three Standings don't share `inc
 
 from collections import Counter, defaultdict
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 from incorporator import Incorporator, inc, link_to
 
@@ -271,24 +271,23 @@ def _driver_id_or_none(raw: Any) -> Any:
 
 ### 2d. State-aware inflow
 
-`inflow(state)` is called **once per source in seed order**, with a progressively-populated `state` dict.  The first call gets an empty `state` (no sources loaded yet); the second gets one entry; and so on.  Guard against missing keys with `if "Track" in state and "Driver" in state:` — your override only emits once its dependencies are present, and fjord re-applies it on every refresh wave so the `link_to` closures see fresh peer snapshots.
+`inflow(state)` is called before each source seeds.  With `depends_on=["Track", "Driver"]` declared on `Race`, the engine splits sources into topo tiers and calls `inflow(state)` per tier — tier 0 sources (`Track`, `Driver`, the three Standings, `LeagueRoster`) each receive the current partial state as peers publish; `Race` (tier 1) sees a fully-populated state when `inflow` is called for it.  The `if "Track" in state and "Driver" in state:` guard is still necessary for the **refresh-wave** path — a peer refresh failure could leave the state incomplete, and without the guard `inflow` would emit a `link_to()` resolver pointing at a stale or missing registry.  Fjord re-applies `inflow(state)` on every refresh so the closures always see the latest snapshots.
 
 ```python
 # ── State-aware inflow — wires Race.conv_dict against live peers ────
 
 
-def inflow(state: Dict[str, Any]) -> Dict[str, Any]:
+def inflow(state: dict[str, Any]) -> dict[str, Any]:
     """Build per-source ``conv_dict`` overrides from sibling registries.
 
-    Inflow is called before each source's ``incorp()``.  On the early
-    calls (Track / Driver / Standings / LeagueRoster) ``state`` is
-    empty or partial, so we only emit Race's override once its peers
-    exist — fjord then re-applies it on every refresh wave so Race's
-    ``track_id``, ``pole_winner_driver_id``, and ``winner_driver_id``
-    resolve to live ``Track`` / ``Driver`` instances rather than raw
-    integers.
+    Inflow is called before each source's ``incorp()``.  With tiered-
+    parallel seed (``depends_on=["Track", "Driver"]`` on Race), ``state``
+    is fully populated with tier-0 registries by the time this fires for
+    Race — no partial-state guards needed for the tier-1 entry.  The guard
+    below is still correct for the refresh-wave path where state may briefly
+    be incomplete if a peer refresh fails.
     """
-    overrides: Dict[str, Any] = {}
+    overrides: dict[str, Any] = {}
     if "Track" in state and "Driver" in state:
         overrides["Race"] = {
             "conv_dict": {
@@ -303,7 +302,7 @@ def inflow(state: Dict[str, Any]) -> Dict[str, Any]:
 
 Returning `{}` for a source = "no overrides, use the `incorp_params` as-declared".  Returning `{"Race": {"conv_dict": …}}` = "when fjord goes to seed `Race`, merge this `conv_dict` into its `incorp_params`".  The `link_to(state["Track"])` call captures the **live** `Track` registry, so when `Race`'s rows incorporate, every `track_id` integer is swapped for the matching `Track` Pydantic instance.
 
-> **Skip the guard and you'll see it in `wave.failed_sources`.**  If `inflow(state)` raises `KeyError` on a missing peer, fjord's seed-error formatter rewrites the failed-sources entry to a copy-pasteable suggestion — `state.get('Track')` for soft access or `depends_on=['Track']` on the dependent source to enforce ordering.  See [Tutorial 10's seed-empty abort callout](../10-multi-source-fjord/README.md) for the canonical version.
+> **Keep the guard for refresh waves.**  During refresh, a peer source may temporarily fail — `Track` might be offline — which means `state["Track"]` is stale or absent.  The `if "Track" in state and "Driver" in state:` check lets `inflow` return `{}` safely, so `Race` re-uses its last-good `conv_dict` instead of getting a `KeyError`.  `depends_on` guarantees ordering at seed time; it does not suppress failures at refresh time.  See [Tutorial 10's seed-empty abort callout](../10-multi-source-fjord/README.md) for more on inflow failure handling.
 
 **Foreign-key resolution is one-time, not lazy.**  Once a Race row is incorporated, `race.track_id` is the `Track` instance itself — `race.track_id.inc_name`, `race.track_id.city`, `race.track_id.length` all work directly.  No re-lookup in the outflow.  (The runner does `name_chg=[("track_id", "track")]` purely for readability — the field arrives renamed to `track` in the Race instance.)
 
@@ -351,7 +350,7 @@ The function reads from `state["Driver"]`, `state["Race"]`, `state["LeagueRoster
 # ── Outflow — three derived views ──────────────────────────────────
 
 
-def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Compute three derived views from the fused state.  Each dict
     key becomes a derived Incorporator subclass and is written to its
     matching ``export_params`` file by fjord's multi-output contract.
@@ -379,7 +378,7 @@ Current-month Cup races with resolved track + driver context.  This is where the
     # ════════════════════════════════════════════════════════════════
     # View 1 — MonthlyRaceSchedule
     # ════════════════════════════════════════════════════════════════
-    monthly: List[Dict[str, Any]] = []
+    monthly: list[dict[str, Any]] = []
     for race in races:
         dt = getattr(race, "date_scheduled", None)
         if dt is None or dt.month != now.month or dt.year != now.year:
@@ -427,7 +426,7 @@ Per-team scoreboard.  For each team's roster pick `{series_id, driver_id}`:
     # ════════════════════════════════════════════════════════════════
     # View 2 — FantasyTeam
     # ════════════════════════════════════════════════════════════════
-    league_teams: Dict[str, Dict[int, List[Any]]] = {}
+    league_teams: dict[str, dict[int, list[Any]]] = {}
     for team in league:
         team_cd = team.team_id
         league_teams[team_cd] = {}
@@ -443,9 +442,9 @@ Per-team scoreboard.  For each team's roster pick `{series_id, driver_id}`:
                     key=lambda d: int(getattr(d, "Badge", 0) or 0)
                 )
 
-    fantasy: List[Dict[str, Any]] = []
+    fantasy: list[dict[str, Any]] = []
     for team_cd, roster in league_teams.items():
-        team_obj: Dict[str, Any] = {
+        team_obj: dict[str, Any] = {
             "team_id":          team_cd,
             "roster":           [],
             "points":           [],
@@ -454,7 +453,7 @@ Per-team scoreboard.  For each team's roster pick `{series_id, driver_id}`:
             "total_score":      0,
         }
         team_score = 0
-        per_series: Dict[int, int] = {}
+        per_series: dict[int, int] = {}
         mfg_counter: Counter = Counter()
         total_wins = 0
 
@@ -518,13 +517,13 @@ A third analytical view that's effectively "free" because the Cup standings are 
     # View 3 — ManufacturerLeaderboard
     # ════════════════════════════════════════════════════════════════
     cup = points_standings[1]
-    mfg_buckets: Dict[str, List[Any]] = defaultdict(list)
+    mfg_buckets: dict[str, list[Any]] = defaultdict(list)
     if cup is not None:
         for stnd in cup:
             mfg = (getattr(stnd, "manufacturer", "") or "").strip() or "Unknown"
             mfg_buckets[mfg].append(stnd)
 
-    manufacturer_rows: List[Dict[str, Any]] = []
+    manufacturer_rows: list[dict[str, Any]] = []
     for mfg, rows in mfg_buckets.items():
         if mfg == "Unknown":
             continue
@@ -555,7 +554,7 @@ The three dict keys land verbatim as fjord-built class names and match the keys 
 
 ## 🔧 Step 3: The Driver Script
 
-`nascar_fantasy.py` is the runner.  It declares the seven sources (six API + one local file), points fjord at `outflow.py` for both inflow and outflow, and configures the three export targets.  `refresh_params=None` on every source = single-wave test mode; the pipeline exits cleanly after one outflow wave.
+`nascar_fantasy.py` is the runner.  It declares the seven sources (six API + one local file), points fjord at `outflow.py` for both inflow and outflow, and configures the three export targets.  The `Race` entry carries `depends_on=["Track", "Driver"]`, which opts the seed phase into tiered-parallel mode: the six co-equal sources fire concurrently in tier 0, and `Race` seeds in tier 1 once those registries are ready.  `refresh_params=None` on every source = single-wave test mode; with no `export_interval` set, the pipeline exits cleanly after one outflow wave.
 
 ```python
 """NASCAR fantasy league as a multi-output fjord pipeline."""
@@ -612,7 +611,7 @@ async def main() -> None:
         stream_params=[
             {"cls": Track, "incorp_params": {"inc_url": f"{CFC_BASE}/tracks.json", "rec_path": "items", "inc_code": "track_id", "inc_name": "track_name"}, "refresh_params": None},
             {"cls": Driver, "incorp_params": {"inc_url": f"{CFC_BASE}/drivers.json", "rec_path": "response", "inc_code": "Nascar_Driver_ID", "inc_name": "Full_Name", "excl_lst": _DRIVER_EXCL}, "refresh_params": None},
-            {"cls": Race, "incorp_params": {"inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/race_list_basic.json", "rec_path": "series_1", "inc_code": "race_id", "inc_name": "race_name", "excl_lst": ["schedule", "track_name"], "name_chg": [("track_id", "track")]}, "refresh_params": None},
+            {"cls": Race, "incorp_params": {"inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/race_list_basic.json", "rec_path": "series_1", "inc_code": "race_id", "inc_name": "race_name", "excl_lst": ["schedule", "track_name"], "name_chg": [("track_id", "track")]}, "depends_on": ["Track", "Driver"], "refresh_params": None},
             {"cls": CupStanding,   "incorp_params": {"inc_url": f"{PROD_BASE}/1/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": inc(int, default=0), "wins": inc(int, default=0), "top_10": inc(int, default=0), "top_5": inc(int, default=0), "laps_led": inc(int, default=0), "position": inc(int, default=0)}}, "refresh_params": None},
             {"cls": BuschStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/2/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": inc(int, default=0), "wins": inc(int, default=0), "top_10": inc(int, default=0), "top_5": inc(int, default=0), "laps_led": inc(int, default=0), "position": inc(int, default=0)}}, "refresh_params": None},
             {"cls": TruckStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/3/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": inc(int, default=0), "wins": inc(int, default=0), "top_10": inc(int, default=0), "top_5": inc(int, default=0), "laps_led": inc(int, default=0), "position": inc(int, default=0)}}, "refresh_params": None},
@@ -640,9 +639,9 @@ if __name__ == "__main__":
 Notable wiring:
 
 * **Same-file inflow + outflow.**  Both `inflow=` and `outflow=` point at `outflow.py` because both callables live there.  Fjord loads the module once via `importlib`'s cache, so the second import is free.
-* **`refresh_params=None` everywhere = single-wave test mode.**  Drop those lines (refresh defaults on at 60s) and the daemons stay alive — perfect for production but blocks the `async for` loop indefinitely.  Mix and match: leave `Track`'s refresh off (tracks never change) while letting standings refresh every 5 minutes.
+* **`refresh_params=None` everywhere = single-wave test mode.**  With no `export_interval` set either, the pipeline exits cleanly after one outflow wave.  Drop the `refresh_params=None` lines (refresh defaults on at 60s) and add `export_interval=60` to keep daemons alive for a production run.  Mix and match: leave `Track`'s refresh off (tracks never change) while letting standings refresh every 5 minutes.
 * **`export_params` is keyed by output class name.**  Each key matches a key returned by `outflow(state)`; fjord's multi-output detection is "is there a top-level `file_path`?  No → multi-output."
-* **Structured error surface.**  The `wave.failed_sources` print above is the bare-string view; production retry orchestrators should reach for `wave.rejects: list[RejectEntry]` instead — each entry carries `source`, `error_kind` (exception type), `message`, `retry_after` (parsed from any HTTP `Retry-After` header), and `wave_index`.  Honour `retry_after` and backoff on 429s without re-parsing the message string.
+* **Structured error surface.**  `wave.failed_sources` carries the bare-string view of any seed or refresh failures.  For structured per-source access use `LoggedIncorporator.get_error()` post-run — each record carries the source name, exception type, message, and HTTP retry metadata.  Honour any `retry_after` value and backoff on 429s without re-parsing the message string.
 
 ---
 
@@ -670,7 +669,7 @@ OK    outflow:FantasyTeam                 chunk 1: 8 rows
 OK    outflow:ManufacturerLeaderboard     chunk 1: 3 rows
 ```
 
-Notice `Race` lands **after** `Track` and `Driver` even though all seven sources started in the same `stream_params` list — that's the inflow's `if "Track" in state and "Driver" in state:` guard back-pressuring `Race`'s seed until its peers have published their registries.  The other five sources race to completion in parallel.
+Notice `Race` lands **after** `Track` and `Driver` — that's `depends_on=["Track", "Driver"]` doing its job.  The engine groups sources into topo tiers: tier 0 (`Track`, `Driver`, `CupStanding`, `BuschStanding`, `TruckStanding`, `LeagueRoster`) fires concurrently via `asyncio.gather`; tier 1 (`Race`) starts only after all tier-0 registries are in state, so the `link_to()` closures in `inflow(state)` resolve against live data on every run.
 
 ### Output 1 — `out/nascar_monthly_schedule.ndjson`
 
@@ -810,7 +809,8 @@ The same seven-source pipeline expressed as a JSON config — no Python wrapper 
         "inc_name":  "race_name",
         "excl_lst":  ["schedule", "track_name"],
         "name_chg":  [["track_id", "track"]]
-      }
+      },
+      "depends_on": ["Track", "Driver"]
     },
     {
       "cls_name": "CupStanding",
@@ -869,7 +869,7 @@ A few JSON-specific notes:
 * **`refresh_params: null`** is the JSON spelling of Python's `refresh_params=None` — opts the source out of the refresh daemon.  Used here for `Track` (tracks never change) and `LeagueRoster` (rosters change rarely; restart the daemon when you edit the file).
 * **`conv_dict` values are quoted strings.**  The token resolver in `cli/tokens.py` parses them at config-load time and substitutes the real callables.  `inc(int, default=0)` becomes the actual converter; same for `inc(datetime)` etc.  `link_to(state["…"])` calls live in `inflow(state)` — not in the JSON — because they need the runtime registry handle.
 * **`name_chg` uses arrays not tuples.**  JSON has no tuple literal; `["track_id", "track"]` deserialises to the same shape the Python code uses.
-* **`refresh_interval` as a dict** keyed by class name, exactly like Python — JSON-friendly out of the box.
+* **`refresh_interval` as a dict** keyed by class name, exactly like Python — the JSON config accepts the same dict shape.
 * **`export_params` keyed by output class** — multi-output detection is "is there a top-level `file_path` key?  No → multi-output."
 
 ### Validate + run
@@ -879,7 +879,7 @@ incorporator validate config/pipeline.json
 incorporator fjord    config/pipeline.json --logs
 ```
 
-`--logs` routes every Wave through the `LoggedIncorporator` queue handler into `logs/api.log` (success) and `logs/error.log` (failures with redacted URLs).  Add `--heartbeat-file /tmp/inc.beat` to pair with Docker's `HEALTHCHECK`.
+`--logs` routes every Wave through the `LoggedIncorporator` queue handler into per-class log files: `logs/<ClassName>_api.log` (HTTP audit traces) and `logs/<ClassName>_error.log` (chunk waves; failures redacted).  A seven-source fjord produces up to 14 log files.  Add `--heartbeat-file /tmp/inc.beat` to pair with Docker's `HEALTHCHECK`.
 
 ### Docker
 
@@ -924,13 +924,13 @@ For an off-season demo (one-shot run with no refresh), set every `refresh_params
 
 | Pattern | Where to look |
 |---|---|
-| **Concurrent seed of N independent sources** | The seven `stream_params` entries — six API + one file all start in parallel via `asyncio.gather` |
+| **Tiered-parallel seed** | `depends_on=["Track", "Driver"]` on `Race` opts the engine into topo-tier mode: six independent sources fire concurrently in tier 0 via `asyncio.gather`; `Race` seeds in tier 1 once all tier-0 registries are ready |
 | **API + file source mixing** | `LeagueRoster` uses `inc_file=`; the other six use `inc_url=`.  Same handler dispatch routes both transparently |
-| **Sequential seed when state matters** | `Race` waits for `Track` + `Driver` because its `inflow(state)` return references them; the others stay parallel |
+| **Sequential seed when state matters** | Without `depends_on`, `inflow=` triggers declaration-order sequential seeding; adding `depends_on` keeps the ordering guarantee while restoring within-tier parallelism |
 | **Live foreign-key resolution** | `link_to(state["Track"])` / `link_to(state["Driver"], extractor=…)` in the inflow's `conv_dict` — and in the outflow, `race.track_id` is a live `Track` Pydantic instance with no re-lookup |
 | **Sentinel-ID filter** | `extractor=_driver_id_or_none` short-circuits ID 0 to `None` at the graph boundary — applied to BOTH `pole_winner_driver_id` and `winner_driver_id` |
 | **`stream()` vs `fjord()` vs `refresh()`** | `stream()` is paginated bulk-export chunking; `refresh()` is manual one-shot; `fjord()` (this tutorial) is the stateful multi-source daemon |
-| **Empty-state contract in `inflow(state)`** | First call arrives with `state == {}`; guard with `if "Track" in state and "Driver" in state:` and let fjord re-call you once peers exist |
+| **Empty-state contract in `inflow(state)`** | With tiered seed, tier-0 sources receive `state == {}`; tier-1 `Race` receives a fully-populated tier-0 state.  The `if "Track" in state and "Driver" in state:` guard still matters on subsequent refresh waves where a peer refresh might fail |
 | **Dynamic output classes** | The three derived classes (`MonthlyRaceSchedule`, `FantasyTeam`, `ManufacturerLeaderboard`) are **not** pre-declared in `outflow.py` — fjord builds one Pydantic class per dict key returned from `outflow(state)`.  Bare pre-declarations would suppress field inference |
 | **Multi-output dict return** | `outflow(state) -> {"MonthlyRaceSchedule": …, "FantasyTeam": …, "ManufacturerLeaderboard": …}` → three derived classes, three files |
 | **Per-class export config** | Top-level `export_params` keyed by class name |

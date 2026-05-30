@@ -137,6 +137,10 @@ async def main() -> None:
                 "refresh_params": None,
             },
             # ── Race schedule — depends on Track + Driver via inflow ──
+            # depends_on enables tiered-parallel seed: Track + Driver +
+            # the three Standings + LeagueRoster all fire concurrently in
+            # tier 0; Race fires in tier 1 once its peers' registries are
+            # available for link_to() resolution.
             {
                 "cls": Race,
                 "incorp_params": {
@@ -147,6 +151,7 @@ async def main() -> None:
                     "excl_lst": ["schedule", "track_name"],
                     "name_chg": [("track_id", "track")],
                 },
+                "depends_on": ["Track", "Driver"],
                 "refresh_params": None,
             },
             # ── Live standings, one source per series ──

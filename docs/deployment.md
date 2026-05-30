@@ -1,14 +1,21 @@
-﻿# Enterprise Deployment (Docker & Prefect)
+# Deployment (Docker & Prefect)
 
-The Incorporator Orchestration Platform is designed to run anywhere. Because the core engine strictly enforces O(1) Memory constraints, you can deploy infinite data streams on the smallest Docker containers or monitor them in real-time via Prefect Cloud.
+Incorporator pipelines are stateless by design — Docker Compose, a systemd
+service, or a Kubernetes pod are all viable deployment targets without
+framework changes. The same `incorp()` / `stream()` / `fjord()` vocabulary
+you used in development runs unchanged inside a container; only the secrets
+and log paths change.
 
 ---
 
-## 1. Containerization (Docker)
+## 1. Containerisation (Docker)
 
-Incorporator pipelines are stateless by design, making them perfect for Docker. The framework safely handles local data and configuration files via volume mounts.
+Schema-free ingestion means there are no class definition files or schema
+registries to bundle — only your `pipeline.json`, an optional `outflow.py`,
+and the package itself. The framework handles local data and configuration
+via volume mounts.
 
-### 5-Minute Quickstart with `docker compose`
+### 5-Minute quickstart with `docker compose`
 
 The repository ships with a working `docker-compose.yml` and an
 `.env.example`. End-to-end first run:
@@ -22,7 +29,7 @@ mkdir -p config data logs
 
 # 3. Pick a starter pipeline.json. examples/ has four ready-to-edit configs.
 cp examples/cli-templates/stream-basic.json config/pipeline.json
-# Or, generate one from scratch:
+# Or generate one from scratch:
 #   incorporator init --type stream --output-dir config
 
 # 4. Validate before you ship.
@@ -37,16 +44,16 @@ Volumes mounted by `docker-compose.yml`:
 
 | Host path | Container path | Purpose |
 | :--- | :--- | :--- |
-| `./config` | `/app/config` (read-only) | `pipeline.json` and any user `outflow.py` files |
+| `./config` | `/app/config` (read-only) | `pipeline.json` and any `outflow.py` files |
 | `./data` | `/app/data` | Exported output files (CSV / NDJSON / Parquet / …) |
 | `./logs` | `/app/logs` | Rotating JSON log files (when `--logs` is set) |
 
-### Secrets — Local vs. Production
+### Secrets — local vs. production
 
 Three options, increasing isolation:
 
 1. **`.env` file (compose default).** Convenient for local dev.
-   References from `pipeline.json` like
+   References in `pipeline.json` like
    `"Authorization": "Bearer ${BEARER_TOKEN}"` are expanded at JSON
    load time from environment. Visible via `docker inspect`, so don't
    use in production.
@@ -55,9 +62,9 @@ Three options, increasing isolation:
    in JSON with `"Authorization": "Bearer ${file:/run/secrets/bearer_token}"`.
    Not visible to `docker inspect`; survives a leaky `env` dump.
 3. **External secret manager** (Vault, AWS Secrets Manager, GCP Secret
-   Manager). Out of scope for this CLI — pull secrets into env vars
-   or sidecar-mounted files before the container starts; the JSON
-   references the same `${VAR}` or `${file:...}` form.
+   Manager). Pull secrets into env vars or sidecar-mounted files before
+   the container starts; the JSON references the same `${VAR}` or
+   `${file:...}` form.
 
 `.env` is gitignored. `pipeline.json` is also gitignored by default
 since most teams keep environment-specific configs out of source
@@ -67,11 +74,10 @@ control — copy yours into `config/` per environment.
 >
 > Without a sandbox, a hostile or typo'd `pipeline.json` containing
 > `${file:/etc/passwd}` would silently exfiltrate host files at
-> expansion time.  The framework's defence is the
-> `INCORPORATOR_SECRETS_ROOT` env-var — set it to an absolute
-> directory, and **any `${file:...}` reference resolving outside
+> expansion time. Set `INCORPORATOR_SECRETS_ROOT` to an absolute
+> directory and **any `${file:...}` reference resolving outside
 > that root is rejected** with a clear diagnostic before any file
-> is opened.
+> is opened (`incorporator/cli/envexpand.py:124-182`).
 >
 > The canonical `docker-compose.yml` sets it to `/run/secrets` to
 > match Docker Swarm / Kubernetes Secrets mount conventions:
@@ -84,15 +90,15 @@ control — copy yours into `config/` per environment.
 > ```
 >
 > For Kubernetes pods, set the same env-var via the Pod spec's
-> `env:` block.  When the var is unset (local dev), the framework
+> `env:` block. When the var is unset (local dev), the framework
 > falls back to permissive behaviour — `${file:...}` can read any
-> readable host file.  **Always set the var in production.**
+> readable host file. **Always set the var in production.**
 
 ### Log directory
 
 By default, `LoggedIncorporator` writes rotating JSON logs to
 `./logs/<ClassName>_{api,error,debug}.log` relative to the process
-CWD.  In a containerised environment the CWD is `/app` (set by the
+CWD. In a containerised environment the CWD is `/app` (set by the
 Dockerfile's `WORKDIR`), so logs land at `/app/logs/...` — and
 `docker-compose.yml` bind-mounts `./logs` there for host visibility.
 
@@ -109,7 +115,7 @@ services:
       - /var/log/incorporator:/var/log/incorporator
 ```
 
-The directory is created lazily on first log write.  When the env-var
+The directory is created lazily on first log write. When the env-var
 is unset, the default `./logs` behaviour is preserved.
 
 ### Healthcheck
@@ -123,31 +129,9 @@ minutes, the container is reported unhealthy — your orchestrator
 
 ### Custom Dockerfile
 
-If you don't want to use compose, the repo's `Dockerfile` works
-standalone. Build:
-
-```bash
-docker build -t incorporator:v2 .
-```
-
-Run as a one-shot:
-
-```bash
-docker run --rm \
-  -v $(pwd)/my_pipeline.json:/app/config/pipeline.json \
-  -v $(pwd)/output_data:/app/data \
-  -v $(pwd)/output_logs:/app/logs \
-  incorporator:v2 stream /app/config/pipeline.json --logs
-```
-
-Watch the chunking telemetry:
-
-```bash
-docker logs -f <container-name>
-```
-
-### The Zero-Bloat Dockerfile
-If you are building a custom container for your pipeline, use this optimized blueprint. It runs securely as a non-root user and automatically bakes in the Rust/C speedups for maximum OS performance.
+If you prefer a standalone Dockerfile, the repo's blueprint runs as a
+non-root user and installs `.[all]` to include the optional orjson /
+cramjam native-code accelerators:
 
 ```dockerfile
 FROM python:3.11-slim
@@ -181,11 +165,12 @@ CMD ["stream", "/app/config/pipeline.json", \
 ### Production HTTP throttling — `register_host_penstock`
 
 The framework ships with **no implicit per-host throttling**;
-unregistered hosts fall back to the 15 req/sec default.  For any
-production API with a tighter rate ceiling (CoinGecko's 5–15 r/min,
-Binance's 1200 r/min, your in-house service's bespoke limit),
-register the throttle once at process start and every subsequent
-`incorp()` / `stream()` / `fjord()` against that host respects it:
+unregistered hosts fall back to the 15 req/sec default
+(`incorporator/io/penstock.py:500`). For any API with a tighter rate
+ceiling, register the throttle once at process start and every
+subsequent `incorp()` / `stream()` / `fjord()` against that host
+respects it — the same Penstock primitive used at the HTTP layer also
+governs Tideweaver edge flow, so one vocabulary covers both:
 
 ```python
 from incorporator import register_host_penstock
@@ -198,19 +183,20 @@ register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
 register_host_penstock("api.internal.acme.com", BurstPenstock(rate_per_sec=50.0, burst=200))
 ```
 
-Put these calls in a module that's imported before any pipeline
-runs — the top of your container's entrypoint script, the top of
-your `outflow.py`, or a dedicated `throttle.py` imported by both.
-The registration is process-global, so registering twice is safe
-(the second call replaces the first).
+Put these calls in a module imported before any pipeline runs — the
+top of your container's entrypoint script, your `outflow.py`, or a
+dedicated `throttle.py` imported by both. The registration is
+process-global; registering twice is safe (second call replaces the
+first).
 
-### Graceful Shutdown
+### Graceful shutdown
 
-The CLI installs a SIGTERM handler that triggers the same shutdown
-path as Ctrl+C: the engine drains in-flight refresh/export daemons,
-flushes waves, and exits cleanly. `docker stop`, `docker compose
-down`, and `kubectl delete pod` all send SIGTERM by default — no
-extra config required.
+The CLI installs a SIGTERM handler (`incorporator/cli/runners.py:187-194`)
+that sets a shutdown event, triggering the same exit path as Ctrl+C.
+`docker stop`, `docker compose down`, and `kubectl delete pod` all
+send SIGTERM by default — no extra config is required when using the
+CLI runner. Bare `asyncio.run(main())` scripts need a user-installed
+signal handler.
 
 ### Deploying a Tideweaver Watershed
 
@@ -228,15 +214,15 @@ ticks for up to `drain_timeout` seconds before exiting (default 30s).
 For long-running or restart-on-exit shapes, use the same `restart:
 unless-stopped` policy a stream daemon would use; for one-shot
 window runs, omit `restart` and the container stops when the window
-closes.  `--json-output` and `--heartbeat-file` work the same as
-they do for `stream` / `fjord`.
+closes. `--json-output` and `--heartbeat-file` work the same as they
+do for `stream` / `fjord`.
 
 > ### Coupling `drain_timeout` with `stop_grace_period`
 >
 > Docker / Compose / Kubernetes send SIGTERM to the container then
 > wait **`--stop-timeout` / `stop_grace_period`** before sending
-> SIGKILL.  The platform default is **10 seconds** — shorter than
-> Tideweaver's default `drain_timeout` of 30s.  Without matching
+> SIGKILL. The platform default is **10 seconds** — shorter than
+> Tideweaver's default `drain_timeout` of 30s. Without matching
 > them, every `docker stop` truncates the drain and loses
 > in-flight ticks silently.
 >
@@ -262,7 +248,7 @@ shape.
 `LoggedIncorporator`: a drop-in for `Tideweaver` that routes every
 yielded `Tide` and every accumulated `RejectEntry` through the same
 `QueueHandler` pipeline that backs `LoggedIncorporator`, so disk I/O
-never blocks the event loop.  Import path matters — it is **not**
+never blocks the event loop. Import path matters — it is **not**
 top-level exported:
 
 ```python
@@ -285,31 +271,38 @@ records still hit `/app/logs/` for the log shipper.
 When a Tideweaver scheduler is consistently saturated (every pass runs
 over `pass_interval` because in-flight ticks haven't completed), set
 `backlog_backoff_factor=2.0` on the constructor to multiplicatively
-extend the next-pass wait until the heap drains.  Default is `1.0`
-(disabled — identical behaviour to v1.2.0).  Pair with
+extend the next-pass wait until the heap drains. Default is `1.0`
+(disabled — identical behaviour to v1.2.0). Pair with
 `tide.next_due_in_sec` and `tide.heap_depth` for diagnosis.
 
 ---
 
-## 2. Cloud Orchestration (Prefect)
+## 2. Prefect integration
 
-If you need enterprise-grade state tracking, retries, and dashboard UI, Incorporator integrates natively with **Prefect**.
+If you need state tracking, retries, and a dashboard UI alongside your
+Incorporator pipelines, the `[orchestrate]` extra bundles a Prefect
+`@flow` / `@task` wrapper. Install it first:
 
-Ensure you have the orchestration dependencies installed:
 ```bash
 pip install "incorporator[orchestrate]"
 ```
 
-### Deploying a Flow
-Incorporator includes a pre-built `@flow` wrapper that automatically pipes our `Wave` telemetry metrics directly into the Prefect Cloud UI.
+Note: `[orchestrate]` pulls in `prefect>=2.10.0` as a hard dependency.
+The `typer` CLI dependency is always installed with the base package.
 
-Create a tiny deployment script (`deploy.py`):
+### Deploying a flow
+
+The pre-built `run_incorporator_flow` entry point loads your
+`pipeline.json` and executes the stream as a Prefect task. Each Wave's
+`chunk_index`, `rows_processed`, and `processing_time_sec` are logged
+through Prefect's run logger, making them visible in the Prefect UI
+run log. Waves with `failed_sources` emit as warnings.
+
 ```python
 import asyncio
 from incorporator.integrations.prefect import run_incorporator_flow
 
 async def deploy():
-    # Automatically loads your pipeline.json and executes it as a Prefect Flow
     results = await run_incorporator_flow(
         config_path="pipeline.json",
         poll_interval=600.0
@@ -320,11 +313,13 @@ if __name__ == "__main__":
     asyncio.run(deploy())
 ```
 
-When you run this script, the Incorporator Engine bypasses its internal disk-logging queues and instead streams the chunk progress (e.g., `✅ Chunk 1 | 10000 rows in 1.4s`) directly to your active Prefect Server or Prefect Cloud dashboard!
+The integration routes Wave telemetry through Prefect's logger rather
+than Incorporator's disk-logging queues — omit `enable_logging=True`
+in the task call to avoid double-writing.
 
 ---
 
-## Where to Go Next
+## Where to go next
 
 | Goal | Read |
 |---|---|

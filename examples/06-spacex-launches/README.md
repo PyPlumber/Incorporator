@@ -106,10 +106,10 @@ naive `for` loop firing 36 sequential requests.
 
 Both `rockets` and `pads` come back as `IncorporatorList` instances, each carrying a
 structured `rejects` list (of `RejectEntry`) alongside the legacy bare-string
-`failed_sources` view. ETL practice calls these *rejects* (Incorporator follows the
-ETL convention rather than the messaging-system "dead-letter queue" term). When a
-child drill fails (rate limit, 5xx, timeout) the entry records the URI, error class,
-parsed `Retry-After` header, and the wave index it belonged to:
+`failed_sources` view. ETL practice calls failed-load rows *rejects* — Incorporator
+uses the same idiom. When a child drill fails (rate limit, 5xx, timeout) the entry
+records the URI, error class, parsed `Retry-After` header, and the wave index it
+belonged to:
 
 ```python
 for entry in rockets.rejects:
@@ -125,7 +125,7 @@ retry logic needs per-source error classification or backoff timing.
 
 ### When parent fields are lists
 
-If `inc_child` points to a list field (e.g. each launch has `payloads: List[str]`), the
+If `inc_child` points to a list field (e.g. each launch has `payloads: list[str]`), the
 framework **flattens** the lists and dedups across all parents before fan-out.  One
 launch with three payloads becomes three requests, not one.
 

@@ -1,110 +1,119 @@
 ***
 
-# 🚨 Tutorial 4 — XML Post Audit: Federal-VIN Fraud Detection
+# Tutorial 4 — XML Post Audit: Federal VIN Fraud Detection
 
 **Prerequisites:** [Tutorial 3 — Universal Formats](../03-universal-formats/README.md) (warehouse round-trip).
 
-You're a state auditor.  You've seized an XML ledger from **Shady Jimmy's Used Cars** and have 24 hours to flag every fraudulent VIN before he gets a tip-off and disappears.  One `incorp()` to parse the ledger, one batched POST to NHTSA's federal VIN database, one O(1) join on VIN — and the audit report writes itself.
+You're a state auditor. You've seized an XML ledger from **Shady Jimmy's Used Cars** and have 24 hours to flag every fraudulent VIN before he gets a tip-off and disappears. One `incorp()` call parses the ledger without a schema file. One batched POST hits NHTSA's federal VIN database. One O(1) join on VIN surfaces the mismatch.
 
-Real-world compliance teams run this arc every day: banking against the SEC, healthcare against the FDA, vehicle resale against NHTSA.  REST APIs aren't just `GET`; bulk endpoints (government databases, GraphQL, batch lookup services) often require `POST` with a **dynamic payload** mapping multiple records — and that's where this tutorial earns its slot.
+Real-world compliance teams run this arc every day: banking against the SEC, healthcare against the FDA, vehicle resale against NHTSA. REST APIs aren't just `GET`; bulk endpoints (government databases, GraphQL, batch lookup services) often require `POST` with a dynamic payload mapping multiple records — and that's where this tutorial earns its slot.
 
-## 🗄️ The Input Data (`jimmy_ledger.xml`)
-Save the seized XML data into a local file called `jimmy_ledger.xml`. Notice how deeply nested the vehicle data is inside the dealership audit wrapper:
+## The Input Data (`jimmy_ledger.xml`)
+
+Save the file below as `jimmy_ledger.xml`. The real ledger holds **10 invoices** (INV-001 through INV-010). The snippet shows the structure plus the fraudulent record at the end — `jimmy_ledger.xml` in this directory is the complete file.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<Dealership name="Shady Jimmy's Used Cars">
-    <AuditFile generatedAt="2026-04-24T10:15:00Z">
+<Dealership name="Shady Jimmy's Used Cars" location="Baltimore, MD">
+    <AuditFile generatedAt="2026-04-24T10:15:00Z" auditor="White Hat Auditors">
         <Invoices>
-            <Invoice id="INV-001">
+
+            <Invoice id="INV-001" status="completed">
+                <SaleDate>2026-04-01</SaleDate>
+                <Salesperson id="SP-100">Jimmy Carter</Salesperson>
                 <Vehicle>
                     <VIN>1HGCM82633A004352</VIN>
                     <Make>Honda</Make>
                     <Model>Accord</Model>
+                    <Year>2003</Year>
                 </Vehicle>
             </Invoice>
-            <Invoice id="INV-002">
+
+            <Invoice id="INV-002" status="completed">
+                <!-- ... INV-002 through INV-009 are legitimate records ... -->
+            </Invoice>
+
+            <!-- FRAUDULENT RECORD -->
+            <Invoice id="INV-010" status="completed">
+                <SaleDate>2026-04-10</SaleDate>
+                <Salesperson id="SP-999">Jimmy Carter</Salesperson>
                 <Vehicle>
-                    <VIN>1FTFW1ET5DFC10312</VIN>
-                    <Make>Ford</Make>
-                    <Model>F-150</Model>
+                    <VIN>WP0AB2A94HS124053</VIN>
+                    <Make>Honda</Make>
+                    <Model>Civic</Model>
+                    <Year>2015</Year>
+                    <Mileage>12000</Mileage>
                 </Vehicle>
+                <Notes>Manager special discount</Notes>
             </Invoice>
-            <Invoice id="INV-003">
-                <Vehicle>
-                    <VIN>5YJ3E1EA7KF317856</VIN>
-                    <Make>Ferrari</Make>
-                    <Model>458</Model>
-                </Vehicle>
-            </Invoice>
-            <Invoice id="INV-004">
-                <Vehicle>
-                    <VIN>WBAFR7C50BC804113</VIN>
-                    <Make>BMW</Make>
-                    <Model>5 Series</Model>
-                </Vehicle>
-            </Invoice>
-            <Invoice id="INV-005">
-                <Vehicle>
-                    <VIN>JTDKN3DU8E1750020</VIN>
-                    <Make>Toyota</Make>
-                    <Model>Prius</Model>
-                </Vehicle>
-            </Invoice>
+
         </Invoices>
     </AuditFile>
 </Dealership>
 ```
 
-> **The planted fraud.**  VIN `5YJ3E1EA7KF317856` on INV-003 is a Tesla Model 3 that Jimmy has misfiled as a Ferrari 458.  NHTSA's batch decoder will return the true make/model — the join on VIN surfaces the mismatch on exactly one row.  The other four invoices should match cleanly.
+> **The planted fraud.** VIN `WP0AB2A94HS124053` on INV-010 is listed as a Honda Civic sold for $499. NHTSA's batch decoder returns the true make — a Porsche. The join on VIN surfaces the mismatch on exactly one row. The other nine invoices check out.
 
 ---
 
-## 💻 The Audit Script
+## The Audit Script
 
-Create a file called `audit_jimmy.py`. We are going to use Incorporator's native XML parsing to load the ledger, define our extraction path using `inc_child`, and use the `join_all` declarative token to bulk-enrich the data in a single, highly-optimized network call.
+Create `audit_jimmy.py`. Incorporator auto-detects the `.xml` extension, drills through `rec_path`, and builds nested Python objects (`inv.Vehicle.VIN`) without a schema file — that's the schema-free ingestion path.
 
 ```python
 import asyncio
-from typing import Any
-from incorporator import Incorporator
+from pathlib import Path
+
+from incorporator import Incorporator, register_host_penstock
+from incorporator.io.penstock import SustainedPenstock
 from incorporator.schema.extractors import join_all
+
+# Pace NHTSA vPIC at 1.5 req/sec (90/min — under the 100-200/min ceiling).
+# register_host_penstock applies to all HTTP methods, including POST.
+register_host_penstock("vpic.nhtsa.dot.gov", SustainedPenstock(rate_per_sec=1.5))
+
+HERE = Path(__file__).resolve().parent
+
 
 class Invoice(Incorporator):
     pass
 
+
 class NHTSASpec(Incorporator):
     pass
 
+
 async def run_audit() -> None:
-    print("📂 Parsing Shady Jimmy's Local XML Ledger...")
+    print("Parsing Shady Jimmy's Local XML Ledger...")
 
     invoices = await Invoice.incorp(
-        inc_file="jimmy_ledger.xml",
+        inc_file=HERE / "jimmy_ledger.xml",
         rec_path="Dealership.AuditFile.Invoices.Invoice",
         inc_code="id",
         # inc_child caches the VIN path on the list for the enrichment call below.
-        inc_child="Vehicle.VIN"
+        inc_child="Vehicle.VIN",
+        xml_force_list=["Invoice"],   # prevents shape drift when ledger has 1 record
     )
 
-    print(f"✅ Extracted {len(invoices)} Invoices. Contacting Federal Databases...")
+    print(f"Extracted {len(invoices)} invoices. Contacting Federal Databases...")
 
-    # Incorporator reads the cached inc_child_path, extracts every VIN,
-    # and joins them into one bulk batch request via join_all(";").
+    # Incorporator reads the cached inc_child path, extracts every VIN,
+    # joins them with the delimiter, and issues one network call —
+    # regardless of ledger size.
     govt_specs = await NHTSASpec.incorp(
         inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
         inc_parent=invoices,
         http_method="POST",
-        payload_type="form",        
+        payload_type="form",
         form_payload={
             "format": "json",
-            "data": join_all(";")  # 🛡️ Zero-boilerplate batching token!
+            "data": join_all(";"),
         },
         rec_path="Results",
-        inc_code="VIN"
+        inc_code="VIN",
     )
 
-    print(f"✅ Government Data Received for {len(govt_specs)} vehicles. Initiating Fraud Audit...\n")
+    print(f"Government data received for {len(govt_specs)} vehicles. Running audit...\n")
 
     print("=" * 85)
     print(f"{'INVOICE':<10} | {'VIN':<18} | {'JIMMY LISTED':<20} | {'NHTSA TRUE SPEC':<25}")
@@ -114,14 +123,12 @@ async def run_audit() -> None:
 
     for inv in invoices:
         inv_id = getattr(inv, "inc_code", "UNKNOWN")
-
-        # 1. Jimmy's Claims (Auto-nested by Incorporator's XML Parser)
         jimmy_vin = getattr(inv.Vehicle, "VIN", "UNKNOWN")
         jimmy_make = getattr(inv.Vehicle, "Make", "UNKNOWN").upper()
         jimmy_model = getattr(inv.Vehicle, "Model", "UNKNOWN").upper()
         jimmy_claim = f"{jimmy_make} {jimmy_model}"
 
-        # 2. The Government Truth (O(1) Memory Registry Lookup)
+        # O(1) lookup via inc_code-keyed registry
         true_spec = govt_specs.inc_dict.get(jimmy_vin)
 
         if true_spec:
@@ -131,18 +138,18 @@ async def run_audit() -> None:
         else:
             federal_claim = "API OFFLINE / UNKNOWN"
 
-        # 3. Discrepancy Detection
         if jimmy_make not in federal_claim and federal_claim != "API OFFLINE / UNKNOWN":
-            print(f"🚨 {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25} <-- FRAUD!")
+            print(f"FRAUD  {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25}")
             fraud_count += 1
         else:
-            print(f"✅ {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25}")
+            print(f"OK     {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25}")
 
     print("=" * 85)
     if fraud_count > 0:
-        print(f"🛑 AUDIT FAILED: Discovered {fraud_count} fraudulent transaction(s). Dispatching authorities.")
+        print(f"AUDIT FAILED: {fraud_count} fraudulent transaction(s). Dispatching authorities.")
     else:
-        print("🟢 AUDIT PASSED: Ledger matches federal records.")
+        print("AUDIT PASSED: Ledger matches federal records.")
+
 
 if __name__ == "__main__":
     asyncio.run(run_audit())
@@ -150,40 +157,52 @@ if __name__ == "__main__":
 
 ---
 
-## 🧠 Framework Highlights
+## Framework Highlights
 
-### 1. Zero-Boilerplate XML Parsing
-Parsing XML in standard Python usually requires messy libraries like `xml.etree.ElementTree` and writing recursive loops. Incorporator auto-detects the `.xml` extension, drills through the `rec_path`, and dynamically builds nested Python objects (like `inv.Vehicle.VIN`) implicitly.
+### 1. Schema-Free XML Parsing
 
-### 2. The Explicit State Carrier (`inc_child`)
-Instead of relying on implicitly mapped URLs or dummy strings, Incorporator uses the **State Carrier** pattern. By declaring `inc_child="Vehicle.VIN"` on the first call, the returned `invoices` list securely memorises that path. When passed as `inc_parent` to the enrichment call, Incorporator reads the cached state, drills into all invoices, extracts the VINs, and provisions a single bulk POST request — no boilerplate loops.
+Parsing XML in standard Python requires `xml.etree.ElementTree` and recursive loops. `incorp()` auto-detects the `.xml` extension, drills through `rec_path`, and returns nested Python objects (`inv.Vehicle.VIN`) with no class definitions or schema files.
 
-### 3. Declarative Bulk POST Execution (`join_all`)
-The NHTSA endpoint is a "Batch" processor—it expects a single string of VINs separated by semicolons. Instead of forcing you to write `for` loops, extraction lambdas, or punishing the government servers with 500 individual concurrent requests, Incorporator solves this declaratively:
+**Security:** every XML payload runs through a pre-flight regex that blocks DTDs and external entities before any parser sees the bytes (`incorporator/io/formats.py:349`). When lxml is installed (`pip install incorporator[speedups]`), the XMLParser uses `resolve_entities=False, no_network=True` as a second layer. The combined approach rejects XXE and billion-laughs payloads regardless of which parser is active — relevant for compliance pipelines ingesting ledgers from untrusted sources.
+
+### 2. Shape Stability with `xml_force_list`
+
+XML collapses a single child element into a dict, but returns multiple children as a list. A ledger with one invoice would produce `dict`; a ledger with ten produces `list[dict]`. Passing `xml_force_list=["Invoice"]` forces the tag to always be a list, preventing downstream shape drift when ledger size varies (`incorporator/io/handlers/text.py:303`).
+
+### 3. The State Carrier (`inc_child`)
+
+Declaring `inc_child="Vehicle.VIN"` on the first call caches that dot-notation path on the returned `invoices` list. When `invoices` is passed as `inc_parent` to the NHTSA call, Incorporator drills into every invoice, extracts VINs, and passes them to `join_all(";")` — no boilerplate loops.
+
+### 4. Declarative Bulk POST (`join_all`)
+
+The NHTSA vPIC batch endpoint expects a semicolon-delimited string of VINs. The `join_all(";")` token extracts all VINs, joins them with the delimiter, and issues one network call — regardless of ledger size. No per-VIN requests, no manual string assembly:
+
 ```python
 form_payload={
     "format": "json",
-    "data": join_all(";")
+    "data": join_all(";"),
 }
 ```
-By providing the `join_all` token, Incorporator automatically intercepts all 500 extracted VINs, joins them perfectly, and generates **one single, polite, highly-optimized network call**. It automatically translates it to Form-Data (`application/x-www-form-urlencoded`) via `payload_type="form"`.
 
-### 4. $O(1)$ Graph Relational Lookups
-We didn't need to write a messy dictionary merge algorithm to join Jimmy's records with the Government records. Because we set `inc_code="VIN"` when parsing the NHTSA response, the data was securely cached in memory. 
+The `payload_type="form"` flag encodes the payload as `application/x-www-form-urlencoded`.
 
-The federal specs are retrieved in $O(1)$ by querying the registry directly: `govt_specs.inc_dict.get(jimmy_vin)`.
+### 5. Rate Control with `register_host_penstock`
+
+`register_host_penstock` attaches a `SustainedPenstock` to any hostname. It applies to all HTTP verbs — GET and POST — so the NHTSA vPIC host is paced at 1.5 req/sec with one declaration at module import time. This is the same Penstock primitive used to pace edges inside a Tideweaver window, making rate-control skills from this tutorial transferable to multi-source orchestration.
+
+### 6. O(1) Join via `inc_dict`
+
+No dictionary merge algorithm needed. Setting `inc_code="VIN"` when parsing the NHTSA response caches each spec by VIN in memory. The join is a single dict lookup:
+
+```python
+true_spec = govt_specs.inc_dict.get(jimmy_vin)
+```
 
 ---
 
-## 🐳 Run it from the CLI
+## Run it from the CLI
 
-`join_all(";")` itself is JSON-expressible — the CLI's text-token resolver
-will turn `"join_all(\";\")"` into a real callable at load time. What
-still requires an `outflow.py` here is the two-step chain — `invoices`
-becomes `inc_parent` for the NHTSA call, and the reconciliation reads both
-registries. That's the natural fjord shape: each source is its own
-`stream_params` entry, and the `outflow(state)` function runs the
-reconciliation across both in-memory registries:
+`join_all(";")` is JSON-expressible — the CLI's token resolver converts the string `"join_all(\";\")"` into the real callable at load time. The two-step chain (invoices as `inc_parent` for the NHTSA call, then reconciliation across both registries) maps naturally onto a fjord config with an `outflow.py`:
 
 ```json
 {
@@ -208,17 +227,17 @@ incorporator validate pipeline.json
 incorporator fjord pipeline.json
 ```
 
-`audit_jimmy.py` defines the `Invoice` and `NHTSASpec` classes, and the `outflow(state)` function that issues the bulk POST with `join_all(";")`, then reconciles each invoice VIN against the federal registry in O(1). See [`examples/cli-templates/outflow_example.py`](../cli-templates/outflow_example.py) for the pattern and [the CLI guide](../../docs/cli_and_configuration.md) for the full schema.
+`audit_jimmy.py` defines the `Invoice` and `NHTSASpec` classes and the `outflow(state)` function that issues the bulk POST with `join_all(";")`, then reconciles each invoice VIN against the federal registry. See [`examples/cli-templates/outflow_example.py`](../cli-templates/outflow_example.py) for the outflow pattern and [the CLI guide](../../docs/cli_and_configuration.md) for the full config schema.
 
 ---
 
 ## Where to Go Next
 
-> 👉 **Up next: [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md).**  T4 enriched a flat ledger via one batched POST; T5 introduces the canonical pattern for fan-out enrichment — `inc_parent` + `inc_child` against a parent list with N children per row.
+> **Up next: [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md).** T4 enriched a flat ledger via one batched POST; T5 introduces the canonical fan-out pattern — `inc_parent` + `inc_child` against a parent list with N children per row.
 
 | Goal | Read |
 |---|---|
-| See the canonical parent-child fan-out intro | [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md) |
+| Canonical parent-child fan-out intro | [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md) |
 | Apply parent-child to operational dashboards | [Tutorial 6 — SpaceX Launches](../06-spacex-launches/README.md) |
 | Fuse audit output into a multi-source pipeline | [Tutorial 10 — Multi-Source Fjord](../10-multi-source-fjord/README.md) |
 | Stream a giant XML feed with chunking | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |

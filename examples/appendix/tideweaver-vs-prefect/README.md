@@ -40,7 +40,7 @@ The two are not competitors. Tideweaver fits inside a single Prefect task. Prefe
 
 A useful summary: **Tideweaver is what runs during a window. Prefect is what decides which window to run next.** Sub-minute cadence and in-process registries are the dividing line — at hour/day cadence with cross-machine fan-out, Prefect's overhead pays for itself.
 
-For a consistently-saturated Tideweaver scheduler (every pass running over `pass_interval`, `tide.next_due_in_sec` repeatedly negative), the v1.2.1 `Tideweaver(watershed, backlog_backoff_factor=2.0)` constructor knob multiplicatively extends the next-pass wait until the heap drains.  Default `1.0` is disabled.  Prefect handles the analogous case via task-concurrency limiters and work-pool concurrency caps.
+For a consistently-saturated Tideweaver scheduler (every pass running over `pass_interval`, with a high fraction of `tide.wake_reason == 'pass_interval'` and a steadily elevated `tide.in_flight_count_at_start`), the v1.2.1 `Tideweaver(watershed, backlog_backoff_factor=2.0)` constructor knob multiplicatively extends the next-pass wait until the heap drains.  Default `1.0` is disabled.  Prefect handles the analogous case via task-concurrency limiters and work-pool concurrency caps.
 
 ---
 

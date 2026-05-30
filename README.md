@@ -249,7 +249,7 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
 
 * **GIL-free hyperthreading** via the `[speedups]` extra. → [Installation](./docs/installation.md)
 * **Invisible decompression** for `.gz`, `.bz2`, `.lzma`, `.zip`, `.tar` — ZIP/TAR paths validated against directory-traversal and a 1 GB bomb cap. → [Formats](./docs/formats_and_compression.md)
-* **Connection pooling + retries + structured rejects** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity backoff, and `IncorporatorList.rejects: List[RejectEntry]` carrying `source` / `error_kind` / `message` / `retry_after` / `wave_index` for every failed source.  The legacy flat `failed_sources: List[str]` is preserved as a derived view.  Opt-in `block_internal_redirects=True` rejects 3xx Locations to RFC1918 / loopback / cloud-metadata IPs.
+* **Connection pooling + retries + structured rejects** — HTTP/2-multiplexed `httpx.AsyncClient`, Tenacity backoff, and `IncorporatorList.rejects: list[RejectEntry]` carrying `source` / `error_kind` / `message` / `retry_after` / `wave_index` for every failed source.  The legacy flat `failed_sources: list[str]` is preserved as a derived view.  Opt-in `block_internal_redirects=True` rejects 3xx Locations to RFC1918 / loopback / cloud-metadata IPs.
 * **Friendly rate limiting** — the framework ships with **no implicit per-host throttling**.  Opt in once at startup with `register_host_penstock` (one source of truth across every `incorp()` call) or pass `requests_per_second=X` per call.  The same `Penstock` primitive serves both the HTTP layer and Tideweaver edges:
 
   ```python
@@ -307,7 +307,7 @@ The eleven-tutorial curriculum.  Each slot introduces one new verb or technique,
 
 * [📖 **Library Reference**](./docs/library_reference.md) — every public class, rendered from source docstrings.
 * [📑 **API Atlas**](./docs/api_atlas.md) — paste-ready map of every public callable: signature, pseudocode, "when to reach for it", common kwargs, tutorial cross-links.
-* [🩺 **Production Debugging with `get_error()`**](./docs/debugging.md) — `LoggedIncorporator` + structured error logs + DLQ retry.
+* [🩺 **Production Debugging with `get_error()`**](./docs/debugging.md) — `LoggedIncorporator` + structured error logs + retry loop via RejectEntry.
 * [📦 **Formats & Compression**](./docs/formats_and_compression.md) + [🌊 **Streaming & Pagination**](./docs/streaming_and_pagination.md) — every format kwarg, compression rules, and the paginator family for endpoints / files too big for RAM.
 * [🐳 **CLI & Configuration**](./docs/cli_and_configuration.md) — running pipelines from `pipeline.json` / `watershed.json`.
 * [⚡ **Performance**](./docs/performance.md) — measured throughput per format, memory profile, tuning knobs. Per-chunk validation uses `TypeAdapter(list[Cls]).validate_python(rows)` and is 1.3-2.0× faster than per-row `model_validate` (`tests/benchmarks/test_validate_batch_vs_per_row.py`). Trade-off: within a single `incorp()` call, peak memory is O(N); `stream()` still keeps RSS flat by releasing each chunk. Outcome records — `Wave`, `Tide`, `RejectEntry`, and slotted dataclass `CurrentOutcome` (per-current outcomes inside `Tide`) — carry structured fields (HTTP retry counts, schema-cache hits, source URLs, per-edge identity, status codes, cooldown hints) for keyed audit.

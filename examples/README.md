@@ -12,7 +12,7 @@ The curriculum alternates CoinGecko-heavy steps with non-CoinGecko domain exampl
 | **T2** | [`02-data-lake-pivot/`](./02-data-lake-pivot/) | jsonplaceholder (1) | ~2 s | 🔁 SaaS roster → BI-ready columnar: pivot a `/users` endpoint into Avro + SQLite. |
 | **T3** | [`03-universal-formats/`](./03-universal-formats/) | CoinGecko (1) | ~5 s | 📦 Fan a CoinGecko snapshot into NDJSON / CSV / SQLite / Parquet and round-trip each. |
 | **T4** | [`04-xml-post-audit/`](./04-xml-post-audit/) | NHTSA POST (1) | ~3 s | 🛡️ Federal-VIN fraud audit: XML invoice ledger enriched via one batched POST. |
-| **T5** | [`05-parent-child-drilling/`](./05-parent-child-drilling/) | CoinGecko (11) | ~55 s | 🚀 `inc_parent` / `inc_child` — parent → child fan-out with O(1) dedup. |
+| **T5** | [`05-parent-child-drilling/`](./05-parent-child-drilling/) | CoinGecko (11) | ~50 s | 🚀 `inc_parent` / `inc_child` — parent → child fan-out with O(1) dedup. |
 | **T6** | [`06-spacex-launches/`](./06-spacex-launches/) | SpaceX (~7) | ~5 s | 🚀 Ops-dashboard feed: upcoming launches drilled for rocket + launchpad detail. |
 | **T7** | [`07-stateful-refresh/`](./07-stateful-refresh/) | Binance.us (4) | ~10 s | 🔄 `refresh()` three ways against a live ticker. |
 | **T8** | [`08-streaming-daemon/`](./08-streaming-daemon/) | CoinGecko + Binance.us | ~30 s | 🌊 `stream()` for paginated bulk export at O(1) memory — plus the `stateful_polling=True` single-source shim. |
@@ -29,6 +29,7 @@ The curriculum alternates CoinGecko-heavy steps with non-CoinGecko domain exampl
 | [`appendix/pokeapi-etl/`](./appendix/pokeapi-etl/) | T5 | Paginated HATEOAS drill + array reductions via `calc()`. |
 | [`appendix/crypto-graph-mapping/`](./appendix/crypto-graph-mapping/) | T10 | `link_to`-based in-memory join — T10's pattern as a one-shot. |
 | [`appendix/nascar-tideweaver/`](./appendix/nascar-tideweaver/) | T11 | Tideweaver diamond on race telemetry (laps + pits + flags). |
+| [`appendix/mlb-pulse/`](./appendix/mlb-pulse/) | T11 + T5 | Live sports analytics: four MLB Stats API endpoints joined inside a Tideweaver window. |
 | [`appendix/tideweaver-parquet-snapshots/`](./appendix/tideweaver-parquet-snapshots/) | T11 | Safe Parquet writes inside a Tideweaver window. |
 | [`appendix/tideweaver-vs-prefect/`](./appendix/tideweaver-vs-prefect/) | T11 | In-process vs cloud orchestration decision matrix. |
 

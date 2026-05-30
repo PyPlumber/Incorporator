@@ -1,14 +1,21 @@
 ﻿# CLI & Pipeline Configuration
 
-The Incorporator CLI transforms the framework from a lightweight micro-client into an **Autonomous Pipeline Daemon**. 
+The Incorporator CLI runs the same `stream` / `fjord` / `tideweaver` verbs from a JSON config file — no Python required to operate a pipeline in a container or service.
 
-By defining your extraction, enrichment, and loading rules in a simple JSON file, you can run infinite streams in the background—perfect for Docker containers, systemd services, or live data scraping.
+By defining your extraction, enrichment, and loading rules in a JSON file, you can run long-running polling daemons in the background — suited for Docker containers, systemd services, or scheduled scraping jobs.
 
 ## 1. Prerequisites
-To use the CLI, you must install Incorporator with the Orchestration upgrades:
+To use the CLI, install Incorporator with the `[orchestrate]` extra:
 ```bash
 pip install "incorporator[orchestrate]"
 ```
+
+> **What `[orchestrate]` installs.** This extra bundles two dependencies:
+> `typer>=0.9.0` (required for the CLI entry point) and `prefect>=2.10.0`
+> (required only if you use `incorporator.integrations.prefect` — the Prefect
+> flow wrapper). Both are hard deps of the extra. If you use Prefect elsewhere
+> in the same env, pin them together; if you don't need Prefect, consider
+> installing typer directly and importing the CLI integration separately.
 
 ---
 
@@ -61,8 +68,10 @@ wave shape, same kwarg vocabulary — but the underlying execution differs:
 
 ### Chunking mode (`"stateful_polling": false`)
 *   **Best for:** 10M+ row databases, massive CSV files, or heavily paginated APIs.
-*   **Behavior:** Strictly enforces O(1) memory. Fetches a single chunk, enriches it,
-    saves it to disk, and **completely flushes the RAM** before fetching the next chunk.
+*   **Behavior:** Each chunk is fetched, enriched, written to disk, and released
+    before the next chunk is fetched — keeping the live object count bounded to
+    one chunk at a time. User outflow callbacks that hold external references
+    break this bound; in-built export paths do not.
 
 ### Stateful mode (`"stateful_polling": true`)
 *   **Best for:** Live dashboards, 100 stock tickers, or 50 IoT sensors.
@@ -175,6 +184,36 @@ Best-practice picks:
 `incorporator validate <config.json>` runs the expansion and reports
 which variable is missing — so you find out before the network call
 fails with a confusing 401.
+
+### Sandboxing `${file:...}` with `INCORPORATOR_SECRETS_ROOT`
+
+By default, `${file:/any/absolute/path}` will read any file the process
+user can access. Set `INCORPORATOR_SECRETS_ROOT` to lock `${file:...}`
+references to a specific directory tree:
+
+```bash
+INCORPORATOR_SECRETS_ROOT=/run/secrets incorporator stream pipeline.json
+```
+
+Any `${file:...}` path that resolves outside the configured root raises
+`EnvExpansionError` at load time — before any network call is made. The
+resolved path (not the file contents) appears in the error message so
+the issue is diagnosable without leaking secrets.
+
+This sandbox is relevant whenever `pipeline.json` (or any file it
+references) is not fully under your control — for example, in a
+multi-tenant deployment or when the config is injected at container
+start-up via an external system.
+
+```yaml
+# docker-compose.yml excerpt
+environment:
+  INCORPORATOR_SECRETS_ROOT: /run/secrets
+secrets:
+  - api_key
+```
+
+Source: `incorporator/cli/envexpand.py:124-182`.
 
 ---
 
@@ -339,7 +378,7 @@ incorporator stream pipeline.json --poll 3600.0 --logs
 Terminal output is suppressed, and telemetry is routed to non-blocking background OS threads. Incorporator will automatically create a `logs/` directory and generate three rotating JSON Lines files (max 15MB each):
 
 1.  **`logs/{Class}_api.log`**: Tracks all successful HTTP traffic, rate limits, and chunk throughput.
-2.  **`logs/{Class}_error.log`**: The Dead Letter Queue (DLQ). Catches network timeouts, 400/500 status codes, and malformed data schemas.
+2.  **`logs/{Class}_error.log`**: Structured failure records (RejectEntry). Catches network timeouts, 400/500 status codes, and malformed data schemas.
 3.  **`logs/{Class}_debug.log`**: Deep framework execution traces for local troubleshooting.
 
 Every `Wave` yielded by the pipeline is also routed to these
@@ -579,20 +618,18 @@ Five `shape` values are supported, each driving a different edge layout:
 list for mixed-mode topologies).  See [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md)
 for the full walk-through plus the Python-API equivalents.
 
-> **Legacy alias.** The JSON loader accepts `"dependency_mode"` as a
-> one-release alias for `"gate_mode"` at the top level (chain / diamond /
-> fanout shapes), and `"mode"` as an alias for `"gate_mode"` on per-edge
-> entries.  New configs should use the canonical names; the aliases will
-> be removed in a future minor release.
+> **Removed keys.** `"dependency_mode"` (top-level) and `"mode"` (per-edge)
+> were removed in v1.3.0. Using either now raises `ValueError` with migration
+> guidance: rename to `"gate_mode"`. There is no silent back-compat path.
 
 ### Per-edge flow control
 
 Beyond `gate_mode`, watershed.json supports the full per-edge **canal
-toolkit** — five orthogonal primitives composable into a `FlowControl`:
-gating, surge override, rate limiting, wave buffering, and overflow
-handling.  Use the shape-level `"flow": {...}` to share one FlowControl
-across every shape-built edge, or the explicit `"edges"` list with a
-per-edge `"flow"` for mixed topologies:
+toolkit** — six orthogonal primitives composable into a `FlowControl`:
+gating, surge override, rate limiting, wave buffering, overflow handling,
+and declarative telemetry.  Use the shape-level `"flow": {...}` to share
+one FlowControl across every shape-built edge, or the explicit `"edges"`
+list with a per-edge `"flow"` for mixed topologies:
 
 ```json
 {
@@ -625,6 +662,7 @@ per-edge `"flow"` for mixed topologies:
 | **`penstock`** | `"sustained"` / `"burst"` / `"window"` / `"backpressure"` / `"signal"` | Edge-level rate limit. `sustained` flat rate; `burst` token bucket; `window` sliding-window cap; `backpressure` interpolates `max_rate → min_rate` as the reservoir fills; `signal` calls a user `rate_fn` callable. Returns skip reason `"penstock_limited"`. |
 | **`reservoir`** | (single shape — `depth: 1..1024`) | Per-edge FIFO buffer of recent waves. Default `depth: 1` keeps just the latest. |
 | **`spillway`** | `"drop_oldest"` / `"raise_overflow"` / `"export_to_archive"` | Fires when a wave is displaced from a full reservoir. `drop_oldest` is silent; `raise_overflow` logs a WARNING; `export_to_archive` extends `archive_cls._spillway_backlog` (strong refs). |
+| **`observer`** | `NullObserver` / `LoggingObserver` / `SignalObserver` (or a `FlowObserver` subclass) | Declarative per-edge telemetry. Hooks: `on_fire`, `on_skip`, `on_spillway`, `on_reservoir_level`. Synchronous and cheap — the scheduler does not await them. Configure via the Python API; no JSON type-tag is resolved yet. |
 
 **Sidecar string resolution:** `SignalPenstock.rate_fn` accepts either a
 bare name (`"peak_rate"`, looked up on the watershed-level `outflow.py`)
@@ -662,7 +700,7 @@ In addition to `tide_number`, `fired`, `skipped`, `duration_sec`, and
 | `wake_reason` | `Literal["startup", "timer", "wake_event", "pass_interval", "shutdown"]` | Why the scheduler woke for this pass |
 | `heap_depth` | `int` | Pending tick count on the heap at pass start |
 | `in_flight_count_at_start` | `int` | Tick functions still running when the pass began |
-| `current_outcomes` | `list[CurrentOutcome]` | Per-current outcome (`name`, `status`, `reason`, `bypassed_edges`, `in_flight_sec`, `last_wave_at`) |
+| `current_outcomes` | `list[CurrentOutcome]` | Per-current outcome (`name`, `status`, `reason`, `bypassed_edges`, `in_flight_sec`, `last_wave_at`, `parent_snapshot_size`) |
 | `canal_rejects_added` | `int` | New `RejectEntry` records this pass appended to `tw.rejects` |
 | `next_due_in_sec` | `float \| None` | Seconds until the next scheduled tick (negative means the scheduler is behind) |
 

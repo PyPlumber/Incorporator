@@ -1,8 +1,9 @@
 ﻿***
 
 > 📑 **Reference** — production-debugging deep dive. Not a numbered
-> tutorial; reach for this when you need durable error logs and DLQ
-> retry patterns for a `stream()` / `fjord()` pipeline.
+> tutorial; reach for this when you need durable error logs and a
+> structured retry loop via RejectEntry for a `stream()` / `fjord()`
+> pipeline.
 
 ***
 
@@ -34,7 +35,7 @@ process, retrievable in your own Python with one async call.
    └─────────────┬───────────┘
                  │
                  ▼
-       await Class.get_error()   ───►  List[dict]  ───►  DLQ retry
+       await Class.get_error()   ───►  list[dict]  ───►  retry loop via RejectEntry
 ```
 
 `failed_sources` is the **live** view (this wave); `get_error()` is
@@ -74,7 +75,7 @@ class Webhook(LoggedIncorporator):
 
 
 async def main():
-    # Mix of good + bad URLs to exercise the DLQ path.
+    # Mix of good + bad URLs to exercise the rejects path.
     sources = [
         "https://jsonplaceholder.typicode.com/users/1",
         "https://jsonplaceholder.typicode.com/users/2",
@@ -104,20 +105,20 @@ parsed dict. Disk read runs in a worker thread.
 errors = await Webhook.get_error()
 
 for record in errors:
-    print(record["timestamp"], "—", record["msg"])
+    print(record["time"], "—", record["msg"])
     # Each record contains:
     #   level:     "ERROR"
     #   msg:       human-readable summary
     #   meta:      flat key:"value" summary (class, identity, origin)
     #   wave:      full Wave dump (chunk index, rows, failed_sources, etc.)
-    #   timestamp: ISO-8601
+    #   time: ISO-8601 string
 ```
 
 Safe to call when no errors have been logged yet — returns `[]`.
 
 ---
 
-## Step 4: Wire It Into a DLQ Retry Loop
+## Step 4: Wire It Into a Rejects Retry Loop
 
 The production pattern: drain `get_error()`, extract the failed URLs
 from each record's `wave.failed_sources`, and reissue them as a
@@ -126,19 +127,19 @@ follow-up `incorp()` call.
 ```python
 async def retry_failed_webhooks():
     errors = await Webhook.get_error()
-    dlq_urls = []
+    reject_urls = []
     for record in errors:
         wave = record.get("wave") or {}
-        dlq_urls.extend(wave.get("failed_sources", []))
+        reject_urls.extend(wave.get("failed_sources", []))
 
-    if not dlq_urls:
-        print("✅ No DLQ entries — pipeline is clean.")
+    if not reject_urls:
+        print("✅ No rejected sources — pipeline is clean.")
         return
 
     # Dedup before retry — the same URL may appear across multiple waves.
-    dlq_urls = list(set(dlq_urls))
-    print(f"♻️  Retrying {len(dlq_urls)} previously-failed URLs.")
-    return await Webhook.incorp(inc_url=dlq_urls, inc_code="id", enable_logging=True)
+    reject_urls = list(set(reject_urls))
+    print(f"♻️  Retrying {len(reject_urls)} previously-failed URLs.")
+    return await Webhook.incorp(inc_url=reject_urls, inc_code="id", enable_logging=True)
 ```
 
 That's the entire reject-retry shape. No external queue service, no log
@@ -154,15 +155,15 @@ warning.
 
 ### 1. Structured rejects (`entry.error_kind`, `entry.retry_after`)
 
-`failed_sources: List[str]` is the legacy bare-string view; the
-structured equivalent is `result.rejects: List[RejectEntry]`. Each
+`failed_sources: list[str]` is the legacy bare-string view; the
+structured equivalent is `result.rejects: list[RejectEntry]`. Each
 entry carries `source` + `error_kind` (the exception class name) +
 `message` + `retry_after` (parsed from any HTTP `Retry-After`
 header) + `wave_index`. Reach for it when retry orchestration
 needs to honour the server's backoff hints:
 
 ```python
-from incorporator import Incorporator, RejectEntry
+from incorporator import RejectEntry
 
 result = await Webhook.incorp(inc_url=urls, enable_logging=True)
 for entry in result.rejects:
@@ -247,7 +248,7 @@ subscribes.
 | Situation | Use `get_error()`? |
 |---|---|
 | Post-run audit of a batch `incorp()` | ✅ Yes — one async call, get structured records |
-| DLQ retry orchestrator | ✅ Yes — feed `wave.failed_sources` back into `incorp()` |
+| Rejects retry orchestrator | ✅ Yes — feed `wave.failed_sources` back into `incorp()` |
 | Live observability during a `stream()` | ❌ No — read `wave.failed_sources` off the live wave |
 | Cross-process inspection (separate retry worker) | ✅ Yes — the log file is the contract |
 
