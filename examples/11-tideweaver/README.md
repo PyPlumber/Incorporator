@@ -186,6 +186,12 @@ watershed = Watershed.chain(
 )
 ```
 
+`gate_mode=` also accepts the `GateMode` enum (`from
+incorporator.observability.tideweaver import GateMode`;
+`GateMode.HARD` / `GateMode.SOFT` / `GateMode.WEIR`) — both forms
+produce identical `FlowControl` because `GateMode` is a `str`-subclass.
+The JSON form below always uses the lowercase string.
+
 Skip-ahead: when `gate_mode="hard"`, every edge gets a default
 `SurgeBarrier(threshold_multiple=2.0, action="skip")` — if A's tick has been
 running longer than `2.0 × b.interval`, B skips this pass with reason
@@ -538,9 +544,11 @@ for rec in tides:
     print(t["tide_number"], t["fired"], t["duration_sec"])
 ```
 
-`get_tides()` reads both `_error.log` and `_debug.log` (tides land in both
-depending on severity) and deduplicates by `tide_number`.  `get_rejects()`
-reads `_error.log` only — each dict has a top-level `"reject"` key.
+`get_tides()` reads the dedicated `logs/<logger_name>_tide.log` file
+(written by the `TideFilter` log router) and returns the records sorted
+by `tide_number` — single-file read, no merge or dedup needed.
+`get_rejects()` reads `_error.log` only — each dict has a top-level
+`"reject"` key.
 
 ### Green-wave coordination with `phase_offset_sec`
 

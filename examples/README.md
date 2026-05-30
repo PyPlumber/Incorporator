@@ -42,6 +42,19 @@ The curriculum alternates CoinGecko-heavy steps with non-CoinGecko domain exampl
 - `daemon-mode.json` — stateful polling daemon with decoupled refresh/export.
 - `with-auth.json` — bearer-token via `${API_KEY}` env expansion.
 
+## Checking optional dependencies
+
+Many tutorials require optional extras (e.g., T2 needs `[avro]`, T3 needs `[parquet]`, T9 / T10 / T11 benefit from `[speedups]`).  Run `incorporator deps` to see what's installed and what each extra unlocks before starting:
+
+```bash
+incorporator deps                  # tabular: name / category / extra / status / install hint
+incorporator deps --missing        # only the deps you don't have
+incorporator deps --category format  # filter by category (speedup / format / orchestrate / platform_fix)
+incorporator deps --json           # machine-readable for CI gates
+```
+
+Same data is available programmatically as `from incorporator import list_deps, Category, install_hint, DepInfo`.
+
 ## Running a tutorial
 
 Each tutorial directory is runnable from anywhere in the repo:
