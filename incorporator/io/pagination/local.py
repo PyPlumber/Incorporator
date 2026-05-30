@@ -89,7 +89,7 @@ class _LocalChunkedPaginator(AsyncPaginator):
                 paginators.
 
         Yields:
-            ``List[Dict[str, Any]]`` — one chunk of up to ``chunk_size``
+            ``list[dict[str, Any]]`` — one chunk of up to ``chunk_size``
             rows per iteration, consumed directly by the instantiation engine.
         """
         if self.is_exhausted:

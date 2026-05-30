@@ -1,9 +1,10 @@
 """Edge flow-control primitives — gates, surge barriers, penstocks, reservoirs, spillways.
 
-:class:`FlowControl` composes five orthogonal per-edge primitives:
+:class:`FlowControl` composes six orthogonal per-edge primitives:
 gating (:class:`Gate`), conditional override (:class:`SurgeBarrier`),
 flow-rate limiting (:class:`Penstock`), wave buffering
-(:class:`Reservoir`), and overflow handling (:class:`Spillway`).
+(:class:`Reservoir`), overflow handling (:class:`Spillway`), and
+declarative telemetry hooks (:class:`FlowObserver`).
 
 :class:`Penstock` and its concrete subclasses (:class:`SustainedPenstock`,
 :class:`BurstPenstock`, :class:`WindowPenstock`, :class:`SignalPenstock`,

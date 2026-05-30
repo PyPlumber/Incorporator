@@ -404,7 +404,7 @@ class Incorporator(BaseModel):
         Headline kwargs:
 
         - ``inc_url`` / ``inc_file`` — HTTP source or local path; a
-          ``List[str]`` triggers concurrent fan-out.
+          ``list[str]`` triggers concurrent fan-out.
         - ``inc_code`` / ``inc_name`` — source-field names used as the
           registry key and the human-readable label.
         - ``inc_parent`` / ``inc_child`` — Parent-Child HATEOAS
@@ -432,8 +432,8 @@ class Incorporator(BaseModel):
 
         Args:
             inc_url: HTTP source. ``str`` for a single endpoint;
-                ``List[str]`` triggers concurrent fan-out.
-            inc_file: Local file path. Same ``str`` / ``List[str]``
+                ``list[str]`` triggers concurrent fan-out.
+            inc_file: Local file path. Same ``str`` / ``list[str]``
                 polymorphism. Compressed archives (``.gz``, ``.bz2``,
                 ``.xz``, ``.zip``, ``.tar``) are auto-detected and
                 transparently decompressed.
@@ -493,8 +493,8 @@ class Incorporator(BaseModel):
 
             ``IncorporatorList[TIncorporator]``: A list wrapper for multiple
             records. The list also carries ``.failed_sources`` containing
-            URLs/paths that hit permanent 429 / network errors — the Dead
-            Letter Queue for programmatic retry.
+            URLs/paths that hit permanent 429 / network errors — the structured
+            rejects surface for programmatic retry — see :attr:`IncorporatorList.rejects`.
 
         Raises:
             ValueError: When no source is provided (no ``inc_url``,
@@ -1240,7 +1240,7 @@ class Incorporator(BaseModel):
             - ``operation`` (str): ``"chunk"``, ``"incorp"``, ``"refresh"``,
               or ``"export"``.
             - ``rows_processed`` (int): Row count for this iteration.
-            - ``failed_sources`` (List[str]): URLs/paths that failed.
+            - ``failed_sources`` (list[str]): URLs/paths that failed.
             - ``processing_time_sec`` (float): Wall-clock duration.
             - ``timestamp`` (datetime): UTC instant of completion.
 
@@ -1744,7 +1744,9 @@ class Incorporator(BaseModel):
                   form to nominate a tail Fjord (``{"verb": "fjord", ...}``).
             output: ``"report"`` prints inspector output + cross-source hints;
                 ``"python"`` emits a paste-ready Python module; ``"json"``
-                emits a paste-ready ``watershed.json`` body.  Default: ``"report"``.
+                emits a paste-ready ``watershed.json`` body; ``"plan"`` returns
+                the structured OrchestrationPlan dataclass directly (no print,
+                no rendering).  Default: ``"report"``.
             shared_kwargs: Common ``incorp()`` kwargs applied to every probe
                 (``timeout``, ``headers``, ...).  Per-source kwargs win on
                 conflict.
@@ -1752,6 +1754,9 @@ class Incorporator(BaseModel):
         Returns:
             ``None`` for ``output="report"`` (prints only).  The rendered
             scaffold string for ``"python"`` and ``"json"`` (also printed).
+            The :class:`OrchestrationPlan` dataclass for ``"plan"`` — pair
+            with ``OrchestrationPlan.to_watershed(window, classes)`` for the
+            in-memory probe → tune → run handoff.
 
         See :mod:`incorporator.observability.tideweaver.architect` for the
         full implementation — this classmethod is a thin shim that delegates

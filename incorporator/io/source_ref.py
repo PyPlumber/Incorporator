@@ -27,7 +27,7 @@ class SourceRef:
     - ``"parent"`` — a previous Incorporator graph; ``value`` is an
       :class:`Incorporator` or :class:`IncorporatorList`.
     - ``"payload"`` — a per-request POST body list; ``value`` is
-      ``List[Dict[str, Any]]``.
+      ``list[dict[str, Any]]``.
     - ``"kwargs"`` — escape hatch carrying a raw ``incorp()`` kwargs
       dict (used by architect's per-source dispatch); ``value`` is a
       dict.
@@ -135,7 +135,7 @@ class SourceRef:
         )
 
     def as_str(self) -> str:
-        """Flat string representation for back-compat with the legacy ``List[str]`` contract.
+        """Flat string representation for back-compat with the legacy ``list[str]`` contract.
 
         URL and file kinds return their string form; parent / payload /
         kwargs kinds return the empty string (callers that route these

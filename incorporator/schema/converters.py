@@ -353,7 +353,7 @@ RANKED_CONVERTERS: dict[Any, list[Callable[[Any], Any]]] = {
 def _get_cached_adapter(actual_type: Any) -> TypeAdapter[Any] | None:
     """Per-type ``TypeAdapter`` factory, memoised.
 
-    The cache is keyed by ``actual_type`` (X | None, X | Y, List[int],
+    The cache is keyed by ``actual_type`` (X | None, X | Y, list[int],
     custom Pydantic models, etc).  Cardinality is bounded by program
     structure — number of distinct types passed to ``inc()`` across the
     process lifetime — so 4096 comfortably absorbs Tideweaver topologies

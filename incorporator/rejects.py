@@ -1,7 +1,7 @@
 """RejectEntry — structured failure record for ``IncorporatorList``.
 
 The in-memory counterpart of :attr:`IncorporatorList.failed_sources` —
-a flat ``List[str]`` of URLs / file paths / source identifiers — but
+a flat ``list[str]`` of URLs / file paths / source identifiers — but
 carrying the exception type, message, ``Retry-After`` hint, and parent
 wave index so retry orchestrators can act on structured data without
 re-parsing strings.

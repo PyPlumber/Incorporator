@@ -16,14 +16,15 @@ class Wave(BaseModel):
     """Per-chunk telemetry record yielded by a running pipeline — what a DX inspects to watch progress.
 
     Use it for real-time progress monitoring, failed-source detection
-    (route to a DLQ), and feeding downstream dashboards as the chunked
-    drain advances across an overnight window:
+    (route into a retry loop via :attr:`Wave.failed_sources`), and feeding
+    downstream dashboards as the chunked drain advances across an overnight
+    window:
 
     .. code-block:: python
 
         async for wave in Coin.stream(...):
             if wave.failed_sources:
-                log_dlq(wave.failed_sources)
+                enqueue_retries(wave.failed_sources)
             if wave.rows_processed > 1000:
                 notify_slack(f"Wave {wave.chunk_index}: {wave.rows_processed} rows")
 

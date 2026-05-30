@@ -77,7 +77,7 @@ class IncorporatorList(list[T]):
         # (List[str], auto-wrapped into minimal RejectEntry objects).  Passing both raises.
         if failed_sources is not None and rejects is not None:
             raise ValueError(
-                "IncorporatorList: pass `failed_sources` (legacy List[str]) OR `rejects` (List[RejectEntry]), not both."
+                "IncorporatorList: pass `failed_sources` (legacy list[str]) OR `rejects` (list[RejectEntry]), not both."
             )
         if rejects is not None:
             self._rejects: list[RejectEntry] = list(rejects)

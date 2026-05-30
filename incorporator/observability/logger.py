@@ -251,7 +251,7 @@ def _read_filtered(filename: str, key: str) -> list[dict[str, Any]]:
 
 
 class JSONFormatter(logging.Formatter):
-    """Emit one JSON-line record per log call for grep, aggregators, and DLQ retrieval.
+    """Emit one JSON-line record per log call for grep, aggregators, and structured retrieval via :meth:`get_rejects`.
 
     `jq`, log aggregators, and :meth:`LoggingMixin.get_error` all read
     these records back without a regex.  Wired automatically onto every
@@ -436,7 +436,7 @@ class LoggingMixin:
 
     @classmethod
     async def get_error(cls) -> list[dict[str, Any]]:
-        """Pull every error this class has logged for a DLQ-retry pass after an overnight pipeline finishes.
+        """Pull every error this class has logged for a retry pass over rejects after an overnight pipeline finishes.
 
         Reach for ``get_error()`` when a stream or fjord daemon has
         drained against a flaky source and you want a structured list
@@ -665,7 +665,7 @@ class LoggingMixin:
         ``except`` blocks to attach the active traceback to the record.
         Retrievable later via :meth:`get_error`, which returns this and
         every other error the class has logged as a list of parsed
-        records suitable for a DLQ-retry pass.
+        records suitable for a retry loop fed from rejects.
 
         Example::
 
@@ -707,7 +707,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     """Drop-in for :class:`Incorporator` with structured JSON-line logs.
 
     Swap in when an overnight pipeline needs records you can grep, ship to
-    an aggregator, or feed into a DLQ-retry loop.  Subclass
+    an aggregator, or feed into a retry loop fed from rejects.  Subclass
     ``LoggedIncorporator`` exactly like ``Incorporator``, then
     pass ``enable_logging=True`` on any verb call to wire up rotating
     JSONL files at ``logs/<ClassName>_{api,error,debug}.log``.  Every

@@ -472,11 +472,9 @@ class BoundPenstock:
     async def acquire(self) -> None:
         """Throttle one consumption — sleeps under the lock until permitted.
 
-        The lock is constructed lazily on first acquire so that
-        :func:`resolve_penstock` can run in a synchronous context on
-        Python 3.9, where ``asyncio.Lock()`` eagerly resolves the event
-        loop.  By the time ``acquire`` runs, we are inside a coroutine
-        and a running loop is guaranteed.
+        The lock is constructed lazily on first acquire so :func:`resolve_penstock`
+        can safely run in synchronous module-import contexts where no event loop
+        is yet running.
         """
         lock = self.lock
         if lock is None:

@@ -613,7 +613,7 @@ def _normalize_source_list(
     source: Any,
     payload_list: list[Any] | None,
 ) -> list[str]:
-    """Normalises any single-source-or-list input into a flat ``List[str]``.
+    """Normalises any single-source-or-list input into a flat ``list[str]``.
 
     Accepts:
       * ``str`` (URL or local path) → single-element list.
@@ -631,7 +631,7 @@ def _normalize_source_list(
 
     Internal: routes every kind through :class:`SourceRef` — URL / file /
     kwargs via :meth:`SourceRef.parse`, payload-list via
-    :meth:`SourceRef.from_payload`.  The flat ``List[str]`` return
+    :meth:`SourceRef.from_payload`.  The flat ``list[str]`` return
     contract is preserved by :meth:`SourceRef.as_str` (URL / file kinds
     return their string form; payload / kwargs / parent kinds return
     ``""`` so the fetch dispatcher's per-source loop reads
