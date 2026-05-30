@@ -325,8 +325,10 @@ def parses_as_datetime(value: Any) -> bool:
         value: The raw value to test.
 
     Returns:
-        ``True`` if :func:`_fallback_date` can parse the value,
-        ``False`` otherwise (including garbage values and ``None``).
+        True if :func:`classify` categorises ``value`` as
+        :attr:`DataKind.DATETIME` (i.e., the value parses as a datetime
+        via the unified type ladder; garbage values short-circuit to
+        False).
     """
     return classify(value) == DataKind.DATETIME
 
@@ -340,8 +342,8 @@ def parses_as_int(value: Any) -> bool:
         value: The raw value to test.
 
     Returns:
-        ``True`` if :func:`_fallback_int` can parse the value,
-        ``False`` otherwise (including garbage values and ``None``).
+        True if :func:`classify` categorises ``value`` as
+        :attr:`DataKind.INT` (garbage values short-circuit to False).
     """
     return classify(value) == DataKind.INT
 
@@ -358,9 +360,12 @@ def parses_as_float(value: Any) -> bool:
         value: The raw value to test.
 
     Returns:
-        ``True`` if :func:`_fallback_float` can parse the value (including
-        integer inputs), ``False`` otherwise (including garbage values and
-        ``None``).
+        True if :func:`classify` categorises ``value`` as
+        :attr:`DataKind.FLOAT` OR :attr:`DataKind.INT` — integers
+        satisfy the float predicate (back-compat: the pre-classify
+        implementation accepted any value that ``float()`` could parse,
+        which includes int-valued strings). Garbage values short-circuit
+        to False.
     """
     return classify(value) in (DataKind.INT, DataKind.FLOAT)
 
