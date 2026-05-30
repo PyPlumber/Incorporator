@@ -283,6 +283,7 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
   print(report.render())   # hint blocks, sorted by severity
   ```
 * **Keyed reject audit + backlog short-circuit.** `Tideweaver.rejects` returns a `list[RejectEntry]` whose `error_kind` is one of `"PenstockLimited"`, `"SurgeHalted"`, `"SkipAhead"`, `"GateBlocked"` — every canal-layer skip that never reached a tick body lands here, with `from_name` / `to_name` / `cooldown_sec` populated for keyed analysis. Set `backlog_backoff_factor=2.0` on the `Tideweaver` constructor to extend the next-pass wait when the scheduler is consistently saturated; the default `1.0` is disabled.
+* **Optional-dependency introspection** — `incorporator deps` (CLI) + `list_deps()` / `install_hint()` / `Category` / `DepInfo` (Python API) surface which extras are installed and what each one unlocks; JSON output for CI health checks. → [`docs/cli_and_configuration.md`](./docs/cli_and_configuration.md)
 * **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML. → [Tutorial 3](./examples/03-universal-formats/README.md)
 
 ---

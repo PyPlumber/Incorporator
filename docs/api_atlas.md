@@ -595,7 +595,7 @@ The windowed orchestration verb — when one source's `stream()` isn't enough, w
 - `currents=[...]` — list of `Stream` / `Fjord` / `Export` (or bare `Current` for tests).
 - `edges=[...]` — explicit edges; each `Edge(from_name=..., to_name=..., gate_mode="hard"/"soft"/"weir")` shorthand or `flow=FlowControl(...)` full-dict form.
 - `inflow=` / `outflow=` — graph-level sidecar defaults; per-current values win.
-- `gate_mode` (shape constructors) — `"hard"` (default), `"soft"`, or `"weir"`. Mutually exclusive with `flow=`.
+- `gate_mode` (shape constructors) — `"hard"` (default), `"soft"`, or `"weir"`.  Accepts both plain strings and the `GateMode` enum (`from incorporator.observability.tideweaver import GateMode; GateMode.HARD`); both forms produce identical `FlowControl` because `GateMode` is a `str`-subclass.  Mutually exclusive with `flow=`.
 - `flow` (shape constructors) — full `FlowControl(...)` shared across every edge produced by the shape. Mutually exclusive with `gate_mode=`.
 - `drain_timeout` — seconds the scheduler waits for in-flight ticks at window close.
 - `pass_interval` (`Tideweaver`) — override the auto-derived scheduler tick.
@@ -685,6 +685,27 @@ The post-window feedback loop.  After a Tideweaver run, feed the accumulated `tw
 **See also**
 [Tutorial 11 — Post-run tuning](../examples/11-tideweaver/README.md#post-run-tuning) ·
 [Production Debugging — Orchestration debugging](./debugging.md#orchestration-debugging--loggedtideweaver--architecttune)
+
+---
+
+### Scheduler-event enums — `SkipReason` / `WakeReason` / `GateMode`
+
+**Import**
+```python
+from incorporator.observability.tideweaver import SkipReason, WakeReason, GateMode
+```
+
+All three are `str`-subclass enums — equality against plain string literals keeps working, and Pydantic v2 serialises the value (not the name), so wire format is unchanged.
+
+| Enum | Members | Where it surfaces |
+|---|---|---|
+| `SkipReason` | `STILL_RUNNING`, `NOT_DUE`, `PHASE_OFFSET`, `AWAITING_UPSTREAM`, `SKIP_AHEAD`, `SURGE_HALTED`, `PENSTOCK_LIMITED` | `tide.skipped: list[(name, reason)]` and `RejectEntry.error_kind` for canal-layer skips |
+| `WakeReason` | `STARTUP`, `TIMER`, `WAKE_EVENT`, `PASS_INTERVAL`, `SHUTDOWN` | `tide.wake_reason` |
+| `GateMode` | `HARD`, `SOFT`, `WEIR` | Shape constructors (`Watershed.chain` / `diamond` / `fanout`) and `Edge(gate_mode=...)`; accepts either the enum or a plain string |
+
+The source-of-truth module is `incorporator/observability/tideweaver/reasons.py` (`SkipReason`, `WakeReason`) and `flow.py` (`GateMode`).
+
+**Gate hierarchy note**: `HardLock`, `SoftPass`, and `Weir` are thin shells over `Gate` — they inherit a single `gate_reason(ctx)` body and override three ClassVar check flags (`_check_in_flight`, `_check_freshness`, `_check_consumed`).  Authors of custom `Gate` subclasses can do the same, or override `gate_reason()` directly.
 
 ---
 
@@ -1082,7 +1103,7 @@ from incorporator.observability.tideweaver import LoggedTideweaver
 1. Construct exactly like `Tideweaver(...)`; disk I/O routes through the same `QueueHandler`-backed background thread as `LoggedIncorporator` — the event loop never blocks on log writes.
 2. On every yielded `Tide`, route to `_error.log` (INFO/ERROR severity) and `_debug.log` (DEBUG passes including no-ops).  Both files receive tide records — severity controls which file a given pass lands in.
 3. On every accumulated `RejectEntry` (swept in a `finally` block so records land on disk even under cancellation), emit a JSON-line to `logs/<logger_name>_error.log`.
-4. `get_tides(logger_name)` reads **both** `_error.log` and `_debug.log`, merges the records, and deduplicates by `tide_number` — this is the only way to recover the full population of passes for a session.
+4. `get_tides(logger_name)` reads the dedicated `logs/<logger_name>_tide.log` file (written by the `TideFilter` log router) and returns the records sorted by `tide_number` — a single-file read replaces the earlier `_error.log` + `_debug.log` merge.
 5. `get_rejects(logger_name)` reads `_error.log` and returns records tagged with a `"reject"` key.
 
 **When to reach for it**
@@ -1096,6 +1117,17 @@ The orchestration-side `LoggedIncorporator` — for Tideweaver pipelines that ne
 
 **Yields / returns**
 Inherits `run()` from `Tideweaver` — `AsyncIterator[Tide]`.  `get_tides(logger_name)` returns `list[dict[str, Any]]` — each dict has a top-level `"tide"` key whose value is the Tide model dump.  `get_rejects(logger_name)` returns `list[dict[str, Any]]` — each dict has a top-level `"reject"` key.  Both return `[]` when no log files exist yet.
+
+**Log-file layout**
+
+When `enable_logging=True`, the runner writes four rotating JSONL files under `logs/<logger_name>_`:
+
+| File | Contents | Reader |
+|---|---|---|
+| `<logger_name>_tide.log` | Every yielded `Tide` (fired + no-op), single source of truth | `LoggedTideweaver.get_tides()` |
+| `<logger_name>_error.log` | Canal-layer `RejectEntry` records + ERROR-severity tides | `LoggedTideweaver.get_rejects()` |
+| `<logger_name>_api.log` | INFO-level api lifecycle records | grep / external tooling |
+| `<logger_name>_debug.log` | Debug-level superset of all passes | grep / external tooling |
 
 **See also**
 [Tutorial 11 — Post-run tuning](../examples/11-tideweaver/README.md#post-run-tuning) ·

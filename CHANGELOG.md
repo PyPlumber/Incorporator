@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-30 — internal grammar gets typed
+
+This session's 11 commits (Chains α through ζ plus docs / docstring
+sweeps) are mostly framework-internal refactors that make the
+scheduler's vocabulary legible at the type level.  No user-facing
+breaking changes; every existing string comparison and JSON shape
+keeps working.
+
+#### Added
+
+- **`SkipReason`, `WakeReason` enums** (`incorporator.observability.tideweaver`).
+  `str`-subclass enums so `SkipReason.SURGE_HALTED == "surge_halted"`
+  stays `True` — existing code that compares `tide.skipped` entries
+  against plain string literals keeps working, and IDEs / mypy now
+  narrow on the typed surface.  Pydantic v2 serialises the value
+  (not the name).  Source: `observability/tideweaver/reasons.py`.
+- **`GateMode` enum** (`incorporator.observability.tideweaver`).
+  `str`-subclass; members `HARD` / `SOFT` / `WEIR`.  Shape constructors
+  (`Watershed.chain` / `diamond` / `fanout`) and `Edge(gate_mode=...)`
+  accept either form — `gate_mode="hard"` and `gate_mode=GateMode.HARD`
+  produce identical `FlowControl`.  Source: `observability/tideweaver/flow.py`.
+- **Per-class `tide.log` file** for `LoggedTideweaver`.  Every yielded
+  `Tide` now lands in a dedicated `logs/<logger_name>_tide.log` in
+  addition to the existing `_api` / `_error` / `_debug` files.
+  `LoggedTideweaver.get_tides()` reads this single file (sorted by
+  `tide_number`) instead of merging `_error.log` + `_debug.log`.
+- **`incorporator deps` CLI + `list_deps()` / `install_hint()` / `Category`
+  / `DepInfo` public API** for runtime optional-dependency introspection.
+  Tabular or JSON output; filterable by category or installed-status.
+  See `docs/cli_and_configuration.md §10` and `docs/api_atlas.md`
+  Optional-dependency introspection section.
+
+#### Changed (internal)
+
+- **`Gate` hierarchy collapsed** — `HardLock` / `SoftPass` / `Weir`
+  no longer carry their own `gate_reason()` bodies.  The base
+  `Gate.gate_reason(ctx)` does the work; subclasses override three
+  ClassVar check flags.  Behaviour unchanged.
+- **`DataPath` + `DataKind` value types** (`schema/path.py`, `schema/kind.py`)
+  + **`classify()`** (`schema/converters.py`).  Internal type-ladder
+  consolidation that replaces four ad-hoc predicates with one walk.
+  The dotted-path surfaces (`rec_path`, `pluck`, `calc` / `calc_all`
+  keys, `inc_code`, `inc_name`, `inc_child`) all route through
+  `DataPath` for identical behaviour.
+- **Optional-dep probes migrated to the `_deps` registry**;
+  `orjson` fast-path now also covers the logger pipeline.
+- **`_emit_payload` helper** in the observability sweep — reduces
+  duplication across the three routing functions
+  (`_route_wave_to_log` / `_route_tide_to_log` / `_route_reject_to_log`).
+
+#### Internal
+
+- `IncorporatorList.failed_sources` cached on first read (perf);
+  baseline micro-benchmarks added under `tests/benchmarks/`.
+- PEP 585 lowercase sweep continued through T9 / T11 outflow
+  sidecars; `DLQ → rejects` rename swept across docstrings.
+- `parses_as_datetime` / `parses_as_int` / `parses_as_float`
+  `Returns:` sections aligned with the `classify`-based
+  implementation.
+
 ## [1.2.2] - 2026-05-26
 
 Docs polish for the v1.2.1 surface.  **Tag-only release** — no PyPI

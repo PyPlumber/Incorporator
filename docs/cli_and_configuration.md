@@ -380,6 +380,7 @@ Terminal output is suppressed, and telemetry is routed to non-blocking backgroun
 1.  **`logs/{Class}_api.log`**: Tracks all successful HTTP traffic, rate limits, and chunk throughput.
 2.  **`logs/{Class}_error.log`**: Structured failure records (RejectEntry). Catches network timeouts, 400/500 status codes, and malformed data schemas.
 3.  **`logs/{Class}_debug.log`**: Deep framework execution traces for local troubleshooting.
+4.  **`logs/{LoggerName}_tide.log`** *(LoggedTideweaver only)*: Every yielded `Tide` (fired and no-op), in `tide_number` order.  Single-file source for `LoggedTideweaver.get_tides(logger_name)` — replaces the earlier "merge `_error.log` + `_debug.log` and dedupe" pattern.  The file name uses the `logger_name` constructor argument, not the class name.
 
 Every `Wave` yielded by the pipeline is also routed to these
 files: the structured `wave` payload appears as a top-level JSON key
@@ -674,6 +675,17 @@ or a `module:attr` form (`"mymodule.signals:peak_rate"`).  Same for
 plus an implicit `SurgeBarrier(threshold_multiple=2.0, action="skip")`
 when `gate_mode="hard"`.  Pass `"flow": {...}` explicitly to opt out of
 the implicit surge barrier on `"hard"`.
+
+**Python API parity — `GateMode` enum.** The shape constructors and `Edge(gate_mode=...)` accept both string form and the `GateMode` enum:
+
+```python
+from incorporator.observability.tideweaver import GateMode, Watershed
+
+Watershed.chain(window=(start, end), currents=[...], gate_mode=GateMode.HARD)
+Watershed.chain(window=(start, end), currents=[...], gate_mode="hard")     # same Watershed
+```
+
+Identical `FlowControl` is produced — `GateMode` is a `str`-subclass so equality against `"hard"` / `"soft"` / `"weir"` keeps working in every comparison.  JSON config (`watershed.json`) continues to use the lowercase strings.
 
 ### Operation tags
 
