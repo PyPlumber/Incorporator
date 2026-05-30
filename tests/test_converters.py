@@ -126,7 +126,7 @@ def test_calc_and_calc_all_markers() -> None:
     assert isinstance(c_op, CalcOp)
     assert c_op.default == 0
     assert c_op.target_type is float
-    assert c_op.input_list == ["mass", "gravity"]
+    assert [p.source for p in c_op.input_list] == ["mass", "gravity"]
 
     # 2. Batch column calc_all
     ca_op = calc_all(dummy_math, target_type=int)

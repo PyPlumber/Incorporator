@@ -15,6 +15,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .converters import _EachSentinel, is_garbage_value
+from .path import DataPath
 
 logger = logging.getLogger(__name__)
 
@@ -299,44 +300,6 @@ def link_to_list(dataset: Any, extractor: Callable[[Any], Any] | None = None) ->
     return _mapper
 
 
-def _drill_path(node: Any, path: str) -> Any:
-    """Walk a dotted path through mixed dict / list structures.
-
-    Single shared walker for every dot-notation drill site in the
-    framework: ``rec_path``, ``pluck``, ``calc``/``calc_all`` input
-    keys, and ``inc_code``/``inc_name`` PK binding.
-
-    Args:
-        node: Raw parsed JSON-like value (typically dict or list).
-        path: Dot-separated path string. Each segment is either a
-            dict key or a digit-only string interpreted as a list
-            position. An empty path returns ``node`` unchanged.
-
-    Returns:
-        The drilled value, or ``None`` if any segment cannot be
-        navigated (missing key, non-digit segment on list,
-        out-of-range index, scalar node mid-walk).
-
-    Note:
-        Pydantic model navigation lives in ``router._get_attr``;
-        this helper operates on raw dict/list structures only.
-    """
-    if not path:
-        return node
-    current: Any = node
-    for part in path.split("."):
-        if current is None:
-            return None
-        if isinstance(current, dict):
-            current = current.get(part)
-        elif isinstance(current, list) and part.isdigit():
-            idx = int(part)
-            current = current[idx] if idx < len(current) else None
-        else:
-            return None
-    return current
-
-
 def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Callable[[Any], Any]:
     """Lift a deeply-nested field to a top-level attribute using a dot-notation path.
 
@@ -377,8 +340,10 @@ def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Callable[[Any]
     a defensive null guard.
     """
 
+    _path = DataPath.parse(key)
+
     def _plucker(val: Any) -> Any:
-        extracted = _drill_path(val, key)
+        extracted = _path.resolve(val)
         if chain is None or is_garbage_value(extracted):
             return extracted
         return chain(extracted)

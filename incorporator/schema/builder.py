@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..exceptions import IncorporatorSchemaError
 from .converters import CalcAllOp, CalcOp, is_garbage_value
-from .extractors import _drill_path
+from .path import DataPath
 
 logger = logging.getLogger(__name__)
 
@@ -147,9 +147,9 @@ def apply_etl_transformations(
                 func = operation.func
                 default = operation.default
                 target_type = operation.target_type if callable(operation.target_type) else None
-                inputs = operation.input_list if operation.input_list else [key]
+                raw_inputs: list[DataPath] = operation.input_list if operation.input_list else [DataPath.parse(key)]
                 for d in dict_items:
-                    args = [_drill_path(d, dep) for dep in inputs]
+                    args = [dep.resolve(d) for dep in raw_inputs]
                     # Align with inc()'s null-handling contract: when EVERY
                     # input value is garbage (None/""/n-a/null/unknown/nan/
                     # undefined), skip the user-supplied func and silently
@@ -178,8 +178,8 @@ def apply_etl_transformations(
                 func = operation.func
                 default = operation.default
                 target_type = operation.target_type if callable(operation.target_type) else None
-                inputs = operation.input_list if operation.input_list else [key]
-                col_args = [[_drill_path(d, dep) for d in dict_items] for dep in inputs]
+                all_inputs: list[DataPath] = operation.input_list if operation.input_list else [DataPath.parse(key)]
+                col_args = [[dep.resolve(d) for d in dict_items] for dep in all_inputs]
                 # Symmetric to CalcOp's pre-check, applied across the full
                 # column matrix: if every cell of every input column is
                 # garbage, skip the func call and default every output row.
@@ -226,13 +226,15 @@ def apply_etl_transformations(
                     d[new_key] = d.pop(old_key)
 
     if code_attr:
+        code_path = DataPath.parse(code_attr)
         for d in dict_items:
-            val = _drill_path(d, code_attr)
+            val = code_path.resolve(d)
             if val is not None:
                 d["inc_code"] = val
     if name_attr:
+        name_path = DataPath.parse(name_attr)
         for d in dict_items:
-            val = _drill_path(d, name_attr)
+            val = name_path.resolve(d)
             if val is not None:
                 d["inc_name"] = val
 

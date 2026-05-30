@@ -18,6 +18,9 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
+from .kind import DataKind
+from .path import DataPath
+
 logger = logging.getLogger(__name__)
 
 # ==========================================
@@ -52,7 +55,7 @@ class CalcOp:
         self.func = func
         self.default = default
         self.target_type = target_type
-        self.input_list = input_list
+        self.input_list = [DataPath.parse(dep) for dep in input_list]
 
 
 class CalcAllOp:
@@ -64,7 +67,7 @@ class CalcAllOp:
         self.func = func
         self.default = default
         self.target_type = target_type
-        self.input_list = input_list
+        self.input_list = [DataPath.parse(dep) for dep in input_list]
 
 
 def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None) -> CalcOp:
@@ -125,7 +128,7 @@ def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target
     Input keys support dot-notation drilling, including integer list indices:
     ``calc(func, "stat.avg", "stat.obp")`` reads from nested sub-dicts.
     Any key of the form ``"a.b.0.c"`` drills through mixed dict/list structures
-    using the shared ``_drill_path`` walker.
+    using :class:`~incorporator.schema.path.DataPath`.
 
     For column-wide aggregation (a single call across every row) use
     :func:`calc_all` instead.
@@ -178,7 +181,7 @@ def calc_all(func: Callable[..., Any], *input_keys: str, default: Any = None, ta
     Input keys support dot-notation drilling, including integer list indices:
     ``calc_all(func, "stat.avg", "stat.obp")`` reads from nested sub-dicts.
     Any key of the form ``"a.b.0.c"`` drills through mixed dict/list structures
-    using the shared ``_drill_path`` walker.
+    using :class:`~incorporator.schema.path.DataPath`.
 
     For per-row computation use :func:`calc` instead.
     """
@@ -270,8 +273,48 @@ def is_garbage_value(value: Any) -> bool:
     return isinstance(value, str) and value.strip().lower() in GARBAGE_VALUES
 
 
+def classify(value: Any) -> DataKind:
+    """Walk the :class:`DataKind` ladder; return the most specific kind ``value`` satisfies.
+
+    Used by ``parses_as_*`` wrappers and the inspector cascade in
+    :mod:`incorporator.tools.inspector`.  Single pass replaces the
+    four-predicate cascade that each wrapper used to run independently.
+
+    Args:
+        value: The raw value to classify.  May be any Python object.
+
+    Returns:
+        The most specific :class:`DataKind` that fits ``value``, from
+        ``GARBAGE`` (most specific) toward ``STRING`` / ``OBJECT`` (least
+        specific).
+    """
+    if is_garbage_value(value):
+        return DataKind.GARBAGE
+    if isinstance(value, bool):
+        return DataKind.BOOL
+    try:
+        _fallback_int(value)
+        return DataKind.INT
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: int(float("inf")) — "inf" parses as float but not int.
+        pass
+    try:
+        _fallback_float(value)
+        return DataKind.FLOAT
+    except (TypeError, ValueError, OverflowError):
+        pass
+    try:
+        _fallback_date(value)
+        return DataKind.DATETIME
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (dict, list)):
+        return DataKind.OBJECT
+    return DataKind.STRING
+
+
 def parses_as_datetime(value: Any) -> bool:
-    """Return True if :func:`_fallback_date` would successfully parse ``value``.
+    """Return ``True`` if ``value`` would parse as a ``datetime``.
 
     The DX Inspector calls this to decide whether to suggest
     ``inc(datetime)`` in ``conv_dict``. Routes through the same parser the
@@ -285,17 +328,11 @@ def parses_as_datetime(value: Any) -> bool:
         ``True`` if :func:`_fallback_date` can parse the value,
         ``False`` otherwise (including garbage values and ``None``).
     """
-    if is_garbage_value(value):
-        return False
-    try:
-        _fallback_date(value)
-        return True
-    except Exception:
-        return False
+    return classify(value) == DataKind.DATETIME
 
 
 def parses_as_int(value: Any) -> bool:
-    """Return True if :func:`_fallback_int` would successfully parse ``value``.
+    """Return ``True`` if ``value`` would parse as an ``int``.
 
     Mirrors :func:`parses_as_datetime` for integer coercion candidates.
 
@@ -306,34 +343,26 @@ def parses_as_int(value: Any) -> bool:
         ``True`` if :func:`_fallback_int` can parse the value,
         ``False`` otherwise (including garbage values and ``None``).
     """
-    if is_garbage_value(value):
-        return False
-    try:
-        _fallback_int(value)
-        return True
-    except Exception:
-        return False
+    return classify(value) == DataKind.INT
 
 
 def parses_as_float(value: Any) -> bool:
-    """Return True if :func:`_fallback_float` would successfully parse ``value``.
+    """Return ``True`` if ``value`` would parse as a ``float``.
 
-    Mirrors :func:`parses_as_datetime` for float coercion candidates.
+    Mirrors :func:`parses_as_datetime` for float coercion candidates.  An
+    integer value also returns ``True`` because every integer is a valid
+    float — ``classify`` returns ``INT`` for ``42``, and this predicate
+    accepts both ``INT`` and ``FLOAT``.
 
     Args:
         value: The raw value to test.
 
     Returns:
-        ``True`` if :func:`_fallback_float` can parse the value,
-        ``False`` otherwise (including garbage values and ``None``).
+        ``True`` if :func:`_fallback_float` can parse the value (including
+        integer inputs), ``False`` otherwise (including garbage values and
+        ``None``).
     """
-    if is_garbage_value(value):
-        return False
-    try:
-        _fallback_float(value)
-        return True
-    except Exception:
-        return False
+    return classify(value) in (DataKind.INT, DataKind.FLOAT)
 
 
 # The Global Ranked Dictionary Engine

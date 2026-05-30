@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
-from ..schema.converters import parses_as_datetime, parses_as_float, parses_as_int
+from ..schema.converters import classify
+from ..schema.kind import DataKind
 
 logger = logging.getLogger(__name__)
 
@@ -278,9 +279,9 @@ def _detect_identity_mapping(profile: SourceProfile) -> None:
 def _detect_type_casting(profile: SourceProfile) -> None:
     """Suggest conv_dict entries by asking the framework's own parsers.
 
-    Routes through :func:`incorporator.schema.converters.parses_as_datetime`
-    and siblings, so the inspector only suggests conversions the runtime
-    would actually accept.
+    Routes through :func:`incorporator.schema.converters.classify` and the
+    :class:`incorporator.schema.kind.DataKind` enum, so the inspector only
+    suggests conversions the runtime would actually accept.
 
     Precedence: datetime > int > float (a numeric ISO date wouldn't reach
     here, but if a string parses as both int and datetime, datetime wins).
@@ -295,7 +296,8 @@ def _detect_type_casting(profile: SourceProfile) -> None:
             continue
         k_lower = str(k).lower()
 
-        if parses_as_datetime(v):
+        kind = classify(v)
+        if kind == DataKind.DATETIME:
             date_candidates.append(k)
             continue
 
@@ -310,7 +312,7 @@ def _detect_type_casting(profile: SourceProfile) -> None:
             for tok in ("count", "total", "amount", "qty", "quantity", "price", "rate", "score", "size", "len")
         )
 
-        if parses_as_int(v):
+        if kind == DataKind.INT:
             # Skip identifier-shaped ints (leading zeros, very long).
             if len(v) > 18 or (len(v) > 1 and v.lstrip("-").startswith("0")):
                 continue
@@ -318,7 +320,7 @@ def _detect_type_casting(profile: SourceProfile) -> None:
                 int_candidates.append(k)
                 continue
 
-        if parses_as_float(v):
+        if kind in (DataKind.INT, DataKind.FLOAT):
             if looks_numeric_key:
                 float_candidates.append(k)
 
