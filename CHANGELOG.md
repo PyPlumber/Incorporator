@@ -38,6 +38,19 @@ keeps working.
   Tabular or JSON output; filterable by category or installed-status.
   See `docs/cli_and_configuration.md §10` and `docs/api_atlas.md`
   Optional-dependency introspection section.
+- **`CustomCurrent.auto_park_snapshot` ClassVar** (default `True`) —
+  the scheduler's `_run_tick` wrapper now automatically parks
+  `list(cls.inc_dict.values())` as `cls._tideweaver_snapshot` after
+  the tick if the tick body didn't manually assign one (identity check
+  on the pre-tick value).  Subclasses opt out with
+  `auto_park_snapshot = False`.  Source:
+  `observability/tideweaver/current.py:318`.
+- **Scheduler empty-output WARNING** — CustomCurrent ticks that
+  succeed but produce empty output despite non-empty upstream
+  snapshot(s) emit a one-line WARNING per pass naming the current and
+  its upstreams.  Helps catch silent predicate / conv_dict
+  mismatches in user tick bodies.  Source:
+  `observability/tideweaver/scheduler.py:818`.
 
 #### Changed (internal)
 
@@ -66,6 +79,14 @@ keeps working.
 - `parses_as_datetime` / `parses_as_int` / `parses_as_float`
   `Returns:` sections aligned with the `classify`-based
   implementation.
+
+#### Examples
+
+- **`examples/09-nascar-fantasy-fjord/nascar_fantasy.py`** adopted
+  the **`inc(int, default=0)` (OUTPUT key == SOURCE key)** DX-first
+  migration over `calc(int, "key", default=0, target_type=int)` for
+  flat-typed integer fields in the FantasyTeam `conv_dict`.  Shorter,
+  reads as "coerce-with-fallback" rather than "compute-from-input".
 
 ## [1.2.2] - 2026-05-26
 
