@@ -16,7 +16,7 @@ Run from the repo root so the relative inc_file / outflow paths resolve:
     incorporator tideweaver run examples/11-tideweaver/watershed.json --json-output
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ class BestMarket(Incorporator):
 
 # Map exchange-native symbol → canonical asset code.  Real production
 # scanners build this dynamically from each exchange's /exchangeInfo feed.
-NORMALIZATION: Dict[str, str] = {
+NORMALIZATION: dict[str, str] = {
     # Binance.us
     "BTCUSDT": "BTC",
     "ETHUSDT": "ETH",
@@ -72,14 +72,14 @@ NORMALIZATION: Dict[str, str] = {
 
 
 def _venue_quotes(
-    rows: List[Any],
+    rows: list[Any],
     symbol_attr: str,
     bid_attr: str,
     ask_attr: str,
     venue: str,
-) -> List[Tuple[str, float, float, str]]:
+) -> list[tuple[str, float, float, str]]:
     """Extract canonical (asset, bid, ask, venue) tuples from one exchange's registry."""
-    out: List[Tuple[str, float, float, str]] = []
+    out: list[tuple[str, float, float, str]] = []
     for row in rows:
         raw = getattr(row, symbol_attr, None)
         if raw is None:
@@ -102,7 +102,7 @@ def _venue_quotes(
 # ---------------------------------------------------------------------------
 
 
-def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Snapshot the three exchange registries → per-asset best-market record.
 
     Args:
@@ -116,16 +116,16 @@ def outflow(state: Dict[str, Any]) -> List[Dict[str, Any]]:
         spread in basis points, and an ``arb_opportunity`` flag for
         ``spread_bps > 5``.
     """
-    quotes: List[Tuple[str, float, float, str]] = []
+    quotes: list[tuple[str, float, float, str]] = []
     quotes += _venue_quotes(state.get("BinanceBook", []), "symbol", "bidPrice", "askPrice", "binance")
     quotes += _venue_quotes(state.get("CoinbaseTicker", []), "product_id", "bid", "ask", "coinbase")
     quotes += _venue_quotes(state.get("KrakenTicker", []), "_key", "b", "a", "kraken")
 
-    by_asset: Dict[str, List[Tuple[float, float, str]]] = {}
+    by_asset: dict[str, list[tuple[float, float, str]]] = {}
     for asset, bid, ask, venue in quotes:
         by_asset.setdefault(asset, []).append((bid, ask, venue))
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for asset, venues in by_asset.items():
         best_bid_price, best_bid_venue = max(((b, v) for b, _, v in venues), default=(0.0, ""))
         best_ask_price, best_ask_venue = min(((a, v) for _, a, v in venues), default=(0.0, ""))

@@ -89,7 +89,7 @@ def _driver_id_or_none(raw: Any) -> Any:
 # ── State-aware inflow — wires Race.conv_dict against live peers ────
 
 
-def inflow(state: Dict[str, Any]) -> Dict[str, Any]:
+def inflow(state: dict[str, Any]) -> dict[str, Any]:
     """Build per-source ``conv_dict`` overrides from sibling registries.
 
     Inflow is called before each source's ``incorp()``.  On the early
@@ -100,7 +100,7 @@ def inflow(state: Dict[str, Any]) -> Dict[str, Any]:
     resolve to live ``Track`` / ``Driver`` instances rather than raw
     integers.
     """
-    overrides: Dict[str, Any] = {}
+    overrides: dict[str, Any] = {}
     if "Track" in state and "Driver" in state:
         overrides["Race"] = {
             "conv_dict": {
@@ -143,7 +143,7 @@ def _track_loc(track: Any) -> str:
 # ── Outflow — three derived views ──────────────────────────────────
 
 
-def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Compute three derived views from the fused state.  Each dict
     key becomes a derived Incorporator subclass and is written to its
     matching ``export_params`` file by fjord's multi-output contract.
@@ -165,7 +165,7 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     # ════════════════════════════════════════════════════════════════
     # View 1 — MonthlyRaceSchedule
     # ════════════════════════════════════════════════════════════════
-    monthly: List[Dict[str, Any]] = []
+    monthly: list[dict[str, Any]] = []
     for race in races:
         dt = getattr(race, "date_scheduled", None)
         if dt is None or dt.month != now.month or dt.year != now.year:
@@ -203,7 +203,7 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     # ════════════════════════════════════════════════════════════════
     # Materialise each team's roster by series, sorted by car number.
     # Read from state["LeagueRoster"] instead of a hardcoded constant.
-    league_teams: Dict[str, Dict[int, List[Any]]] = {}
+    league_teams: dict[str, dict[int, list[Any]]] = {}
     for team in league:
         team_cd = team.team_id
         league_teams[team_cd] = {}
@@ -217,9 +217,9 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
             if sid in league_teams[team_cd]:
                 league_teams[team_cd][sid].sort(key=lambda d: int(getattr(d, "Badge", 0) or 0))
 
-    fantasy: List[Dict[str, Any]] = []
+    fantasy: list[dict[str, Any]] = []
     for team_cd, roster in league_teams.items():
-        team_obj: Dict[str, Any] = {
+        team_obj: dict[str, Any] = {
             "team_id": team_cd,
             "roster": [],
             "points": [],
@@ -228,7 +228,7 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
             "total_score": 0,
         }
         team_score = 0
-        per_series: Dict[int, int] = {}
+        per_series: dict[int, int] = {}
         mfg_counter: Counter = Counter()
         total_wins = 0
 
@@ -306,13 +306,13 @@ def outflow(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     # as Cup-only here because the Cup series is what fantasy plays
     # care about most.
     cup = points_standings[1]
-    mfg_buckets: Dict[str, List[Any]] = defaultdict(list)
+    mfg_buckets: dict[str, list[Any]] = defaultdict(list)
     if cup is not None:
         for stnd in cup:
             mfg = (getattr(stnd, "manufacturer", "") or "").strip() or "Unknown"
             mfg_buckets[mfg].append(stnd)
 
-    manufacturer_rows: List[Dict[str, Any]] = []
+    manufacturer_rows: list[dict[str, Any]] = []
     for mfg, rows in mfg_buckets.items():
         if mfg == "Unknown":
             continue  # skip the catch-all bucket
