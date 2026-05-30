@@ -45,7 +45,9 @@ class DataPath:
             A frozen, hashable ``DataPath`` instance.
 
         Raises:
-            ValueError: If ``dotted`` is empty.
+            ValueError: if ``dotted`` is empty. The empty-path case is a
+                deliberate stricter contract; earlier internal helpers returned
+                the node silently.
         """
         if not dotted:
             raise ValueError("DataPath.parse: empty path string")

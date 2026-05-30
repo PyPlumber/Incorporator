@@ -16,6 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
+from incorporator.observability.tideweaver.reasons import SkipReason, WakeReason
 from incorporator.observability.tideweaver.tide import Tide
 from incorporator.observability.wave import Wave
 
@@ -151,10 +152,10 @@ def _tide_construct(**overrides: object) -> Tide:
     kwargs = dict(
         tide_number=7,
         fired=["coin"],
-        skipped=[("arb", "not_due")],
+        skipped=[("arb", SkipReason.NOT_DUE)],
         current_outcomes=_OUTCOMES,
         duration_sec=0.042,
-        wake_reason="timer",
+        wake_reason=WakeReason.TIMER,
         heap_depth=3,
         in_flight_count_at_start=1,
         canal_rejects_added=0,

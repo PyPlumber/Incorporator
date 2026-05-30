@@ -17,6 +17,7 @@ from typing import Any, Optional
 import pytest
 
 from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
+from incorporator.observability.tideweaver.reasons import SkipReason, WakeReason
 from incorporator.observability.tideweaver.tide import Tide
 from incorporator.observability.wave import Wave
 from incorporator.rejects import RejectEntry
@@ -184,7 +185,7 @@ class TestTideNewFields:
     def _make_tide(
         self,
         *,
-        wake_reason: str = "startup",
+        wake_reason: WakeReason = WakeReason.STARTUP,
         heap_depth: int = 0,
         in_flight_count_at_start: int = 0,
         canal_rejects_added: int = 0,
@@ -206,12 +207,12 @@ class TestTideNewFields:
 
     def test_wake_reason_startup(self) -> None:
         """wake_reason='startup' on the first pass."""
-        tide = self._make_tide(wake_reason="startup")
+        tide = self._make_tide(wake_reason=WakeReason.STARTUP)
         assert tide.wake_reason == "startup"
 
     def test_wake_reason_timer(self) -> None:
         """wake_reason='timer' when heap due-time elapsed."""
-        tide = self._make_tide(wake_reason="timer")
+        tide = self._make_tide(wake_reason=WakeReason.TIMER)
         assert tide.wake_reason == "timer"
 
     def test_heap_depth_populated(self) -> None:
@@ -248,10 +249,10 @@ class TestTideNewFields:
         tide = Tide.model_construct(
             tide_number=1,
             fired=["a"],
-            skipped=[("b", "not_due")],
+            skipped=[("b", SkipReason.NOT_DUE)],
             current_outcomes=outcomes,
             duration_sec=0.01,
-            wake_reason="startup",
+            wake_reason=WakeReason.STARTUP,
             heap_depth=0,
             in_flight_count_at_start=0,
             canal_rejects_added=0,
@@ -264,7 +265,7 @@ class TestTideNewFields:
 
     def test_model_dump_includes_new_fields(self) -> None:
         """model_dump() includes all new scalar fields."""
-        tide = self._make_tide(wake_reason="wake_event", heap_depth=2, canal_rejects_added=1)
+        tide = self._make_tide(wake_reason=WakeReason.WAKE_EVENT, heap_depth=2, canal_rejects_added=1)
         dumped = tide.model_dump()
         assert dumped["wake_reason"] == "wake_event"
         assert dumped["heap_depth"] == 2

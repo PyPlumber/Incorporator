@@ -21,6 +21,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
@@ -33,6 +34,7 @@ from ...io.penstock import (
     SustainedPenstock,
     WindowPenstock,
 )
+from .reasons import SkipReason
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +95,11 @@ class HardLock(Gate):
 
     def gate_reason(self, ctx: GateContext) -> str | None:
         if ctx.up_in_flight:
-            return "awaiting_upstream"
+            return SkipReason.AWAITING_UPSTREAM
         if ctx.up_last_wave_at is None:
-            return "awaiting_upstream"
+            return SkipReason.AWAITING_UPSTREAM
         if ctx.last_consumed is not None and ctx.last_consumed >= ctx.up_last_wave_at:
-            return "awaiting_upstream"
+            return SkipReason.AWAITING_UPSTREAM
         return None
 
 
@@ -117,9 +119,9 @@ class Weir(Gate):
 
     def gate_reason(self, ctx: GateContext) -> str | None:
         if ctx.up_last_wave_at is None:
-            return "awaiting_upstream"
+            return SkipReason.AWAITING_UPSTREAM
         if ctx.last_consumed is not None and ctx.last_consumed >= ctx.up_last_wave_at:
-            return "awaiting_upstream"
+            return SkipReason.AWAITING_UPSTREAM
         return None
 
 
@@ -212,13 +214,13 @@ class BackpressurePenstock(Penstock):
         fullness = min(1.0, len(edge_state.waves) / flow.reservoir.depth)
         effective_rate = self.max_rate - (self.max_rate - self.min_rate) * fullness
         if effective_rate <= 0.0:
-            return ("penstock_limited", None)
+            return (SkipReason.PENSTOCK_LIMITED, None)
         if state.last_consumed_at is None:
             return None
         min_gap = 1.0 / effective_rate
         if (now - state.last_consumed_at) < min_gap:
             cooldown = 1.0 / effective_rate
-            return ("penstock_limited", cooldown)
+            return (SkipReason.PENSTOCK_LIMITED, cooldown)
         return None
 
 
@@ -640,22 +642,37 @@ class FlowControl(BaseModel):
 # Mode-string shorthand — the user-facing API surface
 # ---------------------------------------------------------------------------
 
-GateMode = Literal["hard", "soft", "weir"]
+
+class GateMode(str, Enum):
+    """Shorthand mode for selecting a :class:`Gate` strategy.
+
+    ``str``-subclass so ``GateMode.HARD == "hard"`` is ``True`` — existing
+    callers passing plain strings keep working, and Pydantic v2 serialises
+    the value (not the name) automatically.
+    """
+
+    HARD = "hard"
+    SOFT = "soft"
+    WEIR = "weir"
 
 
-def flow_from_mode(mode: GateMode) -> FlowControl:
+def flow_from_mode(mode: GateMode | str) -> FlowControl:
     """Build a :class:`FlowControl` for ``"hard"``, ``"soft"``, or ``"weir"``.
 
     ``"hard"`` attaches a default :class:`SurgeBarrier` (threshold 2.0,
     action ``"skip"``); the others leave ``surge_barrier=None``.  Branches
     rather than dict-dispatches because the ``"hard"`` mode bundles a
     SurgeBarrier that the other two modes don't ship.
+
+    Accepts both ``GateMode`` enum members and plain strings — ``GateMode``
+    comparison works via ``str``-subclass equality so branches need no
+    special-casing.
     """
-    if mode == "hard":
+    if mode == GateMode.HARD:
         return FlowControl(gate=HardLock(), surge_barrier=SurgeBarrier())
-    if mode == "soft":
+    if mode == GateMode.SOFT:
         return FlowControl(gate=SoftPass())
-    if mode == "weir":
+    if mode == GateMode.WEIR:
         return FlowControl(gate=Weir())
     raise ValueError(f"unknown GateMode: {mode!r} (expected one of ['hard', 'soft', 'weir'])")
 

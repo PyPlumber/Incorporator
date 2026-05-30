@@ -415,6 +415,21 @@ def test_extract_parent_data_non_digit_fanout_unchanged() -> None:
 
 
 # ==========================================
+# 12. DataPath — int segment on dict uses string key
+# ==========================================
+
+
+def test_datapath_int_segment_on_dict_uses_string_key() -> None:
+    """A path like "a.0" applied to {"a": {"0": "x"}} resolves via
+    string-key lookup. The int(0) segment from DataPath.parse becomes
+    str("0") inside resolve() when the current node is a dict.
+    """
+    path = DataPath.parse("a.0")
+    assert path.resolve({"a": {"0": "x"}}) == "x"
+    assert path.resolve({"a": ["zero", "one"]}) == "zero"  # list branch still uses int
+
+
+# ==========================================
 # 12. IncorporatorList.failed_sources — cache identity and correctness
 # ==========================================
 

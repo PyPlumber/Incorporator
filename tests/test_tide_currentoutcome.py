@@ -17,6 +17,7 @@ from typing import List
 import pytest
 
 from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
+from incorporator.observability.tideweaver.reasons import SkipReason, WakeReason
 from incorporator.observability.tideweaver.tide import Tide
 
 
@@ -131,10 +132,10 @@ def test_tide_carries_current_outcomes_model_construct() -> None:
     tide = Tide.model_construct(
         tide_number=1,
         fired=["binance"],
-        skipped=[("kraken", "not_due")],
+        skipped=[("kraken", SkipReason.NOT_DUE)],
         current_outcomes=outcomes,
         duration_sec=0.01,
-        wake_reason="startup",
+        wake_reason=WakeReason.STARTUP,
         heap_depth=0,
         in_flight_count_at_start=0,
         canal_rejects_added=0,
@@ -172,10 +173,10 @@ def test_tide_serializer_fires_under_model_construct() -> None:
     tide = Tide.model_construct(
         tide_number=2,
         fired=[],
-        skipped=[("arb", "not_due")],
+        skipped=[("arb", SkipReason.NOT_DUE)],
         current_outcomes=outcomes,
         duration_sec=0.005,
-        wake_reason="timer",
+        wake_reason=WakeReason.TIMER,
         heap_depth=1,
         in_flight_count_at_start=0,
         canal_rejects_added=0,

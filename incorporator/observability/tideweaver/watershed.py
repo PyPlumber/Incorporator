@@ -116,9 +116,9 @@ def _toposort(currents: Sequence[Current], edges: Sequence[Edge]) -> list[str]:
 
 
 def _resolve_flow(
-    gate_mode: GateMode | None,
+    gate_mode: GateMode | str | None,
     flow: FlowControl | None,
-    default_mode: GateMode = "hard",
+    default_mode: GateMode | str = "hard",
 ) -> FlowControl:
     """Resolve a (gate_mode, flow) pair into a single :class:`FlowControl`.
 
@@ -259,7 +259,7 @@ class Watershed(BaseModel):
         *,
         window: tuple[datetime, datetime],
         currents: Sequence[Current],
-        gate_mode: GateMode | None = None,
+        gate_mode: GateMode | str | None = None,
         flow: FlowControl | None = None,
         inflow: Path | None = None,
         outflow: Path | None = None,
@@ -306,7 +306,7 @@ class Watershed(BaseModel):
         head: Current,
         middle: Sequence[Current],
         tail: Current,
-        gate_mode: GateMode | None = None,
+        gate_mode: GateMode | str | None = None,
         flow: FlowControl | None = None,
         inflow: Path | None = None,
         outflow: Path | None = None,
@@ -361,7 +361,7 @@ class Watershed(BaseModel):
         window: tuple[datetime, datetime],
         source: Current,
         sinks: Sequence[Current],
-        gate_mode: GateMode | None = None,
+        gate_mode: GateMode | str | None = None,
         flow: FlowControl | None = None,
         inflow: Path | None = None,
         outflow: Path | None = None,

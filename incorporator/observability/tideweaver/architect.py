@@ -53,6 +53,7 @@ from ._retry_defaults import (
     _HTTP_INNER_STOP,
     _HTTP_INNER_WAIT_MAX,
 )
+from .reasons import WakeReason
 from .tide import Tide
 
 # Mapping-typed source values may be runtime dicts (Mapping) — we accept any
@@ -248,7 +249,7 @@ class OrchestrationPlan:
             }
             if edge_spec.penstock is not None and edge_spec.penstock.kind == "sustained":
                 # Build the FlowControl from gate_mode + the recommended penstock.
-                base_flow = flow_from_mode(edge_spec.gate_mode)  # type: ignore[arg-type]
+                base_flow = flow_from_mode(edge_spec.gate_mode)
                 edge_kwargs["flow"] = base_flow.model_copy(
                     update={
                         "penstock": SustainedPenstock(
@@ -1363,7 +1364,7 @@ def _tune_pass_interval(tides: list[Tide], current_pass_interval: float) -> list
     p50 = _percentile(durations, 50)
     p99 = _percentile(durations, 99)
 
-    fallback_count = sum(1 for t in tides if t.wake_reason == "pass_interval")
+    fallback_count = sum(1 for t in tides if t.wake_reason == WakeReason.PASS_INTERVAL)
     fallback_fraction = fallback_count / n
 
     hints: list[TuningHint] = []

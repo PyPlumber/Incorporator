@@ -505,6 +505,7 @@ def test_tide_model_dump_includes_new_fields() -> None:
     from datetime import datetime, timezone
 
     from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
+    from incorporator.observability.tideweaver.reasons import WakeReason
     from incorporator.observability.tideweaver.tide import Tide
 
     outcomes = [CurrentOutcome(name="coin", status="fired")]
@@ -514,7 +515,7 @@ def test_tide_model_dump_includes_new_fields() -> None:
         skipped=[],
         current_outcomes=outcomes,
         duration_sec=0.05,
-        wake_reason="wake_event",
+        wake_reason=WakeReason.WAKE_EVENT,
         heap_depth=2,
         in_flight_count_at_start=1,
         canal_rejects_added=0,

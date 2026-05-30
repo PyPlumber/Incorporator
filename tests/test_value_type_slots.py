@@ -22,6 +22,7 @@ import pytest
 from pydantic import ValidationError
 
 from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
+from incorporator.observability.tideweaver.reasons import WakeReason
 from incorporator.observability.tideweaver.tide import Tide
 from incorporator.observability.wave import Wave
 from incorporator.rejects import RejectEntry
@@ -63,7 +64,7 @@ def _tide_construct() -> Tide:
         skipped=[],
         current_outcomes=[],
         duration_sec=0.05,
-        wake_reason="timer",
+        wake_reason=WakeReason.TIMER,
         heap_depth=0,
         in_flight_count_at_start=0,
         canal_rejects_added=0,
@@ -175,7 +176,7 @@ def test_tide_model_dump_current_outcomes_round_trip() -> None:
         skipped=[],
         current_outcomes=[co],
         duration_sec=0.12,
-        wake_reason="timer",
+        wake_reason=WakeReason.TIMER,
         heap_depth=0,
         in_flight_count_at_start=0,
         canal_rejects_added=0,

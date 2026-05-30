@@ -63,7 +63,8 @@ from ._retry_defaults import (
 from .current import Current, CustomCurrent, Export, Fjord, Stream
 from .current_outcome import CurrentOutcome
 from .flow import FlowControl, GateContext, SurgeContext
-from .tide import Tide, WakeReason
+from .reasons import SkipReason, WakeReason
+from .tide import Tide
 from .watershed import Watershed
 
 logger = logging.getLogger(__name__)
@@ -306,7 +307,7 @@ class Tideweaver:
                 self._push_due(c.name, self._run_started_at + c.phase_offset_sec)
         shutdown_event = asyncio.Event()
         stopper = asyncio.create_task(self._shutdown_at_window_end(shutdown_event))
-        wake_reason: WakeReason = "startup"
+        wake_reason: WakeReason = WakeReason.STARTUP
         try:
             while not shutdown_event.is_set():
                 tide = await self._run_pass(shutdown_event, wake_reason)
@@ -356,10 +357,10 @@ class Tideweaver:
         now = time.monotonic()
         if next_due is None:
             timeout: float = self.pass_interval
-            fallback_reason: WakeReason = "pass_interval"
+            fallback_reason: WakeReason = WakeReason.PASS_INTERVAL
         else:
             timeout = max(0.0, next_due - now)
-            fallback_reason = "timer"
+            fallback_reason = WakeReason.TIMER
         if self._backlog_backoff_factor > 1.0 and len(self._recent_pass_metrics) >= 5:
             total_currents = len(self.watershed.currents)
             if total_currents > 0:
@@ -372,7 +373,7 @@ class Tideweaver:
             # wake event so a stale set() from earlier doesn't no-op the
             # next sleep.
             self._wake_event.clear()
-            return "timer"
+            return WakeReason.TIMER
         shutdown_waiter = asyncio.create_task(shutdown_event.wait())
         wake_waiter = asyncio.create_task(self._wake_event.wait())
         wake_reason = fallback_reason
@@ -383,9 +384,9 @@ class Tideweaver:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if shutdown_waiter in done:
-                wake_reason = "shutdown"
+                wake_reason = WakeReason.SHUTDOWN
             elif wake_waiter in done:
-                wake_reason = "wake_event"
+                wake_reason = WakeReason.WAKE_EVENT
             # else: timed out → fallback_reason already set
         finally:
             self._wake_event.clear()
@@ -434,7 +435,7 @@ class Tideweaver:
         self._tide_number += 1
         started = time.monotonic()
         fired: list[str] = []
-        skipped: list[tuple[str, str]] = []
+        skipped: list[tuple[str, SkipReason]] = []
         outcomes: list[CurrentOutcome] = []
         rejects_before = len(self._canal_rejects)
         in_flight_at_start = sum(1 for s in self._state.values() if s.in_flight is not None and not s.in_flight.done())
@@ -453,7 +454,7 @@ class Tideweaver:
             state = self._state[name]
             existing = state.in_flight
             if existing is not None and not existing.done():
-                skipped.append((name, "still_running"))
+                skipped.append((name, SkipReason.STILL_RUNNING))
                 outcomes.append(
                     CurrentOutcome(
                         name=name,
@@ -519,7 +520,7 @@ class Tideweaver:
             self._recent_pass_metrics.append((tide.duration_sec, tide.in_flight_count_at_start))
         return tide
 
-    def _gate_reason(self, current: Current, now: float) -> tuple[str | None, frozenset[str]]:
+    def _gate_reason(self, current: Current, now: float) -> tuple[SkipReason | None, frozenset[str]]:
         """Return ``(None, bypassed)`` if ``current`` may fire; else ``(reason, set())``.
 
         Walks each inbound edge's :class:`FlowControl`:
@@ -541,9 +542,9 @@ class Tideweaver:
             # First tick — honor ``phase_offset_sec`` for green-wave coordination.
             if current.phase_offset_sec > 0.0 and self._run_started_at is not None:
                 if (now - self._run_started_at) < current.phase_offset_sec:
-                    return "phase_offset", frozenset()
+                    return SkipReason.PHASE_OFFSET, frozenset()
         elif (now - last) < current.interval:
-            return "not_due", frozenset()
+            return SkipReason.NOT_DUE, frozenset()
         bypassed: set[str] = set()
         for up_name, flow in self._upstream[current.name]:
             edge = (up_name, current.name)
@@ -566,7 +567,7 @@ class Tideweaver:
                 )
                 if surge.is_tripped(surge_ctx):
                     if surge.action == "skip":
-                        flow.observer.on_skip(self, edge, "skip_ahead")
+                        flow.observer.on_skip(self, edge, SkipReason.SKIP_AHEAD)
                         self._canal_rejects.append(
                             RejectEntry.model_construct(
                                 source=current.cls.__name__,
@@ -585,9 +586,9 @@ class Tideweaver:
                                 cooldown_sec=None,
                             )
                         )
-                        return "skip_ahead", frozenset()
+                        return SkipReason.SKIP_AHEAD, frozenset()
                     if surge.action == "halt":
-                        flow.observer.on_skip(self, edge, "surge_halted")
+                        flow.observer.on_skip(self, edge, SkipReason.SURGE_HALTED)
                         self._canal_rejects.append(
                             RejectEntry.model_construct(
                                 source=current.cls.__name__,
@@ -606,7 +607,7 @@ class Tideweaver:
                                 cooldown_sec=None,
                             )
                         )
-                        return "surge_halted", frozenset()
+                        return SkipReason.SURGE_HALTED, frozenset()
                     # action == "bypass" — fire ignoring this edge's gate AND penstock.
                     bypassed.add(up_name)
                     continue
@@ -617,9 +618,10 @@ class Tideweaver:
                 last_consumed=self._last_consumed.get(edge),
                 now=now,
             )
-            gate_reason = flow.gate.gate_reason(gate_ctx)
-            if gate_reason is not None:
-                flow.observer.on_skip(self, edge, gate_reason)
+            gate_reason_str = flow.gate.gate_reason(gate_ctx)
+            if gate_reason_str is not None:
+                gate_skip = SkipReason(gate_reason_str) if isinstance(gate_reason_str, str) else gate_reason_str
+                flow.observer.on_skip(self, edge, gate_skip)
                 # ``awaiting_upstream`` is the normal pre-first-wave state for
                 # a HardLock or Weir edge — every fresh window starts with at
                 # least one of these per dependent, and a long-running daemon
@@ -628,12 +630,12 @@ class Tideweaver:
                 # with non-failure events.  All other gate reasons (currently
                 # none from the in-tree Gate hierarchy, but custom Gate
                 # subclasses may emit new ones) DO populate rejects.
-                if gate_reason != "awaiting_upstream":
+                if gate_skip != SkipReason.AWAITING_UPSTREAM:
                     self._canal_rejects.append(
                         RejectEntry.model_construct(
                             source=current.cls.__name__,
                             error_kind="GateBlocked",
-                            message=f"edge {edge[0]}→{edge[1]}: {gate_reason}",
+                            message=f"edge {edge[0]}→{edge[1]}: {gate_skip.value}",
                             retry_after=None,
                             wave_index=self._tide_number,
                             from_name=up_name,
@@ -647,7 +649,7 @@ class Tideweaver:
                             cooldown_sec=None,
                         )
                     )
-                return gate_reason, frozenset()
+                return gate_skip, frozenset()
             # Penstock — edge-layer flow-rate strategy.  Delegates to the
             # strategy class (SustainedPenstock / BurstPenstock /
             # WindowPenstock / BackpressurePenstock / SignalPenstock); each
@@ -657,18 +659,23 @@ class Tideweaver:
                 raw = flow.penstock.consume_reason(edge_state, flow, now)
                 # Back-compat shim: third-party subclasses may still return str | None.
                 if isinstance(raw, str):
-                    penstock_reason, cooldown_sec = raw, None
+                    penstock_reason_str, cooldown_sec = raw, None
                 elif raw is not None:
-                    penstock_reason, cooldown_sec = raw
+                    penstock_reason_str, cooldown_sec = raw
                 else:
-                    penstock_reason, cooldown_sec = None, None
-                if penstock_reason is not None:
-                    flow.observer.on_skip(self, edge, penstock_reason)
+                    penstock_reason_str, cooldown_sec = None, None
+                if penstock_reason_str is not None:
+                    # Normalise at the scheduler boundary — io/penstock.py returns
+                    # a plain string to avoid importing from tideweaver (cycle risk).
+                    penstock_skip = (
+                        SkipReason(penstock_reason_str) if isinstance(penstock_reason_str, str) else penstock_reason_str
+                    )
+                    flow.observer.on_skip(self, edge, penstock_skip)
                     self._canal_rejects.append(
                         RejectEntry.model_construct(
                             source=current.cls.__name__,
                             error_kind="PenstockLimited",
-                            message=f"edge {edge[0]}→{edge[1]}: {penstock_reason}",
+                            message=f"edge {edge[0]}→{edge[1]}: {penstock_skip.value}",
                             retry_after=None,
                             wave_index=self._tide_number,
                             from_name=up_name,
@@ -682,7 +689,7 @@ class Tideweaver:
                             cooldown_sec=cooldown_sec,
                         )
                     )
-                    return penstock_reason, frozenset()
+                    return penstock_skip, frozenset()
         return None, frozenset(bypassed)
 
     def _spawn_tick(self, current: Current, bypassed_upstreams: frozenset[str] = frozenset()) -> None:

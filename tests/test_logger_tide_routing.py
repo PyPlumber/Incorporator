@@ -12,13 +12,14 @@ import pytest
 
 from incorporator.observability.logger import JSONFormatter, TideFilter, _route_tide_to_log
 from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
+from incorporator.observability.tideweaver.reasons import SkipReason, WakeReason
 from incorporator.observability.tideweaver.tide import Tide
 
 
 def _make_tide(
     tide_number: int = 1,
     fired: List[str] | None = None,
-    skipped: List[Tuple[str, str]] | None = None,
+    skipped: List[Tuple[str, SkipReason]] | None = None,
     canal_rejects_added: int = 0,
     duration_sec: float = 0.05,
 ) -> Tide:
@@ -29,7 +30,7 @@ def _make_tide(
         skipped=skipped or [],
         current_outcomes=[],
         duration_sec=duration_sec,
-        wake_reason="timer",
+        wake_reason=WakeReason.TIMER,
         heap_depth=0,
         in_flight_count_at_start=0,
         canal_rejects_added=canal_rejects_added,
@@ -84,7 +85,7 @@ def test_route_tide_canal_rejects_error() -> None:
 
 def test_route_tide_surge_halted_error() -> None:
     """skipped containing ('name', 'surge_halted') routes to ERROR."""
-    tide = _make_tide(fired=[], skipped=[("arb", "surge_halted")], canal_rejects_added=0)
+    tide = _make_tide(fired=[], skipped=[("arb", SkipReason.SURGE_HALTED)], canal_rejects_added=0)
     mock_logger = MagicMock(spec=logging.Logger)
     mock_logger.isEnabledFor.return_value = True
 
@@ -100,7 +101,7 @@ def test_route_tide_surge_halted_error() -> None:
 
 def test_route_tide_skip_ahead_error() -> None:
     """skipped containing ('name', 'skip_ahead') routes to ERROR."""
-    tide = _make_tide(fired=[], skipped=[("arb", "skip_ahead")], canal_rejects_added=0)
+    tide = _make_tide(fired=[], skipped=[("arb", SkipReason.SKIP_AHEAD)], canal_rejects_added=0)
     mock_logger = MagicMock(spec=logging.Logger)
     mock_logger.isEnabledFor.return_value = True
 
@@ -143,7 +144,7 @@ def test_route_tide_json_dump_has_tide_key() -> None:
 
 def test_route_tide_not_due_skip_is_not_error() -> None:
     """'not_due' skip reason is normal gating and must NOT route to ERROR."""
-    tide = _make_tide(fired=[], skipped=[("b", "not_due")], canal_rejects_added=0)
+    tide = _make_tide(fired=[], skipped=[("b", SkipReason.NOT_DUE)], canal_rejects_added=0)
     mock_logger = MagicMock(spec=logging.Logger)
     mock_logger.isEnabledFor.return_value = True
 

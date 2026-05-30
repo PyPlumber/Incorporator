@@ -61,6 +61,7 @@ from .flow import (
     flow_from_mode,
 )
 from .logged import LoggedTideweaver
+from .reasons import SkipReason, WakeReason
 from .scheduler import TickFactory, Tideweaver
 from .tide import Tide
 from .watershed import Edge, Watershed
@@ -88,6 +89,7 @@ __all__ = [
     "Reservoir",
     "SignalObserver",
     "SignalPenstock",
+    "SkipReason",
     "SoftPass",
     "Spillway",
     "Stream",
@@ -99,6 +101,7 @@ __all__ = [
     "Tideweaver",
     "TuningHint",
     "TuningReport",
+    "WakeReason",
     "Watershed",
     "Weir",
     "WindowPenstock",

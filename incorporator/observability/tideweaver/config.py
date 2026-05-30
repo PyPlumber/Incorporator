@@ -98,7 +98,7 @@ def build_watershed(raw: dict[str, Any], base_dir: Path) -> Watershed:
         if raw_flow is not None:
             return None, _build_flow(raw_flow, outflow_module, inflow_module)
         if raw_mode is not None:
-            return cast(GateMode, raw_mode), None
+            return GateMode(raw_mode), None
         return None, None
 
     if shape == "chain":
@@ -156,7 +156,7 @@ def build_watershed(raw: dict[str, Any], base_dir: Path) -> Watershed:
             if raw_flow is not None:
                 edge_flow = _build_flow(raw_flow, outflow_module, inflow_module)
             elif raw_mode is not None:
-                edge_flow = flow_from_mode(cast(GateMode, raw_mode))
+                edge_flow = flow_from_mode(GateMode(raw_mode))
             else:
                 edge_flow = FlowControl()
             edges.append(Edge(from_name=e["from"], to_name=e["to"], flow=edge_flow))

@@ -8,14 +8,12 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from .current_outcome import CurrentOutcome
-
-WakeReason = Literal["startup", "timer", "wake_event", "pass_interval", "shutdown"]
-"""Why a scheduler pass started.  See :meth:`Tideweaver._wait_for_next_event`."""
+from .reasons import SkipReason, WakeReason
 
 
 class Tide(BaseModel):
@@ -87,7 +85,7 @@ class Tide(BaseModel):
 
     tide_number: int = Field(..., description="Monotonic 1-indexed counter of scheduler passes.")
     fired: list[str] = Field(default_factory=list, description="Names of currents that produced a wave.")
-    skipped: list[tuple[str, str]] = Field(
+    skipped: list[tuple[str, SkipReason]] = Field(
         default_factory=list,
         description="(current_name, reason) pairs for currents gated out this pass.",
     )
@@ -97,7 +95,7 @@ class Tide(BaseModel):
     )
     duration_sec: float = Field(..., description="Wall-clock duration of the pass in seconds.")
     wake_reason: WakeReason = Field(
-        default="startup",
+        default=WakeReason.STARTUP,
         description=("What triggered this pass: 'startup', 'timer', 'wake_event', 'pass_interval', or 'shutdown'."),
     )
     heap_depth: int = Field(default=0, description="Due-time heap entries remaining after housekeeping.")
