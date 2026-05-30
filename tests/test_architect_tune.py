@@ -25,6 +25,7 @@ from incorporator.observability.tideweaver.architect import (
 )
 from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
 from incorporator.observability.tideweaver.scheduler import Tideweaver
+from incorporator.observability.tideweaver.reasons import WakeReason
 from incorporator.observability.tideweaver.tide import Tide
 from incorporator.observability.tideweaver.watershed import Watershed
 from incorporator.observability.wave import Wave
@@ -59,7 +60,7 @@ def _wave(processing_time_sec: float, source_url: str = "https://api.example.com
 
 def _tide(
     duration_sec: float,
-    wake_reason: str = "timer",
+    wake_reason: WakeReason = WakeReason.TIMER,
     outcomes: List[CurrentOutcome] | None = None,
 ) -> Tide:
     """Build a minimal Tide with the given duration_sec and wake_reason."""
@@ -295,8 +296,8 @@ def test_tune_pass_interval_saturated() -> None:
 
 def test_tune_pass_interval_fallback_heap_empty() -> None:
     """30 tides where 12 have wake_reason='pass_interval' (40%) triggers MED fallback hint."""
-    tides = [_tide(0.005, wake_reason="timer") for _ in range(18)]
-    tides += [_tide(0.005, wake_reason="pass_interval") for _ in range(12)]
+    tides = [_tide(0.005, wake_reason=WakeReason.TIMER) for _ in range(18)]
+    tides += [_tide(0.005, wake_reason=WakeReason.PASS_INTERVAL) for _ in range(12)]
     hints = _tune_pass_interval(tides, current_pass_interval=1.0)
     med_hints = [h for h in hints if h.severity == "med"]
     assert len(med_hints) >= 1
@@ -306,7 +307,7 @@ def test_tune_pass_interval_fallback_heap_empty() -> None:
 
 def test_tune_pass_interval_well_sized() -> None:
     """30 tides with small duration and low fallback fraction emits INFO 'well-sized'."""
-    tides = [_tide(0.005, wake_reason="timer") for _ in range(30)]
+    tides = [_tide(0.005, wake_reason=WakeReason.TIMER) for _ in range(30)]
     hints = _tune_pass_interval(tides, current_pass_interval=1.0)
     assert len(hints) == 1
     h = hints[0]
