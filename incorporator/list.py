@@ -86,6 +86,8 @@ class IncorporatorList(list[T]):
         else:
             self._rejects = []
 
+        self._failed_sources_cache: list[str] | None = None
+
         # Per-list cache slot for graph-drilling routes (set by incorp()).
         self.inc_child_path: str | None = None
 
@@ -104,7 +106,9 @@ class IncorporatorList(list[T]):
         """Deprecated back-compat alias for ``[r.source for r in self.rejects]``;
         prefer :attr:`rejects` for structured access.
         """
-        return [entry.source for entry in self._rejects]
+        if self._failed_sources_cache is None:
+            self._failed_sources_cache = [entry.source for entry in self._rejects]
+        return self._failed_sources_cache
 
     def __del__(self) -> None:
         """Diagnostic hook — emits a DEBUG log if a non-empty list is GC'd.

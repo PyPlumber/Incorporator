@@ -412,3 +412,52 @@ def test_extract_parent_data_non_digit_fanout_unchanged() -> None:
     """extract_parent_data fans out over list items for non-digit segments (regression lock)."""
     parents = [{"results": [{"url": "x"}, {"url": "y"}]}]
     assert extract_parent_data(parents, "results.url") == ["x", "y"]
+
+
+# ==========================================
+# 12. IncorporatorList.failed_sources — cache identity and correctness
+# ==========================================
+
+
+def _make_list_with_rejects() -> IncorporatorList:  # type: ignore[type-arg]
+    """Return an IncorporatorList with two RejectEntry objects."""
+    from pydantic import BaseModel
+
+    from incorporator.rejects import RejectEntry
+
+    class _M(BaseModel):
+        id: int = 0
+
+    entries = [
+        RejectEntry(source="https://api.example.com/a", error_kind="HTTP", message="404"),
+        RejectEntry(source="https://api.example.com/b", error_kind="HTTP", message="500"),
+    ]
+    return IncorporatorList(_M, [], rejects=entries)
+
+
+def test_failed_sources_cache_identity() -> None:
+    """Repeated access to failed_sources returns the exact same list object (cache hit)."""
+    lst = _make_list_with_rejects()
+    first = lst.failed_sources
+    second = lst.failed_sources
+    assert first is second
+
+
+def test_failed_sources_cache_correctness() -> None:
+    """failed_sources matches [e.source for e in rejects] exactly."""
+    lst = _make_list_with_rejects()
+    assert lst.failed_sources == [e.source for e in lst.rejects]
+
+
+def test_failed_sources_empty_list_cache_identity() -> None:
+    """Cache identity holds even when there are no rejects (empty list case)."""
+    from pydantic import BaseModel
+
+    class _M(BaseModel):
+        id: int = 0
+
+    lst: IncorporatorList[_M] = IncorporatorList(_M, [])
+    first = lst.failed_sources
+    second = lst.failed_sources
+    assert first is second
+    assert first == []
