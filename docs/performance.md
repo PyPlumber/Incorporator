@@ -141,6 +141,28 @@ logging, DB writes, etc.).  If you genuinely need a side-effecting
 function called once per row, pass `pure=False` explicitly to opt out
 of the cache.
 
+**Directive dispatch is four bounded passes, with zero per-row
+allocation.**  When `excl_lst` / `name_chg` / `code_attr` / `name_attr`
+are used together, the normalizer (`_normalize_etl_kwargs`) splits and
+typechecks them once at config time — bare strings become `Ex`, 2-tuples
+become `Nm`, `code_attr` / `name_attr` synthesise into the internal
+`Pk` directive.  The dispatcher then walks the rows in four bounded
+passes per chunk:
+
+1. drop fields tagged by `Ex`
+2. apply `conv_dict` ops
+3. rename keys tagged by `Nm`
+4. write the PK bind via the synthesised `Pk` directive
+
+Each pass iterates rows-outer / directives-inner so each row dict stays
+warm in CPU cache, and the frozen directive containers carry no per-row
+state — they're hashable, reusable across chunks, and emit zero
+allocations inside the hot loop.  PK binding running last lets
+`code_attr` resolve cleanly whether the source field was renamed away
+(Case A) or created by the rename pass (Case B); the rename map is
+folded into `Pk.source` once at normalize time so no per-row lookup is
+needed.
+
 ---
 
 ## Getting more out of it

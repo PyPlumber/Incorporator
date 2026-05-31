@@ -296,7 +296,18 @@ These names resolve out of the box:
 |---|---|
 | Paginators | `NextUrlPaginator`, `CursorPaginator`, `OffsetPaginator`, `PageNumberPaginator`, `LinkHeaderPaginator`, `SQLitePaginator`, `CSVPaginator`, `AvroPaginator` |
 | Converters | `inc`, `as_list`, `join_all`, `split_and_get`, `pluck`, `sum_attributes`, `calc`, `calc_all`, `link_to`, `link_to_list` |
+| Directives | `Ex`, `Nm`, `Pk` |
 | Types (as args) | `datetime`, `date`, `time`, `int`, `float`, `bool`, `str`, `list`, `dict`, `tuple`, `set`, `bytes`, `None`, `True`, `False`, `new` |
+
+> **Directive forward-compat.** `Ex` and `Nm` are user-instantiable in
+> JSON pipelines: `"excl_lst": ["legacy", "Ex('audit.legacy_flag')"]`
+> and `"name_chg": [["ext_id", "id"], "Nm('vendor_code', 'code')"]`
+> resolve through the token system and are accepted alongside bare
+> strings / 2-tuples by the framework's normalizer.  `Pk` is
+> allow-listed for forward compatibility, but JSON pipelines today
+> have no canonical destination slot for it — PK binding stays driven
+> by `code_attr` / `name_attr` bare strings, which the framework
+> synthesises into `Pk` internally at normalize time.
 
 ### User Functions via `inflow`
 

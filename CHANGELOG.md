@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-31 — typed wrapper-handler unification
+
+DATA-SHAPE pipeline parameters now travel as typed frozen-dataclass
+directives (`Ex`, `Nm`, `Pk`) through a four-pass dispatcher: drop →
+conv_dict → rename → PK-bind. PK binding moved to the final pass and
+its source path is rewritten through the rename map at config time,
+which closes two silent failure modes — Case A (rename moves the PK
+source away) and Case B (rename creates the PK source). Both are now
+pinned by regression tests. Bare strings and tuples continue to work
+in every existing call site.
+
+#### Added
+
+- **`Ex(field: str)` directive** at `incorporator/schema/directives.py` —
+  frozen-dataclass drop wrapper.  `excl_lst` accepts bare strings
+  (top-level key drop, as always) and `Ex(...)` instances (nested-leaf
+  drop via `DataPath.pop`).  Mixed sequences are accepted; the
+  normalizer splits and merges them in one pass.
+- **`Nm(old: str, new: str)` directive** at
+  `incorporator/schema/directives.py` — frozen-dataclass rename
+  wrapper.  `name_chg` accepts bare 2-tuples and `Nm(...)` instances
+  interchangeably; the normalised result is identical.
+- **`NormalizedKwargs` container + `_normalize_etl_kwargs(...)`**
+  at `incorporator/schema/directives.py` — single normalizer that
+  splits `excl_lst` / `name_chg` mixed sequences, synthesises `Pk`
+  from `code_attr` / `name_attr` bare strings, and rewrites
+  `Pk.source` through the rename map at normalize time (first-hit).
+- **`DataPath.pop(record)` and `DataPath.set(record, value)`** at
+  `incorporator/schema/path.py` — nested-path mutation primitives
+  backing `Ex.apply_drop` and `Pk.apply_bind`.  Silent no-op on
+  missing intermediates; `set` does not auto-create them.
+- **CLI token allow-list entries for `Ex` / `Nm` / `Pk`** at
+  `incorporator/cli/tokens.py:125-127`.  String forms like
+  `"Ex('field')"` and `"Nm('old', 'new')"` resolve through
+  `resolve_tokens()` in `pipeline.json` / `watershed.json`.
+
+#### Fixed
+
+- **Silent PK-bind regression introduced by commit `2fb46d0` (Phase C2
+  dispatcher reorder).**  Case A — `name_chg` renames the field
+  `code_attr` points at, so the PK bind resolved against the wrong
+  key.  Case B — `name_chg` creates the field `code_attr` targets,
+  but the PK bind ran before rename and resolved to `None`, after
+  which Pydantic's auto-counter fallback silently wrote `"1"`,
+  `"2"`, `"3"` instead of the real value.  Both failure modes were
+  silent (no error, no warning, no existing test exercised them).
+  The four-pass dispatcher with `Pk.source` rewritten through the
+  rename map at normalize time closes both cases; pinned by 20 new
+  regression tests.
+
+#### Changed
+
+- **Dispatcher order restored to Ex → Op → Nm → Pk** at
+  `incorporator/schema/builder.py:185-315`.  PK binding (pass 4)
+  runs after rename (pass 3) so renamed source fields resolve
+  cleanly.  Each pass iterates rows-outer / directives-inner to
+  keep each row dict warm in CPU cache.
+- **`Nm._old_path` and `Nm._new_key` dead slots removed.**  The
+  rename pass reads `nm.old` / `nm.new` directly via
+  `Nm.apply_rename`; no per-`Nm` `DataPath` construction is needed
+  for the top-level-only rename surface.
+- **`_PkBindOp` deleted** along with its `_splice_pk_binding`
+  virtual-splice helper.  Pass 4 dispatches directly on
+  `normalized.pk_tuple`.
+
 ### 2026-05-31 — columnar conv_dict reorientation + parse/write perf recovery
 
 A session of architectural reorientation: `conv_dict` is now uniformly

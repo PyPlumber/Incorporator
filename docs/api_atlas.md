@@ -45,6 +45,7 @@ The same seven verbs — `incorp / test / refresh / export / stream / fjord / di
   - [`log_cls_info` / `log_cls_error`](#loggedincorporator-log_cls_info--log_cls_error)
 - [Class-attribute reference](#class-attribute-reference)
 - [Shared kwargs glossary](#shared-kwargs-glossary)
+- [DATA-SHAPE directives](#data-shape-directives)
 - [FormatType](#formattype)
 - [Optional-dependency introspection](#optional-dependency-introspection)
   - [`list_deps`](#list_deps---listdepinfo)
@@ -1144,6 +1145,111 @@ When `enable_logging=True`, the runner writes four rotating JSONL files under `l
 - `format_type=` — `FormatType` enum forcing a writer when the file extension is ambiguous; otherwise auto-detected from extension.
 - `enable_logging=` — on `LoggedIncorporator` only; wires the call into per-class rotating JSONL handlers (`logs/<ClassName>_{api,error,debug}.log`).
 - `inc_code=` — field name on each record that becomes the primary key in `inc_dict`. Pass the field name (e.g. `"id"`); the framework reads each record's value at that key.
+
+---
+
+### DATA-SHAPE directives
+
+The four data-shape pipeline parameters (`excl_lst`, `name_chg`,
+`code_attr`, `name_attr`) travel through a single normalizer
+(`_normalize_etl_kwargs`) into typed frozen-dataclass directives before
+the dispatcher runs.  Bare strings and 2-tuples keep working — the
+normalizer accepts mixed sequences of bare shapes and directive
+instances, and emits an identical `NormalizedKwargs` container either
+way.
+
+**Import**
+```python
+from incorporator.schema.directives import Ex, Nm
+```
+
+`Pk` is also importable from the same module but is synthesised
+internally — users pass `code_attr="field"` / `name_attr="field"` (bare
+strings) and the framework constructs the `Pk` instances at normalize
+time.
+
+**The three directives**
+
+| Directive | Shape | Where it goes | Purpose |
+|---|---|---|---|
+| `Ex(field: str)` | frozen dataclass | `excl_lst` | Drop a field.  Bare `Ex("foo")` drops the top-level key `"foo"`; dotted-path `Ex("a.b.c")` drops the nested leaf via `DataPath.pop`. |
+| `Nm(old: str, new: str)` | frozen dataclass | `name_chg` | Rename a top-level key.  Same semantics as the bare 2-tuple `("old", "new")`; both forms produce identical normalised output. |
+| `Pk(source: str, target: Literal["code", "name"])` | frozen dataclass | synthesised internally | Bind the value at `source` to `inc_code` or `inc_name`.  Built by the normalizer from `code_attr` / `name_attr` bare strings; `Pk.source` is rewritten through the `name_chg` rename map (first-hit) so renames don't desync the bind. |
+
+**Four-pass dispatch order** — `incorporator/schema/builder.py:185-315`
+
+1. **Ex (drop)** — every directive applied per row via `Ex.apply_drop(record)`.
+2. **`conv_dict` ops** — converter operations apply per row, op-outer / row-inner.
+3. **Nm (rename)** — every directive applied per row via `Nm.apply_rename(record)`.
+4. **Pk (PK-bind)** — runs last so renamed source fields resolve cleanly.  `Pk.apply_bind(record)` reads `_path.resolve(record)` and writes `inc_code` or `inc_name`.
+
+PK binding running after rename closes two silent failure modes the
+prior order let through — Case A (rename moves the source away from
+where `code_attr` pointed) and Case B (rename *creates* the field
+`code_attr` targets, but the bind ran too early and the auto-counter
+fallback silently wrote synthetic IDs).
+
+**Worked example**
+
+```python
+from incorporator import Incorporator
+from incorporator.schema.directives import Ex, Nm
+
+class Invoice(Incorporator): pass
+
+# Bare-string form (always worked).
+await Invoice.incorp(
+    inc_file="invoices.json",
+    excl_lst=["internal_id"],
+    name_chg=[("ext_id", "id")],
+    code_attr="id",
+)
+
+# Directive form (post-normalizer).
+await Invoice.incorp(
+    inc_file="invoices.json",
+    excl_lst=[Ex("internal_id"), Ex("audit.legacy_flag")],   # nested drop
+    name_chg=[Nm("ext_id", "id"), Nm("vendor_code", "code")],
+    code_attr="id",
+)
+
+# Mixed sequences are accepted in the same list.
+await Invoice.incorp(
+    inc_file="invoices.json",
+    excl_lst=["internal_id", Ex("audit.legacy_flag")],
+    name_chg=[("ext_id", "id"), Nm("vendor_code", "code")],
+    code_attr="id",
+)
+```
+
+**JSON form** — the same directives resolve as text tokens through `resolve_tokens()`:
+
+```json
+{
+  "incorp_params": {
+    "excl_lst": ["internal_id", "Ex('audit.legacy_flag')"],
+    "name_chg": [["ext_id", "id"], "Nm('vendor_code', 'code')"],
+    "code_attr": "id"
+  }
+}
+```
+
+`Pk` is allow-listed at `incorporator/cli/tokens.py:125-127` for
+forward-compat — a token string like `"Pk('id', target='code')"`
+resolves to a `Pk` instance — but JSON pipelines today have no
+canonical destination slot for it.  Continue to use `code_attr` /
+`name_attr` bare strings in JSON.
+
+**When to reach for the directive form**
+
+- Type-safe, IDE-friendly drop/rename declarations in Python code.
+- Hashable frozen containers for cache/replay across many `incorp()` calls.
+- Nested-leaf drops via `Ex("a.b.c")` that bare-string `excl_lst` cannot express.
+
+**See also**
+[Library Reference](./library_reference.md) ·
+`incorporator/schema/directives.py` ·
+`incorporator/schema/builder.py`
 
 ---
 

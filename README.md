@@ -220,6 +220,26 @@ The same shapes deserialize from `watershed.json` via Pydantic discriminated uni
 
 ### `display()` — REPL debug print: `launches[0].display()`
 
+### Typed directive wrappers (optional)
+
+The DATA-SHAPE pipeline parameters — `excl_lst`, `name_chg`, `code_attr`,
+`name_attr` — now accept typed frozen wrappers alongside the bare shapes
+they always took. Old call sites keep working unchanged; mixed sequences
+are accepted in the same list.
+
+```python
+await Users.incorp(
+    inc_url="https://api.example.com/users",
+    excl_lst=["legacy_flag", Ex("profile.internal.ssn")],   # nested drop
+    name_chg=[("external_id", "id"), Nm("user_name", "name")],
+    code_attr="id",
+)
+```
+
+`Ex("a.b.c")` drops nested leaves (previously only top-level keys could
+be dropped). PK binding now runs after rename, so `inc_code` resolves
+correctly whether `name_chg` removes the source field or creates it.
+
 ---
 
 ## 🚀 From Code to Production — CLI & Docker
