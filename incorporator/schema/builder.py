@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..exceptions import IncorporatorSchemaError
 from .converters import CalcAllOp, CalcOp, is_garbage_value
-from .directives import NormalizedKwargs
+from .directives import NormalizedKwargs, _normalize_etl_kwargs
 from .path import DataPath
 
 logger = logging.getLogger(__name__)
@@ -87,54 +87,6 @@ def sanitize_json_key(key: str) -> str:
     return clean_key
 
 
-class _PkBindOp:
-    """Virtual conv_dict entry for PK binding (inc_code / inc_name).
-
-    Module-private: not part of the public converter API.  Exists only so the
-    dispatcher can treat PK binding as just another conv_dict op, eliminating
-    a separate post-pass special case.
-
-    ``__call__`` returns the resolved value (possibly None) transparently
-    rather than short-circuiting None internally.  The null-skip — only write
-    to ``d[key]`` when the value is non-None — lives in the dispatcher branch
-    so future cache wrappers can distinguish "resolved to None" from "skip
-    this row" without inspecting Op internals.
-    """
-
-    __slots__ = ("_path", "input_keys", "is_pure")
-
-    def __init__(self, source_attr: str) -> None:
-        self._path = DataPath.parse(source_attr)
-        self.input_keys: tuple[str, ...] = ()
-        self.is_pure: bool = True
-
-    def __call__(self, row: dict[str, Any]) -> Any:
-        return self._path.resolve(row)
-
-
-def _splice_pk_binding(
-    conv_dict: dict[str, Any] | None,
-    code_attr: str | None,
-    name_attr: str | None,
-) -> dict[str, Any] | None:
-    """Append PK-binding virtual entries to the conv_dict in insertion order.
-
-    Does NOT overwrite user-explicit ``inc_code`` / ``inc_name`` conv_dict
-    entries — the user's choice wins because they may be performing a
-    deliberate transformation on the field that PK binding would otherwise
-    clobber (e.g., a calc() that builds inc_code from multiple inputs).
-    Empty/None ``code_attr``/``name_attr`` are skipped.
-    """
-    if not conv_dict and not code_attr and not name_attr:
-        return None
-    effective: dict[str, Any] = dict(conv_dict) if conv_dict else {}
-    if code_attr and "inc_code" not in effective:
-        effective["inc_code"] = _PkBindOp(code_attr)
-    if name_attr and "inc_name" not in effective:
-        effective["inc_name"] = _PkBindOp(name_attr)
-    return effective or None
-
-
 def _maybe_cache_bare(fn: Callable[..., Any], sample_inputs: list[Any]) -> Callable[..., Any]:
     """Wrap fn with lru_cache when its sample inputs are mostly repeats.
 
@@ -173,15 +125,19 @@ def apply_etl_transformations(
     *,
     normalized: NormalizedKwargs | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
-    """Apply exc_lst, conv_dict, name_chg, and PK-binding transforms in-place.
+    """Apply excl_lst, conv_dict, name_chg, and PK-binding transforms in-place.
 
-    Processes ``parsed_data`` through three ordered passes: drop (``excl_lst``),
-    convert + PK-bind (``conv_dict`` extended with virtual ``inc_code`` /
-    ``inc_name`` entries derived from ``code_attr`` / ``name_attr``; the
-    extension runs through the same dispatcher as user converters), and
-    rename (``name_chg``).  PK binding executes inside pass 2 — before
-    ``name_chg`` — so a rename of the source field does not strand
-    ``inc_code`` / ``inc_name`` lookups.
+    Processes ``parsed_data`` through four ordered passes:
+
+    1. **Ex (drop)** — remove fields named in ``excl_lst`` / ``ex_tuple``.
+    2. **conv_dict (Op family)** — columnar converter dispatch (op-outer /
+       row-inner) for ``CalcOp``, ``CalcAllOp``, whole-row ops, and plain
+       callables.
+    3. **Nm (rename)** — apply ``name_chg`` / ``nm_tuple`` renames.
+    4. **Pk (PK-bind)** — resolve source paths and write ``inc_code`` /
+       ``inc_name``.  Runs LAST so renames applied in pass 3 are visible
+       (fixes Case A and Case B bugs where a pre-rename source or a
+       rename-created target was not yet present when PK binding ran).
 
     Args:
         parsed_data: A single record dict or a list of record dicts from the
@@ -191,27 +147,30 @@ def apply_etl_transformations(
         excl_lst: Field names to drop before Pydantic compilation.
         conv_dict: Mapping of field name → converter (``inc``, ``calc``,
             ``calc_all``, ``link_to``, ``pluck``, etc.).
-        name_chg: ``[(old_name, new_name), ...]`` rename pairs applied after
-            conversions.
-        normalized: Optional pre-built ``NormalizedKwargs`` container.  When
-            present the shim below reverse-projects ``ex_tuple``,
-            ``nm_tuple``, and ``pk_tuple`` into the bare-param slots above,
-            so the existing dispatcher branches still receive the inputs
-            they expect.  ``conv_map`` is intentionally NOT projected:
-            ``factory.build_instances`` first expands the user ``conv_dict``
-            through ``_schema_union``, and the resulting ``effective_conv``
-            must not be clobbered by the raw user mapping.
+        name_chg: ``[(old_name, new_name), ...]`` rename pairs applied before
+            PK binding.
+        normalized: Optional pre-built ``NormalizedKwargs`` container from
+            ``_normalize_etl_kwargs``.  When ``None`` the function synthesises
+            a transient container from the bare kwargs — this preserves
+            backward-compat for direct test calls that don't pass
+            ``normalized``.  The ``conv_map`` field of the container is
+            intentionally NOT used for Op dispatch: ``factory.build_instances``
+            expands the user ``conv_dict`` through ``_schema_union`` before
+            calling here, and that expanded ``effective_conv`` must not be
+            clobbered by the raw user mapping.
 
     Returns:
         The same structure as ``parsed_data`` (dict or list), mutated in
         place.  Callers may discard the return value.
     """
-
-    if normalized is not None:
-        excl_lst = [ex.field for ex in normalized.ex_tuple] or None
-        name_chg = [(nm.old, nm.new) for nm in normalized.nm_tuple] or None
-        code_attr = next((pk.source for pk in normalized.pk_tuple if pk.target == "code"), None)
-        name_attr = next((pk.source for pk in normalized.pk_tuple if pk.target == "name"), None)
+    if normalized is None:
+        normalized = _normalize_etl_kwargs(
+            excl_lst=excl_lst,
+            conv_dict=conv_dict,
+            name_chg=name_chg,
+            code_attr=code_attr,
+            name_attr=name_attr,
+        )
 
     items = parsed_data if isinstance(parsed_data, list) else [parsed_data]
     if not items:
@@ -221,21 +180,19 @@ def apply_etl_transformations(
     if not dict_items:
         return items if isinstance(parsed_data, list) else items[0]
 
-    # Rows outer, keys inner — keeps each dict warm in the CPU cache during
-    # the inner loop, avoiding cache thrashing on large datasets.
-    if excl_lst:
-        excl_set = frozenset(excl_lst)
+    # Pass 1 — Ex (drop): rows outer, keys inner keeps each dict warm in CPU
+    # cache, avoiding thrashing on large datasets.
+    if normalized.ex_tuple:
         for d in dict_items:
-            for key in excl_set:
-                d.pop(key, None)
+            for ex in normalized.ex_tuple:
+                ex.apply_drop(d)
 
-    effective_conv = _splice_pk_binding(conv_dict, code_attr, name_attr)
-
-    if effective_conv:
-        # Op-outer / row-inner: resolve per-key metadata once, then iterate
-        # rows inside.  Insertion order is preserved so calc A → calc B
-        # sequencing (where B reads A's output) keeps working unchanged.
-        for key, operation in effective_conv.items():
+    if conv_dict:
+        # Pass 2 — conv_dict (Op family): op-outer / row-inner so per-key
+        # metadata is resolved once, then rows iterated inside.  Insertion
+        # order is preserved so calc A → calc B sequencing (where B reads
+        # A's output) keeps working unchanged.
+        for key, operation in conv_dict.items():
             if isinstance(operation, CalcOp):
                 func = operation.func
                 default = operation.default
@@ -310,16 +267,6 @@ def apply_etl_transformations(
                             val = default
                     d[key] = val
 
-            elif isinstance(operation, _PkBindOp):
-                for d in dict_items:
-                    try:
-                        val = operation(d)
-                    except Exception as e:
-                        logger.warning("conv_dict failed on key '%s': %s", key, e)
-                        continue
-                    if val is not None:
-                        d[key] = val
-
             elif getattr(operation, "whole_row", False):
                 # whole_row=True ops (e.g., pluck()) need the full row dict to
                 # navigate nested paths from root — d.get(key) would lose context.
@@ -354,12 +301,18 @@ def apply_etl_transformations(
                     except Exception as e:
                         logger.warning("conv_dict failed on key '%s': %s", key, e)
 
-    if name_chg:
-        name_map = dict(name_chg)  # preserves insertion order so chained renames apply in sequence
+    # Pass 3 — Nm (rename): rows outer, directives inner.
+    if normalized.nm_tuple:
         for d in dict_items:
-            for old_key, new_key in name_map.items():
-                if old_key in d:
-                    d[new_key] = d.pop(old_key)
+            for nm in normalized.nm_tuple:
+                nm.apply_rename(d)
+
+    # Pass 4 — Pk (PK-bind): runs LAST so pass-3 renames are visible.
+    # This fixes Case A (source renamed away) and Case B (rename creates target).
+    if normalized.pk_tuple:
+        for d in dict_items:
+            for pk in normalized.pk_tuple:
+                pk.apply_bind(d)
 
     return items if isinstance(parsed_data, list) else items[0]
 
