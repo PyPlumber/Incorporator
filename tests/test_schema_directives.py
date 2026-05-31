@@ -1,6 +1,6 @@
 """Unit tests for Ex / Nm / Pk frozen-dataclass wrappers and DataPath.pop/set."""
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from typing import Any
 
 import pytest
@@ -56,6 +56,12 @@ def test_wrapper_hashable(wrapper: Any) -> None:
     assert wrapper in s
     d = {wrapper: 1}
     assert d[wrapper] == 1
+
+    # Two equal-fields instances must collide as dict keys (frozen __eq__ + __hash__).
+    wrapper2 = replace(wrapper)
+    collision = {wrapper: 1, wrapper2: 2}
+    assert len(collision) == 1
+    assert collision[wrapper] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +218,21 @@ def test_datapath_pop_non_dict_record_noop() -> None:
     assert not_a_dict == [1, 2, 3]
 
 
+def test_datapath_pop_with_int_segment() -> None:
+    """Asserts DataPath.pop walks a list-index segment to remove a dict leaf inside the list."""
+    record: dict[str, Any] = {"a": [{"b": 99, "c": "keep"}]}
+    DataPath.parse("a.0.b").pop(record)
+    assert "b" not in record["a"][0]
+    assert record["a"][0]["c"] == "keep"
+
+
+def test_datapath_pop_with_int_segment_out_of_bounds_noop() -> None:
+    """Asserts DataPath.pop is a silent no-op when the list index is out of range."""
+    record: dict[str, Any] = {"a": [{"b": 1}]}
+    DataPath.parse("a.5.b").pop(record)
+    assert record == {"a": [{"b": 1}]}
+
+
 # ---------------------------------------------------------------------------
 # DataPath.set
 # ---------------------------------------------------------------------------
@@ -243,3 +264,17 @@ def test_datapath_set_non_dict_record_noop() -> None:
     not_a_dict: Any = [1, 2, 3]
     DataPath.parse("a").set(not_a_dict, 99)
     assert not_a_dict == [1, 2, 3]
+
+
+def test_datapath_set_with_int_segment() -> None:
+    """Asserts DataPath.set walks a list-index segment to write a dict leaf inside the list."""
+    record: dict[str, Any] = {"a": [{"b": 1}]}
+    DataPath.parse("a.0.b").set(record, 42)
+    assert record["a"][0]["b"] == 42
+
+
+def test_datapath_set_with_int_segment_out_of_bounds_noop() -> None:
+    """Asserts DataPath.set is a silent no-op when the list index is out of range."""
+    record: dict[str, Any] = {"a": [{"b": 1}]}
+    DataPath.parse("a.5.b").set(record, 42)
+    assert record == {"a": [{"b": 1}]}

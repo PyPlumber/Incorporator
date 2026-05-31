@@ -78,13 +78,8 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
     # ==========================================
     # PHASE 2: THE REFRESH (State B)
     # ==========================================
-    stock_b = await LiveStock.refresh(
-        instance=stock_a,
-        new_url=BASE_URL,
-        inc_code="symbol",
-        inc_name="company_name",
-        conv_dict={"current_price": calc(float, default=0.0, target_type=float)},
-    )
+    # refresh() auto-replays the original incorp() kwargs via cls._incorp_kwargs.
+    stock_b = await LiveStock.refresh(instance=stock_a)
 
     assert not isinstance(stock_b, list)
 
