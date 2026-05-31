@@ -63,6 +63,7 @@ from ..io.pagination import (
     SQLitePaginator,
 )
 from ..schema.converters import calc, calc_all, inc, new
+from ..schema.directives import Ex, Nm, Pk
 from ..schema.extractors import (
     as_list,
     join_all,
@@ -121,6 +122,9 @@ _ALLOWED_NAMES: dict[str, Any] = {
     "True": True,
     "False": False,
     "new": new,  # incorporator schema "any-type" sentinel
+    "Ex": Ex,
+    "Nm": Nm,
+    "Pk": Pk,
 }
 
 # A string looks like a call-grammar token only if it matches a Python call.

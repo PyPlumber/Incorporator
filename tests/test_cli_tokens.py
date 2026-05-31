@@ -245,3 +245,32 @@ def test_single_quote_inside_call_token() -> None:
 
     out = resolve_tokens({"inc_page": "NextUrlPaginator('next')"})
     assert isinstance(out["inc_page"], NextUrlPaginator)
+
+
+# ---------- Ex / Nm / Pk directive smoke tests ----------
+
+
+def test_resolve_ex_directive() -> None:
+    """Ex('status') in a list resolves to an Ex instance."""
+    from incorporator.schema.directives import Ex
+
+    out = resolve_tokens({"excl_lst": ["Ex('status')"]})
+    assert isinstance(out["excl_lst"][0], Ex)
+
+
+def test_resolve_nm_directive() -> None:
+    """Nm('external_id', 'id') in a list resolves to an Nm instance."""
+    from incorporator.schema.directives import Nm
+
+    out = resolve_tokens({"name_chg": ["Nm('external_id', 'id')"]})
+    assert isinstance(out["name_chg"][0], Nm)
+
+
+def test_resolve_pk_with_kwarg() -> None:
+    """Pk('id', target='code') resolves to a Pk instance with correct attributes."""
+    from incorporator.schema.directives import Pk
+
+    out = resolve_tokens({"x": "Pk('id', target='code')"})
+    assert isinstance(out["x"], Pk)
+    assert out["x"].source == "id"
+    assert out["x"].target == "code"

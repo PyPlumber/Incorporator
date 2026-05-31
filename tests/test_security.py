@@ -172,6 +172,36 @@ async def test_host_is_internal_uses_async_dns(monkeypatch: pytest.MonkeyPatch) 
     assert await fetch._host_is_internal("my-internal.local") is True
 
 
+# ==========================================
+# 4. TOKEN ALLOW-LIST BOUNDARY TESTS (Ex / Nm / Pk)
+# ==========================================
+
+
+def test_token_rejects_ex_class_access() -> None:
+    """Attribute-access forms on Ex are rejected; the new allow-list entry does not
+    expand the attack surface beyond direct construction."""
+    from incorporator.cli.tokens import TokenResolutionError, resolve_tokens
+
+    with pytest.raises(TokenResolutionError, match="unsupported call form"):
+        resolve_tokens({"x": "Ex('a').__init__('b')"})
+
+
+def test_token_rejects_nm_attribute_access() -> None:
+    """Dotted-name call on Nm is rejected by the AST walker before any code runs."""
+    from incorporator.cli.tokens import TokenResolutionError, resolve_tokens
+
+    with pytest.raises(TokenResolutionError, match="unsupported call form"):
+        resolve_tokens({"x": "Nm.__class__('c', 'd')"})
+
+
+def test_token_rejects_pk_attribute_access() -> None:
+    """Dotted-name call on Pk is rejected by the AST walker before any code runs."""
+    from incorporator.cli.tokens import TokenResolutionError, resolve_tokens
+
+    with pytest.raises(TokenResolutionError, match="unsupported call form"):
+        resolve_tokens({"x": "Pk.__class__('id', 'code')"})
+
+
 @pytest.mark.asyncio
 async def test_redirect_hook_blocks_internal_target(monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end: the response hook must raise on a 302 → internal-host redirect."""
