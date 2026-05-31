@@ -70,6 +70,22 @@ class CalcAllOp:
         self.input_list = [DataPath.parse(dep) for dep in input_list]
 
 
+class IncOp:
+    """Marker for inc(); carries the ranked-converter closure for uniform dispatcher introspection."""
+
+    __slots__ = ("target_type", "default", "input_keys", "is_pure", "_ranked_converter")
+
+    def __init__(self, target_type: Any, default: Any, ranked_converter: Callable[[Any], Any]) -> None:
+        self.target_type = target_type
+        self.default = default
+        self.input_keys: tuple[str, ...] = ()
+        self.is_pure: bool = True
+        self._ranked_converter = ranked_converter
+
+    def __call__(self, val: Any) -> Any:
+        return self._ranked_converter(val)
+
+
 def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None) -> CalcOp:
     """Synthesise a derived field per row from one or more source fields.
 
@@ -401,7 +417,7 @@ def _get_cached_adapter(actual_type: Any) -> TypeAdapter[Any] | None:
 
 
 @functools.lru_cache(maxsize=128)
-def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
+def inc(target_type: Any, default: Any = None) -> IncOp:
     """Type-coercion workhorse for ``conv_dict`` — turn messy API values into clean Python types.
 
     Reach for ``inc(SomeType)`` whenever an API returns numeric strings,
@@ -438,7 +454,10 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
             and strings) are hashable, so this is rarely binding.
 
     Returns:
-        A converter closure suitable for placing in ``conv_dict``.
+        An :class:`IncOp` instance suitable for placing in ``conv_dict``.
+        Repeated calls with the same ``(target_type, default)`` return the
+        **same** instance (via :func:`functools.lru_cache`); the instance is
+        stateless so sharing is safe.
 
     Under the hood ``inc()`` builds a ranked converter chain: the
     Pydantic ``TypeAdapter`` is tried first, then a type-specific
@@ -447,12 +466,9 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
     Only when every rank raises does the warning fire and ``default``
     return.
 
-    Repeated calls with the same ``(target_type, default)`` return the
-    same closure instance (via :func:`functools.lru_cache`); the
-    closure is stateless so sharing is safe.  This layers on top of the
-    existing per-type :func:`_get_cached_adapter` cache and saves the
-    ``TypeAdapter`` rebuild cost in long-running pipelines that
-    re-construct ``conv_dict`` per tick.
+    This layers on top of the existing per-type :func:`_get_cached_adapter`
+    cache and saves the ``TypeAdapter`` rebuild cost in long-running pipelines
+    that re-construct ``conv_dict`` per tick.
     """
     # 1. The 'new' mapping: If 'new', accept ANY valid Python type.
     actual_type = Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type
@@ -490,4 +506,4 @@ def inc(target_type: Any, default: Any = None) -> Callable[[Any], Any]:
         )
         return default
 
-    return _ranked_converter
+    return IncOp(target_type, default, _ranked_converter)

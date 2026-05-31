@@ -63,9 +63,35 @@ def sum_attributes(*args: Any) -> float:
     return total
 
 
+class SplitAndGetOp:
+    """Marker for split_and_get(); carries parsed delimiter/index/cast for dispatcher introspection."""
+
+    __slots__ = ("delimiter", "index", "cast_type", "input_keys", "is_pure")
+
+    def __init__(self, delimiter: str, index: int, cast_type: Callable[[Any], Any] | None) -> None:
+        self.delimiter = delimiter
+        self.index = index
+        self.cast_type = cast_type
+        self.input_keys: tuple[str, ...] = ()
+        self.is_pure: bool = True
+
+    def __call__(self, value: Any) -> Any:
+        # Align with inc()'s null contract via :func:`is_garbage_value`:
+        # ``None``, ``""``, and the canonical garbage set (``"n/a"``,
+        # ``"null"``, ``"unknown"``, ``"nan"``, ``"undefined"``) all
+        # short-circuit to ``None`` without entering the split/cast path.
+        if is_garbage_value(value):
+            return None
+        try:
+            result = str(value).strip(self.delimiter).split(self.delimiter)[self.index]
+            return self.cast_type(result) if self.cast_type else result
+        except (IndexError, ValueError, TypeError):
+            return None
+
+
 def split_and_get(
     delimiter: str = "/", index: int = -1, cast_type: Callable[[Any], Any] | None = None
-) -> Callable[[Any], Any]:
+) -> SplitAndGetOp:
     """Extract an ID from a delimited string — the HATEOAS URL-tail / colon-separated-key one-liner.
 
     Reach for it whenever an API hands back a delimited value and the
@@ -93,27 +119,13 @@ def split_and_get(
         cast_type: Optional callable applied to the extracted string
             (e.g. ``int`` to convert a numeric ID).
 
-    Returns a closure for use in ``conv_dict``.  Garbage values
+    Returns a :class:`SplitAndGetOp` for use in ``conv_dict``.  Garbage values
     (``None``, ``""``, ``"N/A"``, ``"null"``, ``"unknown"``, ``"nan"``,
     ``"undefined"`` — see :func:`is_garbage_value`) pass through as
     ``None``; out-of-range indices and failed casts also return ``None``
     rather than raising.
     """
-
-    def _splitter(value: Any) -> Any:
-        # Align with inc()'s null contract via :func:`is_garbage_value`:
-        # ``None``, ``""``, and the canonical garbage set (``"n/a"``,
-        # ``"null"``, ``"unknown"``, ``"nan"``, ``"undefined"``) all
-        # short-circuit to ``None`` without entering the split/cast path.
-        if is_garbage_value(value):
-            return None
-        try:
-            result = str(value).strip(delimiter).split(delimiter)[index]
-            return cast_type(result) if cast_type else result
-        except (IndexError, ValueError, TypeError):
-            return None
-
-    return _splitter
+    return SplitAndGetOp(delimiter, index, cast_type)
 
 
 # ==========================================
@@ -121,7 +133,95 @@ def split_and_get(
 # ==========================================
 
 
-def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Callable[[Any], Any]:
+class LinkToOp:
+    """Marker for link_to(); carries the registry for dispatcher introspection.
+
+    The registry is a WeakValueDictionary, which means entries can be silently evicted when the
+    referenced objects are garbage-collected.  ``is_pure = False`` signals to callers that this op
+    cannot be safely cached across ticks — its output depends on live registry state.
+    """
+
+    __slots__ = ("_registry", "_fallback_registry", "extractor", "input_keys", "is_pure")
+
+    def __init__(self, dataset: Any, extractor: Callable[[Any], Any] | None) -> None:
+        # 1. Primary Cache: OOM-Safe for production Incorporator/Pydantic objects
+        self._registry: weakref.WeakValueDictionary[Any, Any] = weakref.WeakValueDictionary()
+
+        # 2. Fallback Cache: Strong references for tests (SimpleNamespace) or non-weakref classes
+        self._fallback_registry: dict[Any, Any] = {}
+
+        self.extractor = extractor
+        self.input_keys: tuple[str, ...] = ()
+        self.is_pure: bool = False
+
+        def _add_to_cache(k: Any, v: Any) -> None:
+            try:
+                # Attempt to set the weakref
+                self._registry[k] = v
+                self._registry[str(k)] = v  # Shadow string map
+            except TypeError:
+                # Alert on every miss so memory pressure from large non-weakrefable datasets
+                # is visible in logs rather than silently accumulating.
+                logger.debug(
+                    "link_to: strong-ref fallback cache miss for key %r — "
+                    "object is not weakrefable. Large non-weakrefable datasets (e.g. built-in dicts) "
+                    "will not be garbage-collected until the enclosing scope exits.",
+                    k,
+                )
+                self._fallback_registry[k] = v
+                self._fallback_registry[str(k)] = v
+
+        # Build the cache
+        if isinstance(dataset, list):
+            for item in dataset:
+                code = getattr(item, "inc_code", None)
+                if code is not None:
+                    _add_to_cache(code, item)
+        else:
+            # Failsafe for single objects or IncorporatorLists that already have inc_dict
+            reg = getattr(dataset, "inc_dict", {})
+            if isinstance(reg, collections.abc.Mapping):
+                for k, v in reg.items():
+                    _add_to_cache(k, v)
+
+    def __call__(self, val: Any) -> Any:
+        # Align with inc()'s null-handling contract: garbage input
+        # short-circuits to ``None`` BEFORE invoking the optional
+        # ``extractor`` callable.  Without this pre-check, a None FK +
+        # an extractor like ``str.upper`` would raise TypeError, get
+        # caught at the builder.py dispatch boundary, and emit a
+        # "conv_dict failed" WARNING on every garbage row.
+        if is_garbage_value(val):
+            return None
+        key = self.extractor(val) if self.extractor is not None else val
+        # Symmetric output-side guard: when an extractor returns
+        # garbage (``None``, ``""``, ``"N/A"``, etc.), short-circuit
+        # to ``None`` instead of attempting the registry lookup.
+        # The dict lookup itself wouldn't find anything, but garbage
+        # keys would still cost the str-coercion + four lookups
+        # below — and a future warning-instrumented lookup would
+        # falsely surface this as a "missed join" when it's actually
+        # a missing FK.
+        if is_garbage_value(key):
+            return None
+
+        # O(1) Instant Lookup (Check Weak Registry first, then Fallback)
+        if key in self._registry:
+            return self._registry[key]
+        if key in self._fallback_registry:
+            return self._fallback_registry[key]
+
+        # Ultimate Type-Splinter defense (Strings)
+        str_key = str(key)
+        if str_key in self._registry:
+            return self._registry[str_key]
+        if str_key in self._fallback_registry:
+            return self._fallback_registry[str_key]
+
+        return None
+
+
+def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> LinkToOp:
     """SQL-style JOIN as a one-liner — replace a foreign-key value with the actual instance.
 
     Reach for it whenever the row has an FK and the related dataset is
@@ -158,7 +258,7 @@ def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Call
                 }
 
     Returns:
-        A converter closure.  Unmatched keys resolve to ``None`` — never
+        A :class:`LinkToOp` instance.  Unmatched keys resolve to ``None`` — never
         raises.  The lookup tries the key as-is and also its ``str()``
         form to absorb the common "API returns int, registry keyed by
         string" mismatch.
@@ -172,83 +272,29 @@ def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Call
     For lists of foreign keys (e.g. tags → tag objects) use
     :func:`link_to_list`.
     """
-
-    # 1. Primary Cache: OOM-Safe for production Incorporator/Pydantic objects
-    registry: weakref.WeakValueDictionary[Any, Any] = weakref.WeakValueDictionary()
-
-    # 2. Fallback Cache: Strong references for tests (SimpleNamespace) or non-weakref classes
-    fallback_registry: dict[Any, Any] = {}
-
-    def _add_to_cache(k: Any, v: Any) -> None:
-        try:
-            # Attempt to set the weakref
-            registry[k] = v
-            registry[str(k)] = v  # Shadow string map
-        except TypeError:
-            # Alert on every miss so memory pressure from large non-weakrefable datasets
-            # is visible in logs rather than silently accumulating.
-            logger.debug(
-                "link_to: strong-ref fallback cache miss for key %r — "
-                "object is not weakrefable. Large non-weakrefable datasets (e.g. built-in dicts) "
-                "will not be garbage-collected until the enclosing scope exits.",
-                k,
-            )
-            fallback_registry[k] = v
-            fallback_registry[str(k)] = v
-
-    # Build the cache
-    if isinstance(dataset, list):
-        for item in dataset:
-            code = getattr(item, "inc_code", None)
-            if code is not None:
-                _add_to_cache(code, item)
-    else:
-        # Failsafe for single objects or IncorporatorLists that already have inc_dict
-        reg = getattr(dataset, "inc_dict", {})
-        if isinstance(reg, collections.abc.Mapping):
-            for k, v in reg.items():
-                _add_to_cache(k, v)
-
-    def _mapper(val: Any) -> Any:
-        # Align with inc()'s null-handling contract: garbage input
-        # short-circuits to ``None`` BEFORE invoking the optional
-        # ``extractor`` callable.  Without this pre-check, a None FK +
-        # an extractor like ``str.upper`` would raise TypeError, get
-        # caught at the builder.py dispatch boundary, and emit a
-        # "conv_dict failed" WARNING on every garbage row.
-        if is_garbage_value(val):
-            return None
-        key = extractor(val) if extractor is not None else val
-        # Symmetric output-side guard: when an extractor returns
-        # garbage (``None``, ``""``, ``"N/A"``, etc.), short-circuit
-        # to ``None`` instead of attempting the registry lookup.
-        # The dict lookup itself wouldn't find anything, but garbage
-        # keys would still cost the str-coercion + four lookups
-        # below — and a future warning-instrumented lookup would
-        # falsely surface this as a "missed join" when it's actually
-        # a missing FK.
-        if is_garbage_value(key):
-            return None
-
-        # O(1) Instant Lookup (Check Weak Registry first, then Fallback)
-        if key in registry:
-            return registry[key]
-        if key in fallback_registry:
-            return fallback_registry[key]
-
-        # Ultimate Type-Splinter defense (Strings)
-        str_key = str(key)
-        if str_key in registry:
-            return registry[str_key]
-        if str_key in fallback_registry:
-            return fallback_registry[str_key]
-
-        return None
-
-    return _mapper
+    return LinkToOp(dataset, extractor)
 
 
-def link_to_list(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Callable[[Any], list[Any]]:
+class LinkToListOp:
+    """Marker for link_to_list(); wraps a LinkToOp for element-wise FK resolution."""
+
+    __slots__ = ("_base", "input_keys", "is_pure")
+
+    def __init__(self, dataset: Any, extractor: Callable[[Any], Any] | None) -> None:
+        self._base: LinkToOp = link_to(dataset, extractor)
+        self.input_keys: tuple[str, ...] = ()
+        self.is_pure: bool = False
+
+    def __call__(self, val_list: Any) -> list[Any]:
+        if not isinstance(val_list, list):
+            return []
+        # Per-element garbage filter mirrors link_to's pre-check.  The
+        # inner _base also pre-checks for safety, but skipping the
+        # call entirely is the cheaper path on garbage-heavy lists.
+        return [obj for v in val_list if not is_garbage_value(v) and (obj := self._base(v)) is not None]
+
+
+def link_to_list(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> LinkToListOp:
     """1-to-N JOIN — resolve a list of foreign-key IDs to the corresponding instances.
 
     Reach for it whenever the source field is itself a list of IDs:
@@ -278,7 +324,7 @@ def link_to_list(dataset: Any, extractor: Callable[[Any], Any] | None = None) ->
             lookup — same contract as :func:`link_to`.
 
     Returns:
-        A converter closure that accepts a list of foreign keys and returns
+        A :class:`LinkToListOp` instance that accepts a list of foreign keys and returns
         a list of matched objects.  Non-list inputs return an empty list;
         unmatched individual keys are silently omitted.
 
@@ -286,21 +332,28 @@ def link_to_list(dataset: Any, extractor: Callable[[Any], Any] | None = None) ->
     are filtered before the per-element lookup.  Mirrors :func:`link_to`'s
     extractor pre-check.
     """
-    base_linker = link_to(dataset, extractor)
-
-    def _mapper(val_list: Any) -> list[Any]:
-        if not isinstance(val_list, list):
-            return []
-        # Per-element garbage filter mirrors link_to's pre-check.  The
-        # inner base_linker also pre-checks for safety, but skipping the
-        # closure invocation entirely is the cheaper path on garbage-heavy
-        # lists.
-        return [obj for v in val_list if not is_garbage_value(v) and (obj := base_linker(v)) is not None]
-
-    return _mapper
+    return LinkToListOp(dataset, extractor)
 
 
-def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Callable[[Any], Any]:
+class PluckOp:
+    """Marker for pluck(); carries parsed path + chain for dispatcher introspection."""
+
+    __slots__ = ("_path", "chain", "input_keys", "is_pure")
+
+    def __init__(self, key: str, chain: Callable[[Any], Any] | None = None) -> None:
+        self._path = DataPath.parse(key)
+        self.chain = chain
+        self.input_keys: tuple[str, ...] = (key,)
+        self.is_pure: bool = True
+
+    def __call__(self, val: Any) -> Any:
+        extracted = self._path.resolve(val)
+        if self.chain is None or is_garbage_value(extracted):
+            return extracted
+        return self.chain(extracted)
+
+
+def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> PluckOp:
     """Lift a deeply-nested field to a top-level attribute using a dot-notation path.
 
     Reach for it whenever the API buries the value you actually want
@@ -328,7 +381,7 @@ def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Callable[[Any]
         chain: Optional callable applied to the extracted value (e.g.
             ``int`` or another converter token like ``inc(datetime)``).
 
-    Returns a converter closure.  Missing path segments resolve to ``None``
+    Returns a :class:`PluckOp` instance.  Missing path segments resolve to ``None``
     rather than raising — drilling through ``{"a": None}`` for path
     ``"a.b"`` returns ``None`` safely.
 
@@ -339,16 +392,7 @@ def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Callable[[Any]
     callables (``pluck("data.title", chain=str.lower)``) without writing
     a defensive null guard.
     """
-
-    _path = DataPath.parse(key)
-
-    def _plucker(val: Any) -> Any:
-        extracted = _path.resolve(val)
-        if chain is None or is_garbage_value(extracted):
-            return extracted
-        return chain(extracted)
-
-    return _plucker
+    return PluckOp(key, chain)
 
 
 # ==========================================
@@ -384,7 +428,23 @@ def each() -> _EachSentinel:
     return _EachSentinel()
 
 
-def join_all(delimiter: str = ",") -> Callable[[Any], str]:
+class JoinAllOp:
+    """Marker for join_all(); carries delimiter for dispatcher introspection."""
+
+    __slots__ = ("delimiter", "input_keys", "is_pure")
+
+    def __init__(self, delimiter: str) -> None:
+        self.delimiter = delimiter
+        self.input_keys: tuple[str, ...] = ()
+        self.is_pure: bool = True
+
+    def __call__(self, data: Any) -> str:
+        if not isinstance(data, list):
+            return str(data)
+        return self.delimiter.join(str(x) for x in data if x is not None)
+
+
+def join_all(delimiter: str = ",") -> JoinAllOp:
     """Collapse all parent IDs into one delimited string for a single bulk POST.
 
     Reach for it when the endpoint supports a delimited-batch shape:
@@ -410,22 +470,29 @@ def join_all(delimiter: str = ",") -> Callable[[Any], str]:
         delimiter: Separator between IDs.  Default ``","``; common
             alternatives are ``";"`` and ``"|"`` depending on the API.
 
-    Returns a converter closure.  Non-list inputs pass through as
+    Returns a :class:`JoinAllOp` instance.  Non-list inputs pass through as
     ``str(value)``.
 
     See :func:`each` (N requests) and :func:`as_list` (one request, JSON
     array body) for the other request-count patterns.
     """
-
-    def _joiner(data: Any) -> str:
-        if not isinstance(data, list):
-            return str(data)
-        return delimiter.join(str(x) for x in data if x is not None)
-
-    return _joiner
+    return JoinAllOp(delimiter)
 
 
-def as_list() -> Callable[[Any], list[Any]]:
+class AsListOp:
+    """Marker for as_list(); wraps scalar inputs in a single-element list."""
+
+    __slots__ = ("input_keys", "is_pure")
+
+    def __init__(self) -> None:
+        self.input_keys: tuple[str, ...] = ()
+        self.is_pure: bool = True
+
+    def __call__(self, data: Any) -> list[Any]:
+        return data if isinstance(data, list) else [data]
+
+
+def as_list() -> AsListOp:
     """Ship all parent IDs in one POST as a JSON array — the natural shape for typed REST endpoints.
 
     Reach for it when the endpoint expects ``{"ids": [1, 2, 3]}`` (or
@@ -447,10 +514,10 @@ def as_list() -> Callable[[Any], list[Any]]:
         )
 
     Returns:
-        A converter closure.  Scalar inputs are wrapped in a
+        An :class:`AsListOp` instance.  Scalar inputs are wrapped in a
         single-element list.
 
     See :func:`each` (N requests) and :func:`join_all` (one request,
     delimited string) for the other request-count patterns.
     """
-    return lambda data: data if isinstance(data, list) else [data]
+    return AsListOp()
