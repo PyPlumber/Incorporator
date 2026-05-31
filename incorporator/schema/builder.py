@@ -225,13 +225,24 @@ def apply_etl_transformations(
                 if old_key in d:
                     d[new_key] = d.pop(old_key)
 
-    if code_attr:
+    if code_attr and "." not in code_attr:
+        for d in dict_items:
+            val = d.get(code_attr)
+            if val is not None:
+                d["inc_code"] = val
+    elif code_attr:
         code_path = DataPath.parse(code_attr)
         for d in dict_items:
             val = code_path.resolve(d)
             if val is not None:
                 d["inc_code"] = val
-    if name_attr:
+
+    if name_attr and "." not in name_attr:
+        for d in dict_items:
+            val = d.get(name_attr)
+            if val is not None:
+                d["inc_name"] = val
+    elif name_attr:
         name_path = DataPath.parse(name_attr)
         for d in dict_items:
             val = name_path.resolve(d)

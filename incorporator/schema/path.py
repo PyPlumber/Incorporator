@@ -78,6 +78,16 @@ class DataPath:
             index, scalar mid-walk).
         """
         current: Any = record
+        if len(self.segments) == 1:
+            seg = self.segments[0]
+            if current is None:
+                return None
+            if isinstance(current, dict):
+                key = str(seg) if isinstance(seg, int) else seg
+                return current.get(key)
+            if isinstance(current, list) and isinstance(seg, int):
+                return current[seg] if 0 <= seg < len(current) else None
+            return None
         for seg in self.segments:
             if current is None:
                 return None
