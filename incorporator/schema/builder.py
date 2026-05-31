@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..exceptions import IncorporatorSchemaError
 from .converters import CalcAllOp, CalcOp, is_garbage_value
+from .directives import NormalizedKwargs
 from .path import DataPath
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,8 @@ def apply_etl_transformations(
     excl_lst: list[str] | None = None,
     conv_dict: dict[str, Any] | None = None,
     name_chg: list[tuple[str, str]] | None = None,
+    *,
+    normalized: NormalizedKwargs | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
     """Apply exc_lst, conv_dict, name_chg, and PK-binding transforms in-place.
 
@@ -190,11 +193,25 @@ def apply_etl_transformations(
             ``calc_all``, ``link_to``, ``pluck``, etc.).
         name_chg: ``[(old_name, new_name), ...]`` rename pairs applied after
             conversions.
+        normalized: Optional pre-built ``NormalizedKwargs`` container.  When
+            present the shim below reverse-projects ``ex_tuple``,
+            ``nm_tuple``, and ``pk_tuple`` into the bare-param slots above,
+            so the existing dispatcher branches still receive the inputs
+            they expect.  ``conv_map`` is intentionally NOT projected:
+            ``factory.build_instances`` first expands the user ``conv_dict``
+            through ``_schema_union``, and the resulting ``effective_conv``
+            must not be clobbered by the raw user mapping.
 
     Returns:
         The same structure as ``parsed_data`` (dict or list), mutated in
         place.  Callers may discard the return value.
     """
+
+    if normalized is not None:
+        excl_lst = [ex.field for ex in normalized.ex_tuple] or None
+        name_chg = [(nm.old, nm.new) for nm in normalized.nm_tuple] or None
+        code_attr = next((pk.source for pk in normalized.pk_tuple if pk.target == "code"), None)
+        name_attr = next((pk.source for pk in normalized.pk_tuple if pk.target == "name"), None)
 
     items = parsed_data if isinstance(parsed_data, list) else [parsed_data]
     if not items:

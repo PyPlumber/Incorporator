@@ -21,6 +21,7 @@ from pydantic import TypeAdapter
 from ..list import IncorporatorList, _deduplicate_extracted
 from . import builder as schema_builder
 from . import converters, router
+from .directives import NormalizedKwargs
 
 if TYPE_CHECKING:
     from ..base import Incorporator
@@ -234,6 +235,7 @@ def build_instances(
     excl_lst: list[str] | None = None,
     conv_dict: dict[str, Any] | None = None,
     name_chg: list[tuple[str, str]] | None = None,
+    normalized: NormalizedKwargs | None = None,
 ) -> Incorporator | IncorporatorList[Any]:
     """Transform, compile, and instantiate the parsed payload into Incorporator objects.
 
@@ -264,6 +266,10 @@ def build_instances(
         excl_lst: Field names to exclude before instantiation.
         conv_dict: Per-field converter mapping.
         name_chg: ``[(old_name, new_name), ...]`` field renames.
+        normalized: Optional pre-built ``NormalizedKwargs`` container from
+            ``_normalize_etl_kwargs``.  When present it is forwarded directly
+            to ``apply_etl_transformations``; the bare-param slots are then
+            reverse-projected from the container by that function's shim.
 
     Returns:
         A single :class:`Incorporator` instance or an
@@ -337,6 +343,7 @@ def build_instances(
         excl_lst=excl_lst,
         conv_dict=effective_conv,
         name_chg=name_chg,
+        normalized=normalized,
     )
 
     if target_class is not None:

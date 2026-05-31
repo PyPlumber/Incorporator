@@ -34,6 +34,7 @@ from .io.pagination.base import AsyncPaginator
 from .list import IncorporatorList, _deduplicate_extracted
 from .schema import JsonSchemaProperty, router
 from .schema import factory as _factory
+from .schema.directives import _normalize_etl_kwargs
 from .usercode import apply_code_transform, apply_inflow_resolution, load_outflow_module, pascal_case_from_stem
 
 if TYPE_CHECKING:
@@ -621,6 +622,19 @@ class Incorporator(BaseModel):
         if inc_name is not None:
             cls._inc_name_attr = inc_name
 
+        # Normalise the DATA-SHAPE kwargs into a frozen container so refresh()
+        # replays wrapped tuples rather than bare lists/strings.  Stored on
+        # _incorp_kwargs under the three legacy keys for back-compat with any
+        # reader that inspects them directly, plus a new "normalized" key
+        # carrying the wrapped container for the fast-path replay.
+        _normalized = _normalize_etl_kwargs(
+            excl_lst=excl_lst,
+            conv_dict=conv_dict,
+            name_chg=name_chg,
+            code_attr=inc_code,
+            name_attr=inc_name,
+        )
+
         # Persist the FULL network / format-handler context so refresh()
         # can replay the same fetch without forcing the caller to re-declare
         # ``params`` / ``headers`` / ``conv_dict`` / ``rec_path`` on every
@@ -634,6 +648,7 @@ class Incorporator(BaseModel):
             "conv_dict": conv_dict,
             "excl_lst": excl_lst,
             "name_chg": name_chg,
+            "normalized": _normalized,
             **{k: v for k, v in kwargs.items() if k not in ("__inspect", "__capture_into")},
         }
 
@@ -675,6 +690,7 @@ class Incorporator(BaseModel):
             excl_lst=excl_lst,
             conv_dict=conv_dict,
             name_chg=name_chg,
+            normalized=_normalized,
         )
 
         # Retain parent linking instructions for potential nested refreshes
@@ -822,10 +838,26 @@ class Incorporator(BaseModel):
             excl_lst = persisted.get("excl_lst")
         if name_chg is None:
             name_chg = persisted.get("name_chg")
+
+        # Build a fresh NormalizedKwargs for this refresh tick.  Normalizing
+        # here (rather than reusing persisted["normalized"]) ensures that any
+        # override the caller supplied on this tick (conv_dict / excl_lst /
+        # name_chg) is reflected in the wrapped container passed to
+        # build_instances.
+        _normalized = _normalize_etl_kwargs(
+            excl_lst=excl_lst,
+            conv_dict=conv_dict,
+            name_chg=name_chg,
+            code_attr=inc_code,
+            name_attr=inc_name,
+        )
+
         # Network / handler kwargs (params, headers, rec_path, sql_query,
-        # parquet_* etc.).  Filter out the three explicit-param slots we
+        # parquet_* etc.).  Filter out the DATA-SHAPE param slots we
         # already handled so they don't double-feed.
-        persisted_net = {k: v for k, v in persisted.items() if k not in ("conv_dict", "excl_lst", "name_chg")}
+        persisted_net = {
+            k: v for k, v in persisted.items() if k not in ("conv_dict", "excl_lst", "name_chg", "normalized")
+        }
         kwargs = {**persisted_net, **kwargs}
 
         if instance is None:
@@ -918,6 +950,7 @@ class Incorporator(BaseModel):
             excl_lst=excl_lst,
             conv_dict=conv_dict,
             name_chg=name_chg,
+            normalized=_normalized,
         )
 
         if inc_child is not None and isinstance(result, IncorporatorList):

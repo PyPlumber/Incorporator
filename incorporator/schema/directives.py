@@ -6,8 +6,9 @@ PK-BIND intent that today travels as bare strings and tuples alongside
 replayed safely under ``_incorp_kwargs`` reference-sharing because they
 are frozen and hashable.
 
-These classes sit dormant until Chain 2 wires the normalizer and
-dispatcher.  No existing API surface is altered here.
+``NormalizedKwargs`` is the canonical wrapped container produced by
+``_normalize_etl_kwargs``.  It is stored under ``_incorp_kwargs`` and
+replayed by ``refresh()`` via pass-by-reference.
 """
 
 from __future__ import annotations
@@ -144,3 +145,97 @@ class Pk:
 
     def __repr__(self) -> str:
         return f"Pk({self.source!r}, target={self.target!r})"
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedKwargs:
+    """Canonical wrapped form of the DATA-SHAPE pipeline parameters.
+
+    Frozen because it is stored under ``_incorp_kwargs`` and replayed by
+    ``refresh()`` via pass-by-reference.  The contained ``conv_map`` is a
+    regular dict (mutable internally) — the container itself is frozen, not
+    its dict value.
+
+    Attributes:
+        ex_tuple: Drop directives derived from ``excl_lst``.
+        conv_map: Per-field converter mapping (pass-through from
+            ``conv_dict``).
+        nm_tuple: Rename directives derived from ``name_chg``.
+        pk_tuple: PK-bind directives derived from ``code_attr`` /
+            ``name_attr``, with sources already rewritten through the
+            first-hit rename map.
+    """
+
+    ex_tuple: tuple[Ex, ...]
+    conv_map: dict[str, Any]
+    nm_tuple: tuple[Nm, ...]
+    pk_tuple: tuple[Pk, ...]
+
+
+def _normalize_etl_kwargs(
+    *,
+    excl_lst: list[str] | tuple[Ex, ...] | None,
+    conv_dict: dict[str, Any] | None,
+    name_chg: list[tuple[str, str]] | tuple[Nm, ...] | None,
+    code_attr: str | None,
+    name_attr: str | None,
+) -> NormalizedKwargs:
+    """Convert bare-shape DATA-SHAPE kwargs into a ``NormalizedKwargs`` container.
+
+    Idempotent: re-normalizing an already-normalized input (i.e., passing
+    tuples of ``Ex`` / ``Nm`` / ``Pk`` objects) yields an equivalent
+    container.  The Pk-source rewrite (Case A fix) applies the first-hit
+    rule against the ``nm_tuple`` rename map at config time, mirroring
+    ``_splice_pk_binding``'s non-chained behaviour.
+
+    Args:
+        excl_lst: Field names to drop, as bare strings or already-wrapped
+            ``Ex`` instances (mixed sequences are accepted).
+        conv_dict: Per-field converter mapping; passed through unchanged.
+        name_chg: Rename pairs as ``(old, new)`` 2-tuples or already-wrapped
+            ``Nm`` instances.
+        code_attr: Source field name to alias as ``inc_code``.  Skipped when
+            ``conv_dict`` already contains an explicit ``"inc_code"`` entry.
+        name_attr: Source field name to alias as ``inc_name``.  Skipped when
+            ``conv_dict`` already contains an explicit ``"inc_name"`` entry.
+
+    Returns:
+        A frozen ``NormalizedKwargs`` container ready for storage and replay.
+    """
+    # ex_tuple: bare str → Ex(field); existing Ex instances pass through.
+    ex_tuple: tuple[Ex, ...]
+    if excl_lst:
+        ex_tuple = tuple(item if isinstance(item, Ex) else Ex(item) for item in excl_lst)
+    else:
+        ex_tuple = ()
+
+    # nm_tuple: 2-tuple → Nm(old, new); existing Nm instances pass through.
+    nm_tuple: tuple[Nm, ...]
+    if name_chg:
+        nm_tuple = tuple(item if isinstance(item, Nm) else Nm(item[0], item[1]) for item in name_chg)
+    else:
+        nm_tuple = ()
+
+    # pk_tuple: synthesise from code_attr / name_attr; user conv_dict wins.
+    user_owns_code = bool(conv_dict and "inc_code" in conv_dict)
+    user_owns_name = bool(conv_dict and "inc_name" in conv_dict)
+    pk_list: list[Pk] = []
+    if code_attr and not user_owns_code:
+        pk_list.append(Pk(code_attr, target="code"))
+    if name_attr and not user_owns_name:
+        pk_list.append(Pk(name_attr, target="name"))
+
+    # Rewrite Pk.source through the rename map (first hit only — mirrors
+    # _splice_pk_binding's non-chained behaviour).  This fixes Case A: when
+    # code_attr names a field that name_chg renames, inc_code binding must
+    # follow the field to its new name before the rename pass runs.
+    if pk_list and nm_tuple:
+        rename_map = {nm.old: nm.new for nm in nm_tuple}
+        pk_list = [Pk(rename_map[pk.source], target=pk.target) if pk.source in rename_map else pk for pk in pk_list]
+
+    return NormalizedKwargs(
+        ex_tuple=ex_tuple,
+        conv_map=conv_dict or {},
+        nm_tuple=nm_tuple,
+        pk_tuple=tuple(pk_list),
+    )
