@@ -484,3 +484,59 @@ def test_inc_code_dotted_attr_binds_pk() -> None:
     rows = [{"team": {"id": "cub1"}}]
     apply_etl_transformations(rows, code_attr="team.id")
     assert rows[0]["inc_code"] == "cub1"
+
+
+# ---------------------------------------------------------------------------
+# Adaptive lru_cache wrapping via pure=True on calc() / inc() ops.
+# ---------------------------------------------------------------------------
+
+
+def test_calc_pure_true_returns_correct_values() -> None:
+    """calc(pure=True) with low-cardinality inputs still produces correct results.
+
+    Pins that the lru_cache wrapping path (when triggered by is_pure=True and
+    a low-cardinality column) does not corrupt output values.  Uses a category
+    column with two distinct values repeated across 20 rows so the cardinality
+    heuristic (< 50% unique) activates the cache.
+    """
+    call_count = 0
+
+    def tag_upper(v: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        return v.upper()
+
+    op = calc(tag_upper, "cat", default="", target_type=str, pure=True)
+    rows = [{"cat": "alpha" if i % 2 == 0 else "beta"} for i in range(20)]
+    apply_etl_transformations(rows, conv_dict={"out": op})
+
+    assert all(r["out"] in ("ALPHA", "BETA") for r in rows), "cache must not corrupt output"
+    # With caching the function body is only called once per unique input.
+    assert call_count <= 2, f"pure=True should cache repeated inputs; got {call_count} calls"
+
+
+def test_inc_low_cardinality_column_cached_and_correct() -> None:
+    """inc(int) on a low-cardinality column is cache-wrapped and returns correct values.
+
+    Op.is_pure is True by construction for inc(), so the else-branch in the
+    dispatcher populates the per-Op _cache slot on the first batch.  This test
+    pins that the cached path still converts values correctly and does not raise
+    on repeated identical inputs.
+    """
+    op = inc(int)
+    rows = [{"n": "1" if i % 3 == 0 else "2"} for i in range(30)]
+    apply_etl_transformations(rows, conv_dict={"n": op})
+
+    assert all(r["n"] in (1, 2) for r in rows), "cached inc(int) must still produce correct int output"
+
+
+def test_calc_pure_true_is_default() -> None:
+    """calc without pure= uses pure=True by default and still produces correct results."""
+    op = calc(str.lower, "label", default="", target_type=str)
+    assert op.is_pure is True
+
+    rows = [{"label": "FOO"}, {"label": "BAR"}, {"label": None}]
+    apply_etl_transformations(rows, conv_dict={"out": op})
+    assert rows[0]["out"] == "foo"
+    assert rows[1]["out"] == "bar"
+    assert rows[2]["out"] == ""

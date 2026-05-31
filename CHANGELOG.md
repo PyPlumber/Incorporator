@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-31 — columnar conv_dict reorientation + parse/write perf recovery
+
+A session of architectural reorientation: `conv_dict` is now uniformly
+columnar at the dispatcher level (op-outer / row-inner), with adaptive
+`lru_cache` wrapping for low-cardinality input columns.  All 7
+closure-returning converters collapse to a single generic `Op` class;
+the existing `CalcOp` / `CalcAllOp` stay dedicated for their richer
+state.  Plus surgical parse-side and write-side perf recovery.
+
+#### ⚠️  Breaking — `calc()` / `calc_all()` `pure` default flipped to `True`
+
+If you call `calc(func, ...)` with a `func` that has side effects
+(`datetime.now()`, `uuid.uuid4()`, logging, DB writes, network calls,
+mutable counters), **you must now pass `pure=False` explicitly** or
+those side effects will be silently suppressed for repeated identical
+input tuples (the dispatcher's adaptive `lru_cache` wrapping memoizes
+`pure=True` ops with low-cardinality input).
+
+Rationale: `conv_dict` is semantically a data-transform layer.
+Side-effect lambdas there are framework-documented anti-patterns
+(belongs in stream callbacks or post-processing).  Defaulting to
+`pure=True` matches the common case; explicit `pure=False` covers
+the edge case.
+
+Failure mode is silent (cache reuse, not crash) — review existing
+`calc(...)` invocations for any side-effecting `func`.
+
+#### Added
+
+- **`Op` class** at `incorporator/schema/converters.py`.  Generic
+  conv_dict marker carrying `_func`, `input_keys`, `is_pure`,
+  `whole_row`, `_cache` slots — replaces the 7 dedicated marker
+  classes (`PluckOp`, `LinkToOp`, `LinkToListOp`, `SplitAndGetOp`,
+  `JoinAllOp`, `AsListOp`, `IncOp`).  Per-Op-instance lazy `_cache`
+  slot populated on first batch where input cardinality qualifies
+  (< 50% unique in 500-row prefix sample) — persists across batches
+  for `is_pure=True` ops because purity = referentially transparent.
+- **`Op.whole_row` flag** signals dispatcher to pass the whole row
+  dict (replaces the former `isinstance(op, PluckOp)` branch).
+- **`_PkBindOp`** at `incorporator/schema/builder.py` — module-private
+  virtual conv_dict entry that subsumes Phase A's PK-binding fast-path
+  into the same op-outer dispatcher loop.
+- **`_maybe_cache_bare(fn, sample_inputs)`** at `builder.py`.  Decides
+  whether to wrap `fn` with `functools.lru_cache(maxsize=10_000)`
+  based on adaptive cardinality sampling.  Used by both the per-Op
+  cache (else branch) and per-call cache (CalcOp branch).
+
+#### Changed
+
+- **`conv_dict` dispatcher** at `apply_etl_transformations` is now
+  op-outer / row-inner uniformly (was nested per-row / per-op).  PK
+  binding (`inc_code` / `name_code`) executes inside pass 2 (BEFORE
+  `name_chg`) instead of as a post-pass, protecting against the case
+  where `name_chg` renames the source field out from under the
+  inc_code lookup.
+- **`pluck()` dispatch correction.**  PluckOp's `__call__` expects
+  the whole row dict to navigate paths from root, but the prior
+  dispatcher passed `d.get(key)`.  Latent bug — no test exercised it
+  in `apply_etl_transformations`; PluckOp's own unit tests test it
+  directly.  Now `op(d)` correctly per its documented contract.
+- **`serialize_nested()`** at `incorporator/io/formats.py` routes
+  through `_orjson_mod.dumps_str` instead of stdlib `json.dumps`.
+  All 7 callers gain orjson speedup when `[speedups]` is installed.
+- **`_batched_columns` inline scalar fast-path** at `columnar.py`
+  bypasses `serialize_nested` for `str/int/float/bool` values via
+  `_SCALAR_TYPES` frozenset + `type(v) in` C-level membership check
+  (no MRO walk).  Recovers ~41% of a previously-measured Arrow-write
+  throughput regression; ORC writes now exceed v1.1.3 docs claim.
+- **`DataPath.resolve()` single-segment fast-path** at
+  `incorporator/schema/path.py` skips the multi-segment walk for the
+  common single-key case.  Helps every caller of `resolve()`, not
+  just PK binding.
+- **`apply_etl_transformations` PK-binding dotless fast-path**:
+  config-time branch on `code_attr` / `name_attr` complexity skips
+  DataPath construction entirely when the path contains no `.`.
+
+#### Performance
+
+Bench (stagger+alternate methodology, 5 runs/format):
+
+| Format | pre | post | Δ |
+|---|---:|---:|---:|
+| ORC write | 212k | 293k | +38 % |
+| Feather write | 208k | 285k | +37 % |
+| Parquet write | 189k | 248k | +31 % |
+| CSV parse | 178k | 210k | +18 % |
+| SQLite parse | 201k | 228k | +13 % |
+
+Arrow write recovery brings Feather to +18 % over the v1.1.3 docs
+claim; Parquet/ORC come back within ~11–12 % of docs under the
+stricter stagger+alternate methodology.
+
 ### 2026-05-30 — internal grammar gets typed
 
 This session's 11 commits (Chains α through ζ plus docs / docstring

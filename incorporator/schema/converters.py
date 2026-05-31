@@ -49,44 +49,77 @@ class _EachSentinel:
 class CalcOp:
     """Marker indicating an operation that requires multiple values from the current row."""
 
-    __slots__ = ("func", "default", "target_type", "input_list")
+    __slots__ = ("func", "default", "target_type", "input_list", "is_pure")
 
-    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: list[str]):
+    def __init__(
+        self, func: Callable[..., Any], default: Any, target_type: Any, input_list: list[str], pure: bool = False
+    ):
         self.func = func
         self.default = default
         self.target_type = target_type
         self.input_list = [DataPath.parse(dep) for dep in input_list]
+        self.is_pure = pure
 
 
 class CalcAllOp:
     """Marker indicating an operation that requires full array processing down the column."""
 
-    __slots__ = ("func", "default", "target_type", "input_list")
+    __slots__ = ("func", "default", "target_type", "input_list", "is_pure")
 
-    def __init__(self, func: Callable[..., Any], default: Any, target_type: Any, input_list: list[str]):
+    def __init__(
+        self, func: Callable[..., Any], default: Any, target_type: Any, input_list: list[str], pure: bool = False
+    ):
         self.func = func
         self.default = default
         self.target_type = target_type
         self.input_list = [DataPath.parse(dep) for dep in input_list]
+        self.is_pure = pure
 
 
-class IncOp:
-    """Marker for inc(); carries the ranked-converter closure for uniform dispatcher introspection."""
+class Op:
+    """Generic conv_dict marker — wraps a closure with dispatcher-visible metadata.
 
-    __slots__ = ("target_type", "default", "input_keys", "is_pure", "_ranked_converter")
+    Used by the 7 light-state converters (inc/pluck/link_to/link_to_list/
+    split_and_get/join_all/as_list) so they expose ``input_keys``, ``is_pure``,
+    and ``whole_row`` to the apply_etl_transformations dispatcher without
+    requiring a dedicated class each.  CalcOp / CalcAllOp keep their own
+    dedicated shapes because their multi-field state benefits from named
+    attribute access in the dispatcher's calc-specific branches.
 
-    def __init__(self, target_type: Any, default: Any, ranked_converter: Callable[[Any], Any]) -> None:
-        self.target_type = target_type
-        self.default = default
-        self.input_keys: tuple[str, ...] = ()
-        self.is_pure: bool = True
-        self._ranked_converter = ranked_converter
+    The ``_cache`` slot enables per-Op-instance lru_cache wrapping for
+    is_pure=True ops with low-cardinality inputs — populated lazily on the
+    first batch through the dispatcher and persists across batches.  Safe
+    because is_pure ops are referentially transparent: same input → same
+    output regardless of when called.
+    """
+
+    __slots__ = ("_func", "input_keys", "is_pure", "whole_row", "_cache")
+
+    def __init__(
+        self,
+        func: Callable[..., Any],
+        *,
+        input_keys: tuple[str, ...] = (),
+        is_pure: bool = True,
+        whole_row: bool = False,
+    ) -> None:
+        self._func = func
+        self.input_keys = input_keys
+        self.is_pure = is_pure
+        self.whole_row = whole_row
+        self._cache: Callable[..., Any] | None = None  # lazily populated
 
     def __call__(self, val: Any) -> Any:
-        return self._ranked_converter(val)
+        return self._func(val)
 
 
-def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None) -> CalcOp:
+def calc(
+    func: Callable[..., Any],
+    *input_keys: str,
+    default: Any = None,
+    target_type: Any = None,
+    pure: bool = True,
+) -> CalcOp:
     """Synthesise a derived field per row from one or more source fields.
 
     Use it whenever the value you want lives in the row but the API
@@ -118,6 +151,13 @@ def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target
         default: Value used when ``func`` raises or returns ``None``.
         target_type: Optional type the result is coerced to (``int``,
             ``float``, ...).
+        pure: Defaults to ``True`` — the conv_dict layer is a data-transform
+            layer, and side-effect lambdas (``datetime.now()``, logging, DB
+            writes, network calls) are an anti-pattern here.  Pass
+            ``pure=False`` explicitly when your ``func`` must run for its side
+            effects on every row, not just once per unique input.  The default
+            enables the dispatcher's adaptive lru_cache wrapping for
+            low-cardinality input tuples.
 
     Returns:
         A :class:`CalcOp` marker — store it in ``conv_dict``; the engine
@@ -149,10 +189,16 @@ def calc(func: Callable[..., Any], *input_keys: str, default: Any = None, target
     For column-wide aggregation (a single call across every row) use
     :func:`calc_all` instead.
     """
-    return CalcOp(func, default, target_type, list(input_keys))
+    return CalcOp(func, default, target_type, list(input_keys), pure=pure)
 
 
-def calc_all(func: Callable[..., Any], *input_keys: str, default: Any = None, target_type: Any = None) -> CalcAllOp:
+def calc_all(
+    func: Callable[..., Any],
+    *input_keys: str,
+    default: Any = None,
+    target_type: Any = None,
+    pure: bool = True,
+) -> CalcAllOp:
     """Window-aggregation pass — compute a per-row value that depends on **every** row in one shot.
 
     Reach for this when the answer for row N requires knowing rows
@@ -183,6 +229,17 @@ def calc_all(func: Callable[..., Any], *input_keys: str, default: Any = None, ta
         default: Per-row fallback when the returned list is shorter than
             the row count or contains ``None``.
         target_type: Optional coercion type applied per row.
+        pure: Defaults to ``True`` — the conv_dict layer is a data-transform
+            layer, and side-effect lambdas (``datetime.now()``, logging, DB
+            writes, network calls) are an anti-pattern here.  Pass
+            ``pure=False`` explicitly when your ``func`` must run for its side
+            effects on every row, not just once per unique input.  The default
+            enables the dispatcher's adaptive lru_cache wrapping for
+            low-cardinality input tuples.  Note: ``calc_all`` invokes ``func``
+            exactly once per dispatch with full column lists, so the cache
+            wrapping does not currently fire — the flag is stored for API
+            symmetry with :func:`calc` and reserved for future column-level
+            optimisations.
 
     Returns:
         A :class:`CalcAllOp` marker — store it in ``conv_dict``.
@@ -201,7 +258,7 @@ def calc_all(func: Callable[..., Any], *input_keys: str, default: Any = None, ta
 
     For per-row computation use :func:`calc` instead.
     """
-    return CalcAllOp(func, default, target_type, list(input_keys))
+    return CalcAllOp(func, default, target_type, list(input_keys), pure=pure)
 
 
 # ==========================================
@@ -417,7 +474,7 @@ def _get_cached_adapter(actual_type: Any) -> TypeAdapter[Any] | None:
 
 
 @functools.lru_cache(maxsize=128)
-def inc(target_type: Any, default: Any = None) -> IncOp:
+def inc(target_type: Any, default: Any = None) -> Op:
     """Type-coercion workhorse for ``conv_dict`` — turn messy API values into clean Python types.
 
     Reach for ``inc(SomeType)`` whenever an API returns numeric strings,
@@ -454,10 +511,10 @@ def inc(target_type: Any, default: Any = None) -> IncOp:
             and strings) are hashable, so this is rarely binding.
 
     Returns:
-        An :class:`IncOp` instance suitable for placing in ``conv_dict``.
+        An :class:`Op` instance suitable for placing in ``conv_dict``.
         Repeated calls with the same ``(target_type, default)`` return the
         **same** instance (via :func:`functools.lru_cache`); the instance is
-        stateless so sharing is safe.
+        referentially transparent so sharing is safe.
 
     Under the hood ``inc()`` builds a ranked converter chain: the
     Pydantic ``TypeAdapter`` is tried first, then a type-specific
@@ -506,4 +563,4 @@ def inc(target_type: Any, default: Any = None) -> IncOp:
         )
         return default
 
-    return IncOp(target_type, default, _ranked_converter)
+    return Op(_ranked_converter, input_keys=(), is_pure=True)

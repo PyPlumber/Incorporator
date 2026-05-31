@@ -9,6 +9,7 @@ Pydantic V2 model class from raw data samples) and
 
 from __future__ import annotations
 
+import functools
 import keyword
 import logging
 import re
@@ -21,7 +22,6 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..exceptions import IncorporatorSchemaError
 from .converters import CalcAllOp, CalcOp, is_garbage_value
-from .extractors import PluckOp
 from .path import DataPath
 
 logger = logging.getLogger(__name__)
@@ -134,6 +134,34 @@ def _splice_pk_binding(
     return effective or None
 
 
+def _maybe_cache_bare(fn: Callable[..., Any], sample_inputs: list[Any]) -> Callable[..., Any]:
+    """Wrap fn with lru_cache when its sample inputs are mostly repeats.
+
+    Sampling triggers fn cardinality measurement.  When the sample yields
+    fewer than 50% unique entries, wrap fn in a per-call lru_cache(maxsize=10_000)
+    so repeated identical inputs short-circuit through cached output.  Unhashable
+    inputs (dicts, lists) raise TypeError from the set() call and trigger pass-
+    through (no cache).  The cache is local to this call — no cross-batch state.
+
+    Args:
+        fn: The callable to potentially wrap.
+        sample_inputs: A prefix sample of input values used to measure cardinality.
+
+    Returns:
+        Either the original ``fn`` unchanged, or a fresh ``lru_cache``-wrapped
+        version when inputs are low-cardinality and hashable.
+    """
+    if not sample_inputs:
+        return fn
+    try:
+        unique = len(set(sample_inputs))
+    except TypeError:
+        return fn  # unhashable inputs (dict/list) — cache wouldn't help
+    if unique / len(sample_inputs) >= 0.5:
+        return fn  # high cardinality — cache would just add lookup overhead
+    return functools.lru_cache(maxsize=10_000)(fn)
+
+
 def apply_etl_transformations(
     parsed_data: dict[str, Any] | list[dict[str, Any]],
     code_attr: str | None = None,
@@ -196,6 +224,12 @@ def apply_etl_transformations(
                 default = operation.default
                 target_type = operation.target_type if callable(operation.target_type) else None
                 raw_inputs: list[DataPath] = operation.input_list if operation.input_list else [DataPath.parse(key)]
+                # Cache the user func when the user opted in via calc(pure=True).
+                # Cache key is the tuple of resolved arg values; low-cardinality
+                # input tuples short-circuit through cached output.
+                if getattr(operation, "is_pure", False):
+                    sample_args = [tuple(dep.resolve(d) for dep in raw_inputs) for d in dict_items[:500]]
+                    func = _maybe_cache_bare(func, sample_args)
                 for d in dict_items:
                     args = [dep.resolve(d) for dep in raw_inputs]
                     # Align with inc()'s null-handling contract: when EVERY
@@ -204,7 +238,7 @@ def apply_etl_transformations(
                     # fall back to default.  Saves one Python exception raise
                     # + one logger.warning call per garbage row — the per-
                     # row pre-check is ~50ns, the exception path it replaces
-                    # is ~30µs.  See H3 reshape's efficiency analysis.
+                    # is ~30µs.  Material on garbage-heavy datasets.  See H3 reshape's efficiency analysis.
                     if all(is_garbage_value(a) for a in args):
                         val = default
                     else:
@@ -269,9 +303,9 @@ def apply_etl_transformations(
                     if val is not None:
                         d[key] = val
 
-            elif isinstance(operation, PluckOp):
-                # PluckOp.resolve navigates from the row root, so the whole
-                # row dict must be passed — not the value already at d[key].
+            elif getattr(operation, "whole_row", False):
+                # whole_row=True ops (e.g., pluck()) need the full row dict to
+                # navigate nested paths from root — d.get(key) would lose context.
                 for d in dict_items:
                     try:
                         d[key] = operation(d)
@@ -279,12 +313,27 @@ def apply_etl_transformations(
                         logger.warning("conv_dict failed on key '%s': %s", key, e)
 
             else:
-                # IncOp / SplitAndGetOp / LinkToOp / LinkToListOp / JoinAllOp /
-                # AsListOp / user-provided callables — all receive the current
-                # value at d[key].
+                # Op / user-provided callables — all receive the current value at
+                # d[key].  Per-Op cache: pure ops populate _cache slot lazily on
+                # first batch where input cardinality qualifies (sample logic in
+                # _maybe_cache_bare).  Cache persists across batches because
+                # is_pure=True guarantees referential transparency.  Non-Op
+                # callables and is_pure=False ops bypass via the getattr default.
+                fn: Callable[..., Any] = operation
+                if getattr(operation, "is_pure", False) and hasattr(operation, "_cache"):
+                    cached = operation._cache
+                    if cached is None:
+                        sample = [d.get(key, None) for d in dict_items[:500]]
+                        wrapped = _maybe_cache_bare(operation._func, sample)
+                        # Sentinel: if wrapped is the same func (cardinality too high),
+                        # store operation itself so callable(_cache) check distinguishes
+                        # "decided not to cache" from "not yet decided".
+                        operation._cache = wrapped if wrapped is not operation._func else operation
+                        cached = operation._cache
+                    fn = cached if cached is not operation else operation
                 for d in dict_items:
                     try:
-                        d[key] = operation(d.get(key, None))
+                        d[key] = fn(d.get(key, None))
                     except Exception as e:
                         logger.warning("conv_dict failed on key '%s': %s", key, e)
 
