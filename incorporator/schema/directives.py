@@ -86,12 +86,6 @@ class Nm:
 
     old: str
     new: str
-    _old_path: DataPath = dc_field(init=False, repr=False, compare=False)
-    _new_key: str = dc_field(init=False, repr=False, compare=False)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "_old_path", DataPath.parse(self.old))
-        object.__setattr__(self, "_new_key", self.new)
 
     def apply_rename(self, record: dict[str, Any]) -> None:
         """Rename ``self.old`` to ``self.new`` in *record* in-place.
@@ -102,7 +96,7 @@ class Nm:
             record: Raw record dict to mutate.
         """
         if self.old in record:
-            record[self._new_key] = record.pop(self.old)
+            record[self.new] = record.pop(self.old)
 
     def __repr__(self) -> str:
         return f"Nm({self.old!r}, {self.new!r})"
