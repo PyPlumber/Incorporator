@@ -102,3 +102,71 @@ class DataPath:
             else:
                 return None
         return current
+
+    def pop(self, record: Any) -> None:
+        """Remove the leaf at this path from *record* in-place.
+
+        Mirrors ``resolve()`` resilience: missing keys, missing intermediates,
+        and non-dict nodes at any point are silent no-ops.
+
+        Args:
+            record: Raw parsed JSON-like value to mutate (typically ``dict``).
+        """
+        if not self.segments:
+            return
+        if len(self.segments) == 1:
+            seg = self.segments[0]
+            if isinstance(record, dict):
+                key = str(seg) if isinstance(seg, int) else seg
+                record.pop(key, None)
+            return
+        parent: Any = record
+        for seg in self.segments[:-1]:
+            if parent is None:
+                return
+            if isinstance(parent, dict):
+                key = str(seg) if isinstance(seg, int) else seg
+                parent = parent.get(key)
+            elif isinstance(parent, list) and isinstance(seg, int):
+                parent = parent[seg] if 0 <= seg < len(parent) else None
+            else:
+                return
+        if isinstance(parent, dict):
+            leaf = self.segments[-1]
+            key = str(leaf) if isinstance(leaf, int) else leaf
+            parent.pop(key, None)
+
+    def set(self, record: Any, value: Any) -> None:
+        """Write *value* to the leaf at this path in *record* in-place.
+
+        Single-segment paths perform a direct dict assignment.  Multi-segment
+        paths walk to the parent; if the parent is not a dict the write is a
+        silent no-op.  Missing intermediates are NOT auto-created.
+
+        Args:
+            record: Raw parsed JSON-like value to mutate (typically ``dict``).
+            value: Value to assign at the leaf.
+        """
+        if not self.segments:
+            return
+        if len(self.segments) == 1:
+            seg = self.segments[0]
+            if isinstance(record, dict):
+                key = str(seg) if isinstance(seg, int) else seg
+                record[key] = value
+            return
+        parent: Any = record
+        for seg in self.segments[:-1]:
+            if parent is None:
+                return
+            if isinstance(parent, dict):
+                key = str(seg) if isinstance(seg, int) else seg
+                parent = parent.get(key)
+            elif isinstance(parent, list) and isinstance(seg, int):
+                parent = parent[seg] if 0 <= seg < len(parent) else None
+            else:
+                return
+        if isinstance(parent, dict):
+            leaf = self.segments[-1]
+            key = str(leaf) if isinstance(leaf, int) else leaf
+            parent[key] = value
