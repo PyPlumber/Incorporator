@@ -52,6 +52,12 @@ logger = logging.getLogger(__name__)
 _WRITE_BATCH_ROWS = 1024
 _SMALL_TABLE_THRESHOLD = 64  # below this, pure-Python scan beats Arrow compute dispatch
 
+# Scalar types that bypass serialize_nested entirely — direct append.
+# type(v) in frozenset is C-level equality + hash, avoiding isinstance's
+# MRO walk. Subclass-of-int semantics don't apply here (Arrow-write rows
+# carry pure builtins).
+_SCALAR_TYPES = frozenset({str, int, float, bool})
+
 
 def _stream_columnar_write(
     data: Iterable[dict[str, Any]],
@@ -345,9 +351,13 @@ def _build_columnar_schema(
 
 def _coerce_batch(batch: list[dict[str, Any]], explicit_keys: list[str]) -> list[dict[str, Any]]:
     """Apply serialize_nested to one batch — nested lists/dicts → JSON strings."""
-    return [
-        {k: (serialize_nested(row.get(k)) if row.get(k) is not None else None) for k in explicit_keys} for row in batch
-    ]
+
+    def _coerce(v: Any) -> Any:
+        if v is None or type(v) in _SCALAR_TYPES:
+            return v
+        return serialize_nested(v)
+
+    return [{k: _coerce(row.get(k)) for k in explicit_keys} for row in batch]
 
 
 def _batched_dicts(
@@ -409,7 +419,10 @@ def _batched_columns(
     for row in rows:
         for k in explicit_keys:
             v = row.get(k)
-            cols[k].append(serialize_nested(v) if v is not None else None)
+            if v is None or type(v) in _SCALAR_TYPES:
+                cols[k].append(v)
+            else:
+                cols[k].append(serialize_nested(v))
         batch_rows += 1
         if batch_rows >= batch_size:
             yield cols

@@ -14,6 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from .._deps import orjson as _orjson_mod
 from ..exceptions import IncorporatorFormatError
 
 
@@ -283,9 +284,18 @@ def ensure_bytes(source: str | bytes | Path) -> bytes:
 
 
 def serialize_nested(val: Any) -> Any:
-    """Safely serializes nested lists/dicts to JSON strings for flat format exports."""
+    """Safely serializes nested lists/dicts to JSON strings for flat format exports.
+
+    Routes through ``_orjson_mod.dumps_str`` which uses orjson when the
+    ``[speedups]`` extra is installed, falling back to stdlib ``json.dumps``.
+    Output is round-trip-equivalent (re-parses to the same Python object via
+    :func:`deserialize_nested`) but not byte-identical: orjson emits compact
+    JSON (no whitespace after ``:`` / ``,``) while stdlib ``json.dumps`` adds
+    spaces. Tests that round-trip via JSON loads are stable; tests that compare
+    raw serialized strings byte-for-byte would see the difference.
+    """
     if isinstance(val, dict | list):
-        return json.dumps(val)
+        return _orjson_mod.dumps_str(val)
     return val
 
 
