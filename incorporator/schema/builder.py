@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..exceptions import IncorporatorSchemaError
 from .converters import CalcAllOp, CalcOp, is_garbage_value
+from .extractors import PluckOp
 from .path import DataPath
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,54 @@ def sanitize_json_key(key: str) -> str:
     return clean_key
 
 
+class _PkBindOp:
+    """Virtual conv_dict entry for PK binding (inc_code / inc_name).
+
+    Module-private: not part of the public converter API.  Exists only so the
+    dispatcher can treat PK binding as just another conv_dict op, eliminating
+    a separate post-pass special case.
+
+    ``__call__`` returns the resolved value (possibly None) transparently
+    rather than short-circuiting None internally.  The null-skip — only write
+    to ``d[key]`` when the value is non-None — lives in the dispatcher branch
+    so future cache wrappers can distinguish "resolved to None" from "skip
+    this row" without inspecting Op internals.
+    """
+
+    __slots__ = ("_path", "input_keys", "is_pure")
+
+    def __init__(self, source_attr: str) -> None:
+        self._path = DataPath.parse(source_attr)
+        self.input_keys: tuple[str, ...] = ()
+        self.is_pure: bool = True
+
+    def __call__(self, row: dict[str, Any]) -> Any:
+        return self._path.resolve(row)
+
+
+def _splice_pk_binding(
+    conv_dict: dict[str, Any] | None,
+    code_attr: str | None,
+    name_attr: str | None,
+) -> dict[str, Any] | None:
+    """Append PK-binding virtual entries to the conv_dict in insertion order.
+
+    Does NOT overwrite user-explicit ``inc_code`` / ``inc_name`` conv_dict
+    entries — the user's choice wins because they may be performing a
+    deliberate transformation on the field that PK binding would otherwise
+    clobber (e.g., a calc() that builds inc_code from multiple inputs).
+    Empty/None ``code_attr``/``name_attr`` are skipped.
+    """
+    if not conv_dict and not code_attr and not name_attr:
+        return None
+    effective: dict[str, Any] = dict(conv_dict) if conv_dict else {}
+    if code_attr and "inc_code" not in effective:
+        effective["inc_code"] = _PkBindOp(code_attr)
+    if name_attr and "inc_name" not in effective:
+        effective["inc_name"] = _PkBindOp(name_attr)
+    return effective or None
+
+
 def apply_etl_transformations(
     parsed_data: dict[str, Any] | list[dict[str, Any]],
     code_attr: str | None = None,
@@ -95,10 +144,13 @@ def apply_etl_transformations(
 ) -> dict[str, Any] | list[dict[str, Any]]:
     """Apply exc_lst, conv_dict, name_chg, and PK-binding transforms in-place.
 
-    Processes ``parsed_data`` through four ordered columnar passes: drop
-    (``excl_lst``), convert (``conv_dict`` — handles :func:`calc`,
-    :func:`calc_all`, and standard converters), rename (``name_chg``), and
-    PK binding (``code_attr`` / ``name_attr`` → ``inc_code`` / ``inc_name``).
+    Processes ``parsed_data`` through three ordered passes: drop (``excl_lst``),
+    convert + PK-bind (``conv_dict`` extended with virtual ``inc_code`` /
+    ``inc_name`` entries derived from ``code_attr`` / ``name_attr``; the
+    extension runs through the same dispatcher as user converters), and
+    rename (``name_chg``).  PK binding executes inside pass 2 — before
+    ``name_chg`` — so a rename of the source field does not strand
+    ``inc_code`` / ``inc_name`` lookups.
 
     Args:
         parsed_data: A single record dict or a list of record dicts from the
@@ -132,17 +184,13 @@ def apply_etl_transformations(
             for key in excl_set:
                 d.pop(key, None)
 
-    if conv_dict:
-        # Pre-classify each entry once and hoist the per-key state out of
-        # the row loop.  The plan walks ``conv_dict`` in INSERTION ORDER
-        # — callers that rely on calc A → calc B sequencing (where B
-        # reads A's output) keep working unchanged.  The outer iteration
-        # stays column-major (key outside, rows inside) so ``CalcAllOp``
-        # can still do whole-column work in one ``func(*col_args)`` call;
-        # the only thing that changed is that per-row attribute reads on
-        # the operation object (``operation.func``, ``operation.default``,
-        # etc.) are now resolved once per key as locals.
-        for key, operation in conv_dict.items():
+    effective_conv = _splice_pk_binding(conv_dict, code_attr, name_attr)
+
+    if effective_conv:
+        # Op-outer / row-inner: resolve per-key metadata once, then iterate
+        # rows inside.  Insertion order is preserved so calc A → calc B
+        # sequencing (where B reads A's output) keeps working unchanged.
+        for key, operation in effective_conv.items():
             if isinstance(operation, CalcOp):
                 func = operation.func
                 default = operation.default
@@ -211,7 +259,29 @@ def apply_etl_transformations(
                             val = default
                     d[key] = val
 
-            else:  # standard converter: inc, link_to, pluck, etc.
+            elif isinstance(operation, _PkBindOp):
+                for d in dict_items:
+                    try:
+                        val = operation(d)
+                    except Exception as e:
+                        logger.warning("conv_dict failed on key '%s': %s", key, e)
+                        continue
+                    if val is not None:
+                        d[key] = val
+
+            elif isinstance(operation, PluckOp):
+                # PluckOp.resolve navigates from the row root, so the whole
+                # row dict must be passed — not the value already at d[key].
+                for d in dict_items:
+                    try:
+                        d[key] = operation(d)
+                    except Exception as e:
+                        logger.warning("conv_dict failed on key '%s': %s", key, e)
+
+            else:
+                # IncOp / SplitAndGetOp / LinkToOp / LinkToListOp / JoinAllOp /
+                # AsListOp / user-provided callables — all receive the current
+                # value at d[key].
                 for d in dict_items:
                     try:
                         d[key] = operation(d.get(key, None))
@@ -224,30 +294,6 @@ def apply_etl_transformations(
             for old_key, new_key in name_map.items():
                 if old_key in d:
                     d[new_key] = d.pop(old_key)
-
-    if code_attr and "." not in code_attr:
-        for d in dict_items:
-            val = d.get(code_attr)
-            if val is not None:
-                d["inc_code"] = val
-    elif code_attr:
-        code_path = DataPath.parse(code_attr)
-        for d in dict_items:
-            val = code_path.resolve(d)
-            if val is not None:
-                d["inc_code"] = val
-
-    if name_attr and "." not in name_attr:
-        for d in dict_items:
-            val = d.get(name_attr)
-            if val is not None:
-                d["inc_name"] = val
-    elif name_attr:
-        name_path = DataPath.parse(name_attr)
-        for d in dict_items:
-            val = name_path.resolve(d)
-            if val is not None:
-                d["inc_name"] = val
 
     return items if isinstance(parsed_data, list) else items[0]
 
