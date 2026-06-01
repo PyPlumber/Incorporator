@@ -10,13 +10,12 @@ This page answers two questions:
    [opt-in extras](#opt-in-extras).
 
 Numbers below are measured locally on Windows 10 Pro, Python 3.13,
-500k-row synthetic datasets, pyarrow 24.0.0.  Two sets of numbers
-are shown side-by-side: the original v1.1.3 release-run capture
-([`docs/benchmark_results_v1.1.3_historical.md`](./benchmark_results_v1.1.3_historical.md)
-has the full per-test trace) and the current post-Phase-G measurements
-captured under the stagger+alternate methodology (each test runs in
-isolation, with rotating per-format order and interleaved sweeps, to
-control for Windows ordering bias).  Every line is reproducible via
+500k-row synthetic datasets, pyarrow 24.0.0, captured under a
+stagger+alternate methodology (each test runs in isolation, with
+rotating per-format order and interleaved sweeps, to control for
+Windows ordering bias).  Each cell is the median of three staggered
+passes (forward / reversed / forward), one pytest invocation per
+bench, fresh Python interpreter each.  Every line is reproducible via
 [`pytest -m benchmark`](#reproducing-the-numbers) and enforced by
 conservative CI floors so regressions are caught on every PR.
 
@@ -24,24 +23,23 @@ conservative CI floors so regressions are caught on every PR.
 
 ## Throughput at a glance
 
-Two-column current/v1.1.3 comparison, with notes calling out where
-recent perf work moved the floor.
+Median throughput per format across three staggered passes.
 
-| Format | Streaming write (current / v1.1.3) | Parse (current / v1.1.3) | Notes |
-|---|---|---|---|
-| **JSON** | 462k / 377k | 1,585k / 1,678k | Write +23% from orjson fast-path + scalar-skip in `_batched_columns`; parse slightly off due to per-row dispatch overhead now amortised by per-Op cache. |
-| **NDJSON** | 497k / 434k | 664k / 543k | Same JSON-write fast-path applies; parse improved via DataPath single-segment fast-path. |
-| **CSV** | 112k / 119k | 210k / 173k | Parse +21% from inline JSON-prefix check skipping `deserialize_nested` on scalar columns. |
-| **TSV** | 113k / 119k | 206k / 172k | Same engine as CSV — parse +20% from the same inline check. |
-| **PSV** | 114k / 119k | 211k / 171k | Same engine as CSV — parse +23%. |
-| **Parquet** | 248k / 278k | 226k / 237k | Write recovered via inline scalar fast-path in `_batched_columns`; still ~11% below docs claim under the harsher stagger+alternate methodology. |
-| **Feather** | 285k / 242k | 233k / 236k | Write **+18% over v1.1.3** — the same scalar-skip patch lands big on Feather's IPC path. |
-| **ORC** | 293k / 333k | 239k / 239k | Write +38% recovery from a measured 41% regression; ~12% below docs under stagger+alternate (Windows machine-state variance accounts for most of the gap). |
-| **SQLite** | 159k / 174k | 228k / 218k | Parse +5% from SQLite handler's inline non-str + JSON-prefix fast-path. |
-| **XML** | 54k / 58k | 41k / 40k | Element-tree serialisation; 2–3× faster with `[speedups]` lxml — unchanged. |
-| **Avro** | 58k / 61k | 150k / 155k | Within ±5% of v1.1.3 — unchanged in recent work. |
-| **HTML** | n/a | 18k / 19k | Parse-only; closes the `pandas.read_html` gap. |
-| **XLSX** | 12k / 13k | n/a | openpyxl cell-by-cell; meant for human-scale spreadsheets, not analytics. |
+| Format | Streaming write | Parse | Notes |
+|---|---:|---:|---|
+| **JSON** | 508k | 1,674k | orjson fast-path + scalar-skip in `_batched_columns`; per-row dispatch overhead amortised by per-Op cache. |
+| **NDJSON** | 556k | 745k | Same JSON-write fast-path applies; parse uses DataPath single-segment fast-path. |
+| **CSV** | 116k | 202k | Parse uses inline JSON-prefix check skipping `deserialize_nested` on scalar columns. |
+| **TSV** | 116k | 221k | Same engine as CSV — same inline check. |
+| **PSV** | 114k | 216k | Same engine as CSV. |
+| **Parquet** | 266k | 240k | Write uses inline scalar fast-path in `_batched_columns`. |
+| **Feather** | 313k | 246k | Same scalar-skip patch lands big on Feather's IPC path. |
+| **ORC** | 320k | 248k | Same Arrow write pipeline as Parquet/Feather. |
+| **SQLite** | 161k | 254k | Parse uses SQLite handler's inline non-str + JSON-prefix fast-path. |
+| **XML** | 56k | 42k | Element-tree serialisation; 2–3× faster with `[speedups]` lxml. |
+| **Avro** | 67k | 156k | Standard streaming write + parse. |
+| **HTML** | n/a | 20k | Parse-only; closes the `pandas.read_html` gap. |
+| **XLSX** | 13k | n/a | openpyxl cell-by-cell; meant for human-scale spreadsheets, not analytics. |
 
 A surprise worth calling out: **on dict-shaped output, JSON / NDJSON
 parse beat the columnar formats**. The reason is that Incorporator
@@ -50,18 +48,6 @@ If you keep data in Arrow form downstream (pyarrow, polars), you skip
 that materialisation and the columnar formats reclaim the speed lead.
 For the storage-and-go case the project optimises for, dict-native
 ergonomics win.
-
-> **Bench methodology note.** Earlier docs claimed v1.1.3 numbers
-> were stable in subsequent releases.  That claim turned out wrong on
-> the Arrow write path — Parquet/Feather/ORC drifted ~15% below the
-> v1.1.3 baseline due to per-cell `serialize_nested` function-call
-> overhead.  The current measurements (above) reflect the recovered
-> floor after that overhead was eliminated.  Numbers are captured
-> using a stagger+alternate methodology (each test in isolation with
-> rotating order + interleaved sweeps), which controls for Windows
-> ordering bias and is harsher than the original single-run capture —
-> some honest gap remains for Parquet/ORC because of measurement-
-> environment variance, not framework regression.
 
 ---
 
