@@ -45,9 +45,10 @@ class CSVHandler(BaseFormatHandler):
                 parsed_row: dict[str, Any] = {}
                 for k, v in row.items():
                     safe_k = str(k) if k is not None else "unknown_column"
-                    coerced = deserialize_nested(v)
-                    if coerced is v and empty_as_none and v == "":
-                        coerced = None
+                    if v and len(v) >= 2 and v[0] in "{[":
+                        coerced = deserialize_nested(v)
+                    else:
+                        coerced = v if not (empty_as_none and v == "") else None
                     parsed_row[safe_k] = coerced
                 rows.append(parsed_row)
             return rows

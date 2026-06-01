@@ -283,31 +283,6 @@ def ensure_bytes(source: str | bytes | Path) -> bytes:
     return source
 
 
-def is_json_string(val: Any) -> bool:
-    """Cheap predicate: is val a JSON-shaped string worth handing to a parser?
-
-    Conservative — checks both opening and closing brackets so callers
-    don't pay a json.loads failure on strings that merely happen to start
-    with ``{`` or ``[``.  False positives are caught by the try/except
-    inside deserialize_nested; false negatives lose data, so the check
-    deliberately mirrors the existing inline-guard pattern.
-    """
-    return isinstance(val, str) and len(val) >= 2 and val[0] in "{[" and val[-1] in "}]"
-
-
-_DESERIALIZE_SCALAR_TYPES: frozenset[type] = frozenset({str, int, float, bool})
-
-
-def is_scalar_or_none(val: Any) -> bool:
-    """Cheap predicate: is val a primitive that bypasses serialization?
-
-    Matches the inline ``_SCALAR_TYPES`` fast-path already used in
-    columnar write paths.  Uses ``type(val) in frozenset`` (no MRO walk)
-    for C-level equality.  ``None`` short-circuits ahead of the type check.
-    """
-    return val is None or type(val) in _DESERIALIZE_SCALAR_TYPES
-
-
 def serialize_nested(val: Any) -> Any:
     """Safely serializes nested lists/dicts to JSON strings for flat format exports.
 
@@ -325,20 +300,14 @@ def serialize_nested(val: Any) -> Any:
 
 
 def deserialize_nested(val: Any) -> Any:
-    """Auto-unflatten JSON-encoded strings; pass other types through.
-
-    Fast-path: if val is not a JSON-shaped string (see is_json_string),
-    returns val unchanged.  When orjson is available (via the [speedups]
-    extra), uses it; otherwise falls back to stdlib json.  Returns val
-    unchanged on parse failure.
-    """
-    if not is_json_string(val):
-        return val
-    _orjson = _orjson_mod.ORJSON
-    try:
-        return _orjson.loads(val) if _orjson is not None else json.loads(val)
-    except (ValueError, json.JSONDecodeError):
-        return val
+    """MODULAR HELPER: Shared O(1) auto-unflattening for both CSV and SQLite."""
+    if isinstance(val, str) and len(val) >= 2:
+        if (val.startswith("{") and val.endswith("}")) or (val.startswith("[") and val.endswith("]")):
+            try:
+                return json.loads(val)
+            except json.JSONDecodeError:
+                pass
+    return val
 
 
 def xml_to_dict(element: Any, force_list: set[str] | None = None) -> dict[str, Any]:
