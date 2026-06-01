@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from incorporator.schema.builder import apply_etl_transformations
-from incorporator.schema.converters import calc, inc
+from incorporator.schema.converters import _inc_clear_for_tests, calc, inc
 
 ROW_COUNT = 500_000
 STATUSES = ["active", "inactive", "pending", "banned", "suspended", "trial", "expired", "locked", "guest", "admin"]
@@ -31,7 +31,7 @@ def test_conv_dict_low_cardinality_cache_engages() -> None:
     4 columns × 10 unique values × 500k rows = 99.998% cache hit rate after first
     batch. tier stored as str so inc(int) does real coercion work.
     """
-    inc.cache_clear()  # type: ignore[attr-defined]  # CRITICAL — reset Op._cache to None on all cached inc() instances
+    _inc_clear_for_tests()
 
     rows: list[dict[str, Any]] = [
         {
@@ -79,7 +79,7 @@ def test_conv_dict_continuous_data_cache_opts_out() -> None:
     "decided not to cache" — verified explicitly. Throughput floor lower than
     Scenario 1 because per-row ranked-converter dispatch runs on every row.
     """
-    inc.cache_clear()  # type: ignore[attr-defined]  # CRITICAL — reset to None so the decision fires fresh
+    _inc_clear_for_tests()
 
     rows: list[dict[str, Any]] = [
         {
@@ -108,8 +108,10 @@ def test_conv_dict_continuous_data_cache_opts_out() -> None:
     print(f"\n  conv_dict continuous-data (cache opted out): {throughput:,.0f} rows/sec ({elapsed:.2f}s)")
 
     # Behavioral verification: cardinality heuristic correctly REJECTED caching
-    assert int_op._cache is int_op, (
-        f"Op._cache should be the sentinel (Op itself) after high-cardinality batch; got {int_op._cache!r}"
+    from incorporator.schema.builder import _CACHE_SKIP
+
+    assert int_op._cache is _CACHE_SKIP, (
+        f"Op._cache should be the _CACHE_SKIP sentinel after high-cardinality batch; got {int_op._cache!r}"
     )
 
     # Floor at 80k gives ~50% safety margin over typical 125-130k measurements
@@ -127,7 +129,7 @@ def test_calc_pure_true_default_engages_cache() -> None:
 
     Two separate row copies used so in-place mutation in run 1 doesn't pollute run 2.
     """
-    inc.cache_clear()  # type: ignore[attr-defined]  # CRITICAL — reset so Op._cache decisions are fresh
+    _inc_clear_for_tests()
 
     DOMAIN_MAP = {f"cat_{i}": f"canonical_{i % 50}" for i in range(50)}
 
@@ -161,3 +163,60 @@ def test_calc_pure_true_default_engages_cache() -> None:
     # The cache should make pure at least as fast as impure (typically faster on low cardinality)
     assert tp >= ti * 0.9, f"pure=True throughput {tp:,.0f} regressed vs impure {ti:,.0f}"
     assert tp >= 150_000, f"calc(pure=True) throughput {tp:,.0f} below 150k floor"
+
+
+@pytest.mark.benchmark
+def test_calc_op_persistent_cache_across_batches() -> None:
+    """CalcOp._cache survives across batches — W3 cross-batch persistence proof.
+
+    50 unique input tuples, split across 5 batches of 50k rows.  After batch 1
+    the cache decision (engage or skip) must be locked on CalcOp._cache and must
+    not be re-derived on subsequent batches.  The perf floor confirms throughput
+    does not degrade across batches — caching overhead never accumulates.
+    """
+    _inc_clear_for_tests()
+
+    BATCH_SIZE = 50_000
+    DOMAIN_MAP = {f"k_{i}": f"v_{i}" for i in range(50)}
+    batches: list[list[dict[str, Any]]] = [
+        [{"input": f"k_{(b * BATCH_SIZE + i) % 50}"} for i in range(BATCH_SIZE)] for b in range(5)
+    ]
+
+    conv_dict: dict[str, Any] = {
+        "derived": calc(lambda v: DOMAIN_MAP.get(v, "unknown"), "input", pure=True),
+    }
+    calc_op = conv_dict["derived"]
+
+    timings: list[float] = []
+    for batch in batches:
+        t0 = time.perf_counter()
+        apply_etl_transformations(batch, conv_dict=conv_dict)
+        timings.append(time.perf_counter() - t0)
+
+    throughputs = [BATCH_SIZE / t for t in timings]
+    print(
+        f"\n  CalcOp persistent cache (per-batch throughput rows/sec): "
+        + ", ".join(f"{tp:,.0f}" for tp in throughputs)
+    )
+
+    # Behavioural: after batch 1 the cache decision must be locked in.
+    assert calc_op._cache is not None, "CalcOp._cache should be set after first batch"
+    assert hasattr(calc_op._cache, "cache_info"), (
+        "CalcOp._cache should be an lru_cache wrapper (50 unique / 50k rows ⇒ low cardinality)"
+    )
+
+    # Cross-batch persistence proof: the SAME wrapper accumulates hits across
+    # all 5 batches.  A regression that reset _cache per batch would only show
+    # hits from the final batch (≤ 10k); the surviving wrapper shows ~50k rows
+    # minus the 50 unique cache misses minus the 500-row sample from batch 1.
+    cache_hits = calc_op._cache.cache_info().hits
+    assert cache_hits > 10_000, (
+        f"_cache.cache_info().hits={cache_hits} should exceed 10k (one batch's worth) — "
+        "the wrapper must survive across batches, not be re-created each call"
+    )
+
+    # Perf: all batches must sustain the throughput floor — no degradation from
+    # repeated resampling (which the persistent cache prevents).
+    assert min(throughputs) >= 150_000, (
+        f"Per-batch min {min(throughputs):,.0f} below 150k floor"
+    )

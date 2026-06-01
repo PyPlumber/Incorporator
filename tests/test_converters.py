@@ -12,6 +12,7 @@ from incorporator.schema.converters import (
     CalcAllOp,
     CalcOp,
     GARBAGE_VALUES,
+    _inc_clear_for_tests,
     calc,
     calc_all,
     inc,
@@ -92,7 +93,7 @@ def test_inc_caches_closures_per_type_and_default() -> None:
     Different ``(target_type, default)`` pairs produce different
     closures; ``cache_info()`` exposes hits/misses for diagnostics.
     """
-    inc.cache_clear()  # type: ignore[attr-defined]
+    _inc_clear_for_tests()
 
     c1 = inc(int)
     c2 = inc(int)

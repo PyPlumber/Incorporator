@@ -49,7 +49,7 @@ class _EachSentinel:
 class CalcOp:
     """Marker indicating an operation that requires multiple values from the current row."""
 
-    __slots__ = ("func", "default", "target_type", "input_list", "is_pure")
+    __slots__ = ("func", "default", "target_type", "input_list", "is_pure", "_cache")
 
     def __init__(
         self, func: Callable[..., Any], default: Any, target_type: Any, input_list: list[str], pure: bool = False
@@ -59,6 +59,7 @@ class CalcOp:
         self.target_type = target_type
         self.input_list = [DataPath.parse(dep) for dep in input_list]
         self.is_pure = pure
+        self._cache: Callable[..., Any] | None = None
 
 
 class CalcAllOp:
@@ -564,3 +565,23 @@ def inc(target_type: Any, default: Any = None) -> Op:
         return default
 
     return Op(_ranked_converter, input_keys=(), is_pure=True)
+
+
+def _inc_clear_for_tests() -> None:
+    """Evict every ``Op`` instance cached by the ``inc()`` factory.
+
+    Production callers should never call this — the cache is bounded by
+    program structure (keyed by ``(target_type, default)``) and does not
+    grow unboundedly.  This helper exists so test suites that need a
+    fresh per-Op ``_cache`` decision (e.g. benchmarks asserting cache
+    engages vs opts out) can force the next ``inc()`` call to construct
+    a new ``Op`` instance with ``_cache=None`` — by evicting the lru_cache
+    entry that holds the previous instance.  Held references that captured
+    an ``Op`` BEFORE this call still carry their populated ``_cache`` slot.
+
+    The wrapper hides the public ``inc.cache_clear`` surface that
+    ``@functools.lru_cache`` exposes by default.  Calling it in production
+    invalidates every cached ``Op`` instance and forces a full Pydantic
+    TypeAdapter rebuild on the next ``incorp()`` call.
+    """
+    inc.cache_clear()

@@ -66,6 +66,13 @@ _PER_SUBCLASS_CONTAINERS: tuple[tuple[str, Callable[[Any], Any]], ...] = (
 _SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_]")
 
 
+# Sentinel stored in Op._cache / CalcOp._cache to mean "cardinality was too high;
+# decided not to wrap with lru_cache".  Must be a Callable so the slot type
+# (Callable[..., Any] | None) is satisfied without a type: ignore.
+def _CACHE_SKIP(*_a: Any, **_kw: Any) -> None:  # noqa: N802  # sentinel function, uppercase by convention
+    pass
+
+
 def sanitize_json_key(key: str) -> str:
     """Convert a raw JSON key to a safe Python identifier.
 
@@ -198,12 +205,15 @@ def apply_etl_transformations(
                 default = operation.default
                 target_type = operation.target_type if callable(operation.target_type) else None
                 raw_inputs: list[DataPath] = operation.input_list if operation.input_list else [DataPath.parse(key)]
-                # Cache the user func when the user opted in via calc(pure=True).
-                # Cache key is the tuple of resolved arg values; low-cardinality
-                # input tuples short-circuit through cached output.
-                if getattr(operation, "is_pure", False):
-                    sample_args = [tuple(dep.resolve(d) for dep in raw_inputs) for d in dict_items[:500]]
-                    func = _maybe_cache_bare(func, sample_args)
+                # W3: persist the cardinality decision on CalcOp._cache so subsequent
+                # batches reuse the wrapped (or sentinel) callable without resampling.
+                if getattr(operation, "is_pure", False) and hasattr(operation, "_cache"):
+                    if operation._cache is None:
+                        sample_args = [tuple(dep.resolve(d) for dep in raw_inputs) for d in dict_items[:500]]
+                        wrapped = _maybe_cache_bare(func, sample_args)
+                        operation._cache = wrapped if wrapped is not func else _CACHE_SKIP
+                    if operation._cache is not _CACHE_SKIP:
+                        func = operation._cache
                 for d in dict_items:
                     args = [dep.resolve(d) for dep in raw_inputs]
                     # Align with inc()'s null-handling contract: when EVERY
@@ -268,13 +278,43 @@ def apply_etl_transformations(
                     d[key] = val
 
             elif getattr(operation, "whole_row", False):
-                # whole_row=True ops (e.g., pluck()) need the full row dict to
-                # navigate nested paths from root — d.get(key) would lose context.
-                for d in dict_items:
-                    try:
-                        d[key] = operation(d)
-                    except Exception as e:
-                        logger.warning("conv_dict failed on key '%s': %s", key, e)
+                # W4: whole_row caching via frozenset(d.items()) key; only when is_pure
+                # and only when row values are hashable.  Falls through to no-cache on
+                # any failure (sentinel via _cache is _CACHE_SKIP).
+                if getattr(operation, "is_pure", False) and hasattr(operation, "_cache"):
+                    if operation._cache is None:
+                        try:
+                            sample_fs = [frozenset(d.items()) for d in dict_items[:500]]
+                            unique = len(set(sample_fs))
+                            if sample_fs and unique / len(sample_fs) < 0.5:
+                                _op_func = operation._func
+
+                                @functools.lru_cache(maxsize=10_000)
+                                def _whole_row_cached(fs: frozenset[Any], _f: Callable[..., Any] = _op_func) -> Any:
+                                    return _f(dict(fs))
+
+                                operation._cache = _whole_row_cached
+                            else:
+                                operation._cache = _CACHE_SKIP
+                        except TypeError:
+                            operation._cache = _CACHE_SKIP
+                if (
+                    hasattr(operation, "_cache")
+                    and operation._cache is not None
+                    and operation._cache is not _CACHE_SKIP
+                ):
+                    cached_wr = operation._cache
+                    for d in dict_items:
+                        try:
+                            d[key] = cached_wr(frozenset(d.items()))
+                        except Exception as e:
+                            logger.warning("conv_dict failed on key '%s': %s", key, e)
+                else:
+                    for d in dict_items:
+                        try:
+                            d[key] = operation(d)
+                        except Exception as e:
+                            logger.warning("conv_dict failed on key '%s': %s", key, e)
 
             else:
                 # Op / user-provided callables — all receive the current value at
@@ -289,12 +329,9 @@ def apply_etl_transformations(
                     if cached is None:
                         sample = [d.get(key, None) for d in dict_items[:500]]
                         wrapped = _maybe_cache_bare(operation._func, sample)
-                        # Sentinel: if wrapped is the same func (cardinality too high),
-                        # store operation itself so callable(_cache) check distinguishes
-                        # "decided not to cache" from "not yet decided".
-                        operation._cache = wrapped if wrapped is not operation._func else operation
+                        operation._cache = wrapped if wrapped is not operation._func else _CACHE_SKIP
                         cached = operation._cache
-                    fn = cached if cached is not operation else operation
+                    fn = cached if cached is not _CACHE_SKIP else operation
                 for d in dict_items:
                     try:
                         d[key] = fn(d.get(key, None))
