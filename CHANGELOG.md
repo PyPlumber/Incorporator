@@ -635,9 +635,10 @@ TypeAdapter refactor and the outcome-record telemetry buildout.
   - ``SignalPenstock.rate_fn(scheduler, edge_state, now) -> float`` →
     ``rate_fn(edge_state, now) -> float``
 
-  Most users never override these; the change is invisible.  Users
-  with custom Gate/Penstock/Spillway subclasses or ``rate_fn``
-  callables update their signatures (drop the first scheduler arg).
+  Callers that do not subclass Gate / Penstock / Spillway or supply
+  custom ``rate_fn`` callables see no observable change.  Subclasses
+  and custom ``rate_fn`` callables update their signatures (drop the
+  first scheduler arg).
 
 ### Added
 

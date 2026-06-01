@@ -423,9 +423,10 @@ class LoggingObserver(FlowObserver):
     """Emit per-event records through Python ``logging`` at configurable levels.
 
     Per-event level defaults match the legacy hand-rolled emissions:
-    fire/skip at DEBUG (most users don't want this in production),
-    spillway at WARNING (mirrors today's :class:`RaiseOverflow`), and
-    reservoir-level at DEBUG with an optional fraction threshold.
+    fire/skip at DEBUG (high-volume per-tick events; INFO+ in production
+    would flood logs), spillway at WARNING (mirrors today's
+    :class:`RaiseOverflow`), and reservoir-level at DEBUG with an
+    optional fraction threshold.
 
     Records carry a ``meta`` line in the same flat ``key: value`` shape
     other Tideweaver telemetry uses, suitable for downstream JSONL

@@ -29,11 +29,11 @@ OnErrorPolicy = Literal["restart", "isolate", "fail_watershed"]
 class Current(BaseModel):
     """One node in a :class:`Watershed` graph.
 
-    Most users reach for the verb-typed subclasses :class:`Stream`,
-    :class:`Fjord`, or :class:`Export` — they carry the kwargs each tick
-    action needs and give callers good mypy ergonomics. The bare
-    ``Current(...)`` constructor stays available as the escape hatch for
-    tests or unusual integrations that need to drive their own tick body.
+    The verb-typed subclasses :class:`Stream`, :class:`Fjord`, and
+    :class:`Export` carry the kwargs each tick action needs and give
+    callers good mypy ergonomics.  The bare ``Current(...)`` constructor
+    stays available as the escape hatch for tests or integrations that
+    drive their own tick body via :class:`CustomCurrent`.
 
     Attributes:
         name: Unique identifier within the watershed.
