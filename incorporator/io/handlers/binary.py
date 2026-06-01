@@ -90,9 +90,7 @@ class SQLiteHandler(BaseFormatHandler):
                     for k, v in parsed_row.items():
                         if k in bool_columns and v in (0, 1):
                             parsed_row[k] = bool(v)
-                        elif isinstance(v, str) and len(v) >= 2 and v[0] in "{[":
-                            # Only call deserialize_nested for strings that could contain
-                            # JSON; SQLite ints/floats/NULLs would no-op inside it anyway.
+                        else:
                             parsed_row[k] = deserialize_nested(v)
                     rows.append(parsed_row)
 
