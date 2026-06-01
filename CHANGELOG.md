@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-31 — post-audit cleanup: deleted unmeasured perf machinery
+
+Audit of the 32 commits since 2026-05-29 surfaced two perf mechanisms
+that shipped without measurement and existed past their justification.
+Both deleted; their constants and dispatch branches go with them.  Net
+-147 LOC of internal machinery; no API surface change.
+
+#### Removed
+
+- **`_SMALL_TABLE_THRESHOLD = 64` and its fast-path branch** in
+  `incorporator/io/handlers/columnar.py:_table_to_dicts`.  The constant
+  shipped in commit `63d6f2d` (perf-batch "Items 1/6/Adjacent C/Item
+  9/Adjacent A") with no benchmark.  The companion pinning bench added
+  22 hours later (`bba81c3`) measured the premise as false on
+  contemporary hardware: pyarrow.compute vectorisation wins at
+  row_count=30, well below the 64 threshold the fast path gated.  Arrow
+  vectorisation is now unconditional on Parquet / Feather / ORC parse
+  paths.
+- **Cardinality-sample-and-decide cache machinery** in
+  `incorporator/schema/builder.py` — `_maybe_cache_bare()`,
+  `_CACHE_SKIP` sentinel, the W3/W4 cache-decision blocks across the
+  three dispatcher branches (CalcOp / whole_row / generic Op), the
+  `_cache` slots on `Op` and `CalcOp`, and five of the six hardcoded
+  constants the mechanism depended on (`500` × 3 sample sizes, `0.5`
+  cardinality crossover, plus the previously-deleted `64`).  The
+  mechanism existed because the agent talked the user out of "just
+  cache the results" with invented justifications about high-cardinality
+  workloads suffering from cache-miss overhead.  The replacement is one
+  line at Op construction.
+
+#### Changed
+
+- **`Op` and `CalcOp` now wrap pure callables in
+  `functools.lru_cache(maxsize=10_000)` at construction time** when
+  `is_pure=True` (and, for `Op`, `whole_row=False` — pluck's `_pluck`
+  operates on unhashable dicts).  Replaces the cardinality-sample
+  decision logic with unconditional caching.  Calls on unhashable args
+  fall through `Op.__call__`'s `__wrapped__` recovery path (covers
+  `join_all` on lists, `inc(new)` on dicts, `calc(len, "list_field")`).
+- **`Op.is_pure=True` documented as a caller-asserted claim** in the
+  class docstring — side-effecting closures with `is_pure=True` only
+  fire side effects on cache miss.  Parity with the existing warning
+  on `calc()`.
+
+#### Notes
+
+- Benchmark floors hold under the new always-cache design:
+  low-cardinality 567k rows/sec (≥150k floor), continuous-data 100k
+  rows/sec (≥80k floor — worst case: every row is a cache miss),
+  calc(pure=True) 461k at 1.03× pure-vs-impure ratio, CalcOp persistent
+  cache 490-517k rows/sec across 5 sequential batches.
+- The `10_000` `lru_cache` maxsize is documented as a memory bound, not
+  a tuning knob.
+
 ### 2026-05-31 — typed wrapper-handler unification
 
 DATA-SHAPE pipeline parameters now travel as typed frozen-dataclass
