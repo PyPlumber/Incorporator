@@ -50,7 +50,6 @@ logger = logging.getLogger(__name__)
 # default — large enough that columnar encoding is efficient, small enough that
 # memory stays bounded for arbitrarily large input streams.
 _WRITE_BATCH_ROWS = 1024
-_SMALL_TABLE_THRESHOLD = 64  # below this, pure-Python scan beats Arrow compute dispatch
 
 # Scalar types that bypass serialize_nested entirely — direct append.
 # type(v) in frozenset is C-level equality + hash, avoiding isinstance's
@@ -290,24 +289,6 @@ def _table_to_dicts(table: Any) -> list[dict[str, Any]]:
     # plausible JSON cell pay the per-row cost, and even then only the
     # flagged rows are touched.
     for col_name in string_cols:
-        if len(rows) < _SMALL_TABLE_THRESHOLD:
-            # Fast-path: skip Arrow compute on tiny tables (paginated API batches, fixtures, tests).
-            # Arrow's pc.starts_with/or_/any dispatch overhead exceeds plain-Python loop cost
-            # under 64 rows.
-            for i in range(len(rows)):
-                v = rows[i].get(col_name)
-                if (
-                    isinstance(v, str)
-                    and len(v) >= 2
-                    and v[0] in "{["
-                    and ((v[-1] == "}") if v[0] == "{" else (v[-1] == "]"))
-                ):
-                    try:
-                        rows[i][col_name] = json.loads(v)
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-            continue
-
         col = table.column(col_name)
         could_be_json_mask = pc.or_(  # type: ignore[attr-defined]
             pc.starts_with(col, "{"),  # type: ignore[attr-defined]
