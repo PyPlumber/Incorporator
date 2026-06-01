@@ -495,10 +495,10 @@ def test_inc_code_dotted_attr_binds_pk() -> None:
 def test_calc_pure_true_returns_correct_values() -> None:
     """calc(pure=True) with low-cardinality inputs still produces correct results.
 
-    Pins that the lru_cache wrapping path (when triggered by is_pure=True and
-    a low-cardinality column) does not corrupt output values.  Uses a category
-    column with two distinct values repeated across 20 rows so the cardinality
-    heuristic (< 50% unique) activates the cache.
+    Pins that lru_cache wrapping at construction (is_pure=True) does not corrupt
+    output values.  Uses a category column with two distinct values repeated across
+    20 rows; lru_cache is unconditional for pure=True so only 2 unique calls reach
+    the function body.
     """
     call_count = 0
 
@@ -512,17 +512,17 @@ def test_calc_pure_true_returns_correct_values() -> None:
     apply_etl_transformations(rows, conv_dict={"out": op})
 
     assert all(r["out"] in ("ALPHA", "BETA") for r in rows), "cache must not corrupt output"
-    # With caching the function body is only called once per unique input.
+    # lru_cache at construction means the function body is only called once per unique input.
     assert call_count <= 2, f"pure=True should cache repeated inputs; got {call_count} calls"
 
 
 def test_inc_low_cardinality_column_cached_and_correct() -> None:
-    """inc(int) on a low-cardinality column is cache-wrapped and returns correct values.
+    """inc(int) on a low-cardinality column is lru_cache-wrapped at construction and returns correct values.
 
-    Op.is_pure is True by construction for inc(), so the else-branch in the
-    dispatcher populates the per-Op _cache slot on the first batch.  This test
-    pins that the cached path still converts values correctly and does not raise
-    on repeated identical inputs.
+    Op.is_pure is True by construction for inc(), so _func is wrapped with
+    lru_cache(maxsize=10_000) when the Op is created.  This test pins that the
+    cached path still converts values correctly and does not raise on repeated
+    identical inputs.
     """
     op = inc(int)
     rows = [{"n": "1" if i % 3 == 0 else "2"} for i in range(30)]

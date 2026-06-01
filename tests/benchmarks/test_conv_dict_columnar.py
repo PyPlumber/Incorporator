@@ -1,9 +1,9 @@
 """Benchmarks for the conv_dict columnar dispatcher's per-Op cache behaviour.
 
-Three scenarios bracket the cardinality spectrum: low cardinality (cache
-engages), continuous/unique data (cache opts out via sentinel), and a
-pure=True vs pure=False comparison for calc().  Each scenario verifies
-the behavioural assertion — that the cache decision fired correctly — in
+Three scenarios bracket the cardinality spectrum: low cardinality (lru_cache
+at construction delivers a near-100% hit rate), continuous/unique data (lru_cache
+misses on every call — worst-case floor), and a pure=True vs pure=False
+comparison for calc().  Each scenario verifies the behavioural assertion in
 addition to a raw throughput floor.
 """
 
@@ -26,10 +26,12 @@ TIERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 @pytest.mark.benchmark
 def test_conv_dict_low_cardinality_cache_engages() -> None:
-    """Low-cardinality conv_dict workload — per-Op cache delivers measurable speedup.
+    """Low-cardinality conv_dict workload — lru_cache delivers measurable speedup.
 
-    4 columns × 10 unique values × 500k rows = 99.998% cache hit rate after first
-    batch. tier stored as str so inc(int) does real coercion work.
+    lru_cache is unconditional for is_pure=True ops at construction; this test
+    verifies the throughput benefit holds under low-cardinality load.  4 columns
+    × 10 unique values × 500k rows = 99.998% cache hit rate.  tier stored as str
+    so inc(int) does real coercion work.
     """
     _inc_clear_for_tests()
 
@@ -50,34 +52,23 @@ def test_conv_dict_low_cardinality_cache_engages() -> None:
         "tier": inc(int),
     }
 
-    # inc() lru_cache returns the same Op instance for inc(str), so this is the
-    # one used by all 3 string fields.
-    str_op = inc(str)
-
     t0 = time.perf_counter()
     apply_etl_transformations(rows, conv_dict=conv_dict)
     elapsed = time.perf_counter() - t0
 
     throughput = ROW_COUNT / elapsed
-    print(f"\n  conv_dict low-cardinality (cache engaged): {throughput:,.0f} rows/sec ({elapsed:.2f}s)")
-
-    # Behavioral verification: cache decision fired and chose to cache
-    assert str_op._cache is not None, "Op._cache should be populated after low-cardinality batch"
-    assert str_op._cache is not str_op, (
-        "Op._cache should NOT be the sentinel (cache should engage on 10 unique values / 500k rows)"
-    )
+    print(f"\n  conv_dict low-cardinality (lru_cache at construction): {throughput:,.0f} rows/sec ({elapsed:.2f}s)")
 
     assert throughput >= 150_000, f"Low-cardinality throughput {throughput:,.0f} below 150k floor"
 
 
 @pytest.mark.benchmark
-def test_conv_dict_continuous_data_cache_opts_out() -> None:
-    """Continuous-data conv_dict workload — cardinality heuristic opts out of cache.
+def test_conv_dict_continuous_data_always_caches() -> None:
+    """Continuous-data conv_dict workload — every row is unique; lru_cache misses on every call.
 
-    Every row has unique values. Sample is 500/500 unique = 100% — well above the
-    50% threshold. Op._cache should resolve to the sentinel (Op itself) meaning
-    "decided not to cache" — verified explicitly. Throughput floor lower than
-    Scenario 1 because per-row ranked-converter dispatch runs on every row.
+    This is the worst-case throughput floor for always-cache.  lru_cache is
+    still wrapped at construction (is_pure=True), but unique inputs mean no
+    hit benefit materialises.
     """
     _inc_clear_for_tests()
 
@@ -98,34 +89,24 @@ def test_conv_dict_continuous_data_cache_opts_out() -> None:
         "score": inc(float),
     }
 
-    int_op = inc(int)  # Capture for post-run sentinel check
-
     t0 = time.perf_counter()
     apply_etl_transformations(rows, conv_dict=conv_dict)
     elapsed = time.perf_counter() - t0
 
     throughput = ROW_COUNT / elapsed
-    print(f"\n  conv_dict continuous-data (cache opted out): {throughput:,.0f} rows/sec ({elapsed:.2f}s)")
+    print(f"\n  conv_dict continuous-data (lru_cache miss on every row): {throughput:,.0f} rows/sec ({elapsed:.2f}s)")
 
-    # Behavioral verification: cardinality heuristic correctly REJECTED caching
-    from incorporator.schema.builder import _CACHE_SKIP
-
-    assert int_op._cache is _CACHE_SKIP, (
-        f"Op._cache should be the _CACHE_SKIP sentinel after high-cardinality batch; got {int_op._cache!r}"
-    )
-
-    # Floor at 80k gives ~50% safety margin over typical 125-130k measurements
-    # to absorb Windows GC / power-management variance on shared CI hardware.
+    # lru_cache miss overhead on every row; trade for mechanism simplicity
     assert throughput >= 80_000, f"Continuous-data throughput {throughput:,.0f} below 80k floor"
 
 
 @pytest.mark.benchmark
 def test_calc_pure_true_default_engages_cache() -> None:
-    """calc(pure=True) default engages dispatcher cache on low-cardinality input.
+    """calc(pure=True) default — lru_cache wrapped at construction; near-100% hit rate on low cardinality.
 
-    50 unique input values × 500k rows. Sample of 500 has ~50 unique = 10%, well
-    below the 50% threshold; cache MUST engage. Compares pure=True (default) vs
-    pure=False to show the cache win is real, not just a no-op default flip.
+    50 unique input values × 500k rows produces a near-100% hit rate.  Compares
+    pure=True (default) vs pure=False to show the cache win is real, not just a
+    no-op default flip.
 
     Two separate row copies used so in-place mutation in run 1 doesn't pollute run 2.
     """
@@ -167,12 +148,13 @@ def test_calc_pure_true_default_engages_cache() -> None:
 
 @pytest.mark.benchmark
 def test_calc_op_persistent_cache_across_batches() -> None:
-    """CalcOp._cache survives across batches — W3 cross-batch persistence proof.
+    """CalcOp.func is an lru_cache wrapper that persists across all batches.
 
-    50 unique input tuples, split across 5 batches of 50k rows.  After batch 1
-    the cache decision (engage or skip) must be locked on CalcOp._cache and must
-    not be re-derived on subsequent batches.  The perf floor confirms throughput
-    does not degrade across batches — caching overhead never accumulates.
+    lru_cache lives on CalcOp.func for the Op's lifetime; no per-batch reset
+    is possible.  50 unique input tuples, split across 5 batches of 50k rows.
+    The cache accumulates hits across all batches and must exceed 10k — a
+    regression that rebuilt the wrapper per batch would only accumulate one
+    batch's worth.  The perf floor confirms throughput does not degrade.
     """
     _inc_clear_for_tests()
 
@@ -199,20 +181,13 @@ def test_calc_op_persistent_cache_across_batches() -> None:
         + ", ".join(f"{tp:,.0f}" for tp in throughputs)
     )
 
-    # Behavioural: after batch 1 the cache decision must be locked in.
-    assert calc_op._cache is not None, "CalcOp._cache should be set after first batch"
-    assert hasattr(calc_op._cache, "cache_info"), (
-        "CalcOp._cache should be an lru_cache wrapper (50 unique / 50k rows ⇒ low cardinality)"
+    assert hasattr(calc_op.func, "cache_info"), (
+        "CalcOp.func should be an lru_cache wrapper when pure=True"
     )
-
-    # Cross-batch persistence proof: the SAME wrapper accumulates hits across
-    # all 5 batches.  A regression that reset _cache per batch would only show
-    # hits from the final batch (≤ 10k); the surviving wrapper shows ~50k rows
-    # minus the 50 unique cache misses minus the 500-row sample from batch 1.
-    cache_hits = calc_op._cache.cache_info().hits
+    cache_hits = calc_op.func.cache_info().hits
     assert cache_hits > 10_000, (
-        f"_cache.cache_info().hits={cache_hits} should exceed 10k (one batch's worth) — "
-        "the wrapper must survive across batches, not be re-created each call"
+        f"calc_op.func.cache_info().hits={cache_hits} should exceed 10k — "
+        "lru_cache persists on the Op instance across all batches"
     )
 
     # Perf: all batches must sustain the throughput floor — no degradation from

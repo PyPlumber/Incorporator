@@ -9,7 +9,6 @@ Pydantic V2 model class from raw data samples) and
 
 from __future__ import annotations
 
-import functools
 import keyword
 import logging
 import re
@@ -66,13 +65,6 @@ _PER_SUBCLASS_CONTAINERS: tuple[tuple[str, Callable[[Any], Any]], ...] = (
 _SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_]")
 
 
-# Sentinel stored in Op._cache / CalcOp._cache to mean "cardinality was too high;
-# decided not to wrap with lru_cache".  Must be a Callable so the slot type
-# (Callable[..., Any] | None) is satisfied without a type: ignore.
-def _CACHE_SKIP(*_a: Any, **_kw: Any) -> None:  # noqa: N802  # sentinel function, uppercase by convention
-    pass
-
-
 def sanitize_json_key(key: str) -> str:
     """Convert a raw JSON key to a safe Python identifier.
 
@@ -92,34 +84,6 @@ def sanitize_json_key(key: str) -> str:
         clean_key = f"safe_{clean_key}"
 
     return clean_key
-
-
-def _maybe_cache_bare(fn: Callable[..., Any], sample_inputs: list[Any]) -> Callable[..., Any]:
-    """Wrap fn with lru_cache when its sample inputs are mostly repeats.
-
-    Sampling triggers fn cardinality measurement.  When the sample yields
-    fewer than 50% unique entries, wrap fn in a per-call lru_cache(maxsize=10_000)
-    so repeated identical inputs short-circuit through cached output.  Unhashable
-    inputs (dicts, lists) raise TypeError from the set() call and trigger pass-
-    through (no cache).  The cache is local to this call — no cross-batch state.
-
-    Args:
-        fn: The callable to potentially wrap.
-        sample_inputs: A prefix sample of input values used to measure cardinality.
-
-    Returns:
-        Either the original ``fn`` unchanged, or a fresh ``lru_cache``-wrapped
-        version when inputs are low-cardinality and hashable.
-    """
-    if not sample_inputs:
-        return fn
-    try:
-        unique = len(set(sample_inputs))
-    except TypeError:
-        return fn  # unhashable inputs (dict/list) — cache wouldn't help
-    if unique / len(sample_inputs) >= 0.5:
-        return fn  # high cardinality — cache would just add lookup overhead
-    return functools.lru_cache(maxsize=10_000)(fn)
 
 
 def apply_etl_transformations(
@@ -205,15 +169,6 @@ def apply_etl_transformations(
                 default = operation.default
                 target_type = operation.target_type if callable(operation.target_type) else None
                 raw_inputs: list[DataPath] = operation.input_list if operation.input_list else [DataPath.parse(key)]
-                # W3: persist the cardinality decision on CalcOp._cache so subsequent
-                # batches reuse the wrapped (or sentinel) callable without resampling.
-                if getattr(operation, "is_pure", False) and hasattr(operation, "_cache"):
-                    if operation._cache is None:
-                        sample_args = [tuple(dep.resolve(d) for dep in raw_inputs) for d in dict_items[:500]]
-                        wrapped = _maybe_cache_bare(func, sample_args)
-                        operation._cache = wrapped if wrapped is not func else _CACHE_SKIP
-                    if operation._cache is not _CACHE_SKIP:
-                        func = operation._cache
                 for d in dict_items:
                     args = [dep.resolve(d) for dep in raw_inputs]
                     # Align with inc()'s null-handling contract: when EVERY
@@ -228,6 +183,20 @@ def apply_etl_transformations(
                     else:
                         try:
                             val = func(*args)
+                        except TypeError:
+                            # TypeError sources here: (1) lru_cache rejecting an unhashable
+                            # arg (list/dict/etc); (2) the func body itself raising TypeError
+                            # on the args.  Both route through the same unwrap-and-retry path
+                            # — case (1) succeeds on the bare callable, case (2) re-raises
+                            # and falls through to the inner Exception handler that logs +
+                            # uses default.  Same observable behaviour as any other func-
+                            # body failure.
+                            raw_func = getattr(func, "__wrapped__", func)
+                            try:
+                                val = raw_func(*args)
+                            except Exception as e:
+                                logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
+                                val = default
                         except Exception as e:
                             logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
                             val = default
@@ -278,63 +247,16 @@ def apply_etl_transformations(
                     d[key] = val
 
             elif getattr(operation, "whole_row", False):
-                # W4: whole_row caching via frozenset(d.items()) key; only when is_pure
-                # and only when row values are hashable.  Falls through to no-cache on
-                # any failure (sentinel via _cache is _CACHE_SKIP).
-                if getattr(operation, "is_pure", False) and hasattr(operation, "_cache"):
-                    if operation._cache is None:
-                        try:
-                            sample_fs = [frozenset(d.items()) for d in dict_items[:500]]
-                            unique = len(set(sample_fs))
-                            if sample_fs and unique / len(sample_fs) < 0.5:
-                                _op_func = operation._func
-
-                                @functools.lru_cache(maxsize=10_000)
-                                def _whole_row_cached(fs: frozenset[Any], _f: Callable[..., Any] = _op_func) -> Any:
-                                    return _f(dict(fs))
-
-                                operation._cache = _whole_row_cached
-                            else:
-                                operation._cache = _CACHE_SKIP
-                        except TypeError:
-                            operation._cache = _CACHE_SKIP
-                if (
-                    hasattr(operation, "_cache")
-                    and operation._cache is not None
-                    and operation._cache is not _CACHE_SKIP
-                ):
-                    cached_wr = operation._cache
-                    for d in dict_items:
-                        try:
-                            d[key] = cached_wr(frozenset(d.items()))
-                        except Exception as e:
-                            logger.warning("conv_dict failed on key '%s': %s", key, e)
-                else:
-                    for d in dict_items:
-                        try:
-                            d[key] = operation(d)
-                        except Exception as e:
-                            logger.warning("conv_dict failed on key '%s': %s", key, e)
-
-            else:
-                # Op / user-provided callables — all receive the current value at
-                # d[key].  Per-Op cache: pure ops populate _cache slot lazily on
-                # first batch where input cardinality qualifies (sample logic in
-                # _maybe_cache_bare).  Cache persists across batches because
-                # is_pure=True guarantees referential transparency.  Non-Op
-                # callables and is_pure=False ops bypass via the getattr default.
-                fn: Callable[..., Any] = operation
-                if getattr(operation, "is_pure", False) and hasattr(operation, "_cache"):
-                    cached = operation._cache
-                    if cached is None:
-                        sample = [d.get(key, None) for d in dict_items[:500]]
-                        wrapped = _maybe_cache_bare(operation._func, sample)
-                        operation._cache = wrapped if wrapped is not operation._func else _CACHE_SKIP
-                        cached = operation._cache
-                    fn = cached if cached is not _CACHE_SKIP else operation
                 for d in dict_items:
                     try:
-                        d[key] = fn(d.get(key, None))
+                        d[key] = operation(d)
+                    except Exception as e:
+                        logger.warning("conv_dict failed on key '%s': %s", key, e)
+
+            else:
+                for d in dict_items:
+                    try:
+                        d[key] = operation(d.get(key, None))
                     except Exception as e:
                         logger.warning("conv_dict failed on key '%s': %s", key, e)
 

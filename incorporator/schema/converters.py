@@ -49,7 +49,7 @@ class _EachSentinel:
 class CalcOp:
     """Marker indicating an operation that requires multiple values from the current row."""
 
-    __slots__ = ("func", "default", "target_type", "input_list", "is_pure", "_cache")
+    __slots__ = ("func", "default", "target_type", "input_list", "is_pure")
 
     def __init__(
         self, func: Callable[..., Any], default: Any, target_type: Any, input_list: list[str], pure: bool = False
@@ -59,7 +59,8 @@ class CalcOp:
         self.target_type = target_type
         self.input_list = [DataPath.parse(dep) for dep in input_list]
         self.is_pure = pure
-        self._cache: Callable[..., Any] | None = None
+        if pure:
+            self.func = functools.lru_cache(maxsize=10_000)(func)
 
 
 class CalcAllOp:
@@ -87,14 +88,22 @@ class Op:
     dedicated shapes because their multi-field state benefits from named
     attribute access in the dispatcher's calc-specific branches.
 
-    The ``_cache`` slot enables per-Op-instance lru_cache wrapping for
-    is_pure=True ops with low-cardinality inputs — populated lazily on the
-    first batch through the dispatcher and persists across batches.  Safe
-    because is_pure ops are referentially transparent: same input → same
-    output regardless of when called.
+    When ``is_pure=True`` and ``whole_row=False``, ``_func`` is replaced at
+    construction with ``functools.lru_cache(maxsize=10_000)(func)``.  The
+    10_000 maxsize is a memory bound — caps cache growth in long-running
+    streams. Not a tuning knob; the value is conservative.  The
+    ``not whole_row`` guard is required because pluck's func operates on whole
+    dicts which are not hashable; lru_cache would TypeError on every call.
+
+    **`is_pure=True` is a caller-asserted claim, not a framework-verified
+    one.**  Passing ``is_pure=True`` with a closure that captures mutable
+    state, calls ``datetime.now()`` / ``uuid.uuid4()``, reads env vars, or
+    performs I/O will cache its first per-input result and skip subsequent
+    invocations — side effects only fire on cache miss.  Pass
+    ``is_pure=False`` whenever the closure is not referentially transparent.
     """
 
-    __slots__ = ("_func", "input_keys", "is_pure", "whole_row", "_cache")
+    __slots__ = ("_func", "input_keys", "is_pure", "whole_row")
 
     def __init__(
         self,
@@ -108,10 +117,20 @@ class Op:
         self.input_keys = input_keys
         self.is_pure = is_pure
         self.whole_row = whole_row
-        self._cache: Callable[..., Any] | None = None  # lazily populated
+        if is_pure and not whole_row:
+            self._func = functools.lru_cache(maxsize=10_000)(func)
 
     def __call__(self, val: Any) -> Any:
-        return self._func(val)
+        try:
+            return self._func(val)
+        except TypeError:
+            # lru_cache raises TypeError on unhashable arguments (e.g. dict, list).
+            # Fall back to the unwrapped callable so callers that pass unhashable
+            # values (join_all receiving a list, inc(new) receiving a dict) still work.
+            wrapped = getattr(self._func, "__wrapped__", None)
+            if wrapped is not None:
+                return wrapped(val)
+            raise
 
 
 def calc(
@@ -570,18 +589,15 @@ def inc(target_type: Any, default: Any = None) -> Op:
 def _inc_clear_for_tests() -> None:
     """Evict every ``Op`` instance cached by the ``inc()`` factory.
 
-    Production callers should never call this — the cache is bounded by
-    program structure (keyed by ``(target_type, default)``) and does not
-    grow unboundedly.  This helper exists so test suites that need a
-    fresh per-Op ``_cache`` decision (e.g. benchmarks asserting cache
-    engages vs opts out) can force the next ``inc()`` call to construct
-    a new ``Op`` instance with ``_cache=None`` — by evicting the lru_cache
-    entry that holds the previous instance.  Held references that captured
-    an ``Op`` BEFORE this call still carry their populated ``_cache`` slot.
+    Each ``inc()`` call constructs an ``Op`` whose ``_func`` is wrapped
+    in ``functools.lru_cache(maxsize=10_000)`` when ``is_pure=True``.
+    That inner lru_cache lives on the Op instance.  Evicting ``inc()``'s
+    outer cache drops the Op instances; held references that captured
+    an Op BEFORE this call retain their populated inner cache.  Benchmarks
+    asserting hit counts from zero must call this AND discard any captured
+    Op references before re-calling ``inc()``.
 
     The wrapper hides the public ``inc.cache_clear`` surface that
-    ``@functools.lru_cache`` exposes by default.  Calling it in production
-    invalidates every cached ``Op`` instance and forces a full Pydantic
-    TypeAdapter rebuild on the next ``incorp()`` call.
+    ``@functools.lru_cache`` exposes by default.
     """
     inc.cache_clear()
