@@ -27,17 +27,6 @@ def _dumps_json_bytes(item: Any, *, indent: int) -> bytes:
     return _stdlib_json.dumps(item, indent=indent or None).encode("utf-8")
 
 
-def _loads_json(raw: bytes | str) -> Any:
-    """Decode a JSON document, preferring orjson when available."""
-    # Read constant inside function body so monkeypatch.setattr is effective per call.
-    orjson = _orjson_mod.ORJSON
-    if orjson is not None:
-        return orjson.loads(raw)
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8")
-    return _stdlib_json.loads(raw)
-
-
 def _parse_xml(raw_bytes: bytes, raw_str: str) -> Any:
     """Parse XML bytes/string through whichever parser is available.
 
@@ -98,7 +87,7 @@ class JSONHandler(BaseFormatHandler):
     def parse(self, source: str | bytes | Path, **kwargs: Any) -> dict[str, Any] | list[dict[str, Any]]:
         """Read a JSON file or byte buffer and return the decoded structure."""
         try:
-            return cast(dict[str, Any] | list[dict[str, Any]], _loads_json(ensure_bytes(source)))
+            return cast(dict[str, Any] | list[dict[str, Any]], _orjson_mod.loads(ensure_bytes(source)))
         except Exception as exc:
             raise IncorporatorFormatError(f"Invalid JSON: {exc}") from exc
 
@@ -160,12 +149,12 @@ class NDJSONHandler(BaseFormatHandler):
     def _parse_stream(self, stream: TextIO | list[str]) -> list[dict[str, Any]]:
         """Decode an iterable of JSON-encoded lines.
 
-        Uses the same ``_loads_json`` helper as :class:`JSONHandler` so
-        orjson's ~3× speed-up applies per-line.  The hot loop binds the
-        helper to a local name to avoid the module-attribute lookup on
-        every iteration — measurable at 500k+ rows.
+        Uses ``_orjson_mod.loads`` so orjson's speed-up applies per-line when
+        ``[speedups]`` is installed.  The hot loop binds the helper to a local
+        name to avoid the module-attribute lookup on every iteration —
+        measurable at 500k+ rows.
         """
-        loads = _loads_json
+        loads = _orjson_mod.loads
         rows: list[dict[str, Any]] = []
         for line_num, line in enumerate(stream, start=1):
             clean_line = line.strip()
