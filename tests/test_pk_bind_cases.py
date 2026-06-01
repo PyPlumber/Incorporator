@@ -62,6 +62,45 @@ async def test_pk_bind_case_a_rename_source_away(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
+async def test_pk_rewrite_through_nested_name_chg(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Stage 3: Pk.source is rewritten through name_chg even when both sides are dotted paths.
+
+    Mirrors Case A but with nested paths: ``inc_code="user.email"`` and
+    ``name_chg=[("user.email", "contact.email")]`` — Pk.source is rewritten
+    to ``"contact.email"`` at normalization time so PK-bind runs after Nm
+    and finds the value at its post-rename location.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class UserNested(Incorporator):
+        pass
+
+    payload = [{"user": {"email": "alice@example.com"}, "name": "Alice"}]
+
+    async def mock_fn(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        req = httpx.Request("GET", url)
+        return httpx.Response(200, text=json.dumps(payload), request=req)
+
+    monkeypatch.setattr(fetch, "execute_request", mock_fn)
+
+    result = await UserNested.incorp(
+        inc_url="https://users.example.com/list",
+        inc_code="user.email",
+        name_chg=[("user.email", "contact.email")],
+    )
+
+    # Auto-unwrap: single-element list → single instance.
+    assert not isinstance(result, list)
+    assert result.inc_code is not None, "inc_code must not be None after nested-path rename"
+    assert not str(result.inc_code).isdigit(), (
+        f"inc_code must not be the auto-counter fallback; got {result.inc_code!r}"
+    )
+    assert result.inc_code == "alice@example.com", (
+        f"inc_code must equal the email value; got {result.inc_code!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_pk_bind_case_b_rename_creates_target(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """Case B: rename CREATES the PK-bind target.
 

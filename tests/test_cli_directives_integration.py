@@ -21,7 +21,7 @@ from incorporator.cli.validate import (
     validate_stream_config,
     validate_watershed_config,
 )
-from incorporator.schema.directives import Ex, Nm, Pk
+from incorporator.schema.directives import Ex, Nm, Pk, _normalize_etl_kwargs
 
 # ---------------------------------------------------------------------------
 # resolve_tokens() — mixed bare + wrapped shapes
@@ -134,3 +134,36 @@ def test_existing_templates_autodetect_correctly() -> None:
     for rel_path in _WATERSHED_TEMPLATES:
         raw, _ = _load_raw(rel_path)
         assert autodetect_type(raw) == "tideweaver", f"{rel_path} should be detected as tideweaver"
+
+
+# ---------------------------------------------------------------------------
+# Nested-path Nm token + bare-tuple forms
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_nm_directive_nested_paths() -> None:
+    """Nm token with dotted-path args resolves to an Nm with nested DataPaths."""
+    out: dict[str, Any] = resolve_tokens({"name_chg": ["Nm('user.email', 'contact.email')"]})
+    assert len(out["name_chg"]) == 1
+    nm = out["name_chg"][0]
+    assert isinstance(nm, Nm)
+    assert nm.old == "user.email"
+    assert nm.new == "contact.email"
+
+
+def test_name_chg_bare_tuple_nested_paths() -> None:
+    """Bare ("a.b","c.d") tuples normalize to nested-aware Nm via _normalize_etl_kwargs."""
+    result = _normalize_etl_kwargs(
+        excl_lst=None,
+        conv_dict=None,
+        name_chg=[("user.email", "contact.email")],
+        code_attr=None,
+        name_attr=None,
+    )
+    assert len(result.nm_tuple) == 1
+    nm = result.nm_tuple[0]
+    assert nm.old == "user.email"
+    assert nm.new == "contact.email"
+    # The cached DataPaths must have multiple segments (proves nested-aware).
+    assert len(nm._old_path.segments) == 2
+    assert len(nm._new_path.segments) == 2

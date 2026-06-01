@@ -19,6 +19,9 @@ from typing import Any, Literal, Protocol
 
 from incorporator.schema.path import DataPath
 
+# Sentinel distinguishing "key absent" from "key present with None value" in apply_rename.
+_ABSENT: Any = object()
+
 
 class FieldDirective(Protocol):
     """Structural marker for drop / rename / PK-bind directives.
@@ -69,35 +72,65 @@ class Ex:
 
 @dataclass(frozen=True, slots=True)
 class Nm:
-    """Rename directive — moves a top-level key to a new name in a record.
+    """Rename directive — moves a key (top-level or nested) to a new name in a record.
 
-    Semantics mirror ``builder.py:340-345`` exactly: when both ``old`` and
-    ``new`` already exist in the record, ``new`` is clobbered with ``old``'s
-    value and ``old`` is removed.  Missing ``old`` is a silent no-op.
+    Top-level renames (``Nm("a", "b")``) behave identically to the previous
+    single-segment shape.  Nested renames (``Nm("user.email", "contact.email")``)
+    drill via ``DataPath`` and may cross parent dicts.  Cross-parent moves
+    auto-create the target parent dict via ``DataPath.set(create_parents=True)``.
+
+    Source resolution preserves explicit-None fidelity: ``Nm("a", "b")`` on
+    ``{"a": None}`` writes ``b == None``; on ``{}`` it is a silent no-op.
 
     Attributes:
-        old: Source key name.
-        new: Destination key name.
+        old: Source path (top-level key or dotted path).
+        new: Destination path (top-level key or dotted path).
 
     Example::
 
         Nm("external_id", "id").apply_rename(record)
+        Nm("user.email", "contact.email").apply_rename(record)
 
     """
 
     old: str
     new: str
+    _old_path: DataPath = dc_field(init=False, repr=False, compare=False)
+    _new_path: DataPath = dc_field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_old_path", DataPath.parse(self.old))
+        object.__setattr__(self, "_new_path", DataPath.parse(self.new))
 
     def apply_rename(self, record: dict[str, Any]) -> None:
-        """Rename ``self.old`` to ``self.new`` in *record* in-place.
+        """Move the value at ``self.old`` to ``self.new`` in *record* in-place.
 
-        When ``self.old`` is absent the record is left untouched.
+        When the source key is absent, the record is left untouched.  When the
+        source value is present (including explicit None), it is moved to the
+        target path; missing target parent dicts are auto-created.
 
         Args:
             record: Raw record dict to mutate.
         """
-        if self.old in record:
-            record[self.new] = record.pop(self.old)
+        segs = self._old_path.segments
+        # Fast path: single-segment top-level rename preserves bit-for-bit
+        # behaviour of the pre-Stage-3 implementation including explicit-None.
+        if len(segs) == 1:
+            seg = segs[0]
+            key = str(seg) if isinstance(seg, int) else seg
+            value = record.pop(key, _ABSENT) if isinstance(record, dict) else _ABSENT
+            if value is _ABSENT:
+                return
+            self._new_path.set(record, value, create_parents=True)
+            return
+        # Multi-segment: has() distinguishes absent from explicit-None, then
+        # pop removes from the source parent, set writes to the target with
+        # auto-create.
+        if not self._old_path.has(record):
+            return
+        value = self._old_path.resolve(record)
+        self._old_path.pop(record)
+        self._new_path.set(record, value, create_parents=True)
 
     def __repr__(self) -> str:
         return f"Nm({self.old!r}, {self.new!r})"

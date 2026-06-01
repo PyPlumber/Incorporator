@@ -129,6 +129,72 @@ def test_nm_clobbers_existing_new_key() -> None:
     assert "old" not in record
 
 
+def test_nm_nested_source_to_top_level() -> None:
+    """Nm("a.b", "c") moves nested leaf to top-level key."""
+    record: dict[str, Any] = {"a": {"b": 99, "keep": 1}, "other": 2}
+    Nm("a.b", "c").apply_rename(record)
+    assert record["c"] == 99
+    assert "b" not in record["a"]
+    assert record["a"]["keep"] == 1
+
+
+def test_nm_top_level_to_nested_target_parent_exists() -> None:
+    """Nm("a", "b.c") moves top-level to nested target when parent dict exists."""
+    record: dict[str, Any] = {"a": 99, "b": {}}
+    Nm("a", "b.c").apply_rename(record)
+    assert record["b"]["c"] == 99
+    assert "a" not in record
+
+
+def test_nm_top_level_to_nested_target_parent_auto_created() -> None:
+    """Nm("a", "b.c") auto-creates the target parent when missing."""
+    record: dict[str, Any] = {"a": 99}
+    Nm("a", "b.c").apply_rename(record)
+    assert record["b"]["c"] == 99
+    assert "a" not in record
+
+
+def test_nm_cross_parent_move_both_exist() -> None:
+    """Nm("user.email", "contact.email") moves across parent dicts."""
+    record: dict[str, Any] = {"user": {"email": "x@y.com", "name": "Alice"}, "contact": {}}
+    Nm("user.email", "contact.email").apply_rename(record)
+    assert record["contact"]["email"] == "x@y.com"
+    assert "email" not in record["user"]
+    assert record["user"]["name"] == "Alice"
+
+
+def test_nm_cross_parent_move_target_auto_created() -> None:
+    """Nm("user.email", "contact.email") auto-creates the target parent."""
+    record: dict[str, Any] = {"user": {"email": "x@y.com"}}
+    Nm("user.email", "contact.email").apply_rename(record)
+    assert record["contact"]["email"] == "x@y.com"
+    assert "email" not in record["user"]
+
+
+def test_nm_nested_source_missing_intermediate_noop() -> None:
+    """Nm("a.b.c", "x") is a no-op when an intermediate segment is missing."""
+    record: dict[str, Any] = {"a": {}}
+    Nm("a.b.c", "x").apply_rename(record)
+    assert record == {"a": {}}
+
+
+def test_nm_top_level_explicit_none_preserved() -> None:
+    """Nm("a", "b") moves an explicit None value (does NOT skip)."""
+    record: dict[str, Any] = {"a": None}
+    Nm("a", "b").apply_rename(record)
+    assert "a" not in record
+    assert "b" in record
+    assert record["b"] is None
+
+
+def test_nm_nested_explicit_none_preserved() -> None:
+    """Nm("a.b", "c.d") moves an explicit None value across parents."""
+    record: dict[str, Any] = {"a": {"b": None}}
+    Nm("a.b", "c.d").apply_rename(record)
+    assert "b" not in record["a"]
+    assert record["c"]["d"] is None
+
+
 # ---------------------------------------------------------------------------
 # Pk — PK-bind directive
 # ---------------------------------------------------------------------------
@@ -278,3 +344,79 @@ def test_datapath_set_with_int_segment_out_of_bounds_noop() -> None:
     record: dict[str, Any] = {"a": [{"b": 1}]}
     DataPath.parse("a.5.b").set(record, 42)
     assert record == {"a": [{"b": 1}]}
+
+
+def test_datapath_set_create_parents_nested_missing() -> None:
+    """DataPath.set(create_parents=True) creates intermediate dicts."""
+    record: dict[str, Any] = {}
+    DataPath.parse("a.b.c").set(record, 42, create_parents=True)
+    assert record["a"]["b"]["c"] == 42
+
+
+def test_datapath_set_create_parents_nested_partial() -> None:
+    """DataPath.set(create_parents=True) creates only missing intermediates."""
+    record: dict[str, Any] = {"a": {"existing": 1}}
+    DataPath.parse("a.b.c").set(record, 42, create_parents=True)
+    assert record["a"]["existing"] == 1
+    assert record["a"]["b"]["c"] == 42
+
+
+def test_datapath_set_create_parents_false_default() -> None:
+    """DataPath.set without create_parents= remains silent no-op (default)."""
+    record: dict[str, Any] = {}
+    DataPath.parse("a.b.c").set(record, 42)
+    assert record == {}
+
+
+def test_datapath_set_create_parents_non_dict_intermediate_noop() -> None:
+    """DataPath.set(create_parents=True) refuses silently when intermediate is not a dict/list."""
+    record: dict[str, Any] = {"a": "scalar_not_dict"}
+    DataPath.parse("a.b.c").set(record, 42, create_parents=True)
+    assert record == {"a": "scalar_not_dict"}
+
+
+def test_datapath_set_create_parents_int_segment_in_parent_noop() -> None:
+    """DataPath.set(create_parents=True) refuses silently when an int segment appears in the parent path.
+
+    str parents before the int are created (the early-return fires at the int segment),
+    but the leaf value is never written.  The caller should not rely on partial state.
+    """
+    record: dict[str, Any] = {}
+    DataPath.parse("a.0.c").set(record, 42, create_parents=True)
+    # Won't auto-create a list entry for the int segment — the value 42 is not written.
+    assert "c" not in record.get("a", {}).get("0", {})
+
+
+# ---------------------------------------------------------------------------
+# DataPath.has
+# ---------------------------------------------------------------------------
+
+
+def test_datapath_has_top_level_present() -> None:
+    """DataPath.has returns True for a present top-level key."""
+    assert DataPath.parse("a").has({"a": 1})
+
+
+def test_datapath_has_top_level_absent() -> None:
+    """DataPath.has returns False for an absent top-level key."""
+    assert not DataPath.parse("a").has({"b": 1})
+
+
+def test_datapath_has_present_with_none_value() -> None:
+    """has() returns True even when the value is explicitly None."""
+    assert DataPath.parse("a").has({"a": None})
+
+
+def test_datapath_has_nested_present() -> None:
+    """DataPath.has returns True when the full nested path is present."""
+    assert DataPath.parse("a.b.c").has({"a": {"b": {"c": 1}}})
+
+
+def test_datapath_has_nested_missing_intermediate() -> None:
+    """DataPath.has returns False when an intermediate segment is absent."""
+    assert not DataPath.parse("a.b.c").has({"a": {}})
+
+
+def test_datapath_has_non_dict_record() -> None:
+    """DataPath.has returns False when the root record is not a dict."""
+    assert not DataPath.parse("a").has([1, 2, 3])

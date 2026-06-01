@@ -136,37 +136,97 @@ class DataPath:
             key = str(leaf) if isinstance(leaf, int) else leaf
             parent.pop(key, None)
 
-    def set(self, record: Any, value: Any) -> None:
-        """Write *value* to the leaf at this path in *record* in-place.
+    def set(self, record: Any, value: Any, *, create_parents: bool = False) -> None:
+        """Assign ``value`` at this path in ``record`` in place.
 
-        Single-segment paths perform a direct dict assignment.  Multi-segment
-        paths walk to the parent; if the parent is not a dict the write is a
-        silent no-op.  Missing intermediates are NOT auto-created.
+        Top-level segment: ``record[seg] = value`` when ``record`` is a dict.
+        Nested: walks to the parent and assigns when the parent is a dict.
+        With ``create_parents=False`` (default), missing intermediate dicts are a
+        silent no-op.  With ``create_parents=True``, missing intermediate dicts
+        are created as empty dicts on the way down — useful for cross-parent
+        moves in Nm.apply_rename.  Integer segments and non-dict intermediates
+        are always a silent no-op (auto-extending lists is not safe).
 
         Args:
             record: Raw parsed JSON-like value to mutate (typically ``dict``).
             value: Value to assign at the leaf.
+            create_parents: When True, auto-create missing intermediate dicts
+                (str-keyed segments only; int segments refuse silently).
         """
         if not self.segments:
             return
         if len(self.segments) == 1:
-            seg = self.segments[0]
             if isinstance(record, dict):
+                seg = self.segments[0]
                 key = str(seg) if isinstance(seg, int) else seg
                 record[key] = value
             return
-        parent: Any = record
+        current: Any = record
         for seg in self.segments[:-1]:
-            if parent is None:
+            if current is None:
                 return
-            if isinstance(parent, dict):
+            if isinstance(current, dict):
                 key = str(seg) if isinstance(seg, int) else seg
-                parent = parent.get(key)
-            elif isinstance(parent, list) and isinstance(seg, int):
-                parent = parent[seg] if 0 <= seg < len(parent) else None
+                nxt = current.get(key)
+                if nxt is None:
+                    if create_parents and isinstance(seg, str):
+                        nxt = {}
+                        current[key] = nxt
+                    else:
+                        return
+                elif not isinstance(nxt, (dict, list)):
+                    # intermediate exists but isn't a dict/list — refuse silently
+                    return
+                current = nxt
+            elif isinstance(current, list) and isinstance(seg, int):
+                current = current[seg] if 0 <= seg < len(current) else None
             else:
                 return
-        if isinstance(parent, dict):
-            leaf = self.segments[-1]
-            key = str(leaf) if isinstance(leaf, int) else leaf
-            parent[key] = value
+        if isinstance(current, dict):
+            last = self.segments[-1]
+            last_key = str(last) if isinstance(last, int) else last
+            current[last_key] = value
+
+    def has(self, record: Any) -> bool:
+        """Return True iff this path resolves to a present key in ``record``.
+
+        Distinct from ``resolve``: ``resolve`` returns None for both "key absent"
+        and "key present with None value".  ``has`` returns True for the
+        present-with-None case and False for the absent case.  Used by callers
+        that need to distinguish missing data from explicit None (e.g.,
+        Nm.apply_rename's silent no-op contract on missing source keys).
+
+        Walks the same parent chain as ``pop`` and ``set`` but reads — never
+        mutates.  Non-dict intermediates and missing intermediates return False.
+
+        Args:
+            record: Raw parsed JSON-like value to inspect (typically ``dict``).
+
+        Returns:
+            True if the path is present (even if the value is None); False
+            if any segment along the path is absent or non-traversable.
+        """
+        if not self.segments:
+            return False
+        if len(self.segments) == 1:
+            if isinstance(record, dict):
+                seg = self.segments[0]
+                key = str(seg) if isinstance(seg, int) else seg
+                return key in record
+            return False
+        current: Any = record
+        for seg in self.segments[:-1]:
+            if current is None:
+                return False
+            if isinstance(current, dict):
+                key = str(seg) if isinstance(seg, int) else seg
+                current = current.get(key)
+            elif isinstance(current, list) and isinstance(seg, int):
+                current = current[seg] if 0 <= seg < len(current) else None
+            else:
+                return False
+        if isinstance(current, dict):
+            last = self.segments[-1]
+            last_key = str(last) if isinstance(last, int) else last
+            return last_key in current
+        return False

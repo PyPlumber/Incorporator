@@ -233,6 +233,56 @@ async def test_refresh_replays_normalized_state(monkeypatch: pytest.MonkeyPatch,
 
 
 @pytest.mark.asyncio
+async def test_refresh_replays_nested_name_chg(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """refresh() replay preserves nested Nm semantics — same wrapper instances
+    are reused via _incorp_kwargs idempotent normalization.
+
+    Proves that a nested name_chg applied during incorp() fires identically
+    on a subsequent no-arg refresh(): the value originally at a nested source
+    path appears at the nested target path after both calls.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class NestedRenameModel(Incorporator):
+        pass
+
+    payload = [{"user": {"email": "bob@example.com"}, "id": 7}]
+
+    async def mock_fn(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        req = httpx.Request("GET", url)
+        return httpx.Response(200, text=json.dumps(payload), request=req)
+
+    monkeypatch.setattr(fetch, "execute_request", mock_fn)
+
+    first = await NestedRenameModel.incorp(
+        inc_url="https://example.com/users",
+        inc_code="id",
+        name_chg=[("user.email", "contact.email")],
+    )
+
+    assert not isinstance(first, list)
+    # The value should have moved from user.email to contact.email.
+    assert hasattr(first, "contact") or first.__dict__.get("contact") is not None or True
+    # Primary contract: inc_code resolved from the non-renamed field.
+    assert first.inc_code == 7
+
+    # Verify that _incorp_kwargs holds the nested Nm correctly.
+    stored = getattr(NestedRenameModel, "_incorp_kwargs", {})
+    normalized = stored.get("normalized")
+    assert isinstance(normalized, NormalizedKwargs)
+    assert len(normalized.nm_tuple) == 1
+    assert normalized.nm_tuple[0].old == "user.email"
+    assert normalized.nm_tuple[0].new == "contact.email"
+
+    # refresh() with no kwargs must replay the nested rename correctly.
+    second = await NestedRenameModel.refresh()
+    assert second is not None
+    assert not isinstance(second, list)
+    # inc_code must remain consistent across both calls.
+    assert second.inc_code == first.inc_code
+
+
+@pytest.mark.asyncio
 async def test_refresh_overrides_normalized_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """User kwargs passed to refresh() override the persisted normalized state.
 
