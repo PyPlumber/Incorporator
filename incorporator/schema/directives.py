@@ -148,7 +148,25 @@ class Pk:
         target: Either ``"code"`` (writes ``inc_code``) or ``"name"`` (writes
             ``inc_name``).
 
-    Example::
+    Note::
+
+        Internal-only.  ``Pk`` is synthesized from ``code_attr`` / ``name_attr``
+        by ``_normalize_etl_kwargs`` and is not part of the public construction
+        API.  Direct instantiation by config code is unsupported:
+
+        - ``code_attr=Pk(...)`` — ``code_attr`` is typed ``str | None``; the
+          wrapping ``Pk(code_attr, target="code")`` at line 257 ends up with
+          ``Pk.source`` holding a ``Pk`` instance, and ``__post_init__``'s
+          ``DataPath.parse(self.source)`` raises on the non-string.
+        - ``conv_dict={"x": Pk(...)}`` — falls into the converter dispatcher's
+          else branch at ``builder.py:256-261``; ``Pk`` is not callable, so
+          ``operation(d.get(key, None))`` raises ``TypeError``, the try/except
+          catches it, ``logger.warning`` fires per row, and the key is never
+          written.
+
+        Use bare-string ``code_attr=`` / ``name_attr=`` instead.
+
+    Internal example::
 
         Pk("id", target="code").apply_bind(record)
         Pk("league.name", target="name").apply_bind(record)
@@ -218,8 +236,9 @@ def _normalize_etl_kwargs(
     Idempotent: re-normalizing an already-normalized input (i.e., passing
     tuples of ``Ex`` / ``Nm`` / ``Pk`` objects) yields an equivalent
     container.  The Pk-source rewrite (Case A fix) applies the first-hit
-    rule against the ``nm_tuple`` rename map at config time, mirroring
-    ``_splice_pk_binding``'s non-chained behaviour.
+    rule against the ``nm_tuple`` rename map at config time, applying each
+    rename at most once (no chained rewrites: if ``A → B`` and ``B → C`` both
+    appear, a ``Pk`` on ``A`` binds to ``B``, not ``C``).
 
     Args:
         excl_lst: Field names to drop, as bare strings or already-wrapped
@@ -258,10 +277,11 @@ def _normalize_etl_kwargs(
     if name_attr and not user_owns_name:
         pk_list.append(Pk(name_attr, target="name"))
 
-    # Rewrite Pk.source through the rename map (first hit only — mirrors
-    # _splice_pk_binding's non-chained behaviour).  This fixes Case A: when
-    # code_attr names a field that name_chg renames, inc_code binding must
-    # follow the field to its new name before the rename pass runs.
+    # Rewrite Pk.source through the rename map (first hit only — no chained
+    # rewrites: if A→B and B→C both appear in nm_tuple, Pk.source=A becomes
+    # B, not C).  This fixes Case A: when code_attr names a field that
+    # name_chg renames, inc_code binding must follow the field to its new
+    # name before the rename pass runs.
     if pk_list and nm_tuple:
         rename_map = {nm.old: nm.new for nm in nm_tuple}
         pk_list = [Pk(rename_map[pk.source], target=pk.target) if pk.source in rename_map else pk for pk in pk_list]
