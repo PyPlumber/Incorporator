@@ -107,6 +107,19 @@ def test_ndjson_parse_malformed_line_raises() -> None:
         NDJSONHandler().parse(bad)
 
 
+def test_ndjson_malformed_line_bytes_source_reports_line_number() -> None:
+    """Pin: NDJSON bytes-source parse error message contains the offending line number.
+
+    Fix 2 routes bytes source through ensure_bytes(source).split(b"\\n") and
+    iterates bytes lines. This test exercises that path (the existing
+    test_ndjson_parse_malformed_line_raises covers the str path).
+    """
+    handler = NDJSONHandler()
+    raw = b'{"a":1}\nNOT_JSON\n{"b":2}\n'
+    with pytest.raises(IncorporatorFormatError, match="line 2"):
+        handler.parse(raw)
+
+
 def test_ndjson_parse_skips_blank_lines() -> None:
     """Empty lines in the NDJSON stream must be silently skipped."""
     src = '{"id": 1}\n\n\n{"id": 2}\n'
