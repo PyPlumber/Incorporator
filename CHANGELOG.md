@@ -88,12 +88,16 @@ in every existing call site.
   splits `excl_lst` / `name_chg` mixed sequences, synthesises `Pk`
   from `code_attr` / `name_attr` bare strings, and rewrites
   `Pk.source` through the rename map at normalize time (first-hit).
-- **`DataPath.pop(record)` and `DataPath.set(record, value)`** at
+- **`DataPath.pop(record)` and `DataPath.set(record, value, *, create_parents=False)`** at
   `incorporator/schema/path.py` — nested-path mutation primitives
-  backing `Ex.apply_drop` and `Pk.apply_bind`.  Silent no-op on
-  missing intermediates; `set` does not auto-create them.
+  backing `Ex.apply_drop`, `Pk.apply_bind`, and (later in this cycle)
+  nested `Nm` renames.  With `create_parents=False` (default) missing
+  intermediates are a silent no-op; with `create_parents=True` missing
+  intermediate str-keyed dicts are auto-created on the way down.
+  `DataPath.has(record)` added alongside — distinguishes absent key
+  from explicit-`None` without a try/except.
 - **CLI token allow-list entries for `Ex` / `Nm` / `Pk`** at
-  `incorporator/cli/tokens.py:125-127`.  String forms like
+  `incorporator/cli/tokens.py:126-128`.  String forms like
   `"Ex('field')"` and `"Nm('old', 'new')"` resolve through
   `resolve_tokens()` in `pipeline.json` / `watershed.json`.
 
@@ -114,26 +118,31 @@ in every existing call site.
 #### Changed
 
 - **Dispatcher order restored to Ex → Op → Nm → Pk** at
-  `incorporator/schema/builder.py:185-315`.  PK binding (pass 4)
+  `incorporator/schema/builder.py:154-274`.  PK binding (pass 4)
   runs after rename (pass 3) so renamed source fields resolve
   cleanly.  Each pass iterates rows-outer / directives-inner to
   keep each row dict warm in CPU cache.
-- **`Nm._old_path` and `Nm._new_key` dead slots removed.**  The
-  rename pass reads `nm.old` / `nm.new` directly via
-  `Nm.apply_rename`; no per-`Nm` `DataPath` construction is needed
-  for the top-level-only rename surface.
-- **`_PkBindOp` deleted** along with its `_splice_pk_binding`
-  virtual-splice helper.  Pass 4 dispatches directly on
-  `normalized.pk_tuple`.
+- **`Nm` supports nested and cross-parent renames** (commit `6cd1754`).
+  `Nm("user.email", "contact.email")` drills via `DataPath`,
+  auto-creating intermediate parent dicts on the target side.  The
+  `_old_path` / `_new_path` slots on `Nm` back the multi-segment
+  path resolution; `Nm.apply_rename` routes single-segment renames
+  through a fast path and multi-segment through `DataPath.has` /
+  `DataPath.pop` / `DataPath.set(create_parents=True)`.
+- **`_PkBindOp` and its `_splice_pk_binding` virtual-splice helper
+  deleted.**  Pass 4 dispatches directly on `normalized.pk_tuple`.
 
 ### 2026-05-31 — columnar conv_dict reorientation + parse/write perf recovery
 
 A session of architectural reorientation: `conv_dict` is now uniformly
-columnar at the dispatcher level (op-outer / row-inner), with adaptive
-`lru_cache` wrapping for low-cardinality input columns.  All 7
-closure-returning converters collapse to a single generic `Op` class;
-the existing `CalcOp` / `CalcAllOp` stay dedicated for their richer
-state.  Plus surgical parse-side and write-side perf recovery.
+columnar at the dispatcher level (op-outer / row-inner), with
+unconditional `lru_cache` wrapping for `is_pure=True` ops at `Op`
+construction time (no per-batch cardinality sampling — see the
+post-audit cleanup entry above for the deletion of the original
+adaptive-sample machinery).  All 7 closure-returning converters
+collapse to a single generic `Op` class; the existing `CalcOp` /
+`CalcAllOp` stay dedicated for their richer state.  Plus surgical
+parse-side and write-side perf recovery.
 
 #### ⚠️  Breaking — `calc()` / `calc_all()` `pure` default flipped to `True`
 
@@ -141,8 +150,9 @@ If you call `calc(func, ...)` with a `func` that has side effects
 (`datetime.now()`, `uuid.uuid4()`, logging, DB writes, network calls,
 mutable counters), **you must now pass `pure=False` explicitly** or
 those side effects will be silently suppressed for repeated identical
-input tuples (the dispatcher's adaptive `lru_cache` wrapping memoizes
-`pure=True` ops with low-cardinality input).
+input tuples (`is_pure=True` ops are wrapped in
+`functools.lru_cache(maxsize=10_000)` at `Op` construction — every
+unique input tuple is cached regardless of cardinality).
 
 Rationale: `conv_dict` is semantically a data-transform layer.
 Side-effect lambdas there are framework-documented anti-patterns
@@ -157,30 +167,24 @@ Failure mode is silent (cache reuse, not crash) — review existing
 
 - **`Op` class** at `incorporator/schema/converters.py`.  Generic
   conv_dict marker carrying `_func`, `input_keys`, `is_pure`,
-  `whole_row`, `_cache` slots — replaces the 7 dedicated marker
-  classes (`PluckOp`, `LinkToOp`, `LinkToListOp`, `SplitAndGetOp`,
-  `JoinAllOp`, `AsListOp`, `IncOp`).  Per-Op-instance lazy `_cache`
-  slot populated on first batch where input cardinality qualifies
-  (< 50% unique in 500-row prefix sample) — persists across batches
-  for `is_pure=True` ops because purity = referentially transparent.
+  `whole_row` slots — replaces the 7 dedicated marker classes
+  (`PluckOp`, `LinkToOp`, `LinkToListOp`, `SplitAndGetOp`,
+  `JoinAllOp`, `AsListOp`, `IncOp`).  When `is_pure=True and not
+  whole_row`, the `Op` constructor replaces `_func` with
+  `functools.lru_cache(maxsize=10_000)(func)` — unconditional at
+  construction time, no per-Op `_cache` slot, no runtime sampling.
+  `Op.__call__` has an `__wrapped__` fallback for unhashable args
+  (`join_all` on lists, `inc(new)` on dicts).
 - **`Op.whole_row` flag** signals dispatcher to pass the whole row
   dict (replaces the former `isinstance(op, PluckOp)` branch).
-- **`_PkBindOp`** at `incorporator/schema/builder.py` — module-private
-  virtual conv_dict entry that subsumes Phase A's PK-binding fast-path
-  into the same op-outer dispatcher loop.
-- **`_maybe_cache_bare(fn, sample_inputs)`** at `builder.py`.  Decides
-  whether to wrap `fn` with `functools.lru_cache(maxsize=10_000)`
-  based on adaptive cardinality sampling.  Used by both the per-Op
-  cache (else branch) and per-call cache (CalcOp branch).
 
 #### Changed
 
 - **`conv_dict` dispatcher** at `apply_etl_transformations` is now
-  op-outer / row-inner uniformly (was nested per-row / per-op).  PK
-  binding (`inc_code` / `name_code`) executes inside pass 2 (BEFORE
-  `name_chg`) instead of as a post-pass, protecting against the case
-  where `name_chg` renames the source field out from under the
-  inc_code lookup.
+  op-outer / row-inner uniformly (was nested per-row / per-op).  See
+  the typed wrapper-handler unification entry above for the final
+  PK-binding pass order (Ex → Op → Nm → Pk; Pk runs LAST so renames
+  from pass 3 are visible to it).
 - **`pluck()` dispatch correction.**  PluckOp's `__call__` expects
   the whole row dict to navigate paths from root, but the prior
   dispatcher passed `d.get(key)`.  Latent bug — no test exercised it
@@ -657,10 +661,10 @@ TypeAdapter refactor and the outcome-record telemetry buildout.
   Migration:
 
   ```json
-  // Before v1.3.0:
+  // Before v1.2.0:
   {"shape": "chain", "dependency_mode": "hard", "currents": [...]}
 
-  // After v1.3.0:
+  // v1.2.0+:
   {"shape": "chain", "gate_mode": "hard", "currents": [...]}
 
   // Per-edge:
@@ -693,15 +697,6 @@ TypeAdapter refactor and the outcome-record telemetry buildout.
   custom ``rate_fn`` callables see no observable change.  Subclasses
   and custom ``rate_fn`` callables update their signatures (drop the
   first scheduler arg).
-
-### Added
-
-- **`register_host_throttle` promoted to package top-level.**
-  `from incorporator import register_host_throttle` works; the
-  submodule path `incorporator.io.throttle.register_host_throttle`
-  continues to work and is the same callable.  New entry in
-  [`docs/api_atlas.md`](docs/api_atlas.md) walks the registration API
-  side-by-side with the existing `resolve_throttle` resolver.
 
 ### Internal
 

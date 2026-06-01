@@ -5,8 +5,11 @@ Companion script for `examples/07-stateful-refresh/README.md`.
 
 Demonstrates the three `refresh()` resolution modes against Binance's
 public ticker feed (~1,900 pairs, no auth required). Each call
-mutates the existing Pydantic instances in place — local Python
-references survive across refreshes without reassignment.
+replaces the registry entries under the same primary keys — to see
+the updated values, re-read from ``Pair.inc_dict[key]`` (a local
+variable captured before the refresh would still point at the
+pre-refresh instance). See the README section "How refresh() Updates
+the Registry" for the full pattern.
 
 Run with:
     python examples/07-stateful-refresh/stateful_refresh.py

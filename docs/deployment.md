@@ -287,8 +287,10 @@ Incorporator pipelines, the `[orchestrate]` extra bundles a Prefect
 pip install "incorporator[orchestrate]"
 ```
 
-Note: `[orchestrate]` pulls in `prefect>=2.10.0` as a hard dependency.
-The `typer` CLI dependency is always installed with the base package.
+Note: `[orchestrate]` pulls in `prefect>=2.10.0` AND `typer>=0.9.0` as
+hard dependencies — `typer` is not in the base package; it ships only
+with `[orchestrate]` and `[all]`. `pip install incorporator[orchestrate]`
+is the smallest install that gets you the `incorporator` CLI entry point.
 
 ### Deploying a flow
 

@@ -1,6 +1,6 @@
 """NASCAR fantasy league as a multi-output fjord pipeline.
 
-Six-source fjord pipeline showcasing advanced fjord capabilities via
+Seven-source fjord pipeline showcasing advanced fjord capabilities via
 the fjord engine.  Demonstrates three advanced fjord capabilities in
 one config:
 
@@ -12,9 +12,9 @@ one config:
    peers and gets state-wired conv_dict on every refresh wave.
 
 2. **Multi-output outflow** — ``outflow(state)`` returns
-   ``dict[ClassName, list[dict]]``; fjord builds TWO derived classes
-   (``MonthlyRaceSchedule`` and ``FantasyTeam``) and writes each to
-   its own file.
+   ``dict[ClassName, list[dict]]``; fjord builds THREE derived classes
+   (``MonthlyRaceSchedule``, ``FantasyTeam``, and
+   ``ManufacturerLeaderboard``) and writes each to its own file.
 
 3. **Per-source refresh cadence via dict** — Tracks never refresh
    (``refresh_params=None``), drivers and the race schedule refresh

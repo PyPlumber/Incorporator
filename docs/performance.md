@@ -103,23 +103,24 @@ across the batch. The cost is invisible to callers — you see
 `list[Incorporator]` either way — but it's why the framework keeps
 up with orjson's parse rate on JSON workloads.
 
-**The conv_dict dispatcher is columnar with adaptive caching.** The
+**The conv_dict dispatcher is columnar with unconditional pure-op caching.** The
 ETL pass that applies your `conv_dict` (`inc` / `calc` / `pluck` /
 `link_to` / `split_and_get` / `join_all` / `as_list`) iterates
 op-outer / row-inner.  For each pure op (default for everything
-except user-supplied `calc(..., pure=False)` lambdas), the dispatcher
-samples the first 500 input values per column and decides whether to
-wrap the op in `functools.lru_cache(maxsize=10_000)`.  Cardinality
-under 50% unique triggers caching; above the threshold the dispatcher
-skips wrapping to avoid paying lookup overhead on continuous data.
+except user-supplied `calc(..., pure=False)` lambdas), the `Op`
+constructor wraps the callable in `functools.lru_cache(maxsize=10_000)`
+at construction time — unconditionally, with no per-batch cardinality
+sampling.  An `__wrapped__` fallback in `Op.__call__` catches the
+`TypeError` `lru_cache` raises on unhashable args (`join_all` on lists,
+`inc(new)` on dicts) and retries against the bare callable.
 
 The cache lives on the `Op` instance itself, so it persists across
 batches.  For long-running stream/fjord deployments this delivers
 near-100% hit rate on enum-like columns (status codes, categories,
 country codes, tiers) after the first batch — bench scenario for the
 4-column × 10-unique-value shape clears **~1M rows/sec** through the
-dispatcher.  Continuous-data workloads measure ~125k rows/sec without
-the cache wrapper; same per-row work either way, no overhead added.
+dispatcher.  Continuous-data workloads (every input unique) measure
+~125k rows/sec through the same dispatcher path.
 
 Side-effect lambdas in `calc()` are a framework-documented anti-pattern
 (`conv_dict` is a data-transform layer, not a place for `datetime.now()`,
@@ -195,14 +196,22 @@ For multi-million-row pipelines, switch from `incorp()` to `stream()`
 or `fjord()`:
 
 ```python
-async for wave in MyClass.stream(inc_url=..., chunk_size=10_000):
+from incorporator.io.pagination import PageNumberPaginator
+
+async for wave in MyClass.stream(
+    incorp_params={
+        "inc_url": ...,
+        "inc_page": PageNumberPaginator(page_param="page", chunk_size=10_000),
+    },
+):
     print(wave.rows_processed, wave.processing_time_sec)
 ```
 
-The chunked engine processes 10k-row windows at a time, releasing
-each window's memory before fetching the next. Both verbs accept
-`outflow=` to plug in a user-defined reducer, and `refresh_params={}`
-to re-poll the source on an interval.
+The chunked engine processes 10k-row windows at a time, releasing each
+window's memory before fetching the next. `stream()` and `fjord()`
+accept `outflow=` (a path to a sidecar `outflow.py`) to plug in a
+user-defined reducer, and `refresh_params={}` to re-poll the source on
+an interval.
 
 ### 4. Tune `chunk_size`
 

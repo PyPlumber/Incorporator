@@ -202,10 +202,11 @@ if __name__ == "__main__":
 > geo-blocks (`api.binance.com` is blocked in the US — use
 > `api.binance.us`), rate-limit responses, and transient API outages
 > surface visibly.  For structured per-source errors with HTTP retry
-> hints, reach for `wave.rejects: list[RejectEntry]` instead — each
-> entry carries `error_kind`, `retry_after` (parsed from the HTTP
-> header), and the parent `wave_index`, so 429-aware backoff doesn't
-> need to re-parse the bare strings.
+> hints, reach for the returned ``IncorporatorList``'s ``.rejects``
+> attribute (a ``list[RejectEntry]``) — each entry carries
+> ``error_kind``, ``retry_after`` (parsed from the HTTP header), and
+> the parent ``wave_index``, so 429-aware backoff doesn't need to
+> re-parse the bare ``wave.failed_sources`` strings.
 >
 > **`KeyError` on a missing peer?**  When `inflow(state)` raises
 > `KeyError` because a peer source hasn't seeded yet, the seed-error

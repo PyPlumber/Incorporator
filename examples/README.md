@@ -16,11 +16,11 @@ The curriculum alternates CoinGecko-heavy steps with non-CoinGecko domain exampl
 | **T6** | [`06-spacex-launches/`](./06-spacex-launches/) | SpaceX (~7) | ~5 s | 🚀 Ops-dashboard feed: upcoming launches drilled for rocket + launchpad detail. |
 | **T7** | [`07-stateful-refresh/`](./07-stateful-refresh/) | Binance.us (4) | ~10 s | 🔄 `refresh()` three ways against a live ticker. |
 | **T8** | [`08-streaming-daemon/`](./08-streaming-daemon/) | CoinGecko + Binance.us | ~30 s | 🌊 `stream()` for paginated bulk export at O(1) memory — plus the `stateful_polling=True` single-source shim. |
-| **T9** | [`09-nascar-fantasy-fjord/`](./09-nascar-fantasy-fjord/) | NASCAR (6) | ~8 s | 🏁 Fantasy-sports scoring fjord across Cup, Xfinity, Truck series. |
+| **T9** | [`09-nascar-fantasy-fjord/`](./09-nascar-fantasy-fjord/) | NASCAR (7) | ~8 s | 🏁 Fantasy-sports scoring fjord across Cup, Busch, Truck series. |
 | **T10** | [`10-multi-source-fjord/`](./10-multi-source-fjord/) | CG + Binance | continuous | 🌊 `fjord()` fuses two live sources into a derived spread. |
 | **T11** | [`11-tideweaver/`](./11-tideweaver/) | local fixtures | ~5 s | 🧵 Capstone — declarative diamond orchestration across three exchanges. |
 
-> **Why the alternating rhythm?**  CoinGecko's free public tier is 5–15 calls per minute, server-side.  Incorporator's host-aware throttle (12 req/min on `api.coingecko.com` — see [the rate-limit registry](../incorporator/io/fetch.py)) paces each script, but the per-minute window persists across scripts.  Interleaving non-CG steps between CG-heavy ones lets the window refresh while you learn a complementary pattern.
+> **Why the alternating rhythm?**  CoinGecko's free public tier is 5–15 calls per minute, server-side.  Each CG-touching tutorial calls `register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))` near the top of its script (the framework ships with no implicit per-host throttle).  Interleaving non-CG steps between CG-heavy ones lets the per-minute window refresh while you learn a complementary pattern.
 
 ## Appendix — optional side-quests, different domains
 
@@ -60,7 +60,7 @@ Same data is available programmatically as `from incorporator import list_deps, 
 Each tutorial directory is runnable from anywhere in the repo:
 
 ```bash
-python examples/10-multi-source-fjord/fjord.py
+python examples/10-multi-source-fjord/crypto_spread.py
 ```
 
 Sidecars (`outflow.py`, fixtures, `pipeline.json`) live next to the script that uses them — Python sibling imports work because Python adds the script's directory to `sys.path[0]` automatically.
