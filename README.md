@@ -288,8 +288,6 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
   }
   ```
 
-  > **Breaking change in v1.2.3** — `calc()` and `calc_all()` now default `pure=True`. If your `func` has side effects (`datetime.now()`, `uuid.uuid4()`, logging, DB writes), pass `pure=False` explicitly — caching is silent, not an error.
-
   See `incorporator.io.SourceRef` for the opt-in typed source value (URL / file / parent / payload / kwargs) when you need explicit source dispatch.
 * **Atomic writes + spreadsheet-injection guard** — Parquet / Feather / ORC / JSON / XML / XLSX build via tempfile + `os.replace()` (no half-written files); CSV / XLSX cells starting with `=` / `@` / `+` / `-` are quoted on export (OWASP).
 * **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. For orchestration runs, `LoggedTideweaver` (from `incorporator.observability.tideweaver`) is the parallel drop-in for `Tideweaver` — routes every yielded `Tide` and every accumulated `RejectEntry` to disk via the same `QueueHandler` pipeline; replay with `get_tides()` / `get_rejects()`.

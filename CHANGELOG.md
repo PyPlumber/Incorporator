@@ -146,24 +146,20 @@ collapse to a single generic `Op` class; the existing `CalcOp` /
 `CalcAllOp` stay dedicated for their richer state.  Plus surgical
 parse-side and write-side perf recovery.
 
-#### ⚠️  Breaking — `calc()` / `calc_all()` `pure` default flipped to `True`
+#### Default change — `calc()` / `calc_all()` `pure` defaults to `True`
 
-If you call `calc(func, ...)` with a `func` that has side effects
-(`datetime.now()`, `uuid.uuid4()`, logging, DB writes, network calls,
-mutable counters), **you must now pass `pure=False` explicitly** or
-those side effects will be silently suppressed for repeated identical
-input tuples (`is_pure=True` ops are wrapped in
-`functools.lru_cache(maxsize=10_000)` at `Op` construction — every
-unique input tuple is cached regardless of cardinality).
+`calc()` and `calc_all()` default `pure=True`.  `is_pure=True` ops are
+wrapped in `functools.lru_cache(maxsize=10_000)` at `Op` construction —
+each unique input tuple is computed once and the result is reused for
+repeated identical inputs.
 
-Rationale: `conv_dict` is semantically a data-transform layer.
-Side-effect lambdas there are framework-documented anti-patterns
-(belongs in stream callbacks or post-processing).  Defaulting to
+Pass `pure=False` explicitly when your `func` must run on every row
+(side effects: `datetime.now()`, `uuid.uuid4()`, logging, DB writes,
+network calls, mutable counters).
+
+Rationale: `conv_dict` is a data-transform layer.  Defaulting to
 `pure=True` matches the common case; explicit `pure=False` covers
-the edge case.
-
-Failure mode is silent (cache reuse, not crash) — review existing
-`calc(...)` invocations for any side-effecting `func`.
+the side-effect path.
 
 #### Added
 
@@ -553,7 +549,7 @@ TypeAdapter refactor and the outcome-record telemetry buildout.
   verb signatures unchanged; `SourceRef` is internal scaffolding plus
   an opt-in public type for callers that want explicit source typing.
 
-### Breaking
+### Internal subclass API change
 
 - **`_EdgeState` now composes a `FlowState` field.**  The Tideweaver
   scheduler's per-edge bookkeeping (`_EdgeState`) used to declare four
