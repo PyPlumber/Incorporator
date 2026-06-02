@@ -333,47 +333,6 @@ def _make_pulse_tick(tw: Tideweaver, strong_refs: dict, currents_by_name: dict[s
     return tick
 
 
-async def _prime_upstreams(
-    strong_refs: dict,
-    schedule_stream: Stream,
-    al_teams_stream: Stream,
-    standings_stream: Stream,
-    hitting_stream: Stream,
-    pitching_stream: Stream,
-) -> None:
-    """Prime all upstream snapshots before the scheduler run.
-
-    Drives Stream.incorp() calls directly so that when the scheduler's first
-    Fjord flush fires, the state dict is already populated with real data.
-    This avoids the race where the Fjord fires before the parent-current
-    Streams have populated MLBHitting/MLBPitching.
-    """
-    # 1. Simple streams — incorp + park snapshot
-    for stream in (schedule_stream, al_teams_stream, standings_stream):
-        result = await stream.cls.incorp(**stream.incorp_params)
-        rows = list(result) if isinstance(result, list) else ([result] if result is not None else [])
-        strong_refs[stream.cls] = rows
-        stream.cls._tideweaver_snapshot = rows  # type: ignore[attr-defined]
-
-    # 2. Parent-current Streams — resolve upstream snapshot, fan-out.
-    # Lookup table mirrors scheduler._tick_stream's self._currents_by_name[current.parent_current];
-    # KeyError surfaces if a future child Stream names an unknown parent.
-    by_name = {
-        "schedule": schedule_stream,
-        "al_teams": al_teams_stream,
-        "standings": standings_stream,
-    }
-    for stream in (hitting_stream, pitching_stream):
-        upstream = by_name[stream.parent_current]
-        pre_snap = getattr(upstream.cls, "_tideweaver_snapshot", None)
-        if not pre_snap:
-            continue
-        result = await stream.cls.incorp(inc_parent=list(pre_snap), **stream.incorp_params)
-        rows = list(result) if isinstance(result, list) else ([result] if result is not None else [])
-        strong_refs[stream.cls] = rows
-        stream.cls._tideweaver_snapshot = rows  # type: ignore[attr-defined]
-
-
 # ---------------------------------------------------------------------------
 # Test
 # ---------------------------------------------------------------------------
@@ -493,11 +452,11 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
     currents_by_name = {c.name: c for c in ws.currents}
     monkeypatch.setattr(tw, "_invoke_tick", _make_pulse_tick(tw, strong_refs, currents_by_name))
 
-    # Pre-prime all upstream snapshots so the first Fjord flush has data.
-    await _prime_upstreams(
-        strong_refs, schedule_stream, al_teams_stream, standings_stream, hitting_stream, pitching_stream
-    )
-
+    # The scheduler drives all 5 upstream Stream ticks under the Weir gate's
+    # freshness watermark (last_wave_at set inside _tick_wrapper, scheduler.py:761).
+    # Pre-priming via direct Stream.cls.incorp() was removed because it does not
+    # set last_wave_at and therefore does not satisfy the Weir gate — see
+    # flow.py:122-127 + scheduler.py:557-558/617/761/796.
     [_ async for _ in tw.run()]
 
     # --- Assertions ---
