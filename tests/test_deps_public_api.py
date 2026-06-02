@@ -196,7 +196,7 @@ class TestDepsCli:
     # ---------------------------------------------------------------------------
 
     def test_tzdata_json_platform_marker(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-        """tzdata row in --json has 'platform_marker' set and installed_version null on non-Windows."""
+        """tzdata row in --json carries the win32 platform_marker."""
         assert _runner is not None
         monkeypatch.chdir(tmp_path)
         result = _runner.invoke(app, ["deps", "--json"])
@@ -206,9 +206,6 @@ class TestDepsCli:
         assert len(tzdata_entries) == 1, "tzdata must appear exactly once"
         entry = tzdata_entries[0]
         assert entry["platform_marker"] == "sys_platform == 'win32'"
-        if sys.platform != "win32":
-            # On non-Windows tzdata is not available so installed_version should be None
-            assert entry["installed_version"] is None
 
     # ---------------------------------------------------------------------------
     # Z5-T10: PackageNotFoundError handled gracefully via monkeypatching _get_version

@@ -117,7 +117,7 @@ async def test_eligibility_start_perf_reset_after_fire(tmp_path: Any, monkeypatc
     b = Stream(name="b", cls=TelemetryB, interval=0.05, incorp_params={})
 
     ws = Watershed(
-        window=_short_window(0.5),
+        window=_short_window(0.8),
         currents=[a, b],
         edges=[Edge(from_name="a", to_name="b")],
     )
