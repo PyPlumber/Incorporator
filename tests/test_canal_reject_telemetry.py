@@ -105,11 +105,21 @@ async def test_penstock_limited_reject_telemetry(tmp_path: Any, monkeypatch: pyt
 
 @pytest.mark.asyncio
 async def test_eligibility_start_perf_reset_after_fire(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """eligibility_start_perf is None after _tick_wrapper.finally resets it on successful fire.
+    """_tick_wrapper.finally reset path executes on a successful fire.
 
-    Run a two-current chain just long enough for B to fire at least once.
-    After the run, every edge_state.eligibility_start_perf should be None
-    because the finally block resets it on each successful consumption.
+    Runs a two-current chain just long enough for B to fire at least once.
+    The successful fire of B proves the `_tick_wrapper.finally` block at
+    scheduler.py:796 ran (it is unconditional on fire), which is what resets
+    `edge_state.eligibility_start_perf` to None.
+
+    Note: this test does NOT assert on the post-run value of
+    `eligibility_start_perf`. That field is reset to None on fire
+    (scheduler.py:796) AND set to a fresh `time.perf_counter()` on the next
+    gate-evaluation pass when None (scheduler.py:557-558) — both correct for
+    the reject DLQ duration tracking the field exists for. The value
+    ping-pongs every pass, so the post-run final value depends on whether the
+    loop exited on the "None" or "non-None" side of that cycle, which is
+    timing-dependent and varies across machines.
     """
     monkeypatch.chdir(tmp_path)
 
@@ -124,14 +134,6 @@ async def test_eligibility_start_perf_reset_after_fire(tmp_path: Any, monkeypatc
     tw = Tideweaver(ws, tick_factory=_noop, pass_interval=0.03)
     tides = [t async for t in tw.run()]
 
-    # At least one firing of B must have occurred for the reset to matter.
+    # At least one firing of B proves the _tick_wrapper.finally reset path ran.
     b_fired = sum(1 for t in tides for n in t.fired if n == "b")
-    assert b_fired >= 1, "B must fire at least once for the reset assertion to be valid"
-
-    edge_state = tw._edge_state.get(("a", "b"))
-    assert edge_state is not None
-    # After a successful tick, eligibility_start_perf should be None.
-    assert edge_state.eligibility_start_perf is None, (
-        f"eligibility_start_perf should be reset to None after a successful fire; "
-        f"got {edge_state.eligibility_start_perf}"
-    )
+    assert b_fired >= 1, "B must fire at least once so the finally reset block executes"
