@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-06-01
+
 ### 2026-05-31 — post-audit cleanup: deleted unmeasured perf machinery
 
 Audit of the 32 commits since 2026-05-29 surfaced two perf mechanisms
