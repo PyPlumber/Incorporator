@@ -105,7 +105,7 @@ pokeapi `?limit=50&offset=0`; the same MLB appendix's `_STANDINGS_URL`
 | **Six graph maps in state** | `MLBSchedule` (head) + `MLBAllTeam` (middle) + `MLBStandings` (middle) + `MLBHitting` (Stream, parent_current="al_teams") + `MLBPitching` (Stream, parent_current="al_teams") + `TeamPulseCard` (output). The Fjord's `outflow(state)` reads four of them (`MLBSchedule` is the head — never accessed in `outflow(state)`). |
 | **`conv_dict` with named primitives, lambda-free** | Two `calc(float, "stat.ops", default=0.0, target_type=float)` / `calc(float, "stat.era", default=9.99, target_type=float)` calls — coercion only, no row predicates. Zero lambdas. See [AGENTS.md H3 idiom](../../../AGENTS.md). |
 | **Schema discovery** via `Incorporator.architect()` + per-class `test()` | Pre-flight probe profiles all 4 source endpoints in parallel, prints schemas + field counts, and fails loudly BEFORE the 25-second diamond run if any `rec_path` or field is missing. No registry pollution — `test()` stops at the schema. |
-| **`LoggedTideweaver`** runtime telemetry | Drops in for `Tideweaver`; routes each `Tide` and every canal-layer `RejectEntry` to disk JSONL via the queue-handler-backed logger thread. Inspect `out/logs/MLBPulse_tide.log` (single-file source for `get_tides()`), `out/logs/MLBPulse_error.log` (rejects + ERROR tides), and `out/logs/MLBPulse_debug.log` (debug superset) after the run. |
+| **`LoggedTideweaver`** runtime telemetry | Drops in for `Tideweaver`; routes each `Tide` and every canal-layer `RejectEntry` to disk JSONL via the queue-handler-backed logger thread. Inspect `logs/MLBPulse_tide.log` (single-file source for `get_tides()`), `logs/MLBPulse_error.log` (rejects + ERROR tides), and `logs/MLBPulse_debug.log` (debug superset) after the run. |
 | **`architect.tune()`** post-run feedback | After the run, accumulated outcome records feed `architect.tune(rejects, tides, pass_interval)` which emits concrete knob-tuning hints (or "no tuning needed" on a clean run — also a valid outcome). Closes the developer loop: **probe → run → measure → tune**. |
 | **Polite host throttle** | `register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))` at module top — 1 req/sec = 60 req/min, comfortably under any unstated MLB Stats API courtesy cap. |
 | **Composite analytics** | Per-team Power Index AND Pythagorean win expectation computed in `outflow(state)`, joined across 4 upstream graph maps, pre-sorted by Power Index. Same insight in `pandas` = ~60 lines of merges + manual normalization + Pythag calc. |
@@ -174,9 +174,9 @@ Artifacts produced (all under `out/`, gitignored by repo policy):
 | File | What |
 |---|---|
 | `out/al_pulse.ndjson` | 15 ranked Pulse Cards, sorted by Power Index descending — the headline deliverable |
-| `out/logs/MLBPulse_tide.log` | Every yielded `Tide` (fired + no-op) — single-file source for `LoggedTideweaver.get_tides("MLBPulse")` |
-| `out/logs/MLBPulse_error.log` | Canal-layer `RejectEntry` records + ERROR-severity Tides |
-| `out/logs/MLBPulse_debug.log` | Debug-level superset for grep / external tooling |
+| `logs/MLBPulse_tide.log` | Every yielded `Tide` (fired + no-op) — single-file source for `LoggedTideweaver.get_tides("MLBPulse")` |
+| `logs/MLBPulse_error.log` | Canal-layer `RejectEntry` records + ERROR-severity Tides |
+| `logs/MLBPulse_debug.log` | Debug-level superset for grep / external tooling |
 
 Plus console output:
 - Pre-flight architect+test schemas
@@ -196,9 +196,10 @@ examples/appendix/mlb-pulse/
   watershed.json             (CLI-equivalent declarative form)
   out/                       (runtime artifacts; gitignored)
     al_pulse.ndjson
-    logs/
-      MLBPulse_error.log
-      MLBPulse_debug.log
+  logs/                      (runtime logs; gitignored)
+    MLBPulse_tide.log
+    MLBPulse_error.log
+    MLBPulse_debug.log
 ```
 
 Matches the [Tutorial 11](../../11-tideweaver/) + [`nascar-tideweaver`](../nascar-tideweaver/) convention:

@@ -78,6 +78,7 @@ pip install incorporator                  # core
 pip install incorporator[speedups]        # orjson + lxml + cramjam
 pip install incorporator[parquet]         # pyarrow — Parquet, Feather, ORC
 pip install incorporator[avro]            # fastavro
+pip install incorporator[xlsx]            # openpyxl — XLSX read/write
 pip install incorporator[orchestrate]     # typer + prefect — CLI + Prefect wrappers
 pip install incorporator[all]             # everything except [parquet]
 ```
@@ -89,7 +90,6 @@ pip install incorporator[all]             # everything except [parquet]
 Every method you'll call on an `Incorporator` subclass, plus the windowed orchestrator.
 
 ### `incorp()` — fetch, parse, build the object graph
-
 ```python
 class Launch(Incorporator): pass
 
@@ -97,27 +97,22 @@ launches = await Launch.incorp(inc_url="https://ll.thespacedevs.com/2.2.0/launch
 print(launches[0].name)
 ```
 → [Tutorial 1 — First Steps](./examples/01-first-steps/README.md)
-
 ### `test()` — let the framework write your `incorp()` kwargs
-
 ```python
 await Launch.test(inc_url="https://api.unknown.com/v1/users")
 # Prints payload tree + suggested inc_code, rec_path, conv_dict.
 ```
 
 ### `refresh()` — re-fetch live data into existing instances
-
 ```python
 await Launch.refresh(instance=launches)
 ```
 The seed call's network context (`params`, `headers`, `rec_path`, `conv_dict`, ...) auto-replays.
 
 ### `export()` — serialise to any format
-
 `await Launch.export(instance=launches, file_path="launches.parquet")` — JSON, NDJSON, CSV, XML, SQLite, Parquet, Feather, ORC, Avro, XLSX. → [Formats & compression](./docs/formats_and_compression.md)
 
 ### `stream()` — paginated bulk export, O(1) memory
-
 For paginated APIs or local files too big for RAM, `stream()` fetches one page at a time, exports it, releases the page, and moves on — peak memory stays at roughly one chunk regardless of dataset size. A `Wave` per chunk is the built-in observability stream.
 
 ```python
@@ -134,12 +129,11 @@ async for wave in Launch.stream(
     if wave.failed_sources: print(wave)
 ```
 
-Use an append-friendly format (`.ndjson` / `.csv` / `.sqlite` / `.avro`) — Parquet, Feather, ORC, and Excel rebuild the whole file every wave and aren't safe for per-tick streams. For live dashboards keeping a registry hot across many sources, reach for `fjord()` instead. Pass `adapt_chunk_size=True` to let `stream()` resize `paginator.chunk_size` between chunks via AIMD — bounded by `chunk_size_min` / `chunk_size_max` and a target latency window of `target_min_sec` / `target_max_sec`.
+Use an append-friendly format (`.ndjson` / `.csv` / `.sqlite` / `.avro`) — Parquet, Feather, ORC, and Excel rebuild the whole file every wave. For multi-source live registries reach for `fjord()`. Pass `adapt_chunk_size=True` to resize `paginator.chunk_size` via AIMD — bounded by `chunk_size_min` / `chunk_size_max` and a target latency window of `target_min_sec` / `target_max_sec`.
 
 → [Streaming & pagination](./docs/streaming_and_pagination.md) · [Tutorial 8](./examples/08-streaming-daemon/README.md)
 
 ### `fjord()` — a multi-source data pipeline
-
 Fans out across N concurrent sources, fuses them through a user-defined `outflow(state)`, exports the combined output.
 
 ```python
@@ -154,9 +148,7 @@ async for wave in Incorporator.fjord(
     if wave.failed_sources: print(wave)
 ```
 → [Tutorial 10 — Multi-Source Fjord](./examples/10-multi-source-fjord/README.md)
-
 ### `Tideweaver` — orchestrate multiple feeds on independent intervals
-
 When you need several sources at different cadences inside a single time window, with dependency edges gating downstream work until upstreams produce fresh data, build a `Watershed` and hand it to `Tideweaver`:
 
 ```python
@@ -175,7 +167,6 @@ async for tide in Tideweaver(watershed).run():
     print(tide.tide_number, tide.fired, tide.skipped)
 ```
 Four shape helpers (`parallel`, `chain`, `fanout`, `diamond`) plus `custom` with explicit `edges`. Declarative `watershed.json` config + `incorporator tideweaver run / validate` CLI mirror the `stream` / `fjord` workflow. After the run, `Tideweaver.summary(tides=tides)` returns a `TuningReport` (see Resilience).
-
 **Probe → plan → run, no disk round-trip.** When you have N unknown endpoints, `architect()` profiles each one and emits a runnable plan you can tune in-memory before handing it to `Tideweaver`:
 
 ```python
@@ -190,7 +181,6 @@ async for tide in Tideweaver(watershed).run():
 ```
 
 `architect(output=...)` also emits `"report"` (pretty-printed), `"python"` (paste-ready module), or `"json"` (paste-ready `watershed.json`). After a run, `architect.tune()` consumes the accumulated rejects + tides + waves and emits a `TuningReport` of structured recommendations — see Resilience below.
-
 **Per-edge flow control.** Each edge composes six orthogonal primitives — `Gate` (HardLock / SoftPass / Weir), `SurgeBarrier`, `Penstock` (Sustained / Burst / Window / Backpressure / Signal), `Reservoir`, `Spillway` (DropOldest / RaiseOverflow / ExportToArchive), and a declarative `FlowObserver` (Null / Logging / Signal) for telemetry. The shape constructors accept a top-level `flow=` or `gate_mode=` shorthand; explicit `Edge(...)` carries its own:
 
 ```python
@@ -208,8 +198,18 @@ edge_flow = FlowControl(
 
 The same shapes deserialize from `watershed.json` via Pydantic discriminated unions (`{"gate": {"type": "weir"}, ...}`) — see [Appendix — NASCAR Tideweaver](./examples/appendix/nascar-tideweaver/README.md) for the JSON form on a working diamond. For non-verb tick logic (cron-style cleanups, custom side-effects), subclass `CustomCurrent` and override `async tick(scheduler)`.
 
-→ [Tutorial 11 — Tideweaver](./examples/11-tideweaver/README.md) · [Canal toolkit primitives in API Atlas](./docs/api_atlas.md#canal-toolkit-primitives)
+`Stream(parent_current=...)` declares a parent-child row fan without a `CustomCurrent` wrapper — one child row per parent snapshot entry at tick time:
 
+```python
+child = Stream(
+    name="coin_detail",
+    cls=CoinDetail,
+    interval=60,
+    parent_current="markets",          # row-fans from markets._tideweaver_snapshot
+    incorp_params={"inc_code": "id"},  # inc_parent injected per row at tick time
+)
+```
+→ [Tutorial 11 — Tideweaver](./examples/11-tideweaver/README.md) · [Canal toolkit primitives in API Atlas](./docs/api_atlas.md#canal-toolkit-primitives)
 ### When to reach for which long-running verb
 
 | Verb | Sources | Shape | Reach for it when… |
@@ -221,13 +221,10 @@ The same shapes deserialize from `watershed.json` via Pydantic discriminated uni
 ### `display()` — REPL debug print: `launches[0].display()`
 
 ### Typed directive wrappers (optional)
-
-The DATA-SHAPE pipeline parameters — `excl_lst`, `name_chg`, `code_attr`,
-`name_attr` — now accept typed frozen wrappers alongside the bare shapes
-they always took. Old call sites keep working unchanged; mixed sequences
-are accepted in the same list.
+`excl_lst`, `name_chg`, `code_attr`, `name_attr` accept typed frozen wrappers alongside bare shapes. Old call sites keep working; mixed sequences are accepted.
 
 ```python
+from incorporator.schema.directives import Ex, Nm
 await Users.incorp(
     inc_url="https://api.example.com/users",
     excl_lst=["legacy_flag", Ex("profile.internal.ssn")],   # nested drop
@@ -253,6 +250,7 @@ The CLI runs the same engines from declarative config. No Python required.
 | `incorporator stream pipeline.json` | Run a single-source stream pipeline. |
 | `incorporator fjord pipeline.json` | Run a multi-source fjord pipeline. |
 | `incorporator tideweaver run watershed.json` | Run a windowed orchestration graph. |
+| `incorporator deps [--missing] [--category CAT] [--json]` | List installed optional extras and what each one unlocks; `--json` for CI. |
 
 ```bash
 incorporator init --type stream --output-dir .
@@ -290,10 +288,12 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
   }
   ```
 
+  > **Breaking change in v1.2.3** — `calc()` and `calc_all()` now default `pure=True`. If your `func` has side effects (`datetime.now()`, `uuid.uuid4()`, logging, DB writes), pass `pure=False` explicitly — caching is silent, not an error.
+
   See `incorporator.io.SourceRef` for the opt-in typed source value (URL / file / parent / payload / kwargs) when you need explicit source dispatch.
 * **Atomic writes + spreadsheet-injection guard** — Parquet / Feather / ORC / JSON / XML / XLSX build via tempfile + `os.replace()` (no half-written files); CSV / XLSX cells starting with `=` / `@` / `+` / `-` are quoted on export (OWASP).
 * **Non-blocking observability** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. For orchestration runs, `LoggedTideweaver` (from `incorporator.observability.tideweaver`) is the parallel drop-in for `Tideweaver` — routes every yielded `Tide` and every accumulated `RejectEntry` to disk via the same `QueueHandler` pipeline; replay with `get_tides()` / `get_rejects()`.
-* **The pipeline tells you what to tune.** After a Tideweaver run, `architect.tune()` reads the accumulated rejects, tides, and pass interval and returns a `TuningReport` of severity-sorted hints — per-edge `Penstock` rates, backlog backoff, surge thresholds. For an existing `Tideweaver` instance, `tw.summary(tides=tides)` returns the same report.
+* **The pipeline tells you what to tune.** `architect.tune()` reads accumulated rejects, tides, and pass interval and returns a `TuningReport` of severity-sorted hints — per-edge `Penstock` rates, backlog backoff, surge thresholds. `tw.summary(tides=tides)` returns the same report from an existing instance.
 
   ```python
   from incorporator.observability.tideweaver import LoggedTideweaver, tune
@@ -303,7 +303,7 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
   print(report.render())   # hint blocks, sorted by severity
   ```
 * **Keyed reject audit + backlog short-circuit.** `Tideweaver.rejects` returns a `list[RejectEntry]` whose `error_kind` is one of `"PenstockLimited"`, `"SurgeHalted"`, `"SkipAhead"`, `"GateBlocked"` — every canal-layer skip that never reached a tick body lands here, with `from_name` / `to_name` / `cooldown_sec` populated for keyed analysis. Set `backlog_backoff_factor=2.0` on the `Tideweaver` constructor to extend the next-pass wait when the scheduler is consistently saturated; the default `1.0` is disabled.
-* **Optional-dependency introspection** — `incorporator deps` (CLI) + `list_deps()` / `install_hint()` / `Category` / `DepInfo` (Python API) surface which extras are installed and what each one unlocks; JSON output for CI health checks. → [`docs/cli_and_configuration.md`](./docs/cli_and_configuration.md)
+* **Optional-dependency introspection** — `list_deps()` / `install_hint()` / `Category` / `DepInfo` Python API; CLI surface via `incorporator deps` (see CLI table). → [`docs/cli_and_configuration.md`](./docs/cli_and_configuration.md)
 * **Cross-format round-tripping** — JSON ↔ Parquet ↔ SQLite ↔ Avro ↔ CSV ↔ XML. → [Tutorial 3](./examples/03-universal-formats/README.md)
 
 ---
