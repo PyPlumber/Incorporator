@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-02
+
+First PyPI publication since v1.2.0 (2026-05-21).  The intervening tags
+`v1.2.1`, `v1.2.2`, and `v1.2.3` were local / GitHub-only — no PyPI
+upload — so this release is what PyPI users will see as the cumulative
+delta on top of v1.2.0.
+
+Content shipped under those tag-only releases is documented in the
+`[1.2.3]`, `[1.2.2]`, and `[1.2.1]` sections below; this `[1.3.0]`
+entry exists for the version-bump rationale and to mark the
+PyPI-resumption point.  No additional API surface in this release
+beyond what is already documented in those sections.
+
 ## [1.2.3] - 2026-06-01
 
 ### 2026-05-31 — post-audit cleanup: deleted unmeasured perf machinery
