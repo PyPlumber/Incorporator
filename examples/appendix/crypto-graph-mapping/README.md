@@ -29,7 +29,13 @@ Build a Unified Stablecoin Liquidity Dashboard. For the top 100 cryptocurrencies
 
 ```python
 import asyncio
-from incorporator import Incorporator, link_to, calc
+from incorporator import Incorporator, link_to, register_host_penstock
+from incorporator.io.penstock import SustainedPenstock
+from incorporator.schema.converters import calc
+
+# Pace api.coingecko.com at 0.2 req/sec (12/min — under the 5-15/min
+# free-tier ceiling).
+register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
 
 # ==========================================
 # 1. DECLARATIVE ETL FACTORY
@@ -119,6 +125,8 @@ Look at the execution order. **Incorporator makes 3 API calls total:**
 3. The 100 CoinGecko assets (1 call).
 
 When it hits the `link_to` configuration, **it disconnects from the network.** It synthesizes the target string (e.g., `"BTCUSDT"`) and searches Incorporator's internal RAM registry (`inc_dict`). All 400 mappings execute as `O(1)` dict lookups, completely bypassing server rate limits.
+
+The single live source that *does* hit the network — CoinGecko — is paced by a `register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))` registered up top, keeping it under the 5-15/min free-tier ceiling. The penstock guards the one real call; `link_to` makes the other 400 mappings free.
 
 > **Strong-ref note.** `inc_dict` is a `WeakValueDictionary` ([T1's runtime contract](../../01-first-steps/README.md#step-3-apply-the-recommendations-with-incorp) has the canonical lifecycle treatment). As long as `binance_stats` and `binance_books` are held in `main()`'s local scope (they are — by the `await` returns), every record stays resident and `link_to` resolves cleanly. Drop those references and the registries can be garbage-collected mid-traversal.
 

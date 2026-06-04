@@ -233,7 +233,7 @@ class LeagueRoster(Incorporator):
     ``{series_id, driver_id}`` picks."""
 ```
 
-> ⚠️ **Do not pre-declare fields on these classes.**  The framework builds Pydantic schemas dynamically from the incoming JSON; if you stub `track_id: int = None` on `Track`, fjord stops inferring and you lose half your columns to silent drops.  The classes are deliberately bare.  The framework now emits a one-time WARNING per class when it spots this bare-class trap firing on a pre-declared subclass — watch the logs the first time a new source seeds.
+> ⚠️ **Do not pre-declare fields on these classes.**  The framework builds Pydantic schemas dynamically from the incoming JSON; if you stub `track_id: int = None` on `Track`, fjord stops inferring and you lose half your columns to silent drops.  The classes are deliberately bare — source classes are seeded by dynamic schema inference from the incoming JSON, so a bare `pass` body is exactly right here.  (The framework does emit a one-time WARNING for a bare *output* class — see the §2f callout — but that path is the derived-class emit, not source seeding.)
 
 ### 2b. Constants
 

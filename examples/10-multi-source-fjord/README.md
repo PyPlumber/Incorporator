@@ -47,7 +47,7 @@ NDJSON tail. T11 generalises this same shape to N exchanges in a windowed graph.
 * **Fusion:** for each CoinGecko coin where a matching `{SYMBOL}USDT`
   exists in Binance, emit a row with both prices + the basis-point spread
 * **Cadence:** sources refresh every 30 s; fused output writes every 60 s
-* **Output:** `data/crypto_spread.ndjson` — append-friendly columnar format
+* **Output:** `out/crypto_spread.ndjson` — append-friendly columnar format
 
 Notice: no output class is declared. `fjord()` builds it dynamically
 from the rows your `outflow()` returns, named after the code-file
@@ -120,8 +120,11 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
         if pair is None:
             continue                                      # not traded on Binance
 
-        gecko_usd = float(getattr(coin, "current_price", 0) or 0)
-        binance_usdt = float(getattr(pair, "price", 0) or 0)
+        try:
+            gecko_usd = float(getattr(coin, "current_price", 0) or 0)
+            binance_usdt = float(getattr(pair, "price", 0) or 0)
+        except (TypeError, ValueError):
+            continue
         if gecko_usd <= 0 or binance_usdt <= 0:
             continue
 
@@ -173,7 +176,7 @@ async def main():
             },
         ],
         outflow="examples/10-multi-source-fjord/outflow.py",
-        export_params={"file_path": "data/crypto_spread.ndjson"},
+        export_params={"file_path": "out/crypto_spread.ndjson"},
         refresh_interval={"CoinGecko": 60, "BinancePair": 30},   # per-source cadences
         export_interval=60.0,                                    # fused output every 60 s
     ):
@@ -212,9 +215,10 @@ if __name__ == "__main__":
 > `KeyError` because a peer source hasn't seeded yet, the seed-error
 > formatter rewrites the wave's `failed_sources` to a copy-pasteable
 > diagnostic — `"inflow(state) for source 'Race' raised KeyError on
-> missing peer 'Track' — guard with state.get('Track') or add
-> depends_on=['Track'] to enforce ordering"`.  Either guard the access
-> defensively or declare the ordering on the dependent source's entry.
+> missing peer 'Track' — guard inflow(state) against missing keys
+> (e.g. state.get('Track') or add depends_on=['Track'] to enforce
+> ordering)"`.  Either guard the access defensively or declare the
+> ordering on the dependent source's entry.
 
 > **Refresh is on by default.**  Every fjord source automatically
 > spawns a refresh daemon — you don't need `"refresh_params": {}`
@@ -319,7 +323,7 @@ The same pipeline as a `pipeline.json`:
       }
     }
   ],
-  "export_params": {"file_path": "data/crypto_spread.ndjson"},
+  "export_params": {"file_path": "out/crypto_spread.ndjson"},
   "refresh_interval": {"CoinGecko": 60, "BinancePair": 30},
   "export_interval": 60.0
 }

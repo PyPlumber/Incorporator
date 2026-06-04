@@ -58,7 +58,7 @@ Save the file below as `jimmy_ledger.xml`. The real ledger holds **10 invoices**
 
 ## The Audit Script
 
-Create `audit_jimmy.py`. Incorporator auto-detects the `.xml` extension, drills through `rec_path`, and builds nested Python objects (`inv.Vehicle.VIN`) without a schema file — that's the schema-free ingestion path.
+Create `audit_jimmy.py` (the runnable version ships in this directory as `nhtsa_post_audit.py`). Incorporator auto-detects the `.xml` extension, drills through `rec_path`, and builds nested Python objects (`inv.Vehicle.VIN`) without a schema file — that's the schema-free ingestion path.
 
 ```python
 import asyncio
@@ -163,11 +163,11 @@ if __name__ == "__main__":
 
 Parsing XML in standard Python requires `xml.etree.ElementTree` and recursive loops. `incorp()` auto-detects the `.xml` extension, drills through `rec_path`, and returns nested Python objects (`inv.Vehicle.VIN`) with no class definitions or schema files.
 
-**Security:** every XML payload runs through a pre-flight regex that blocks DTDs and external entities before any parser sees the bytes (`incorporator/io/formats.py:349`). When lxml is installed (`pip install incorporator[speedups]`), the XMLParser uses `resolve_entities=False, no_network=True` as a second layer. The combined approach rejects XXE and billion-laughs payloads regardless of which parser is active — relevant for compliance pipelines ingesting ledgers from untrusted sources.
+**Security:** every XML payload runs through a pre-flight regex that blocks DTDs and external entities before any parser sees the bytes (`incorporator/io/formats.py:358` — `check_xml_security`). When lxml is installed (`pip install incorporator[speedups]`), the XMLParser uses `resolve_entities=False, no_network=True` as a second layer. The combined approach rejects XXE and billion-laughs payloads regardless of which parser is active — relevant for compliance pipelines ingesting ledgers from untrusted sources.
 
 ### 2. Shape Stability with `xml_force_list`
 
-XML collapses a single child element into a dict, but returns multiple children as a list. A ledger with one invoice would produce `dict`; a ledger with ten produces `list[dict]`. Passing `xml_force_list=["Invoice"]` forces the tag to always be a list, preventing downstream shape drift when ledger size varies (`incorporator/io/handlers/text.py:303`).
+XML collapses a single child element into a dict, but returns multiple children as a list. A ledger with one invoice would produce `dict`; a ledger with ten produces `list[dict]`. Passing `xml_force_list=["Invoice"]` forces the tag to always be a list, preventing downstream shape drift when ledger size varies (`incorporator/io/handlers/text.py:291`).
 
 ### 3. The State Carrier (`inc_child`)
 

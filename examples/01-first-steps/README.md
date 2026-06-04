@@ -161,8 +161,7 @@ paste the kwargs:
 ```python
 from datetime import datetime
 
-from incorporator import Incorporator
-from incorporator.schema.converters import inc
+from incorporator import Incorporator, inc
 
 
 class Coin(Incorporator):
@@ -302,6 +301,19 @@ And the discovery loop you ran *before* that:
   timeout).
 * **Errors** — failed sources surface on `coins.failed_sources`.  For durable error logs
   and a structured retry loop via RejectEntry, see [Production Debugging](../../docs/debugging.md).
+* **Rate limits** — CoinGecko's anon tier allows only 5-15 req/min, and Incorporator ships
+  no implicit per-host throttle (the default fallback is ~15 req/sec). Register the host
+  once at startup so the framework paces your calls automatically:
+
+  ```python
+  from incorporator import register_host_penstock
+  from incorporator.io.penstock import SustainedPenstock
+
+  # 0.2 req/sec = 12 req/min, comfortably under the anon ceiling
+  register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+  ```
+
+  Or pass `requests_per_second=0.2` directly to `incorp()` / `test()` per call.
 
 ---
 

@@ -183,7 +183,7 @@ scheduler runs:
 
 | Hook | Fires when | Default level (configurable) |
 |---|---|---|
-| `on_fire` | Edge consumed an upstream wave and the downstream tick fired | `info` |
+| `on_fire` | Edge consumed an upstream wave and the downstream tick fired | `debug` (this `watershed.json` raises it to `info`) |
 | `on_skip(reason)` | Edge skipped (e.g. `"penstock_limited"`, `"awaiting_upstream"`) | `debug` |
 | `on_spillway(displaced, count)` | Reservoir overflowed and the spillway evicted a wave | `warning` |
 | `on_reservoir_level(used, capacity)` | After each successful consume — useful for capacity tracking | `debug` |

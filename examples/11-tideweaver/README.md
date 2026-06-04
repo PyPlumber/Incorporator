@@ -359,7 +359,7 @@ NORMALIZATION = {
     # Coinbase
     "BTC-USD": "BTC", "ETH-USD": "ETH",
     # Kraken
-    "XXBTZUSD": "BTC", "XETHZUSD": "ETH",
+    "XXBTZUSD": "BTC", "XETHZUSD": "ETH", "XBTUSD": "BTC",
 }
 
 
@@ -373,9 +373,12 @@ def _venue_quotes(rows, symbol_attr: str, bid_attr: str, ask_attr: str, venue: s
         asset = NORMALIZATION.get(str(raw))
         if asset is None:
             continue
-        bid = float(getattr(row, bid_attr, 0) or 0)
-        ask = float(getattr(row, ask_attr, 0) or 0)
-        if bid and ask:
+        try:
+            bid = float(getattr(row, bid_attr, 0) or 0)
+            ask = float(getattr(row, ask_attr, 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if bid > 0 and ask > 0:
             out.append((asset, bid, ask, venue))
     return out
 

@@ -225,7 +225,7 @@ The natural next backtest step is `/coins/{id}/market_chart?vs_currency=usd&days
 30 days of `[timestamp, price]` pairs per coin.  That response shape (three parallel
 arrays under `prices`, `market_caps`, `total_volumes`) is *one record per child URL*,
 which doesn't fit the standard `inc_code` model directly.  The
-[Pokédex ETL appendix](../appendix/pokeapi-etl/README.md) shows the `calc()` + nested-array
+[PokéAPI ETL appendix](../appendix/pokeapi-etl/README.md) shows the `calc()` + nested-array
 reduction pattern that solves this — and the same trick handles `market_chart` row
 flattening.
 

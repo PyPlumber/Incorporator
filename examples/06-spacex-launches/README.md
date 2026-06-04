@@ -181,7 +181,7 @@ pattern T8 walks through; nothing SpaceX-specific.
 * **Stable schedule changes** — launch slips happen on the order of hours/days, not
   seconds, so a 2-minute refresh captures every change with low API pressure.
 * **Bounded registry** — the upcoming feed is always ~18-30 records; the live
-  registry is tiny, and the per-tick export is a snapshot of the full current state.
+  registry is tiny, and the per-refresh export is a snapshot of the full current state.
 * **No auth, no quota** — public, free, ideal for tutorial code.
 
 ---

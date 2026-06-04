@@ -1,4 +1,4 @@
-# Tutorial 2 — Data Lake Pivot: From SaaS Roster to BI-Ready Columnar
+# Tutorial 2 — Data Lake Pivot: From SaaS Roster to SQLite + Avro
 
 Your SaaS roster lives in Auth0 or Okta as deeply nested JSON. BI wants it in Avro + SQLite by 7 AM. Two calls — `incorp()` then `export()` — and the nested `address` and `company` dicts flatten correctly, types infer to strict Avro (`int` → `long`) and SQLite columns, and the round-trip rehydrates the full object graph. No schema file, no ORM, no Avro schema definition.
 
@@ -34,7 +34,7 @@ sample = await User.test(inc_url="https://jsonplaceholder.typicode.com/users")
 # Returns a 3-record preview — safe to run against live endpoints.
 ```
 
-`test()` caps itself at one page and a 5-second timeout. Paste the suggested kwargs into step 1 and move on. (`base.py:1613`)
+`test()` caps itself at one page and a 5-second timeout. Paste the suggested kwargs into step 1 and move on. (`base.py:1646`)
 
 ### 1. Ingest the Nested JSON API
 

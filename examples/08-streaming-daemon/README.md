@@ -106,9 +106,9 @@ is **no**.
 ### Adaptive chunk sizing
 
 `adapt_chunk_size=True` lets `stream()` resize `paginator.chunk_size` between
-chunks via multiplicative-increase / multiplicative-decrease (20% growth, 50%
-shrink), bounded by `chunk_size_min` / `chunk_size_max` and the latency window
-`[target_min_sec, target_max_sec]`:
+chunks via an AIMD policy — additive-increase / multiplicative-decrease (grow
+by 20% of the current size, shrink by half), bounded by `chunk_size_min` /
+`chunk_size_max` and the latency window `[target_min_sec, target_max_sec]`:
 
 ```python
 async for wave in CoinPage.stream(
@@ -324,7 +324,7 @@ hangs.  See the [deployment guide](../../docs/deployment.md) for the full Compos
 
 ## Where to Go Next
 
-> **Up next: [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md).**  T10 is about to introduce `fjord()` for coordinated multi-source refresh — the canonical stateful-daemon pattern that supersedes the `stateful_polling=True` shim shown above.  T9 gives you the shape first on a real fantasy-sports scoring problem: pull driver standings concurrently from Cup, Xfinity, and Truck series; join with track + driver master data; produce a weekly fantasy-points table.  Its state-aware `inflow()` even previews T10's `depends_on` graph.  Runs in ~8 s.
+> **Up next: [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md).**  T9 previews the multi-source `fjord()` shape — the canonical stateful-daemon pattern that supersedes the `stateful_polling=True` shim shown above — on a real fantasy-sports scoring problem before T10 introduces `fjord()` formally.  T9 has you pull driver standings concurrently from Cup, Xfinity, and Truck series; join with track + driver master data; and produce a weekly fantasy-points table.  Its state-aware `inflow()` even previews T10's `depends_on` graph.  Runs in ~8 s.
 
 | Goal | Read |
 |---|---|

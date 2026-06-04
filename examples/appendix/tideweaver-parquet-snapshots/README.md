@@ -20,7 +20,7 @@ The framework refuses to silently rebuild because the bigger the file gets, the 
 
 ## Pattern 1: `Export` current at window close
 
-Inside a `Watershed`, add an `Export` current after the head stream with a much longer `interval` than the head — typically the full window length. `Export` calls `cls.export()` against the live registry once per tick; with `interval=window_duration` and `gate_mode="hard"`, it fires exactly once, right before window close.
+Inside a `Watershed`, add an `Export` current after the head stream and push its single tick to the end of the window with `phase_offset_sec`. The first tick of any current fires on the first pass it is gate-eligible (scheduler skips the interval check while `last_tick_started is None`); a long `interval` then blocks any re-fire inside the window. So with `phase_offset_sec` set near the window length, that first — and only — `Export` tick lands just before window close, calling `cls.export()` against the fully accumulated registry in one shot. (`phase_offset_sec` is the green-wave delay knob documented in [Tutorial 11](../../11-tideweaver/README.md#green-wave-coordination-with-phase_offset_sec).)
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -51,7 +51,8 @@ watershed = Watershed.chain(
         Export(
             name="laps_snapshot",
             cls=Lap,
-            interval=3600,                                  # one tick: at the very end
+            interval=3600,                                  # long interval — never re-fires inside the window
+            phase_offset_sec=3500,                          # hold the single tick until just before window close
             export_params={"file_path": "laps_snapshot.parquet"},
         ),
     ],
@@ -67,8 +68,10 @@ For production runs that should leave a disk trail of every pass,
 swap `Tideweaver(watershed)` for `LoggedTideweaver(watershed,
 enable_logging=True, logger_name="LapsSnapshot")` — same constructor
 surface, but every yielded `Tide` and every canal-layer `RejectEntry`
-lands in `logs/LapsSnapshot_{api,error}.log` via a non-blocking
-`QueueHandler`.  Import path:
+lands on disk via a non-blocking `QueueHandler`: every `Tide` in
+`logs/LapsSnapshot_tide.log` (the single file `get_tides()` reads) and
+every canal-layer `RejectEntry` in `logs/LapsSnapshot_error.log`.
+Import path:
 `from incorporator.observability.tideweaver import LoggedTideweaver`.
 
 ---

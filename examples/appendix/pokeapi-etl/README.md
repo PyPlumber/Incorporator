@@ -70,16 +70,15 @@ What the inspector prints, abbreviated:
 ```text
 🗑️  5. HEAVY-FIELD HINTS:
    💡 Fields likely to bloat the payload — consider excluding:
-      excl_lst=['sprites', 'moves', 'game_indices', 'held_items']
-
-🛠️  3. ETL / TYPE CASTING SUGGESTIONS:
-   💡 Nested list-of-dicts found — consider reducing with `calc()`:
-      conv_dict={'stats': calc(<reducer>, "stats", ...)}
+      excl_lst=[...]
 ```
 
-The heavy-field hint produces the exact `excl_lst` the Complete Code uses;
-the ETL section flags `stats` as a reduction candidate.  Copy the
-suggestions verbatim, swap `test()` for `incorp()`, paste the kwargs.
+The heavy-field hint flags the bloated payload candidates; the Complete
+Code's `excl_lst` (`sprites`, `moves`, `game_indices`, `held_items`) drops
+the heaviest of them.  The `stats`/`types` arrays you reduce with `calc()`
+show up in the printed tree (section 1) as nested list-of-dicts — the
+inspector doesn't auto-suggest a `calc()` reducer, so add those yourself.
+Copy the suggested keys, swap `test()` for `incorp()`, and paste the kwargs.
 
 ---
 
@@ -88,7 +87,11 @@ suggestions verbatim, swap `test()` for `incorp()`, paste the kwargs.
 ```python
 import asyncio
 from typing import Any
-from incorporator import Incorporator, NextUrlPaginator, calc
+from incorporator import Incorporator, NextUrlPaginator, calc, register_host_penstock
+from incorporator.io.penstock import SustainedPenstock
+
+# Pace pokeapi.co at 1.5 req/sec (90/min — under the documented 100/min ceiling).
+register_host_penstock("pokeapi.co", SustainedPenstock(rate_per_sec=1.5))
 
 # --- EXPLICIT SUBCLASSING ---
 class Nav(Incorporator): pass
@@ -118,7 +121,8 @@ async def main() -> None:
         # Explicitly declare where the next URLs live!
         inc_child="url",
         inc_page=NextUrlPaginator("next"),
-        call_lim=3  # 3 pages * 50 = 150 Pokemon
+        call_lim=3,  # 3 pages * 50 = 150 Pokemon
+        requests_per_second=1.5,  # 90 req/min — under PokéAPI's 100/min ceiling
     )
 
     print(f"✅ Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
@@ -135,7 +139,8 @@ async def main() -> None:
             "stats": calc(calculate_bst, "stats", default=0, target_type=int),
             "types": calc(format_typing, "types", default="Unknown", target_type=str)
         },
-        name_chg=[("stats", "base_stat_total")]
+        name_chg=[("stats", "base_stat_total")],
+        requests_per_second=1.5,
     )    
     
     if isinstance(enriched_pokemon, list):
@@ -247,7 +252,7 @@ incorporator validate pipeline.json
 incorporator stream pipeline.json
 ```
 
-The token resolver imports `inflow.py` at config-load time, sees `calculate_bst` in its public symbols, and resolves the `calc(...)` string to a real Python callable before the engine runs. The reducer runs **before** format dispatch, so this same pipeline.json works for any export format — switch the extension to `.csv`, `.parquet`, `.avro`, etc., and the integer still lands in the cell.
+The token resolver imports `inflow.py` at config-load time, sees `calculate_bst` in its public symbols, and resolves the `calc(...)` string to a real Python callable before the engine runs. This shallow pipeline is a **wiring demo**: the `/pokemon/?limit=50` list rows carry only `name` + a HATEOAS `url` (no per-Pokémon `stats`), so `base_stat_total` resolves to the `default=0` for every row — for a real Base Stat Total you need the parent-child drill from the Python script above. What it does prove is that the reducer is wired and runs **before** format dispatch, so this same pipeline.json works for any export format — switch the extension to `.csv`, `.parquet`, `.avro`, etc., and the resolved field still lands in the cell.
 
 > **Tip:** for paginators and pre-built converter instances, use the cleaner `@name` syntax. Define `next_page = NextUrlPaginator("next")` in `inflow.py`, then reference it as `"inc_page": "@next_page"` in pipeline.json — zero JSON escape characters. See [the CLI guide](../../../docs/cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full pattern.
 

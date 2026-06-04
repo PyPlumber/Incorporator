@@ -26,9 +26,10 @@ measure → tune**.
 
 ```
 🔍 Phase 1 — Pre-flight schema probe via Incorporator.architect()...
-✅ MLBSchedule: 14 fields inferred
-✅ MLBAllTeam: 17 fields inferred
-✅ MLBHitting (sample team 147): 33 fields inferred
+✅ Schedule: 14 fields inferred
+✅ AlTeams: 17 fields inferred
+✅ Standings: 7 fields inferred
+✅ HittingSample: 33 fields inferred
 
 🌀 Phase 2 — Building Watershed.diamond...
   Tide   1 | fired: schedule                                          | skipped:  4 | 0.412s
@@ -103,7 +104,7 @@ pokeapi `?limit=50&offset=0`; the same MLB appendix's `_STANDINGS_URL`
 | **URL-level row filtering** | `al_teams` Stream's `inc_url` is `?sportId=1&leagueId=103` — server-side filter scopes to the 15 American League teams. Children drill that scope directly via `parent_current="al_teams"`. No post-fetch filter primitive. See "Row filtering" section above for the decision tree. |
 | **T5 parent-child drilling** via `Stream(parent_current=...)` | Two `Stream` nodes (`hitting`, `pitching`) with `parent_current="al_teams"` read the upstream snapshot at tick time and fan-out `cls.incorp(inc_parent=<snapshot>, inc_child="inc_code", inc_url="...{}/stats?group=...")` — 15 concurrent child fetches per stream. Two streams firing in parallel = **30 concurrent T5 child calls** per tick. Parent list comes from the upstream `al_teams` Stream's `_tideweaver_snapshot`, never hardcoded. |
 | **Six graph maps in state** | `MLBSchedule` (head) + `MLBAllTeam` (middle) + `MLBStandings` (middle) + `MLBHitting` (Stream, parent_current="al_teams") + `MLBPitching` (Stream, parent_current="al_teams") + `TeamPulseCard` (output). The Fjord's `outflow(state)` reads four of them (`MLBSchedule` is the head — never accessed in `outflow(state)`). |
-| **`conv_dict` with named primitives, lambda-free** | Two `calc(float, "stat.ops", default=0.0, target_type=float)` / `calc(float, "stat.era", default=9.99, target_type=float)` calls — coercion only, no row predicates. Zero lambdas. See [AGENTS.md H3 idiom](../../../AGENTS.md). |
+| **`conv_dict` with named primitives, lambda-free** | Two `calc(float, "stat.ops", default=0.0, target_type=float)` / `calc(float, "stat.era", default=9.99, target_type=float)` calls — coercion only, no row predicates. Zero lambdas — named module-level helpers per the framework's lambda-free idiom. |
 | **Schema discovery** via `Incorporator.architect()` + per-class `test()` | Pre-flight probe profiles all 4 source endpoints in parallel, prints schemas + field counts, and fails loudly BEFORE the 25-second diamond run if any `rec_path` or field is missing. No registry pollution — `test()` stops at the schema. |
 | **`LoggedTideweaver`** runtime telemetry | Drops in for `Tideweaver`; routes each `Tide` and every canal-layer `RejectEntry` to disk JSONL via the queue-handler-backed logger thread. Inspect `logs/MLBPulse_tide.log` (single-file source for `get_tides()`), `logs/MLBPulse_error.log` (rejects + ERROR tides), and `logs/MLBPulse_debug.log` (debug superset) after the run. |
 | **`architect.tune()`** post-run feedback | After the run, accumulated outcome records feed `architect.tune(rejects, tides, pass_interval)` which emits concrete knob-tuning hints (or "no tuning needed" on a clean run — also a valid outcome). Closes the developer loop: **probe → run → measure → tune**. |
