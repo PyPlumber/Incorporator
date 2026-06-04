@@ -366,7 +366,7 @@ for style is a lot of churn for low ROI.
 
 | # | Area | Finding | Action |
 |---|---|---|---|
-| 1 | Hot-path models | `slots=True` absent on Wave / Tide / RejectEntry | Add to `model_config`; orchestrator-routed bundle |
+| 1 | Hot-path models | `slots=True` absent on Wave / Tide / RejectEntry | INVALIDATED (see §5): no `slots` key in ConfigDict 2.13.3; `BaseModel.__slots__` declares `__dict__`; closed, no code action |
 | 2 | CLI configs | Strict mode absent (no `strict=True`, no `StrictInt`) | Document as deliberate (env-var coercion) |
 | 3 | CLI configs | `extra='allow'` on Stream/Fjord/Webhook configs | Defer; soft recommend opt-in `extra='forbid'` |
 | 4 | `failed_sources` | Plain `@property`, not `@computed_field` | Document as deliberate (back-compat alias) |
@@ -374,8 +374,8 @@ for style is a lot of churn for low ROI.
 
 ### Bundle map
 
-- **Bundle A — Finding 1 (slots)**: orchestrator-routed; three file
-  edits + one new test file + one micro-benchmark
+- **Finding 1 (slots)**: INVALIDATED (see §5) — closed with no code
+  action; only test scaffolding (commit `d12da06`) landed
 - **Findings 2, 3, 4, 5**: captured in this doc; no code action this
   cycle
 
