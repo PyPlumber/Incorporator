@@ -7,7 +7,7 @@ and runnable. This atlas sits between them: paste-ready signatures,
 3-7 step pseudocode, and one-line "when to reach for it" narrative for
 every public callable.
 
-The same seven verbs — `incorp / test / refresh / export / stream / fjord / display` — work on any source (JSON, XML, CSV, NDJSON, SQLite, Parquet, Avro, and more) without class declarations or validation schemas.  The same `Penstock / Wave / RejectEntry` primitives that govern a single `incorp()` call govern a multi-source `Tideweaver` window: you are not learning two tools.
+The same eight verbs — `incorp / test / architect / refresh / export / stream / fjord / display` — work on any source (JSON, XML, CSV, NDJSON, SQLite, Parquet, Avro, and more) without class declarations or validation schemas.  The same `Penstock / Wave / RejectEntry` primitives that govern a single `incorp()` call govern a multi-source `Tideweaver` window: you are not learning two tools.
 
 > Every code block here is copy-paste runnable assuming
 > `from incorporator import Incorporator, LoggedIncorporator` and
@@ -19,7 +19,9 @@ The same seven verbs — `incorp / test / refresh / export / stream / fjord / di
 
 - [Discovery & ingestion](#discovery--ingestion)
   - [`test`](#test)
+  - [`architect`](#architect)
   - [`incorp`](#incorp)
+  - [`register_host_penstock`](#register_host_penstock)
 - [Live updates](#live-updates)
   - [`refresh`](#refresh)
 - [Persistence](#persistence)
@@ -30,22 +32,24 @@ The same seven verbs — `incorp / test / refresh / export / stream / fjord / di
 - [REPL](#repl)
   - [`display`](#display)
 - [Orchestration](#orchestration)
-  - [`Tideweaver orchestration surface`](#tideweaver-orchestration-surface)
+  - [Tideweaver orchestration surface](#tideweaver-orchestration-surface)
   - [`Tideweaver.summary` / `tune` / `TuningReport`](#tideweaversummary--tune--tuningreport)
+  - [Scheduler-event enums — `SkipReason` / `WakeReason` / `GateMode`](#scheduler-event-enums--skipreason--wakereason--gatemode)
+  - [Canal toolkit primitives](#canal-toolkit-primitives)
 - [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive)
 - [Telemetry](#telemetry)
   - [`Wave.log_meta`](#wavelog_meta)
-- [Observability layer (`LoggedIncorporator` + `LoggedTideweaver`)](#observability-layer-loggedincorporator)
-  - [`LoggedTideweaver`](#loggedtideweaver)
+- [Observability layer (`LoggedIncorporator` + `LoggedTideweaver`)](#observability-layer-loggedincorporator--loggedtideweaver)
   - [`LoggedIncorporator` — shared `enable_logging=` note](#loggedincorporator--shared-enable_logging-note)
   - [`get_error`](#loggedincorporator-get_error)
   - [`log_debug` / `log_info` / `log_error`](#loggedincorporator-log_debug--log_info--log_error)
   - [`log_api`](#loggedincorporator-log_api)
   - [`log_meta`](#loggedincorporator-log_meta)
   - [`log_cls_info` / `log_cls_error`](#loggedincorporator-log_cls_info--log_cls_error)
-- [Class-attribute reference](#class-attribute-reference)
+  - [`LoggedTideweaver`](#loggedtideweaver)
 - [Shared kwargs glossary](#shared-kwargs-glossary)
 - [DATA-SHAPE directives](#data-shape-directives)
+- [Class-attribute reference](#class-attribute-reference)
 - [FormatType](#formattype)
 - [Optional-dependency introspection](#optional-dependency-introspection)
   - [`list_deps`](#list_deps---listdepinfo)
@@ -199,13 +203,13 @@ async def incorp(
 6. Register every instance into `cls.inc_dict`; return a single instance for one record, or an `IncorporatorList` (carrying `.failed_sources`) otherwise.
 
 **When to reach for it**
-This is the cold-start verb — the one you call when a new endpoint hits your radar and you want a working object graph in three lines. Backtest data prep, one-shot CSV-to-Pydantic conversions, the seed call before any daemon takes over.
+This is the cold-start verb — the one you call when a new endpoint hits your radar and you want a working object graph in three lines. Backtest data prep, one-shot CSV-to-Pydantic conversions, the seed call before any daemon takes over. **Memory note (v1.2.1+):** `incorp()` validates each chunk as a whole via `TypeAdapter(list[Cls]).validate_python(rows)` — peak memory scales with the source row count, not streaming row-by-row. For large pulls reach for `stream()` (chunking mode) instead so each chunk releases before the next is fetched.
 
 **Common kwargs**
 - `inc_url` / `inc_file` — single string or list; list triggers concurrent fan-out.
 - `inc_code` — field name to use as the primary key in `inc_dict`.
 - `inc_parent` + `inc_child` — drill a parent list's URLs into child fetches (HATEOAS).
-- `conv_dict` — `{field_name: converter}` pre-validation coercion (`inc`, `calc`, `calc_all`, `pluck`, `link_to`, `link_to_list`, `split_and_get`).  **Null-handling contract:** every converter short-circuits on garbage input (`None`, `""`, `"N/A"`, `"null"`, `"unknown"`, `"nan"`, `"undefined"`) before invoking the user callable — defensive null guards in lambdas are unnecessary.  Idioms: `calc(str.lower, "title", default="", target_type=str)` · `calc(str.upper, "code", default="", target_type=str)` · `calc(str.strip, "name", default="", target_type=str)` · `calc(len, "body", default=0, target_type=int)` · `calc("Alive".__eq__, "status", default=False)` · `inc(float)` (type coerce; use `inc()`, not `calc()`).
+- `conv_dict` — `{field_name: converter}` pre-validation coercion (`inc`, `calc`, `calc_all`, `pluck`, `link_to`, `link_to_list`, `split_and_get`).  **Null-handling contract:** every converter short-circuits on garbage input (`None`, `""`, `"N/A"`, `"null"`, `"unknown"`, `"nan"`, `"undefined"`) before invoking the user callable — defensive null guards in lambdas are unnecessary.  Idioms: `calc(str.lower, "title", default="", target_type=str)` · `calc(str.upper, "code", default="", target_type=str)` · `calc(str.strip, "name", default="", target_type=str)` · `calc(len, "body", default=0, target_type=int)` · `calc("Alive".__eq__, "status", default=False)` · `inc(float)` / `inc(int, default=0)` — type coerce with fallback, OUTPUT key == SOURCE key (DX-first: shorter than `calc(int, "key", default=0, target_type=int)` for flat-typed fields). Use `inc()`, not `calc()`, when the source and target keys are the same.  **v1.2.3 purity default flip:** `calc()` and `calc_all()` now default `pure=True` — the wrapped callable is memoised via `functools.lru_cache(maxsize=10_000)` at Op construction, so identical input tuples are computed once per process. Pass `pure=False` explicitly for side-effecting callables (`datetime.now()`, `uuid.uuid4()`, logging, DB writes, mutable counters); otherwise the side effects fire only on cache miss.
 - `inc_page` — `AsyncPaginator` subclass for paginated endpoints.
 - `rec_path` — dot-notation drill into a wrapper response; supports integer indices for list segments (e.g. `"results"` or `"dates.0.games"`).
 - **Dot-notation coverage (Bundle G).** All six path-string surfaces accept `"a.b.0.c"` form (dict keys and integer list indices): `rec_path`, `pluck()`, `calc()` input keys, `calc_all()` input keys, `inc_code=`, `inc_name=`, and `inc_child=`. The authoritative implementation is `DataPath` (`incorporator/schema/path.py`) — behaviour is identical across all surfaces.
@@ -559,7 +563,7 @@ class Tideweaver:
         tides: list[Tide] | None = None,
         waves: list[Wave] | None = None,
     ) -> "TuningReport": ...                         # v1.2.1+
-    rejects: list[RejectEntry]                       # canal-layer + verb-layer
+    rejects: list[RejectEntry]                       # canal-layer only (verb-layer rejects live on IncorporatorList.rejects)
 
 class Watershed(BaseModel):
     @classmethod
@@ -573,8 +577,8 @@ class Watershed(BaseModel):
 ```
 
 `gate_mode=` is the shorthand (one of `"hard"` / `"soft"` / `"weir"`, default
-`"hard"`).  `flow=` is the full-dict form: a :class:`FlowControl` composing
-gate + surge_barrier + penstock + reservoir + spillway.  They are mutually
+`"hard"`).  `flow=` is the full-dict form: a `FlowControl` composing
+gate + surge_barrier + penstock + reservoir + spillway + observer.  They are mutually
 exclusive — pass one, neither (defaults to `gate_mode="hard"`), but not both.
 `Edge(gate_mode=..., flow=...)` follows the same mutex rule for custom
 explicit-edge graphs.  See [Canal toolkit primitives](#canal-toolkit-primitives)
@@ -744,7 +748,7 @@ class SustainedPenstock(Penstock):    # rate_per_sec: float
 class BurstPenstock(Penstock):        # rate_per_sec: float, burst: int
 class WindowPenstock(Penstock):       # window_sec: float, cap: int
 class BackpressurePenstock(Penstock): # min_rate < max_rate, scales with reservoir
-class SignalPenstock(Penstock):       # rate_fn(scheduler, edge_state, now) -> float
+class SignalPenstock(Penstock):       # rate_fn(state, now) -> float
 
 # Reservoir — per-edge FIFO buffer of recent waves
 class Reservoir(BaseModel):
@@ -752,7 +756,7 @@ class Reservoir(BaseModel):
 
 # Spillway — overflow handler when reservoir is full
 class DropOldest(Spillway): ...                       # silent default
-class RaiseOverflow(Spillway): ...                    # WARNING log per displacement
+class RaiseOverflow(Spillway): ...                    # WARNING log per displacement (never raises despite the name)
 class ExportToArchive(Spillway):                      # strong-ref backlog list
     archive_cls: Type[Incorporator]
 
@@ -763,7 +767,7 @@ class LoggingObserver(FlowObserver):                    # per-event Python loggi
     skip_level: Literal["debug","info","warning"]      = "debug"
     spillway_level: Literal["debug","info","warning"]  = "warning"
     reservoir_level_level: Literal[...]                = "debug"
-    reservoir_threshold: float | None = None         # only emit when used/cap >= threshold
+    reservoir_threshold: float = 0.0                  # 0.0..1.0; only emit when used/cap >= threshold
 class SignalObserver(FlowObserver):                     # forward to user callable
     callback: Callable[[str, tuple[str, str], dict], None]
 ```
@@ -910,13 +914,14 @@ Rarely called directly — the routing adapter calls it on every `Wave` written 
 
 ---
 
-## Observability layer (`LoggedIncorporator`)
+## Observability layer (`LoggedIncorporator` + `LoggedTideweaver`)
 
 ### LoggedIncorporator — shared `enable_logging=` note
 
-Every verb on `LoggedIncorporator` (`incorp`, `refresh`, `export`, `stream`, `fjord`)
-accepts every kwarg its `Incorporator` counterpart accepts, plus one extra:
-`enable_logging: bool = False`. When set to `True`, the call wires up a
+The five verbs `LoggedIncorporator` overrides (`incorp`, `refresh`, `export`, `stream`, `fjord`)
+accept every kwarg their `Incorporator` counterpart accepts, plus one extra:
+`enable_logging: bool = False`. (`test`, `architect`, and `display` are inherited unchanged —
+they don't take `enable_logging=` and don't emit log records.) When set to `True`, the call wires up a
 per-class `QueueHandler`-backed logger that writes rotating JSON-line records
 to `logs/<ClassName>_{api,error,debug}.log`. Disk I/O runs on a background
 thread — the event loop never blocks on log writes. Logging is **opt-in per
@@ -1102,7 +1107,7 @@ from incorporator.observability.tideweaver import LoggedTideweaver
 
 **What it does (pseudocode)**
 1. Construct exactly like `Tideweaver(...)`; disk I/O routes through the same `QueueHandler`-backed background thread as `LoggedIncorporator` — the event loop never blocks on log writes.
-2. On every yielded `Tide`, route to `_error.log` (INFO/ERROR severity) and `_debug.log` (DEBUG passes including no-ops).  Both files receive tide records — severity controls which file a given pass lands in.
+2. On every yielded `Tide`, route via `_route_tide_to_log()`: error-class passes (canal rejects added, or `surge_halted` / `skip_ahead` skip reasons) → ERROR; fired passes → INFO; pure no-op passes → DEBUG.  The handler set then sorts records by level — `debug.log` is the superset (every tide), `error.log` accepts INFO and above (fired + error-class), `tide.log` collects every record tagged `is_tide=True` for `get_tides()` readback.
 3. On every accumulated `RejectEntry` (swept in a `finally` block so records land on disk even under cancellation), emit a JSON-line to `logs/<logger_name>_error.log`.
 4. `get_tides(logger_name)` reads the dedicated `logs/<logger_name>_tide.log` file (written by the `TideFilter` log router) and returns the records sorted by `tide_number` — a single-file read replaces the earlier `_error.log` + `_debug.log` merge.
 5. `get_rejects(logger_name)` reads `_error.log` and returns records tagged with a `"reject"` key.
@@ -1137,7 +1142,7 @@ When `enable_logging=True`, the runner writes four rotating JSONL files under `l
 
 ---
 
-### Shared kwargs glossary
+## Shared kwargs glossary
 
 - `inflow=` — sidecar `.py` exposing public symbols for `conv_dict` token resolution; in fjord, may also define `inflow(state)` for sequential dependent seeding (see [the `inflow(state)` contract](#fjord) under the fjord entry for call cadence, guard requirements, and return shape).
 - `outflow=` — sidecar `.py` whose stem becomes the dynamic output class name; must define `outflow(state) -> list[dict]` (or `dict[ClassName, list[dict]]` for multi-output fjord).
@@ -1148,7 +1153,7 @@ When `enable_logging=True`, the runner writes four rotating JSONL files under `l
 
 ---
 
-### DATA-SHAPE directives
+## DATA-SHAPE directives
 
 The four data-shape pipeline parameters (`excl_lst`, `name_chg`,
 `code_attr`, `name_attr`) travel through a single normalizer
@@ -1262,7 +1267,7 @@ canonical destination slot for it.  Continue to use `code_attr` /
 | `inc_code` / `inc_name` / `last_rcd` | instance | universal Pydantic fields | identity (auto-counter fallback) + display label + UTC construction timestamp. |
 | `failed_sources` | `IncorporatorList` | `list[str]` | legacy flat reject-list surface — every URL/file that hit a permanent failure.  Derived view of `rejects` (`[entry.source for entry in rejects]`). |
 | `Wave.{chunk_index, operation, rows_processed, failed_sources, processing_time_sec, timestamp}` | `Wave` (frozen Pydantic) | core model fields | one record per pipeline tick. Yielded by `stream()` and `fjord()`. |
-| `Wave.{source_url, bytes_processed, http_retry_count, validation_error_count, schema_cache_hit, conv_dict_time_sec, parent_snapshot_size}` | `Wave` (frozen Pydantic) | v1.2.1 outcome-record fields | per-wave telemetry surface: source URL, byte volume, HTTP retry count, validation error count, schema-cache hit flag, `conv_dict` execution time, and upstream snapshot row count for parent-child ticks (`None` when not applicable). |
+| `Wave.{source_url, bytes_processed, http_retry_count, validation_error_count, schema_cache_hit, conv_dict_time_sec, parent_snapshot_size}` | `Wave` (frozen Pydantic) | v1.2.1 outcome-record fields | per-wave telemetry surface: source URL, byte volume, HTTP retry count, validation error count, schema-cache hit flag, per-chunk ETL wall-clock (`conv_dict_time_sec` — proxy for total per-chunk work; covers fetch + parse + validate + converter expansion together, not converter-isolated), and upstream snapshot row count for parent-child ticks (`None` when not applicable). |
 | `Tide.{tide_number, fired, skipped, duration_sec, timestamp}` | `Tide` (frozen Pydantic) | core model fields | one record per `Tideweaver` scheduler pass. Yielded by `Tideweaver.run()`. |
 | `Tide.{current_outcomes, wake_reason, heap_depth, in_flight_count_at_start, canal_rejects_added, next_due_in_sec}` | `Tide` (frozen Pydantic) | v1.2.1 outcome-record fields | per-pass scheduler telemetry: list of per-current outcomes, wake reason (Literal), heap depth, in-flight tick count at start, new canal rejects this pass, seconds until next due tick. |
 | `CurrentOutcome` (`incorporator.observability.tideweaver.current_outcome`) | `@dataclass(frozen=True, slots=True)` | per-current outcome record | Fields: `name: str`, `status: str` (`"fired"` / `"skipped"` / `"still_running"`), `reason: str | None`, `bypassed_edges: tuple[str, ...]`, `in_flight_sec: float | None`, `last_wave_at: datetime | None`, `parent_snapshot_size: int | None` (upstream snapshot row count consumed by a parent-child tick; `None` for non-parent-child currents — used by `tune()` to detect empty-upstream misconfiguration). Surfaced via `tide.current_outcomes`. |
@@ -1273,7 +1278,7 @@ canonical destination slot for it.  Continue to use `code_attr` /
 | `SourceRef` (`incorporator.io.SourceRef`) | frozen dataclass | source value type | Five factories (`from_url` / `from_file` / `from_parent` / `from_payload` / `from_kwargs`) plus an auto-detect `parse()` classmethod.  Internal scaffolding for `incorp()` / `architect()` source dispatch; opt-in public API for callers wanting explicit source typing. |
 | `Stream.parent_current` | `Stream` field | declarative parent-child dependency | `parent_current: str` names an upstream `Stream` current in the same watershed. The framework auto-derives a `HardLock` Watershed edge from the parent, drives the snapshot read on every dependent tick, and injects the parent's `_tideweaver_snapshot` as `inc_parent` into the child's `cls.incorp(...)` call. **The parent declares its row scope at the URL / SQL / outflow level — the framework does not post-filter at the child.** See [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive) for how to scope the parent. |
 | `Fjord.parent_currents` | `Fjord` field | declarative multi-parent dependency | `parent_currents: list[str]` names one or more upstream `Stream` (or `Fjord`) currents. Same semantics as `Stream.parent_current` — auto-derived `HardLock` edges, snapshot reads on every tick — broadcast across all named parents into the fjord's `state` dict before `outflow(state)` runs. Each parent declares its own row scope at the URL / SQL / outflow level. See [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive). |
-| `CustomCurrent` (`incorporator.observability.tideweaver.CustomCurrent`) | abstract `Current` subclass | escape hatch | Subclass and override `async tick(self, scheduler: Tideweaver) -> None` for non-verb tick logic (cron-style cleanups, custom side-effects, externally-driven publishers). |
+| `CustomCurrent` (`incorporator.observability.tideweaver.CustomCurrent`) | abstract `Current` subclass | escape hatch | Subclass and override `async tick(self, scheduler: Tideweaver) -> None` for non-verb tick logic (cron-style cleanups, custom side-effects, externally-driven publishers). The scheduler auto-parks `list(cls.inc_dict.values())` as `cls._tideweaver_snapshot` after every tick when the body didn't assign one (v1.2.3+) — downstream `HardLock` edges see fresh upstream waves without manual snapshot wiring. Set `auto_park_snapshot: ClassVar[bool] = False` to opt out (rare — only when the tick is a pure side-effect that shouldn't gate downstream). Also v1.2.3+: the scheduler emits a one-line WARNING per pass when a CustomCurrent tick succeeds but produces an empty `_tideweaver_snapshot` while upstream snapshots are non-empty — surfaces silent predicate / conv_dict mismatches without needing a debugger. |
 | `GateContext` / `SurgeContext` / `FlowState` | frozen dataclasses | narrow value types | What custom `Gate.gate_reason(ctx)` / `SurgeBarrier.is_tripped(ctx)` / `Penstock.consume_reason(state, flow, now)` overrides read.  Authoring a custom strategy?  Subclass against these — never the scheduler. |
 
 ---
