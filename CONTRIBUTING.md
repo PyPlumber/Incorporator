@@ -31,7 +31,7 @@ pytest -m benchmark
 Every PR is expected to land with:
 
 - **All 703+ tests green** (`pytest --no-cov -q`).
-- **`mypy --strict` clean** on the source tree (57 files, no errors).
+- **`mypy --strict` clean** on the `incorporator/` source tree (no errors).
 - **`ruff check` clean** on `incorporator/` (tests are intentionally excluded — running ruff against `tests/` overrides the `[tool.ruff].exclude` config and produces a 1000+ line S101-assert storm).
 - **`black --check` clean** on `incorporator/` (line length 120).
 - **New tests** covering any new public method, handler, or CLI flag.
@@ -137,13 +137,14 @@ design, not the journey to it.
 ## Continuous Integration & Branch Protection
 
 Every PR and every push to `main` triggers
-[`.github/workflows/ci.yml`](./.github/workflows/ci.yml), which runs
-three jobs in parallel:
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml). A `lint` job runs
+first; once it passes, `typecheck`, `test`, and `docker` run in parallel:
 
-- **lint** — `ruff check`, `ruff format --check`, `black --check` on `incorporator/`.
+- **lint** — `ruff check`, `ruff format --check`, `black --check` on `incorporator/`, plus `python tools/sync_pyproject.py --check` (validates the auto-generated optional-dependencies block).
 - **typecheck** — `mypy incorporator/` under strict mode.
 - **test** — `pytest -m "not benchmark"` across a 3×2 matrix
-  (Python 3.9 / 3.11 / 3.13 on Ubuntu + Windows).
+  (Python 3.10 / 3.11 / 3.13 on Ubuntu + Windows).
+- **docker** — builds the image and smoke-tests `incorporator --version` inside it.
 
 Total wall-clock is ~2–3 minutes; the test matrix runs all six cells
 concurrently. A red ❌ on any cell blocks the merge button when branch
@@ -162,14 +163,14 @@ click-through GitHub setting, not a committed file:
 5. After the first CI run lands, search the status-checks box and add:
    - `lint`
    - `typecheck`
-   - `test (ubuntu-latest, 3.9)` and the other five matrix cells.
+   - `test (ubuntu-latest, 3.10)` and the other five matrix cells.
 6. (Recommended) tick **Require a pull request before merging**.
 7. (Optional) tick **Do not allow bypassing the above settings** to
    apply the rule to admins.
 8. **Create** / **Save changes**.
 
 The "Merge" button on every PR against `main` is now disabled until
-all eight CI cells are green.
+all CI jobs (lint, typecheck, the six test-matrix cells, and docker) are green.
 
 ## Reporting Bugs / Asking Questions
 

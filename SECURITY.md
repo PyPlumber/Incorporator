@@ -56,9 +56,12 @@ buffering. Pathological compression ratios trip the format parser's
 streaming guards rather than blowing out memory.
 
 ### Archive Path Traversal
-ZIP and TAR extraction skip system junk (`__MACOSX`, `.DS_Store`) and
-unpack only the first valid data file in a flat directory walk — no
-arbitrary path writes outside the archive root.
+ZIP and TAR member names are validated against absolute paths, drive
+prefixes, and `..` traversal before any extraction, and Apple
+resource-fork junk (`__MACOSX`) is filtered out. Extraction selects the
+single member matching the requested data format; an archive containing
+more than one matching file is rejected unless you name one explicitly
+via `archive_target`. No arbitrary path writes outside the archive root.
 
 ### Secret Handling
 - Pipeline configs reference secrets by name (`${API_KEY}`,
