@@ -26,9 +26,9 @@ Incorporator natively supports flat text files, streaming logs, and binary datab
 | **XML** | `.xml` | *Native* | Hardened against XXE and Billion Laughs. Pre-flight regex blocks DTDs and external entities; lxml parser uses `resolve_entities=False` when available. |
 | **HTML Tables** | `.html`, `.htm` | `[speedups]` | Extracts `<table>` elements via `lxml`. Each row becomes an Incorporator instance; mismatched columns are handled gracefully. |
 | **SQLite** | `.db`, `.sqlite`, `.sqlite3` | *Native* | Executes `SELECT` and bulk `INSERT` statements at C-speed. |
-| **Excel** | `.xlsx` | `[xlsx]` | Pure-Python via `openpyxl` (~250 KB). Reads/writes worksheets with header rows auto-detected. |
+| **Excel** | `.xlsx`, `.xlsm` | `[xlsx]` | Pure-Python via `openpyxl` (~250 KB). Reads/writes worksheets with header rows auto-detected. |
 | **Apache Avro** | `.avro` | `[avro]` | Requires `pip install incorporator[avro]`. Converts Pydantic schemas to strict binary Avro schemas on write. |
-| **Apache Parquet** | `.parquet` | `[parquet]` | Columnar format for data lakes / warehouses. Uses `pyarrow` (heavyweight — opt-in only). |
+| **Apache Parquet** | `.parquet`, `.pq` | `[parquet]` | Columnar format for data lakes / warehouses. Uses `pyarrow` (heavyweight — opt-in only). |
 | **Feather / Arrow IPC** | `.feather`, `.arrow`, `.ipc` | `[parquet]` | Zero-copy columnar interchange. Shares the `pyarrow` install with Parquet. |
 | **Apache ORC** | `.orc` | `[parquet]` | Columnar format also via `pyarrow`. |
 
@@ -133,7 +133,10 @@ How each Python type lands in each supported format:
 
 CSV / TSV / PSV inherit JSON Schema's row contract: every cell is
 serialised as a string with `serialize_nested()` round-tripping
-`dict` / `list` cells through JSON encoding.
+`dict` / `list` cells through JSON encoding. As of v1.2.3,
+`serialize_nested()` encodes those cells through orjson when
+`[speedups]` is installed (falling back to stdlib `json` otherwise) —
+round-trip-equivalent, though orjson emits whitespace-free JSON.
 
 ### Round-Trip Preservation Notes
 

@@ -10,7 +10,7 @@ This page answers two questions:
    [opt-in extras](#opt-in-extras).
 
 Numbers below are measured locally on Windows 10 Pro, Python 3.13,
-500k-row synthetic datasets, pyarrow 24.0.0, captured under a
+500k-row synthetic datasets, pyarrow 14+, captured under a
 stagger+alternate methodology (each test runs in isolation, with
 rotating per-format order and interleaved sweeps, to control for
 Windows ordering bias).  Each cell is the median of three staggered
@@ -97,16 +97,18 @@ load. Retries (HTTP 429, 5xx) use Tenacity's exponential backoff
 with jitter; fatal 4xx errors break the loop immediately so you don't
 burn budget on permanent failures.
 
-**Pydantic validation is batched.** Rows are validated 1,000 at a
-time, which lets Pydantic's Rust core amortise field-offset lookups
-across the batch. The cost is invisible to callers — you see
+**Pydantic validation is batched.** Rows are validated in one
+`TypeAdapter(list[Cls]).validate_python(...)` call per batch — the
+whole payload for `incorp()`, one `chunk_size` window for `stream()` /
+`fjord()` — which lets Pydantic's Rust core amortise field-offset
+lookups across the batch. The cost is invisible to callers — you see
 `list[Incorporator]` either way — but it's why the framework keeps
 up with orjson's parse rate on JSON workloads.
 
 **The conv_dict dispatcher is columnar with unconditional pure-op caching.** The
-ETL pass that applies your `conv_dict` (`inc` / `calc` / `pluck` /
-`link_to` / `split_and_get` / `join_all` / `as_list`) iterates
-op-outer / row-inner.  For each pure op (default for everything
+ETL pass that applies your `conv_dict` (`inc` / `pluck` / `link_to` /
+`link_to_list` / `split_and_get` / `join_all` / `as_list`, plus `calc` /
+`calc_all`) iterates op-outer / row-inner.  For each pure op (default for everything
 except user-supplied `calc(..., pure=False)` lambdas), the `Op`
 constructor wraps the callable in `functools.lru_cache(maxsize=10_000)`
 at construction time — unconditionally, with no per-batch cardinality
@@ -210,8 +212,9 @@ async for wave in MyClass.stream(
 The chunked engine processes 10k-row windows at a time, releasing each
 window's memory before fetching the next. `stream()` and `fjord()`
 accept `outflow=` (a path to a sidecar `outflow.py`) to plug in a
-user-defined reducer, and `refresh_params={}` to re-poll the source on
-an interval.
+user-defined reducer, `refresh_params={}` to re-fetch source data
+between chunks via `cls.refresh()`, and `poll_interval=` to re-poll the
+source on an interval.
 
 ### 4. Tune `chunk_size`
 
@@ -288,7 +291,7 @@ to slowest:
 | `[parquet]` | pyarrow, tzdata (Windows) | Working with Parquet, Feather, or ORC. |
 | `[avro]` | fastavro | Kafka, Hadoop, or schema-registry pipelines. |
 | `[xlsx]` | openpyxl | Human spreadsheets (< 100k rows). |
-| `[all]` | speedups + avro + xlsx | Everything except pyarrow. |
+| `[all]` | speedups + avro + xlsx + orchestrate (typer, prefect) | Everything except the heavyweight `[parquet]` (pyarrow). |
 
 `[all]` deliberately omits `[parquet]` because pyarrow's 30 MB
 footprint is the wrong default for users who never touch columnar

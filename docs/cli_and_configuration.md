@@ -386,7 +386,7 @@ incorporator stream pipeline.json --poll 3600.0 --logs
 ```
 
 ### What happens when `--logs` is enabled?
-Terminal output is suppressed, and telemetry is routed to non-blocking background OS threads. Incorporator will automatically create a `logs/` directory and generate three rotating JSON Lines files (max 15MB each):
+Terminal output is suppressed, and telemetry is routed to non-blocking background OS threads. Incorporator will automatically create a `logs/` directory and generate three rotating JSON Lines files (5MB each, 3 backups — roughly 15MB total per log type):
 
 1.  **`logs/{Class}_api.log`**: Tracks all successful HTTP traffic, rate limits, and chunk throughput.
 2.  **`logs/{Class}_error.log`**: Structured failure records (RejectEntry). Catches network timeouts, 400/500 status codes, and malformed data schemas.
@@ -787,7 +787,8 @@ incorporator deps
 NAME      CATEGORY      EXTRA        STATUS              INSTALL
 --------  ------------  -----------  ------------------  -----------------------------
 orjson    speedup       speedups     ✓ 3.9.15            pip install incorporator[speedups]
-lxml      format        formats      ✓ 5.3.0             pip install incorporator[formats]
+lxml      speedup       speedups     ✓ 5.3.0             pip install incorporator[speedups]
+fastavro  format        avro         ✗ not installed     pip install incorporator[avro]
 cramjam   speedup       speedups     ✗ not installed     pip install incorporator[speedups]
 tzdata    platform_fix  parquet      n/a (platform)      pip install incorporator[parquet]
 ```

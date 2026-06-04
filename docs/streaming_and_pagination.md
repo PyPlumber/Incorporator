@@ -100,7 +100,7 @@ asyncio.run(scrape_api())
 
 Whether you use a Web Paginator or a Local Paginator, the internal mechanics are identical:
 
-1.  **State Retention:** The `AsyncPaginator` class holds variables like `self.current_offset`, `self.current_cursor`, or `self._reader` in its `__init__` method.
+1.  **State Retention:** Each paginator subclass holds its traversal state — `self.current_offset` (`OffsetPaginator`), `self.current_cursor` (`CursorPaginator`), or `self._reader` (the local file paginators) — initialised in its `__init__` method.
 2.  **O(1) Orchestration:** `.stream()` drives the paginator one chunk at a time — exactly one page is fetched, materialised, exported, and released before the next iteration begins.
 3.  **Daemon Reset:** If you are running an infinite stream with `--poll 3600` (1 hour), the orchestrator automatically calls `paginator.reset()` when it wakes up, starting the extraction loop back at row/page 1 to check for new data.
 
@@ -242,7 +242,7 @@ The CLI ships an equivalent subcommand:
 incorporator fjord pipeline.json --logs
 ```
 
-👉 See the [fjord section](./cli_and_configuration.md#6-the-fjord-subcommand--multi-source-stateful-pipelines)
+👉 See the [fjord section](./cli_and_configuration.md#8-the-fjord-subcommand--multi-source-stateful-pipelines)
 of the CLI guide for the JSON schema and a worked example, or the
 [Library reference](./library_reference.md) for the full method signature.
 
@@ -331,8 +331,10 @@ apply automatically, no code changes required:
 * **LRU `SCHEMA_REGISTRY`** — compiled Pydantic classes are cached and
   evicted by least-recently-used; long-running daemons that see many
   distinct shapes don't thrash the cache.
-* **Batched `model_validate`** — Pydantic instantiation runs in 1000-row
-  batches so the Rust core can amortise schema lookups across the batch.
+* **Batched `model_validate`** — each chunk's rows are validated in one
+  cached `TypeAdapter(list[Cls]).validate_python(...)` call instead of a
+  per-row loop, so the Rust core amortises schema lookups across the whole
+  chunk (measured 1.3–2.0× faster).
 * **In-place columnar parse** — Parquet/Feather/ORC parse uses
   `pyarrow.compute` for vectorised JSON-prefix detection, skipping the
   per-cell Python check entirely when string columns contain no JSON.

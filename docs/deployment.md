@@ -166,7 +166,7 @@ CMD ["stream", "/app/config/pipeline.json", \
 
 The framework ships with **no implicit per-host throttling**;
 unregistered hosts fall back to the 15 req/sec default
-(`incorporator/io/penstock.py:500`). For any API with a tighter rate
+(`incorporator/io/penstock.py:498`). For any API with a tighter rate
 ceiling, register the throttle once at process start and every
 subsequent `incorp()` / `stream()` / `fjord()` against that host
 respects it — the same Penstock primitive used at the HTTP layer also
@@ -191,7 +191,7 @@ first).
 
 ### Graceful shutdown
 
-The CLI installs a SIGTERM handler (`incorporator/cli/runners.py:187-194`)
+The CLI installs a SIGTERM handler (`incorporator/cli/runners.py:184-192`)
 that sets a shutdown event, triggering the same exit path as Ctrl+C.
 `docker stop`, `docker compose down`, and `kubectl delete pod` all
 send SIGTERM by default — no extra config is required when using the
@@ -214,8 +214,10 @@ ticks for up to `drain_timeout` seconds before exiting (default 30s).
 For long-running or restart-on-exit shapes, use the same `restart:
 unless-stopped` policy a stream daemon would use; for one-shot
 window runs, omit `restart` and the container stops when the window
-closes. `--json-output` and `--heartbeat-file` work the same as they
-do for `stream` / `fjord`.
+closes. `--json-output` and `--heartbeat-file` behave as they do for
+`stream` / `fjord`, except the heartbeat is touched after every
+*Tide* rather than every Wave — size your HEALTHCHECK window against
+`pass_interval` accordingly.
 
 > ### Coupling `drain_timeout` with `stop_grace_period`
 >

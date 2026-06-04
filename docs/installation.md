@@ -55,7 +55,7 @@ pip install incorporator[xlsx]
 ```bash
 pip install incorporator[parquet]
 ```
-**What this installs:** `pyarrow` (~30 MB — heavyweight; deliberately **not** in `[all]`).
+**What this installs:** `pyarrow` (~30 MB — heavyweight; deliberately **not** in `[all]`), plus `tzdata` on Windows (pyarrow's ORC reader hardcodes `/usr/share/zoneinfo` lookups, which Windows lacks).
 * **Why you need it:** Unlocks Apache **Parquet**, **Feather / Arrow IPC**, and **ORC** read/write. Required for data-lake and warehouse interoperability.
 
 ### 🛠️ The Orchestration Flag
@@ -63,7 +63,7 @@ pip install incorporator[parquet]
 pip install incorporator[orchestrate]
 ```
 **What this installs:** `typer`, `prefect`.
-* **Why you need it:** Unlocks the `incorporator stream`, `incorporator fjord`, `incorporator tideweaver`, `incorporator validate`, and `incorporator init` CLI subcommands plus the pre-built Prefect `@flow` wrappers (see `deployment.md`).
+* **Why you need it:** Unlocks the `incorporator stream`, `incorporator fjord`, `incorporator tideweaver`, `incorporator validate`, `incorporator init`, and `incorporator deps` CLI subcommands plus the pre-built Prefect `@flow` wrappers (see `deployment.md`).
 
 ### 📖 The Docs Flag (Contributors Only)
 ```bash
@@ -83,6 +83,18 @@ pip install incorporator[all]
 
 **Note:** `[all]` deliberately excludes `[parquet]` (pyarrow is ~30 MB) and
 `[docs]` (contributor-only). Opt into those explicitly when you need them.
+
+---
+
+## 4. Checking What's Installed
+Not sure which extras actually landed? Ask Incorporator directly:
+
+```bash
+incorporator deps
+```
+Prints a table of every optional dependency — its category, extra, install status (`✓`/`✗`), and the `pip install` hint to fix anything missing. Filter with `--missing` (only what's absent), `--category speedup|format|orchestrate|platform_fix`, or `--json` for scripting.
+
+*(This subcommand rides on Typer, so it requires `[orchestrate]` like the rest of the CLI.)*
 
 ---
 

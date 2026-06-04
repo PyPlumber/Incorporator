@@ -182,7 +182,7 @@ canal-layer string literals — `"PenstockLimited"`, `"SurgeHalted"`,
 `"SkipAhead"`, `"GateBlocked"` — for skips the scheduler made before
 the dependent tick ran.  Each entry carries `from_name` / `to_name` /
 `cooldown_sec` so per-edge attribution is straightforward.  See
-[Orchestration debugging](#orchestration-debugging-loggedtideweaver--architecttune)
+[Orchestration debugging](#orchestration-debugging--loggedtideweaver--architecttune)
 below.
 
 ### 2. Seed-error formatter — missing-peer `KeyError`
@@ -285,6 +285,12 @@ past_tides   = await LoggedTideweaver.get_tides(logger_name="ArbSession")
 past_rejects = await LoggedTideweaver.get_rejects(logger_name="ArbSession")
 ```
 
+Unlike `LoggedIncorporator`'s three files, `LoggedTideweaver` also
+writes a dedicated `logs/<logger_name>_tide.log` — every yielded `Tide`
+(fired and no-op alike) lands there, so `get_tides()` reads that one
+file sorted by `tide_number` rather than merging `_error.log` +
+`_debug.log`. Rejects still live in `logs/<logger_name>_error.log`.
+
 `tw.summary(tides=tides)` is the instance-method convenience for the
 same `TuningReport`.  Each `tide.current_outcomes` is a
 `list[CurrentOutcome]` carrying per-current `status` / `reason` /
@@ -297,6 +303,14 @@ skipped, per pass.
 | Per-edge skip audit | `tw.rejects` filtered by `error_kind` ∈ {canal-layer strings above} |
 | Post-window tuning recommendations | `tune(rejects=..., tides=..., pass_interval=...)` → `TuningReport` |
 | Cross-process replay | `LoggedTideweaver.get_tides(...)` / `get_rejects(...)` |
+
+> **Empty-output stalls fire a WARNING.** When a `CustomCurrent` tick
+> succeeds but yields no rows while its upstream snapshot was non-empty,
+> the scheduler emits a one-line `WARNING` per pass naming the current
+> and its upstream(s) — the signal for a tick body, predicate, or
+> missing-`conv_dict` bug that silently drops every row. It is a log
+> warning, not a `RejectEntry`, so watch `logs/<logger_name>_debug.log`
+> (or stderr) rather than `tw.rejects`.
 
 ---
 
