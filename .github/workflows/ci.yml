@@ -53,8 +53,31 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install with all optional extras
         run: pip install -e .[all,parquet,dev]
-      - name: pytest
-        run: pytest --no-cov -q -p no:randomly -m "not benchmark"
+      - name: pytest (fast tier, parallel)
+        # Fast tier only: skip `slow` (timing-sensitive scheduler/throttle + long
+        # integration). Runs in parallel via pytest-xdist; `--dist loadfile` keeps a
+        # file's tests on one worker. The `slow` tests run in the `coverage` job
+        # (serial, Linux) so this matrix — including Windows — stays fast and never
+        # races real-clock scheduler windows under parallel CPU contention.
+        run: pytest --no-cov -q -p no:randomly -m "not benchmark and not slow" -n auto --dist loadfile
+
+  # Full suite (fast + slow, serial) WITH coverage. This is the only job that runs
+  # the timing-sensitive `slow` tests — serially on Linux, where scheduler timing is
+  # stable — so the Windows matrix above never runs them and can't flake. It is also
+  # the coverage gate: `--cov-fail-under=85` enforces the original pre-release goal
+  # (suite currently sits ~90%).
+  coverage:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install with all optional extras
+        run: pip install -e .[all,parquet,dev]
+      - name: pytest with coverage gate (full suite incl. slow)
+        run: pytest -q -p no:randomly -m "not benchmark" --cov=incorporator --cov-report=term-missing --cov-fail-under=85
 
   # Build the Docker image on every PR + push so future Dockerfile or
   # dependency-extra regressions surface at CI time, not when a user tries

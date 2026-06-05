@@ -78,6 +78,7 @@ _FIXED_EXTRAS: dict[str, list[str]] = {
         '"pytest-asyncio>=0.21.0"',
         '"pytest-cov>=4.0.0"',
         '"pytest-randomly>=3.15.0"',
+        '"pytest-xdist>=3.5.0"',
         '"mypy>=1.0.0"',
         '"ruff>=0.1.0"',
         '"black>=24.0"',

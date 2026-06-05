@@ -133,3 +133,38 @@ def mock_no_speedups(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, N
     monkeypatch.setattr(_cramjam_mod, "CRAMJAM", None)
     monkeypatch.setattr(_fastavro_mod, "FASTAVRO", None)
     yield
+
+
+# --- SLOW-TIER AUTO-MARKING ---------------------------------------------------
+#
+# Whole test files that are timing-sensitive (drive the real Tideweaver scheduler
+# / penstock throttle over a wall-clock window) or long-running integration tests
+# get the `slow` marker by filename. The fast tier (`-m "not benchmark and not
+# slow"`, run with `-n auto`) excludes them, so the parallel matrix stays fast and
+# deterministic; the serial CI coverage job runs them. This is the direct fix for
+# the Windows-CI timing flakes: the real-clock scheduler tests no longer run under
+# parallel CPU contention on Windows. The substring list is derived from the
+# measured `--durations` slowest set — extend it if a fast-tier file starts flaking
+# under `-n auto`.
+_SLOW_FILENAME_SUBSTRINGS = (
+    "tideweaver",       # all Tideweaver scheduler / routing / parent-child tests
+    "scheduler",        # scheduler retry + backlog timing tests
+    "penstock",         # rate-limit / cooldown throttle-window tests
+    "prefect",          # 16.9s Prefect engine import/setup
+    "fetch_streaming",  # real HTTP retry/backoff waits
+    "inflow_state",     # real-window fjord state wiring
+    "canal_reject",     # canal-layer reject telemetry over a window
+    "_etl",             # tests/public/api/test_*_etl.py — long mocked ETL runs
+)
+
+
+def pytest_collection_modifyitems(config: "pytest.Config", items: "list") -> None:
+    """Tag timing-sensitive / long-running test files with the `slow` marker."""
+    slow_mark = pytest.mark.slow
+    for item in items:
+        path = str(item.fspath).replace("\\", "/")
+        if "/benchmarks/" in path:
+            continue  # the benchmark suite has its own marker (benchmarks/conftest.py)
+        filename = path.rsplit("/", 1)[-1]
+        if any(sub in filename for sub in _SLOW_FILENAME_SUBSTRINGS):
+            item.add_marker(slow_mark)

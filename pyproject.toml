@@ -58,6 +58,7 @@ dev =[
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
     "pytest-randomly>=3.15.0",
+    "pytest-xdist>=3.5.0",
     "mypy>=1.0.0",
     "ruff>=0.1.0",
     "black>=24.0"
@@ -118,13 +119,19 @@ include = ["incorporator", "incorporator.*"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-v --cov=incorporator --cov-report=term-missing -m 'not benchmark'"
+# Coverage is intentionally NOT in the default addopts — it adds instrumentation
+# overhead to every local/CI run. The dedicated `coverage` CI job (with an explicit
+# `--cov=incorporator --cov-fail-under=85`) is the single place coverage is measured.
+# Default run is the fast tier: skip `benchmark` (perf) and `slow` (timing-sensitive
+# scheduler + long integration) tests. Run those with `-m slow` or `-m "not benchmark"`.
+addopts = "-v -m 'not benchmark and not slow'"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "benchmark: performance benchmarks; opt-in only (run with -m benchmark)",
+    "slow: timing-sensitive (real scheduler/throttle windows) or long-running integration tests; auto-applied by path in tests/conftest.py. Excluded from the parallel fast tier; run serially on the CI coverage job. Run locally with `-m slow`.",
 ]
 
 [tool.mypy]

@@ -1,6 +1,6 @@
 """Regression tests for PK-bind dispatch order (Chain 3 fix).
 
-Both cases failed silently before Chain 3: ``_PkBindOp`` ran inside the
+Both cases failed silently before Chain 3: PK-binding ran inside the
 conv_dict pass (pass 2), BEFORE ``name_chg`` (pass 3), so the source
 field had already been renamed away (Case A) or the target field did not
 yet exist (Case B) when PK-bind tried to resolve it.
