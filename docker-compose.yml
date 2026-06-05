@@ -16,8 +16,6 @@
 #     via ${file:/run/secrets/secret_name}.
 #   - .env is gitignored. Never commit it.
 
-version: "3.9"
-
 services:
   incorporator:
     build: .
