@@ -1,8 +1,8 @@
 ﻿# Streaming & Pagination (O(1) Memory)
 
-When dealing with massive datasets (10M+ rows) or heavily paginated REST APIs, loading everything into RAM at once will cause your server to crash with an Out-Of-Memory (OOM) error.
+Pass a paginator to the `inc_page` parameter and `stream()` shifts into **O(1) Memory Chunking** mode: one chunk is fetched, processed, exported, and released before the next begins. This covers paginated REST APIs, 10M+ row database exports, and binary file formats without any change to calling code.
 
-Incorporator solves this natively using **Stateful Paginators**. By passing a paginator to the `inc_page` parameter, the framework shifts into a strict **O(1) Memory Chunking** mode. It fetches a chunk, processes it, saves it to disk, and releases the chunk via `del`, allowing Python's reference-counting to reclaim it immediately before moving to the next chunk.
+The mechanism is **Stateful Paginators**: each chunk is fetched, processed, saved to disk, then released via `del` so Python's reference-counting reclaims it immediately before the next chunk begins.
 
 > **Three daemon shapes share this engine — pick the one that matches your data:**
 >
@@ -14,7 +14,7 @@ Incorporator solves this natively using **Stateful Paginators**. By passing a pa
 
 ## 1. Local Data Streaming (Databases & Massive Files)
 
-Incorporator treats massive local files exactly like paginated web APIs. These paginators maintain persistent file pointers or database cursors, yielding byte-encoded arrays directly into Incorporator's C-speed instantiation engine.
+Incorporator treats massive local files exactly like paginated web APIs. These paginators maintain persistent file pointers or database cursors, yielding byte-encoded arrays directly into Incorporator's chunking engine.
 
 ### Available Local Paginators:
 *   **`SQLitePaginator(db_path, sql_query, chunk_size)`**: Maintains a live database cursor, yielding rows incrementally via `fetchmany()`.
@@ -53,13 +53,13 @@ async def run_massive_export():
 
 asyncio.run(run_massive_export())
 ```
-*Because the dataset decays at the end of each loop iteration, memory consumption remains perfectly flat.*
+*Because each chunk is released at the end of the loop iteration, memory stays bounded at O(chunk_size) — not O(total rows).*
 
 ---
 
 ## 2. Web API Pagination (REST APIs)
 
-Web APIs use wildly different pagination strategies. Incorporator provides out-of-the-box support for the 5 most common patterns. They have built-in infinite-loop protection and compose with the framework's concurrency engine.
+Web APIs use wildly different pagination strategies. Incorporator ships five paginators covering the most common REST pagination patterns. They have built-in infinite-loop protection and compose with the framework's concurrency engine.
 
 ### Available Web Paginators:
 *   **`CursorPaginator(cursor_param="cursor")`**: Extracts the next token from the payload and appends it to the query string (e.g., Twitter/X API).
@@ -174,9 +174,7 @@ predict (slow upstream, variable row size, GC pressure on the host).
 
 ## 4. Skip the Code: Run it via CLI
 
-Don't want to write boilerplate Python scripts to run your streams? You don't have to.
-
-Incorporator includes a built-in CLI that can execute this exact same stateful, infinite-looping daemon using a simple JSON file.
+The CLI can drive the same stateful chunked drain without a Python script — define your pipeline in a JSON file and the engine behaviour is identical.
 
 Instead of writing the Python loop above, simply define your pipeline in **`pipeline.json`**:
 ```json
@@ -198,8 +196,7 @@ Then, trigger the infinite daemon directly from your terminal:
 incorporator stream pipeline.json --poll 600.0 --logs
 ```
 
-**Ready to automate your pipelines without writing code?**  
-👉 **[Read the CLI & Configuration Guide](cli_and_configuration.md)**
+👉 **[CLI & Configuration Guide](cli_and_configuration.md)** — full JSON schema and all supported flags.
 
 ---
 

@@ -1,6 +1,6 @@
 # Tutorial 2 — Data Lake Pivot: From SaaS Roster to SQLite + Avro
 
-Your SaaS roster lives in Auth0 or Okta as deeply nested JSON. BI wants it in Avro + SQLite by 7 AM. Two calls — `incorp()` then `export()` — and the nested `address` and `company` dicts flatten correctly, types infer to strict Avro (`int` → `long`) and SQLite columns, and the round-trip rehydrates the full object graph. No schema file, no ORM, no Avro schema definition.
+Your SaaS roster lives in Auth0 or Okta as deeply nested JSON. BI wants it in Avro + SQLite by 7 AM. Start with `test()` to profile the endpoint and get paste-ready kwargs, call `incorp()` to absorb the nested payload into a typed object graph, then `export()` to write Avro and SQLite — with the nested `address` and `company` dicts flattened, types mapped to strict Avro (`int` → `long`) and SQLite columns, and the round-trip rehydrating the full object graph. No schema file, no ORM, no Avro schema definition.
 
 **Prerequisites:** [Tutorial 1 — First Steps](../01-first-steps/README.md) (`incorp()`, `test()`, `inc_dict`).
 
@@ -21,7 +21,7 @@ This tutorial walks that arc on a SaaS-style `/users` endpoint. `jsonplaceholder
 
 ### 0. Discover first with test()
 
-If this were an unknown endpoint, start here before writing any `incorp()` call:
+For an unfamiliar endpoint, run `test()` before writing any `incorp()` call:
 
 ```python
 from incorporator import Incorporator
@@ -54,7 +54,7 @@ users = await User.incorp(
 
 ### 2. Export to SQLite
 
-A single call creates the `employees` table, infers column types, serialises nested dicts, and streams rows to the C driver one-by-one — keeping memory O(1) regardless of row count.
+A single call creates the `employees` table, infers column types, serialises nested dicts, and streams rows to the C driver one by one — keeping the export memory O(1) regardless of row count. Note: the preceding `incorp()` call validates all rows in a single batch, so peak memory before export is O(N).
 
 ```python
 await User.export(
@@ -131,7 +131,7 @@ Note: SQLite has no native boolean type — `True`/`False` are stored as integer
 
 ### Putting It Together
 
-We went from a nested JSON web payload → relational SQLite → Apache Avro binary file → back to fully reconstructed Python objects using exactly two methods (`incorp` and `export`).
+The arc: nested JSON web payload → relational SQLite → Apache Avro binary file → fully reconstructed Python objects. Three steps (`test`, `incorp`, `export`), all sharing the same vocabulary.
 
 Because the data is parked in `.inc_dict` registries, you can immediately use `link_to(sql_users)` or `link_to(avro_users)` to fuse this data with live REST API responses — no ORM or Avro schema file required.
 

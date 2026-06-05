@@ -35,8 +35,8 @@ class Coin(Incorporator):
 ```
 
 That's the whole class definition. No field declarations, no type annotations, no
-validators.  The framework will infer the schema from the first response payload and
-attach the fields to your class dynamically.
+validators.  The framework will sample the response payload to infer a unified schema and
+attach every observed field to your class dynamically.
 
 ---
 
@@ -46,8 +46,7 @@ You've found an unknown REST API.  What's the schema?  What's the right
 `inc_code` (the primary-key field for the registry)?  Is there a `rec_path` wrapping the
 records?  Are any fields ISO-8601 strings that should be cast to `datetime`?
 
-You *could* open Postman, eyeball the JSON, and start guessing what kwargs you'd need
-to ingest it.  Or you let Incorporator do it for you.
+`test()` does the profiling work for you.
 
 `test()` is the **JIT API Profiler** and your first call against any unfamiliar
 endpoint.  It fetches one safe page, walks the payload tree, runs regex-based value
@@ -255,8 +254,10 @@ When you called `Coin.incorp(...)`:
 2. **Parse.** The response body was decoded as JSON via the fastest parser available
    (`orjson` if you installed the `[speedups]` extra, stdlib `json` otherwise).
 3. **Schema inference.** The framework sampled the records to merge every key into a
-   unified Pydantic schema.  Optional fields handle the case where some records omit
-   keys.
+   unified Pydantic schema.  Every inferred field is optional (scalars default to
+   `None`), so records that omit a key validate silently.  Fields absent from the
+   sampled records entirely are caught by Pydantic's `extra="allow"` config — they
+   land as attributes rather than causing a validation error.
 4. **Build.** Each record became a Pydantic instance — validated, typed, dot-accessible,
    datetime-coerced for the fields you flagged.  Each instance auto-registered into
    `Coin.inc_dict` under its `inc_code` (a `WeakValueDictionary` so the registry never

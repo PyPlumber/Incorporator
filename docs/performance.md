@@ -107,12 +107,15 @@ up with orjson's parse rate on JSON workloads.
 
 **The conv_dict dispatcher is columnar with unconditional pure-op caching.** The
 ETL pass that applies your `conv_dict` (`inc` / `pluck` / `link_to` /
-`link_to_list` / `split_and_get` / `join_all` / `as_list`, plus `calc` /
-`calc_all`) iterates op-outer / row-inner.  For each pure op (default for everything
-except user-supplied `calc(..., pure=False)` lambdas), the `Op`
-constructor wraps the callable in `functools.lru_cache(maxsize=10_000)`
-at construction time — unconditionally, with no per-batch cardinality
-sampling.  An `__wrapped__` fallback in `Op.__call__` catches the
+`link_to_list` / `split_and_get` / `join_all` / `as_list`, plus `calc`)
+iterates op-outer / row-inner.  For each pure op (default for everything
+except user-supplied `calc(..., pure=False)` lambdas), the generic `Op`
+and `CalcOp` (`calc`) constructor wraps the callable in
+`functools.lru_cache(maxsize=10_000)` at construction time —
+unconditionally, with no per-batch cardinality sampling.  `calc_all`
+accepts `pure=True` for API symmetry but is **not** cache-wrapped: it
+runs once across the whole column, so there is no per-input memoization
+to apply.  An `__wrapped__` fallback in `Op.__call__` catches the
 `TypeError` `lru_cache` raises on unhashable args (`join_all` on lists,
 `inc(new)` on dicts) and retries against the bare callable.
 

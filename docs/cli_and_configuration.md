@@ -1,8 +1,8 @@
 ﻿# CLI & Pipeline Configuration
 
-The Incorporator CLI runs the same `stream` / `fjord` / `tideweaver` verbs from a JSON config file — no Python required to operate a pipeline in a container or service.
+The Incorporator CLI runs the same `stream` / `fjord` / `tideweaver` verbs from a JSON config file. For `stream` pipelines, no Python sidecar is required — the JSON config alone is sufficient. `fjord` and `tideweaver` pipelines also accept a Python `outflow.py` for join logic and custom classes.
 
-By defining your extraction, enrichment, and loading rules in a JSON file, you can run long-running polling daemons in the background — suited for Docker containers, systemd services, or scheduled scraping jobs.
+Define your extraction, enrichment, and loading rules in a JSON file and run long-running polling daemons in the background — suited for Docker containers, systemd services, or scheduled scraping jobs.
 
 ## 1. Prerequisites
 To use the CLI, install Incorporator with the `[orchestrate]` extra:
@@ -103,7 +103,7 @@ Chunk 2 | 10000 rows | 1.91s
 ```
 
 ### Daemon Execution (Infinite Polling)
-To keep the pipeline alive in the background, use the `--poll` flag. This tells the orchestrator to wait `X` seconds after a successful run before automatically restarting the extraction/hydration cycle.
+To keep the pipeline alive in the background, use the `--poll` flag. This tells the daemon to wait `X` seconds after a successful run before automatically restarting the extraction/hydration cycle.
 ```bash
 incorporator stream pipeline.json --poll 60.0
 ```
@@ -436,7 +436,7 @@ Use fjord when you need to keep a live, joined object map synchronised
 across N APIs (e.g. crypto spot price + futures price → combined market
 spread).
 
-### Zero output-class declaration
+### No output class required
 
 You **do not** define the output Incorporator subclass. fjord builds it
 dynamically from the rows your `outflow()` function returns — same

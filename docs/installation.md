@@ -1,6 +1,6 @@
 ﻿# 📦 Installation & Environment Setup
 
-Incorporator is designed with a **"Zero-Bloat"** philosophy. The base package relies purely on the Python Standard Library, Pydantic, and HTTPX. 
+The base package depends on three libraries: the Python Standard Library, Pydantic, and HTTPX. 
 
 **Requires Python 3.10+.**  v1.2.1 dropped 3.9 support (the package
 uses `@dataclass(slots=True)` and PEP 604 union syntax internally).
@@ -25,45 +25,45 @@ pip install incorporator
 
 ---
 
-## 2. Enterprise Performance Flags (Optional)
+## 2. Optional Extras
 
-If you are deploying Incorporator to process multi-gigabyte data streams, we highly recommend utilizing our optional installation flags.
+Optional extras add format support or GIL-free parsing backends. Install only what your environment needs.
 
-### 🚀 The Speedups Flag (GIL-Free Hyperthreading + Rust Compression)
+### 🚀 The Speedups Flag (GIL-Free Parsing + Rust Compression)
 ```bash
 pip install incorporator[speedups]
 ```
 **What this installs:** `orjson`, `lxml`, `cramjam`
-* **Why you need it:** Standard Python `json` and `xml` libraries hold the Global Interpreter Lock (GIL). If you download a 500MB payload, the main Event Loop freezes while parsing it. Installing `[speedups]` routes Incorporator through Rust/C backends — `orjson` for JSON, `lxml` for XML/HTML — releasing the GIL and parsing massive payloads across multiple CPU cores simultaneously.
-* **Bonus: ultra-fast compression.** The same extra also installs `cramjam`, which unlocks Rust-backed streaming for `zstd`, `lz4`, `snappy`, and `brotli` on top of the natively-supported `gzip`, `bz2`, `lzma`, `zip`, and `tar`. One install, both wins.
+* **GIL-free parsing:** Standard `json` and `xml` libraries hold the GIL during parsing. Installing `[speedups]` routes JSON through `orjson` and XML/HTML through `lxml`, releasing the GIL so other threads run during large payload parses. This also activates orjson in `LoggedTideweaver`'s `JSONFormatter` and in the `_read_filtered()` replay path — log write and replay throughput scales with the same GIL-free serialisation (`logger.py:309, 270`).
+* **Rust-backed compression:** `cramjam` adds `zstd`, `lz4`, `snappy`, and `brotli` on top of the stdlib-supported `gzip`, `bz2`, `lzma`, `zip`, and `tar`.
 
-### 🐘 The Big Data Flag
+### 🐘 The Avro Flag
 ```bash
 pip install incorporator[avro]
 ```
 **What this installs:** `fastavro`
-* **Why you need it:** Unlocks native read/write support for Apache Avro binary streams, heavily utilized in Hadoop, Kafka, and enterprise data lakes.
+* **Use this for:** Apache Avro binary stream read/write — the format used by Kafka producers and Hadoop-ecosystem pipelines.
 
 ### 📊 The Spreadsheet Flag
 ```bash
 pip install incorporator[xlsx]
 ```
 **What this installs:** `openpyxl` (pure-Python, ~250 KB).
-* **Why you need it:** Unlocks read/write for `.xlsx` workbooks so you can hand business stakeholders a spreadsheet straight from an API call. Lightweight enough to fit the microclient identity.
+* **Use this for:** `.xlsx` workbook read/write. At ~250 KB, openpyxl adds negligible install footprint.
 
 ### ⚡ The Columnar Data-Lake Flag
 ```bash
 pip install incorporator[parquet]
 ```
 **What this installs:** `pyarrow` (~30 MB — heavyweight; deliberately **not** in `[all]`), plus `tzdata` on Windows (pyarrow's ORC reader hardcodes `/usr/share/zoneinfo` lookups, which Windows lacks).
-* **Why you need it:** Unlocks Apache **Parquet**, **Feather / Arrow IPC**, and **ORC** read/write. Required for data-lake and warehouse interoperability.
+* **Use this for:** Apache Parquet, Feather / Arrow IPC, and ORC read/write. Required for data-lake and warehouse interoperability.
 
 ### 🛠️ The Orchestration Flag
 ```bash
 pip install incorporator[orchestrate]
 ```
 **What this installs:** `typer`, `prefect`.
-* **Why you need it:** Unlocks the `incorporator stream`, `incorporator fjord`, `incorporator tideweaver`, `incorporator validate`, `incorporator init`, and `incorporator deps` CLI subcommands plus the pre-built Prefect `@flow` wrappers (see `deployment.md`).
+* **Use this for:** The `incorporator stream`, `incorporator fjord`, `incorporator tideweaver`, `incorporator validate`, `incorporator init`, and `incorporator deps` CLI subcommands, plus the pre-built Prefect `@flow` wrappers (see `deployment.md`).
 
 ### 📖 The Docs Flag (Contributors Only)
 ```bash

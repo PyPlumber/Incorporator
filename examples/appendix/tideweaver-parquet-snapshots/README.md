@@ -3,14 +3,15 @@
 > 📎 **Appendix — Parquet snapshots inside a Tideweaver window.**
 > NDJSON / CSV / SQLite are append-friendly per tick; columnar
 > formats (Parquet, Feather, ORC) are not. This appendix shows two
-> safe patterns for landing Parquet from a `Tideweaver` run. Read
+> safe patterns for landing Parquet from a `Tideweaver` run. Requires
+> `pip install incorporator[parquet]`. Read
 > [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md) first.
 
 ***
 
 # 🧵 Parquet Snapshots in a Tideweaver Window
 
-Your Tideweaver run accumulates 4 hours of arb signals into NDJSON, but downstream (Athena, DuckDB, Spark) wants columnar Parquet. Add a tail `Export` current that fires once at window close, reads the accumulated registry, and writes the Parquet artifact — one file per window, atomic via `os.replace()`.
+Your Tideweaver run accumulates a window of data into NDJSON, but downstream (Athena, DuckDB, Spark) wants columnar Parquet. Add a tail `Export` current that fires once at window close, draws from the in-memory class registry, and writes the Parquet artifact — one file per window, atomic via `os.replace()`.
 
 The reason you can't just set `export_params={"file_path": "...parquet"}` on a regular `Stream` or `Fjord`: those currents flush **once per tick**. That's fine for NDJSON (one line per record, append the file), CSV (header once, append rows), or SQLite (transactional `INSERT OR REPLACE`). It is **not fine** for Parquet, Feather, or ORC: those formats write a column-statistics footer at the **end** of the file, recomputed from the full row set. Appending a second chunk requires reading every existing row group back, merging, re-encoding, and rewriting the whole file — a Parquet "append" is really a rebuild.
 

@@ -6,9 +6,9 @@
 extension — whether you are reading from a URL or a local file. No format
 adapter classes to instantiate, no `format=` kwarg required in the common case.
 
-You never write custom extraction loops. The same `incorp()` call works whether
-the source is a JSON API, a gzipped CSV, a ZIP archive, or a Parquet column
-store — the parsing surface never changes.
+The same `incorp()` call works whether the source is a JSON API, a gzipped
+CSV, a ZIP archive, or a Parquet column store — the parsing surface never
+changes.
 
 ---
 
@@ -25,7 +25,7 @@ Incorporator natively supports flat text files, streaming logs, and binary datab
 | **PSV** | `.psv` | *Native* | Pipe-Separated Values. Uses the CSV engine configured for `\|`. |
 | **XML** | `.xml` | *Native* | Hardened against XXE and Billion Laughs. Pre-flight regex blocks DTDs and external entities; lxml parser uses `resolve_entities=False` when available. |
 | **HTML Tables** | `.html`, `.htm` | `[speedups]` | Extracts `<table>` elements via `lxml`. Each row becomes an Incorporator instance; mismatched columns are handled gracefully. |
-| **SQLite** | `.db`, `.sqlite`, `.sqlite3` | *Native* | Executes `SELECT` and bulk `INSERT` statements at C-speed. |
+| **SQLite** | `.db`, `.sqlite`, `.sqlite3` | *Native* | Executes `SELECT` and bulk `INSERT` statements via the stdlib `sqlite3` C extension. |
 | **Excel** | `.xlsx`, `.xlsm` | `[xlsx]` | Pure-Python via `openpyxl` (~250 KB). Reads/writes worksheets with header rows auto-detected. |
 | **Apache Avro** | `.avro` | `[avro]` | Requires `pip install incorporator[avro]`. Converts Pydantic schemas to strict binary Avro schemas on write. |
 | **Apache Parquet** | `.parquet`, `.pq` | `[parquet]` | Columnar format for data lakes / warehouses. Uses `pyarrow` (heavyweight — opt-in only). |
@@ -87,8 +87,9 @@ The base installation (`pip install incorporator`) uses only the standard librar
 and `httpx` / `pydantic` / `tenacity`. Format-specific extras opt in:
 
 ```bash
-# GIL-releasing C/Rust parsing (orjson + lxml) AND Rust compression
-# (Zstandard, LZ4, Snappy, Brotli via cramjam) — all in one extra.
+# GIL-releasing C/Rust parsing (orjson + lxml), Rust compression
+# (Zstandard, LZ4, Snappy, Brotli via cramjam), and orjson serialisation
+# in the logger pipeline — all in one extra.
 pip install incorporator[speedups]
 
 # Apache Avro read/write via fastavro
@@ -193,7 +194,7 @@ Each is opt-in or opt-out via a kwarg you'll see in the handler docs:
 
 ### Adding a New Format
 
-The two-step recipe (well under an hour for most formats):
+The two-step recipe:
 
 1. **Add the type-bridge entries** in
    [`incorporator/io/formats.py`](../incorporator/io/formats.py):

@@ -161,11 +161,11 @@ if __name__ == "__main__":
 ### 1. The Explicit Routing Engine & State Carrier (`inc_child`)
 REST APIs often use HATEOAS — a shallow list of items, each carrying a `"url"` to get more data.
 
-Older frameworks rely on implicit "magic" to make this jump. Incorporator uses an explicit **State Carrier** pattern:
+Incorporator makes this explicit:
 
 1. The discovery call passes `inc_child="url"` to tell the engine where child URLs live.
 2. The returned `pokemon_nav` list carries that path as state.
-3. Passing `inc_parent=pokemon_nav` to the enrichment call reads the cached state, drills into all 150 objects, extracts the URLs, and provisions a rate-limited concurrency pool to download the detail payloads. Zero boilerplate loops.
+3. Passing `inc_parent=pokemon_nav` to the enrichment call reads the cached state, drills into all 150 objects, extracts the URLs, and provisions a rate-limited concurrency pool to download the detail payloads. No hand-written loops over the child list.
 
 ### 2. The Power of `calc()`
 Look at the raw JSON for "stats":
@@ -187,8 +187,10 @@ We intercept with `calc`:
 **Under the hood:**
 * **Interception** — Incorporator sees the `"stats"` key and pauses auto-nesting.
 * **Extraction (`*input_keys`)** — by passing `"stats"` as the second argument, Incorporator extracts the raw JSON list and passes it into `calculate_bst`.
-* **Reduction** — your pure Python function iterates, sums, and returns a single integer (e.g. `318`).
+* **Reduction** — your Python function iterates, sums, and returns a single integer (e.g. `318`).
 * **Type guarantee** — `target_type=int` strictly validates the output.
+
+> **Caching note.** `calc()` defaults to `pure=True`, which wraps the callable in `lru_cache(maxsize=10_000)` at construction. For this pattern each `stats` array is a distinct object, so the cache will rarely hit. If `calculate_bst` is computationally cheap (it is here), the default is fine. Pass `pure=False` to skip the cache on callables that always receive unique inputs.
 
 *Memory benefit:* the raw JSON array is immediately garbage-collected. The final object stores one `int`.
 
@@ -211,7 +213,7 @@ PokéAPI returns massive base64 strings and thousand-item lists for `moves`. Exc
 
 ## 🌟 Summary
 
-You aren't just ingesting APIs — you are sculpting them. The explicit `inc_child` state carrier plus declarative `calc` tokens compress 150 deeply nested, fractured JSON payloads into a flat list of native Python objects in a fraction of a second.
+You aren't just ingesting APIs — you are sculpting them. The explicit `inc_child` state carrier plus declarative `calc` tokens compress 150 deeply nested, fractured JSON payloads into a flat list of native Python objects — the companion script reports ~100 s wall-clock at 1.5 req/sec for the full 150-Pokémon drill.
 
 ---
 
