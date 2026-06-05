@@ -214,6 +214,8 @@ async def _run_stream(
     stateful_polling = config.get("stateful_polling", False)
     refresh_interval = config.get("refresh_interval")
     export_interval = config.get("export_interval")
+    inflow = config.get("inflow")
+    outflow = config.get("outflow")
 
     shutdown = asyncio.Event()
     _install_sigterm_handler(shutdown)
@@ -229,6 +231,8 @@ async def _run_stream(
         refresh_interval=refresh_interval,
         export_interval=export_interval,
         enable_logging=enable_logging,
+        inflow=inflow,
+        outflow=outflow,
     )
 
     try:

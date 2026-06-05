@@ -466,3 +466,82 @@ def test_cli_stream_heartbeat_file_touched(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.stdout
     assert heartbeat.exists()
+
+
+# ==========================================
+# Finding 1 — inflow/outflow forwarded to stream()
+# ==========================================
+
+
+def test_cli_stream_forwards_inflow_and_outflow_to_stream(tmp_path: Path) -> None:
+    """stream runner forwards 'inflow' and 'outflow' config keys to LoggedIncorporator.stream().
+
+    A stateful_polling=True pipeline that declares 'outflow' in the JSON config
+    must have outflow= present in the kwargs passed to stream().  Before this
+    fix, both keys were silently discarded — the outflow sidecar class was never
+    loaded by the stateful engine even though the config declared it.
+    """
+    inflow_file = tmp_path / "inflow.py"
+    inflow_file.write_text("# inflow stub\n", encoding="utf-8")
+    outflow_file = tmp_path / "outflow.py"
+    outflow_file.write_text(
+        "from incorporator import Incorporator\nclass Out(Incorporator):\n    pass\n"
+        "def outflow(state):\n    return []\n",
+        encoding="utf-8",
+    )
+
+    cfg = tmp_path / "pipeline.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "incorp_params": {"inc_url": "https://x"},
+                "stateful_polling": True,
+                "inflow": "inflow.py",
+                "outflow": "outflow.py",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured_kwargs: dict[str, Any] = {}
+
+    async def _capture_stream(**kwargs: Any) -> Any:  # type: ignore[return]
+        captured_kwargs.update(kwargs)
+        yield Wave(chunk_index=1, rows_processed=1, processing_time_sec=0.0)
+
+    with patch("incorporator.cli.LoggedIncorporator.stream", new=_capture_stream):
+        result = runner.invoke(app, ["stream", str(cfg)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "inflow" in captured_kwargs, "inflow must be forwarded to stream()"
+    assert "outflow" in captured_kwargs, "outflow must be forwarded to stream()"
+    assert captured_kwargs["inflow"] == "inflow.py"
+    assert captured_kwargs["outflow"] == "outflow.py"
+
+
+def test_cli_stream_inflow_outflow_absent_stays_none(tmp_path: Path) -> None:
+    """When 'inflow'/'outflow' are absent from the config, stream() receives None for both.
+
+    The absence case must be explicitly forwarded as None= rather than omitted,
+    so stream() sees its default parameter value rather than whatever was left
+    from a previous call.  This guards against the None/absent distinction in
+    any future stream() overload.
+    """
+    cfg = tmp_path / "pipeline.json"
+    cfg.write_text(
+        json.dumps({"incorp_params": {"inc_url": "https://x"}}),
+        encoding="utf-8",
+    )
+
+    captured_kwargs: dict[str, Any] = {}
+
+    async def _capture_stream(**kwargs: Any) -> Any:  # type: ignore[return]
+        captured_kwargs.update(kwargs)
+        yield Wave(chunk_index=1, rows_processed=0, processing_time_sec=0.0)
+
+    with patch("incorporator.cli.LoggedIncorporator.stream", new=_capture_stream):
+        result = runner.invoke(app, ["stream", str(cfg)])
+
+    assert result.exit_code == 0, result.stdout
+    assert captured_kwargs.get("inflow") is None
+    assert captured_kwargs.get("outflow") is None

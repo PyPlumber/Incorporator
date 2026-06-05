@@ -603,8 +603,18 @@ The `run` verb runs the same validator before kickoff (parity with
 `stream` / `fjord`), so a bad watershed fails fast with the curated
 diagnostic block instead of mid-construction Pydantic errors.
 
-Both accept the same observability flags as `stream` / `fjord`:
-`--logs`, `--json-output`, `--heartbeat-file <path>`.
+The `run` verb accepts the following flags:
+
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `--logs` | off | Enable background multiplex disk logging. |
+| `--json-output` | off | Emit one NDJSON `Tide` record per line on stdout. |
+| `--heartbeat-file <path>` | none | Touch this path after every tide; pairs with Docker `HEALTHCHECK`. |
+| `--drain-timeout <secs>` | none | Override the watershed `drain_timeout` field — how long the scheduler waits for in-flight ticks on window close or SIGTERM. Precedence: CLI flag → `INCORPORATOR_DRAIN_TIMEOUT` env-var → `watershed.json` value → 30 s. Set to match your container orchestrator's `stop_grace_period`. |
+
+The `validate` verb accepts no flags beyond the config path argument.
+
+> **Container deployments.** `INCORPORATOR_DRAIN_TIMEOUT` is the canonical knob for Docker / Kubernetes: set it in `docker-compose.yml`'s `environment:` block so SIGTERM → drain → SIGKILL cycles complete cleanly.
 
 ### Configuration File (`watershed.json`)
 
@@ -674,7 +684,7 @@ list with a per-edge `"flow"` for mixed topologies:
 | **`penstock`** | `"sustained"` / `"burst"` / `"window"` / `"backpressure"` / `"signal"` | Edge-level rate limit. `sustained` flat rate; `burst` token bucket; `window` sliding-window cap; `backpressure` interpolates `max_rate → min_rate` as the reservoir fills; `signal` calls a user `rate_fn` callable. Returns skip reason `"penstock_limited"`. |
 | **`reservoir`** | (single shape — `depth: 1..1024`) | Per-edge FIFO buffer of recent waves. Default `depth: 1` keeps just the latest. |
 | **`spillway`** | `"drop_oldest"` / `"raise_overflow"` / `"export_to_archive"` | Fires when a wave is displaced from a full reservoir. `drop_oldest` is silent; `raise_overflow` logs a WARNING; `export_to_archive` extends `archive_cls._spillway_backlog` (strong refs). |
-| **`observer`** | `NullObserver` / `LoggingObserver` / `SignalObserver` (or a `FlowObserver` subclass) | Declarative per-edge telemetry. Hooks: `on_fire`, `on_skip`, `on_spillway`, `on_reservoir_level`. Synchronous and cheap — the scheduler does not await them. Configure via the Python API; no JSON type-tag is resolved yet. |
+| **`observer`** | `"null"` / `"logging"` / `"signal"` | Declarative per-edge telemetry. Hooks: `on_fire`, `on_skip`, `on_spillway`, `on_reservoir_level`. Synchronous and cheap — the scheduler does not await them. JSON type-tags are resolved: `{"type": "logging", "fire_level": "info"}` deserialises directly. `SignalObserver.callback` accepts a bare name or `module:fn` form (same resolution as `SignalPenstock.rate_fn`). For a custom subclass, use the Python API. |
 
 **Sidecar string resolution:** `SignalPenstock.rate_fn` accepts either a
 bare name (`"peak_rate"`, looked up on the watershed-level `outflow.py`)

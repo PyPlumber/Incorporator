@@ -2942,6 +2942,46 @@ def test_validate_rejects_unknown_edge_endpoint(tmp_path: Path) -> None:
     assert any("ghost" in e for e in errs)
 
 
+# ---------------------------------------------------------------------------
+# Finding 6 — _build_current actionable error for verb="custom"
+# ---------------------------------------------------------------------------
+
+
+def test_build_current_custom_verb_raises_actionable_error(tmp_path: Path) -> None:
+    """``verb='custom'`` in watershed.json raises a clear, actionable ValueError.
+
+    CustomCurrent requires a Python tick() body and cannot be declared via
+    JSON config.  The error message must name the current, explain the
+    limitation, and direct the user to the Python API.  It must NOT produce
+    the generic 'Unknown verb' fallback.
+    """
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "parallel",
+        "outflow": "outflow.py",
+        "currents": [
+            {
+                "name": "custom_tick",
+                "class": "LapData",
+                "verb": "custom",
+                "interval": 30,
+            }
+        ],
+    }
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(ValueError) as exc_info:
+        load_watershed(cfg)
+    msg = str(exc_info.value)
+    assert "custom_tick" in msg
+    assert "Python API" in msg
+    # Must not fall through to the generic "Unknown verb" fallback.
+    assert "Unknown verb" not in msg
+
+
 def test_validate_rejects_bad_interval(tmp_path: Path) -> None:
     """A non-positive interval is rejected."""
     from incorporator.cli.validate import validate_watershed_config

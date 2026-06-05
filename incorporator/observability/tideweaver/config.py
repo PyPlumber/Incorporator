@@ -233,6 +233,12 @@ def _build_current(
         )
     if verb == "export":
         return Export(**common, export_params=entry.get("export_params", {}))
+    if verb == "custom":
+        raise ValueError(
+            f"Current {entry.get('name', '?')!r} uses verb='custom', which cannot be declared in watershed.json. "
+            "CustomCurrent subclasses require a Python tick() body — register them via the Python API directly "
+            "(e.g. watershed.currents.append(MyCurrent(...))) instead of through the JSON config."
+        )
     raise ValueError(
         f"Unknown verb {verb!r} for current {entry.get('name', '?')!r}. Expected one of: 'stream', 'fjord', 'export'."
     )
