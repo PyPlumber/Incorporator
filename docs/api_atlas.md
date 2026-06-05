@@ -36,6 +36,7 @@ The same eight verbs — `incorp / test / architect / refresh / export / stream 
   - [`Tideweaver.summary` / `tune` / `TuningReport`](#tideweaversummary--tune--tuningreport)
   - [Scheduler-event enums — `SkipReason` / `WakeReason` / `GateMode`](#scheduler-event-enums--skipreason--wakereason--gatemode)
   - [Canal toolkit primitives](#canal-toolkit-primitives)
+  - [`CustomCurrent`](#customcurrent)
 - [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive)
 - [Telemetry](#telemetry)
   - [`Wave.log_meta`](#wavelog_meta)
@@ -46,11 +47,16 @@ The same eight verbs — `incorp / test / architect / refresh / export / stream 
   - [`log_api`](#loggedincorporator-log_api)
   - [`log_meta`](#loggedincorporator-log_meta)
   - [`log_cls_info` / `log_cls_error`](#loggedincorporator-log_cls_info--log_cls_error)
+  - [`LoggingMixin`](#loggingmixin)
+  - [`setup_class_logger`](#setup_class_logger)
   - [`LoggedTideweaver`](#loggedtideweaver)
+- [Schema utilities](#schema-utilities)
 - [Shared kwargs glossary](#shared-kwargs-glossary)
 - [DATA-SHAPE directives](#data-shape-directives)
 - [Class-attribute reference](#class-attribute-reference)
 - [FormatType](#formattype)
+- [CompressionType](#compressiontype)
+- [Exception hierarchy](#exception-hierarchy)
 - [Optional-dependency introspection](#optional-dependency-introspection)
   - [`list_deps`](#list_deps---listdepinfo)
   - [`install_hint`](#install_hintdep_name-str---str)
@@ -840,6 +846,60 @@ Pass `flow=FlowControl(...)` explicitly to control the SurgeBarrier independentl
 
 ---
 
+### CustomCurrent
+
+**Import path** *(load-bearing — not top-level)*
+```python
+from incorporator.observability.tideweaver import CustomCurrent
+```
+
+**Signature**
+```python
+class CustomCurrent(Current):
+    auto_park_snapshot: ClassVar[bool] = True
+
+    async def tick(self, scheduler: Tideweaver) -> None: ...
+```
+
+`CustomCurrent` is the escape hatch for tick logic that does not fit the three verb-typed Currents (`Stream` / `Fjord` / `Export`).  Subclass it, override `async tick(self, scheduler)`, and place the instance in the `Watershed.currents` list like any other Current.  The scheduler calls `current._run_tick(scheduler)` — which wraps `tick()` with the auto-park logic described below — in place of the normal verb dispatch.
+
+**What it does (pseudocode)**
+1. On each scheduler pass that satisfies the interval + upstream gate checks, the scheduler calls `await current._run_tick(scheduler)`.
+2. `_run_tick` records the pre-tick value of `cls._tideweaver_snapshot` (the identity sentinel).
+3. `await self.tick(scheduler)` runs the user-supplied body.
+4. If `auto_park_snapshot` is `True` and the tick body did NOT assign a new list to `cls._tideweaver_snapshot` (identity check — a new list object means the user wired their own snapshot), the scheduler parks `list(cls.inc_dict.values())` as `cls._tideweaver_snapshot` so downstream `HardLock` edges see fresh upstream waves without manual wiring.
+5. After the tick returns, if the resulting `_tideweaver_snapshot` is empty while at least one upstream current's snapshot was non-empty, the scheduler emits a per-tick WARNING — surfaces silent predicate or `conv_dict` mismatches without needing a debugger (fires each tick while the condition persists).
+
+**`auto_park_snapshot` opt-out contract**
+
+Set `auto_park_snapshot: ClassVar[bool] = False` on the subclass to disable the automatic snapshot park.  Only correct for ticks that are pure side-effects (health-check pings, external metric pushes) that should never gate downstream currents.  When `False`, downstream `HardLock` edges will stay permanently unblocked unless the tick body manually assigns `cls._tideweaver_snapshot`.
+
+```python
+from incorporator.observability.tideweaver import CustomCurrent
+
+class HealthcheckPing(CustomCurrent):
+    auto_park_snapshot: ClassVar[bool] = False   # pure side-effect — don't gate downstream
+
+    async def tick(self, scheduler):
+        response = await httpx.get("https://internal.acme/health")
+        if response.status_code != 200:
+            raise RuntimeError(f"health check failed: {response.status_code}")
+```
+
+**Immutability contract**
+
+`tick()` MUST NOT register new `Current`s or `Edge`s, nor mutate `scheduler.watershed.currents` / `scheduler.watershed.edges`, after `Tideweaver.run()` has started.  The scheduler memoises transitive-upstream lookups once per instance for O(1) gate evaluation; runtime topology mutations would silently invalidate that cache and produce incorrect gating decisions.  To add a current mid-run, stop the current watershed and start a new `Tideweaver` instance.
+
+**When to reach for it**
+Use `CustomCurrent` only when the standard verb-typed Currents genuinely cannot express the tick logic: health-check pings, sentinel-row insertions, externally-driven publishers, computed-field filters that depend on a derived attribute only available post-seeding.  For all standard `incorp()` / `refresh()` / `export()` shapes reach for `Stream`, `Fjord`, or `Export` first.
+
+**See also**
+[Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive) (escape-hatch entry #5) ·
+[Class-attribute reference](#class-attribute-reference) (`CustomCurrent` row) ·
+[Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md)
+
+---
+
 ## Row filtering: pick the right primitive
 
 The framework has **no post-fetch row-filter primitive** — there is no
@@ -1078,6 +1138,105 @@ The class-level counterpart to `log_info` / `log_error` — use these inside `@c
 
 ---
 
+<a id="loggingmixin"></a>
+### LoggingMixin
+
+**Signature**
+```python
+class LoggingMixin():
+    # Instance-level verbs
+    def log_debug(self, msg: str) -> None: ...
+    def log_info(self, msg: str) -> None: ...
+    def log_error(self, msg: str, exc_info: bool = False) -> None: ...
+    def log_api(self, msg: str) -> None: ...
+    def log_meta(self) -> str: ...
+    # Class-level verbs
+    @classmethod
+    def log_cls_info(cls, msg: str) -> None: ...
+    @classmethod
+    def log_cls_error(cls, msg: str, exc_info: bool = False) -> None: ...
+    @classmethod
+    async def get_error(cls) -> list[dict[str, Any]]: ...
+```
+
+**Import**
+```python
+from incorporator import LoggingMixin
+# also available from:
+from incorporator.observability.logger import LoggingMixin, setup_class_logger
+```
+
+**What it does**
+Escape-hatch mixin that adds all structured logging methods to any `Incorporator` subclass without the full `LoggedIncorporator` verb-wrapper machinery.  The mixin provides `log_debug` / `log_info` / `log_error` / `log_api` / `log_cls_info` / `log_cls_error` / `get_error` on a custom subclass.  All methods silently noop when the class has not been wired through `setup_class_logger()` — safe to leave in code paths that may run before logging is enabled.  Records land in rotating JSONL files via a `QueueHandler`-backed background thread.
+
+**When to reach for it**
+Subclass `LoggingMixin` directly when you want the structured logging surface on a custom `Incorporator` subclass but don't want the verb overrides that `LoggedIncorporator` adds (`incorp` / `refresh` / `export` / `stream` / `fjord` with `enable_logging=` wiring).  Typical pattern: a custom subclass that manages its own fetch logic but still needs `get_error()` and per-instance log calls for post-mortem forensics.
+
+```python
+from incorporator import Incorporator
+from incorporator.observability.logger import LoggingMixin, setup_class_logger
+
+class Audited(LoggingMixin, Incorporator):
+    pass
+
+setup_class_logger(Audited)
+# instance.log_info("backtest prep started")
+# failures = await Audited.get_error()
+```
+
+**See also**
+[`setup_class_logger`](#setup_class_logger) ·
+[`LoggedIncorporator` — shared `enable_logging=` note](#loggedincorporator--shared-enable_logging-note)
+
+---
+
+<a id="setup_class_logger"></a>
+### setup_class_logger
+
+**Signature**
+```python
+def setup_class_logger(cls: str | type[Any]) -> None:
+```
+
+**Import**
+```python
+from incorporator import setup_class_logger
+# also available from:
+from incorporator.observability.logger import setup_class_logger
+```
+
+**What it does (pseudocode)**
+1. Resolve the logger name: if `cls` is a class, use `cls.__name__`; if `cls` is a plain string, use it directly (the string form is used by `LoggedTideweaver` to set up a named logger without a class reference).
+2. Return early (idempotent) if the name is already in `_ACTIVE_LISTENERS` or the logger already has handlers — prevents duplicate background threads on repeated calls or dynamic class rebuilds.
+3. Wire four rotating JSONL handlers (`debug.log`, `error.log`, `api.log`, `tide.log`) at `logs/<name>_*`, each capped at 5 MB × 3 backups.
+4. Attach a `QueueHandler` + `QueueListener` backed by `queue.SimpleQueue` so all disk I/O runs on a dedicated background thread — the event loop never blocks on log writes.
+5. Register the listener in `_ACTIVE_LISTENERS`; register a `_cleanup_listeners` atexit hook that gracefully stops all listeners on process exit.
+
+**When to reach for it**
+Call it directly when you use `LoggingMixin` on a custom subclass rather than `LoggedIncorporator`, or when you want structured logging on a class identified by a string name (e.g. a dynamically constructed logger name in a Tideweaver pipeline).  `LoggedIncorporator` calls it automatically when `enable_logging=True` — you don't need to call it manually for standard verb usage.
+
+```python
+from incorporator.observability.logger import LoggingMixin, setup_class_logger
+
+class MyPipeline(LoggingMixin, Incorporator):
+    pass
+
+setup_class_logger(MyPipeline)          # wire once at startup
+instance.log_info("pipeline started")   # now live
+```
+
+**Common kwargs**
+- `cls` — a class (uses `cls.__name__` as the logger key) or a plain string name (used when a caller manages a custom logger name).
+
+**Yields / returns**
+`None`.  Idempotent — safe to call multiple times; subsequent calls for the same name are no-ops.
+
+**See also**
+[`LoggingMixin`](#loggingmixin) ·
+[`LoggedIncorporator` — shared `enable_logging=` note](#loggedincorporator--shared-enable_logging-note)
+
+---
+
 ### LoggedTideweaver
 
 **Signatures** *(v1.2.1+)*
@@ -1139,6 +1298,154 @@ When `enable_logging=True`, the runner writes four rotating JSONL files under `l
 [Tutorial 11 — Post-run tuning](../examples/11-tideweaver/README.md#post-run-tuning) ·
 [Production Debugging — Orchestration debugging](./debugging.md#orchestration-debugging--loggedtideweaver--architecttune) ·
 [Deployment — Production logging for Tideweaver](./deployment.md#production-logging-for-tideweaver--loggedtideweaver)
+
+---
+
+## Schema utilities
+
+Helpers for `conv_dict`, `json_payload`, and `form_payload` that don't fit neatly inside the `incorp` kwarg descriptions.  All are importable from the top-level `incorporator` package.
+
+**Import**
+```python
+from incorporator import new, sum_attributes, each, join_all, as_list
+```
+
+---
+
+### `new` — generated-field sentinel
+
+**Signature**
+```python
+new  # module-level value, not a callable
+```
+
+`new` is a module-level sentinel value (instance of the private `_NewSentinel` class).  Assign it as the value for a `conv_dict` key to signal "this field should exist on the dynamic class but has no source key to map from — generate it from scratch."  The schema factory accepts any valid Python type for a `new`-valued key; the value defaults to `None` unless a converter on the same key sets it.
+
+```python
+from incorporator import Incorporator, new, calc
+
+class Enriched(Incorporator):
+    pass
+
+await Enriched.incorp(
+    inc_url="https://api.example.com/items",
+    conv_dict={
+        "computed_rank": new,       # field exists on the class; populated by a downstream calc
+        "upper_name":   calc(str.upper, "name", target_type=str),
+    },
+)
+```
+
+**When to reach for it**
+When you need a field to exist on the dynamic class (e.g. for a downstream `calc()` to write into, or for Pydantic to include in the schema) but no source key maps to it directly.  Rare in typical ETL — most fields come from the raw payload.
+
+---
+
+### `sum_attributes` — safe field-sum reducer
+
+**Signature**
+```python
+def sum_attributes(*args: Any) -> float:
+```
+
+`sum_attributes` is a ready-made `calc()` reducer that safely sums N fields, treating `None` and non-numeric values as zero.  Numeric strings (`"42"`), floats, ints, and `None` all mix without raising.  Use it as the `func` argument to `calc()`:
+
+```python
+from incorporator import calc, sum_attributes
+
+await Pokemon.incorp(
+    inc_url="https://pokeapi.co/api/v2/pokemon?limit=151",
+    conv_dict={
+        "total_stats": calc(sum_attributes, "hp", "attack", "defense", "speed"),
+    },
+)
+# pokemon.total_stats == float(hp + attack + defense + speed)
+```
+
+**When to reach for it**
+Any time you'd write a 3-line try/except to total a handful of row fields: Pokémon base-stat totals, revenue sums across line items, point totals in a fantasy scoring sheet.
+
+---
+
+### `each` — POST fan-out sentinel
+
+**Signature**
+```python
+def each() -> _EachSentinel:
+```
+
+`each` is a POST fan-out sentinel.  Place `each()` as the value in `json_payload` or `form_payload` to tell the router "make one POST per parent ID rather than a single bulk request."  Produces N concurrent requests — one per row in the parent snapshot.  Returns an `_EachSentinel` instance (not an `Op`).
+
+```python
+from incorporator import Incorporator, each
+
+results = await Decoded.incorp(
+    inc_url="https://vpic.nhtsa.dot.gov/.../DecodeVin/",
+    inc_parent=invoices,
+    inc_child="Vehicle.VIN",
+    http_method="POST",
+    json_payload={"vin": each(), "format": "json"},
+)
+```
+
+**When to reach for it**
+When the target endpoint takes exactly one ID per request and will not accept a bulk body.  Contrast with `join_all()` (one POST, delimited string) and `as_list()` (one POST, JSON array) for endpoints that accept batch shapes.
+
+---
+
+### `join_all` — bulk-POST delimited string
+
+**Signature**
+```python
+def join_all(delimiter: str = ",") -> Op:
+```
+
+`join_all` collapses all parent IDs into one delimited string for a single bulk POST.  Returns an `Op` instance.  Place it in `form_payload` when the endpoint accepts a delimited-batch body (e.g. NHTSA `DecodeVINValuesBatch/` takes `vin1;vin2;vin3`).
+
+```python
+from incorporator import Incorporator, join_all
+
+specs = await NHTSASpec.incorp(
+    inc_url="https://vpic.nhtsa.dot.gov/.../DecodeVINValuesBatch/",
+    inc_parent=invoices,
+    inc_child="Vehicle.VIN",
+    http_method="POST",
+    payload_type="form",
+    form_payload={"data": join_all(";"), "format": "json"},
+)
+```
+
+**Args**
+- `delimiter` — separator between IDs.  Default `","` ; common alternatives are `";"` and `"|"`.
+
+**When to reach for it**
+When the endpoint supports a delimited-batch shape and `each()` (N requests) would be wasteful or rate-limited.
+
+---
+
+### `as_list` — bulk-POST JSON array
+
+**Signature**
+```python
+def as_list() -> Op:
+```
+
+`as_list` wraps all parent IDs in one JSON array for a single bulk POST.  Returns an `Op` instance.  Place it in `json_payload` when the endpoint expects `{"ids": [1, 2, 3]}` or any other JSON-array-bodied bulk shape.
+
+```python
+from incorporator import Incorporator, as_list
+
+results = await Audit.incorp(
+    inc_url="https://api.example.com/bulk-audit",
+    inc_parent=invoices,
+    inc_child="id",
+    http_method="POST",
+    json_payload={"ids": as_list()},   # → {"ids": [1, 2, 3, ...]}
+)
+```
+
+**When to reach for it**
+When the endpoint expects a JSON array body and a single round-trip.  Scalar inputs are wrapped in a single-element list.  Contrast with `each()` (N requests) and `join_all()` (one request, delimited string).
 
 ---
 
@@ -1313,6 +1620,79 @@ if not fmt.is_append_safe:
 **See also**
 [Formats & Compression](./formats_and_compression.md) ·
 [Appendix — Tideweaver Parquet Snapshots](../examples/appendix/tideweaver-parquet-snapshots/README.md)
+
+---
+
+## CompressionType
+
+`CompressionType` is the enum that names every compression and archive format Incorporator can transparently decompress (and re-compress on `export()`).  The enum value is the canonical file-extension suffix (without the dot) used by `infer_compression()` to detect compression from a path or URL.
+
+**Import**
+```python
+from incorporator import CompressionType
+# companion:
+from incorporator.io.compression import infer_compression
+```
+
+**Members by family**
+
+| Family | Members | Enum values | Notes |
+|---|---|---|---|
+| Native streams (always available) | `GZIP`, `BZ2`, `XZ`, `LZMA` | `"gz"`, `"bz2"`, `"xz"`, `"lzma"` | stdlib `gzip` / `bz2` / `lzma`; single-file decompression |
+| Native archives (always available) | `ZIP`, `TAR`, `TGZ` | `"zip"`, `"tar"`, `"tgz"` | multi-file archives; use `archive_target=` on `incorp()` to select a specific member |
+| Cramjam plugins (requires `[speedups]`) | `ZSTD`, `LZ4`, `SNAPPY`, `BROTLI` | `"zst"`, `"lz4"`, `"snappy"`, `"br"` | Rust-backed via the `cramjam` package; install with `pip install incorporator[speedups]` |
+
+**`infer_compression(path_or_url: str) -> CompressionType | None`**
+
+Auto-detect the compression type from a file path or URL by its extension.  Case-insensitive — `data.JSON.GZ` resolves to `GZIP`.  Returns `None` when no recognised compression suffix is found.  LRU-cached for the same cardinality story as `infer_format`.
+
+```python
+from incorporator.io.compression import infer_compression, CompressionType
+
+assert infer_compression("data.csv.gz") == CompressionType.GZIP
+assert infer_compression("archive.tar.zst") == CompressionType.ZSTD
+assert infer_compression("plain.json") is None
+```
+
+**Decompression bomb protection**
+
+Every decompression path enforces a ceiling on the decompressed payload size (default 1 GB).  Override via the `INCORPORATOR_MAX_DECOMPRESSED_BYTES` environment variable when the workload legitimately exceeds 1 GB.
+
+**When to reach for it**
+Pass the string value directly to `export(compression=...)` (e.g. `compression="gz"`), or use the enum directly when you need to branch on format in a custom outflow sidecar.  The framework handles transparent decompression automatically during `incorp()` and `stream()` — you only need `CompressionType` explicitly when writing export or sidecar code.
+
+**See also**
+[Formats & Compression](./formats_and_compression.md) ·
+[`FormatType`](#formattype)
+
+---
+
+## Exception hierarchy
+
+All Incorporator exceptions inherit from `IncorporatorError`, which inherits from the built-in `Exception`.  Import from the top-level package:
+
+```python
+from incorporator import (
+    IncorporatorError,
+    IncorporatorFormatError,
+    IncorporatorNetworkError,
+    IncorporatorSchemaError,
+)
+```
+
+| Class | Inherits from | When it is raised |
+|---|---|---|
+| `IncorporatorError` | `Exception` | Base class for all Incorporator exceptions; catch this to handle any framework error in one `except` block. |
+| `IncorporatorFormatError` | `IncorporatorError` | Data cannot be parsed into a dict — malformed JSON, unreadable CSV/XML, archive extraction failure, decompression bomb exceeded. Raised by `export()` on write failures too. |
+| `IncorporatorNetworkError` | `IncorporatorError` | The internal HTTP client exhausted all retries or encountered a non-retryable I/O error. |
+| `IncorporatorSchemaError` | `IncorporatorError` | Dynamic Pydantic model compilation failed — typically a type conflict in the inferred schema during Dynamic Class Building. |
+
+**When to reach for each**
+
+- **`IncorporatorError`** — catch-all in a top-level error handler; use when any framework failure should funnel to the same recovery path.
+- **`IncorporatorFormatError`** — catch in export sidecars, archive-reading code, or any path that reads user-supplied file data.  The message always includes the format, the source, and (for archives) the member name.
+- **`IncorporatorNetworkError`** — catch in retry orchestrators that need to distinguish network failures from parse failures.  `IncorporatorList.rejects` carries structured `RejectEntry` records for per-source HTTP failures; `IncorporatorNetworkError` is raised only when the whole fetch leg fails (not just individual URLs).
+- **`IncorporatorSchemaError`** — catch during development when iterating on `conv_dict` / `rec_path` kwargs; in production these should not occur unless the source schema changes unexpectedly.
 
 ---
 
