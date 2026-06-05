@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-06-05
+
+### Fixed
+
+- CLI now correctly forwards `inflow` and `outflow` arguments to `stream()`;
+  custom-verb errors produce a clearer diagnostic message instead of a bare
+  `AttributeError`.
+- `--logs` flag in the CLI is properly wired to `LoggedTideweaver`, so
+  structured log output is captured when running Tideweaver sub-roles from
+  the command line.
+
+### Changed
+
+- Test suite is tiered into `fast`, `slow`, and `benchmark` markers and the
+  CI matrix is parallelised accordingly, cutting wall-clock CI time.
+
+### Docs
+
+- API Atlas expanded with entries for 11 previously undocumented public
+  symbols plus `CustomCurrent`.
+- Marketing-review positioning pass across the adopt-all docs; corrected a
+  `calc_all` example that produced wrong output.
+- Seven user guides and 15 tutorial READMEs reconciled with the v1.2.0..HEAD
+  API surface (factual corrections and completeness fixes).
+- CONTRIBUTING updated to reflect current CI facts; SECURITY updated with
+  accurate archive-handling behaviour.
+- Removed stale historical benchmark snapshot and associated review-audit docs.
+
 ## [1.3.0] - 2026-06-02
 
 First PyPI publication since v1.2.0 (2026-05-21).  The intervening tags
