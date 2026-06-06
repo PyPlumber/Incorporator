@@ -6,7 +6,7 @@
 
 You're the commissioner of an 8-team NASCAR fantasy league.  Every Sunday morning before the green flag drops you need three derived analytical views on the same desk: **this month's Cup schedule** (so the group chat knows what's worth tuning in for), **the league scoreboard** (so trash talk is correctly calibrated), and **the manufacturer leaderboard** (so the Chevy-vs-Ford bet has a settled score).  All three live behind the same seven NASCAR APIs and one hand-maintained roster file.  Wired naively this is a nine-script crontab.  Wired through fjord it's a single async-for loop and one outflow function.
 
-T8 introduced streaming polling on single-source registries.  T9 walks the *full* multi-source production shape — schema-free ingestion of eight heterogeneous JSON endpoints and one local file into eight bare `class Foo(Incorporator): pass` subclasses (no field declarations, no Pydantic schemas hand-written), tiered-parallel seed via `depends_on`, sentinel-ID filtering at the graph boundary, and a single outflow returning a `dict` whose keys become three derived classes, three NDJSON files.  T10 will introduce `fjord()` formally on the minimum-viable two-source case.  You're getting the production shape first, the abstraction next.
+T8 introduced streaming polling on single-source registries.  T9 walks the *full* multi-source production shape — schema-free ingestion of seven heterogeneous JSON endpoints and one local file into eight bare `class Foo(Incorporator): pass` subclasses (no field declarations, no Pydantic schemas hand-written), tiered-parallel seed via `depends_on`, sentinel-ID filtering at the graph boundary, and a single outflow returning a `dict` whose keys become three derived classes, three NDJSON files.  T10 will introduce `fjord()` formally on the minimum-viable two-source case.  You're getting the production shape first, the abstraction next.
 
 ---
 
@@ -49,15 +49,18 @@ With `inflow=` set, fjord seeds sources sequentially by default — each source 
 
 ## 🗂️ Project Layout
 
-By the end of this tutorial you'll have laid down three files:
+By the end of this tutorial you'll have laid down four files:
 
 ```text
 examples/09-nascar-fantasy-fjord/
 ├── fixtures/
 │   └── league_teams.json     ← Step 1 — the roster
-├── outflow.py                ← Step 2 — source classes + inflow + outflow
+├── inflow.py                 ← Step 2a — incoming-data manipulation (inflow seed hook + conv_dict converters)
+├── outflow.py                ← Step 2b — source classes + output-assembly policy + outflow
 └── nascar_fantasy.py         ← Step 3 — the runner
 ```
+
+The two sidecars are split by **direction of data flow**: anything that shapes a value *as it's ingested* (the `inflow(state)` seed hook, `conv_dict` converters/extractors) lives in `inflow.py`; anything that shapes the *output* (the `outflow(state)` views, their row helpers, the source classes) lives in `outflow.py`.
 
 The output directory (`out/`) is created at runtime; you don't need to make it.
 
@@ -183,11 +186,16 @@ EOF
 
 ---
 
-## 🔧 Step 2: The Inflow / Outflow Sidecar
+## 🔧 Step 2: The Sidecars — `inflow.py` and `outflow.py`
 
-`outflow.py` is the entire ETL.  It defines the eight source classes, the sentinel-filter helper, the `inflow(state)` callable that wires `Race`'s foreign keys against `Track` + `Driver`, and the `outflow(state)` function that emits the three derived views.  Fjord imports it, registers the classes, and drives the pipeline — no other Python is required apart from the runner in Step 3.  The filename matches the framework's CLI-scaffold convention (`incorporator init --type fjord` generates a `pipeline.json` + `outflow.py` pair).
+The ETL lives in two sibling sidecars, split by **direction of data flow** so the file layout self-documents:
 
-Lay the file down whole; we'll walk it in chunks below.
+* **`inflow.py` — incoming-data manipulation.**  The `inflow(state)` seed hook that wires `Race`'s foreign keys against `Track` + `Driver`, plus the `conv_dict` converter/extractor helpers that shape values *as they're ingested* (`_driver_id_or_none`, `_mfg_from_logo_url`) and the ingestion constant `_DATE_FIELDS`.
+* **`outflow.py` — output shaping.**  The eight source classes, the output-assembly policy (`OWNER_SCORED`), the output-row helpers (`_hometown`, `_track_loc`, `_SERIES_LIST`), and the `outflow(state)` function that emits the three derived views.
+
+The runner points `inflow=` at `inflow.py` and `outflow=` at `outflow.py`.  A converter used in a `conv_dict` is incoming-data manipulation even though the runner imports it directly — so it belongs in `inflow.py`, not `outflow.py`.
+
+Lay both files down whole; we'll walk them in chunks below.
 
 ### 2a. Source classes
 
@@ -200,7 +208,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Any
 
-from incorporator import Incorporator, inc, link_to
+from incorporator import Incorporator
 
 
 # ── Source classes ─────────────────────────────────────────────────
@@ -244,36 +252,35 @@ class CupOwnerStanding(Incorporator):
 # Owner-seat routing map: driver_id → vehicle_number (string).
 # The per-pick scoring loop reads this at O(1) to route picks for
 # deceased / released Cup drivers to CupOwnerStanding instead of CupStanding.
+# Scoring policy only — conv_dict lives inline in the runner (nascar_fantasy.py).
 OWNER_SCORED: dict[int, str] = {454: "133"}
-
-# conv_dict for CupOwnerStanding — passed as incorp_params in the runner.
-_OWNER_CONV: dict[str, Any] = {
-    "points":   inc(int,   default=0),
-    "wins":     inc(int,   default=0),
-    "top_5":    inc(int,   default=0),
-    "top_10":   inc(int,   default=0),
-    "starts":   inc(int,   default=0),
-    "position": inc(int,   default=0),
-    "dnf":      inc(int,   default=0),
-    "winnings": inc(float, default=0),
-}
 ```
 
-> ⚠️ **Do not pre-declare fields on these classes.**  The framework builds Pydantic schemas dynamically from the incoming JSON; if you stub `track_id: int = None` on `Track`, fjord stops inferring and you lose half your columns to silent drops.  The classes are deliberately bare — source classes are seeded by dynamic schema inference from the incoming JSON, so a bare `pass` body is exactly right here.  (The framework does emit a one-time WARNING for a bare *output* class — see the §2f callout — but that path is the derived-class emit, not source seeding.)
+> ⚠️ **Do not pre-declare fields on these classes.**  The framework builds Pydantic schemas dynamically from the incoming JSON; if you stub `track_id: int = None` on `Track`, fjord stops inferring and you lose half your columns to silent drops.  The classes are deliberately bare — source classes are seeded by dynamic schema inference from the incoming JSON, so a bare `pass` body is exactly right here.  (The framework does emit a one-time WARNING for a bare *output* class — see the §2g callout — but that path is the derived-class emit, not source seeding.)
 
 ### 2b. Constants
 
+These two constants live in separate files because they serve different directions of data flow.
+
+**`inflow.py`** (`inflow.py:28`):
+
 ```python
 _DATE_FIELDS = ("date_scheduled", "race_date", "qualifying_date", "tunein_date")
+```
 
+`_DATE_FIELDS` lists every column in the Race payload that ships as an ISO string — the inflow's `conv_dict` adds `inc(datetime)` for each so they arrive as real `datetime` instances in the outflow.
+
+**`outflow.py`** (`outflow.py:103`):
+
+```python
 _SERIES_LIST = ("Cup", "Busch", "Truck")
 ```
 
-`_DATE_FIELDS` lists every column in the Race payload that ships as an ISO string — the inflow's `conv_dict` adds `inc(datetime)` for each so they arrive as real `datetime` instances in the outflow.  `_SERIES_LIST` is the human-readable label table; series IDs `1/2/3` map to indices `0/1/2`.
+`_SERIES_LIST` is the human-readable label table used in `outflow(state)`; series IDs `1/2/3` map to indices `0/1/2`.
 
-### 2c. The sentinel filter
+### 2c. The sentinel filter (`inflow.py`)
 
-NASCAR's API returns `pole_winner_driver_id = 0` for races whose pole qualifying hasn't happened yet (or was rained out) — and `winner_driver_id = 0` for races that haven't been run yet.  Driver ID `0` coincidentally resolves to a real entry in the driver registry, so a naked `link_to` makes every future race resolve to the same incidental name.  The fix is a 3-line `extractor=`:
+NASCAR's API returns `pole_winner_driver_id = 0` for races whose pole qualifying hasn't happened yet (or was rained out) — and `winner_driver_id = 0` for races that haven't been run yet.  Driver ID `0` coincidentally resolves to a real entry in the driver registry, so a naked `link_to` makes every future race resolve to the same incidental name.  The fix is a 3-line `extractor=` in `inflow.py`:
 
 ```python
 # ── Sentinel filter for link_to ────────────────────────────────────
@@ -295,7 +302,50 @@ def _driver_id_or_none(raw: Any) -> Any:
 
 > 💡 **The pattern generalises.**  Any third-party API with sentinel IDs (Discord's `-1`-as-deleted-user, Twitter's `0`-as-anon-author, a SQL `NULL` foreign-key) lands at the same boundary: write a tiny extractor that converts the sentinel to `None` and let `link_to`'s short-circuit do the rest.  No per-call guard in consumer code.
 
-### 2d. State-aware inflow
+### 2d. The manufacturer helper (`inflow.py`)
+
+NASCAR's `drivers.json` delivers `Manufacturer` as a logo-image URL — for example:
+
+```
+https://www.nascar.com/.../Chevrolet_2025-330x140.png
+```
+
+Without a converter, `driver.Manufacturer` holds that raw CDN URL.  Two downstream paths break silently when that happens:
+
+1. **Owner-seat fallback in `outflow.py`.**  When `did in OWNER_SCORED`, the outflow reads `driver.Manufacturer` because the owner standings carry no manufacturer field.  The URL string would appear verbatim in the fantasy scoreboard's `manufacturer` column.
+2. **`ManufacturerLeaderboard`.**  `CupStanding` rows carry a clean make name from the standings feed.  But any driver whose standings row is missing gets bucketed under the raw URL string, producing spurious manufacturer entries.
+
+`_mfg_from_logo_url` in `inflow.py` (`inflow.py:49-63`) parses the make from the URL basename by stripping the path, removing the extension, and splitting on underscores and hyphens:
+
+```python
+def _mfg_from_logo_url(url: str) -> str:
+    """Parse a NASCAR manufacturer logo URL into the make name.
+
+    'https://www.nascar.com/.../Chevrolet_2025-330x140.png' -> 'Chevrolet'
+    'https://www.nascar.com/.../Ford-Logo-1-320x180.png'   -> 'Ford'
+    'https://www.nascar.com/.../Toyota-180x180.png'         -> 'Toyota'
+    'https://www.nascar.com/.../Ram-330x115.png'            -> 'Ram'
+
+    Splits the basename on underscores and hyphens; first token is the make.
+    is_garbage_value pre-handles empty / None inputs — no defensive guard needed.
+    """
+    basename = url.rsplit("/", 1)[-1]  # 'Chevrolet_2025-330x140.png'
+    stem = basename.split(".")[0]  # 'Chevrolet_2025-330x140'
+    token = stem.replace("-", "_").split("_")[0]  # 'Chevrolet'
+    return token
+```
+
+It is wired in the runner's `Driver` stream entry via `calc()`:
+
+```python
+"conv_dict": {
+    "Manufacturer": calc(_mfg_from_logo_url, "Manufacturer", default="Unknown", target_type=str),
+}
+```
+
+`calc()` handles empty or `None` inputs via `is_garbage_value` before the callable runs; those land as `default="Unknown"`.  The helper belongs in `inflow.py` because it shapes a value *as it is ingested* — it is a `conv_dict` converter, not an output-assembly helper.
+
+### 2e. State-aware inflow
 
 `inflow(state)` is called before each source seeds.  With `depends_on=["Track", "Driver"]` declared on `Race`, the engine splits sources into topo tiers and calls `inflow(state)` per tier — tier 0 sources (`Track`, `Driver`, the three Standings, `LeagueRoster`) each receive the current partial state as peers publish; `Race` (tier 1) sees a fully-populated state when `inflow` is called for it.  The `if "Track" in state and "Driver" in state:` guard is still necessary for the **refresh-wave** path — a peer refresh failure could leave the state incomplete, and without the guard `inflow` would emit a `link_to()` resolver pointing at a stale or missing registry.  Fjord re-applies `inflow(state)` on every refresh so the closures always see the latest snapshots.
 
@@ -332,7 +382,7 @@ Returning `{}` for a source = "no overrides, use the `incorp_params` as-declared
 
 **Foreign-key resolution is one-time, not lazy.**  Once a Race row is incorporated, `race.track_id` is the `Track` instance itself — `race.track_id.inc_name`, `race.track_id.city`, `race.track_id.length` all work directly.  No re-lookup in the outflow.  (The runner does `name_chg=[("track_id", "track")]` purely for readability — the field arrives renamed to `track` in the Race instance.)
 
-### 2e. Helpers
+### 2f. Helpers
 
 Two small string-composition helpers used by the outflow.  Pure functions, no state.
 
@@ -364,7 +414,7 @@ def _track_loc(track: Any) -> str:
     return city or state or "Unknown"
 ```
 
-### 2f. Outflow — three derived views in one function
+### 2g. Outflow — three derived views in one function
 
 `outflow(state)` returns `dict[ClassName, list[dict]]` and fjord builds **one dynamic Incorporator subclass per dict key** at first emit.  This is the multi-output contract: three keys in the return → three derived classes → three NDJSON files.
 
@@ -386,6 +436,11 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     league = state.get("LeagueRoster")
     if drivers is None or races is None or league is None:
         return {}
+
+    # CupOwnerStanding is an optional eighth source — if it fails to load the
+    # outflow degrades gracefully (owner-scored picks score 0 pts) rather than
+    # aborting.  The owner-seat branch in View 2 reads this handle.
+    owner_standings = state.get("CupOwnerStanding")
 
     points_standings = {
         1: state.get("CupStanding"),
@@ -580,7 +635,7 @@ The three dict keys land verbatim as fjord-built class names and match the keys 
 
 ## 🔧 Step 3: The Driver Script
 
-`nascar_fantasy.py` is the runner.  It declares the eight sources (seven API + one local file), points fjord at `outflow.py` for both inflow and outflow, and configures the three export targets.  The `Race` entry carries `depends_on=["Track", "Driver"]`, which opts the seed phase into tiered-parallel mode: the seven co-equal tier-0 sources fire concurrently, and `Race` seeds in tier 1 once those registries are ready.  `refresh_params=None` on every source = single-wave test mode; with no `export_interval` set, the pipeline exits cleanly after one outflow wave.
+`nascar_fantasy.py` is the runner.  It declares the eight sources (seven API + one local file), points `inflow=` at `inflow.py` and `outflow=` at `outflow.py`, and configures the three export targets.  The `Race` entry carries `depends_on=["Track", "Driver"]`, which opts the seed phase into tiered-parallel mode: the seven co-equal tier-0 sources fire concurrently, and `Race` seeds in tier 1 once those registries are ready.  `refresh_params=None` on every source = single-wave test mode; with no `export_interval` set, the pipeline exits cleanly after one outflow wave.
 
 ```python
 """NASCAR fantasy league as a multi-output fjord pipeline."""
@@ -590,16 +645,21 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from incorporator import Incorporator, inc
+from incorporator import Incorporator, calc, inc
 
 HERE = Path(__file__).resolve().parent
-DATA = HERE / "out"
+DATA = HERE / "out"  # examples/09-nascar-fantasy-fjord/out/
 
+# Sibling sidecar import — Python only auto-adds HERE to sys.path for the
+# bare ``python <script>`` invocation; explicit insert covers ``python -m``
+# and other launch paths.
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+from inflow import _mfg_from_logo_url  # noqa: E402
 from outflow import (  # noqa: E402
     BuschStanding,
+    CupOwnerStanding,
     CupStanding,
     Driver,
     LeagueRoster,
@@ -613,49 +673,246 @@ CFC_BASE = "https://cf.nascar.com/cacher"
 PROD_BASE = f"https://cf.nascar.com/data/cacher/production/{CURRENT_YEAR}"
 STANDINGS_BASE = "racinginsights-points-feed.json"
 
+# Owner-standings exclusion list — drop the redundant name-component
+# fields; ``owner_name`` is already the ``inc_name`` and is sufficient.
+_OWNER_EXCL = ["owner_first_name", "owner_last_name", "owner_suffix"]
+
+# Standings exclusion list — drop only the genuinely-noisy fields.
+# Keep ``position``, ``top_5``, ``laps_led``, ``delta_leader``,
+# ``poles``, ``starts``, ``manufacturer``, and ``playoff_eligible``:
+# FantasyTeam scoring and ManufacturerLeaderboard both need them.
 _STANDINGS_EXCL = [
     "is_clinch",
-    "driver_first_name", "driver_last_name", "driver_suffix",
+    "driver_first_name",
+    "driver_last_name",
+    "driver_suffix",
     "playoff_stage_wins",
 ]
+# Driver exclusion list — keep ``Manufacturer``, ``Hometown_City``,
+# ``Hometown_State`` (used by the enriched FantasyTeam roster).
 _DRIVER_EXCL = [
-    "Series_Logo", "Short_Name", "Description", "Hobbies", "Children",
-    "Residing_City", "Residing_State", "Residing_Country", "Image_Transparent",
-    "SecondaryImage", "Career_Stats", "Age", "Rank", "Points", "Points_Behind",
-    "No_Wins", "Poles", "Top5", "Top10", "Laps_Led", "Stage_Wins",
-    "Playoff_Points", "Playoff_Rank", "Integrated_Sponsor_Name",
-    "Integrated_Sponsor", "Integrated_Sponsor_URL", "Silly_Season_Change",
-    "Silly_Season_Change_Description", "Driver_Post_Status", "Driver_Part_Time",
+    "Series_Logo",
+    "Short_Name",
+    "Description",
+    "Hobbies",
+    "Children",
+    "Residing_City",
+    "Residing_State",
+    "Residing_Country",
+    "Image_Transparent",
+    "SecondaryImage",
+    "Career_Stats",
+    "Age",
+    "Rank",
+    "Points",
+    "Points_Behind",
+    "No_Wins",
+    "Poles",
+    "Top5",
+    "Top10",
+    "Laps_Led",
+    "Stage_Wins",
+    "Playoff_Points",
+    "Playoff_Rank",
+    "Integrated_Sponsor_Name",
+    "Integrated_Sponsor",
+    "Integrated_Sponsor_URL",
+    "Silly_Season_Change",
+    "Silly_Season_Change_Description",
+    "Driver_Post_Status",
+    "Driver_Part_Time",
 ]
 
 
 async def main() -> None:
-    print("Initiating NASCAR Data Gateway (fjord)...\n")
+    print("🏁 Initiating NASCAR Data Gateway (fjord)...\n")
     DATA.mkdir(exist_ok=True)
 
     async for wave in Incorporator.fjord(
         stream_params=[
-            {"cls": Track, "incorp_params": {"inc_url": f"{CFC_BASE}/tracks.json", "rec_path": "items", "inc_code": "track_id", "inc_name": "track_name"}, "refresh_params": None},
-            {"cls": Driver, "incorp_params": {"inc_url": f"{CFC_BASE}/drivers.json", "rec_path": "response", "inc_code": "Nascar_Driver_ID", "inc_name": "Full_Name", "excl_lst": _DRIVER_EXCL}, "refresh_params": None},
-            {"cls": Race, "incorp_params": {"inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/race_list_basic.json", "rec_path": "series_1", "inc_code": "race_id", "inc_name": "race_name", "excl_lst": ["schedule", "track_name"], "name_chg": [("track_id", "track")]}, "depends_on": ["Track", "Driver"], "refresh_params": None},
-            {"cls": CupStanding,   "incorp_params": {"inc_url": f"{PROD_BASE}/1/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": inc(int, default=0), "wins": inc(int, default=0), "top_10": inc(int, default=0), "top_5": inc(int, default=0), "laps_led": inc(int, default=0), "position": inc(int, default=0)}}, "refresh_params": None},
-            {"cls": BuschStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/2/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": inc(int, default=0), "wins": inc(int, default=0), "top_10": inc(int, default=0), "top_5": inc(int, default=0), "laps_led": inc(int, default=0), "position": inc(int, default=0)}}, "refresh_params": None},
-            {"cls": TruckStanding, "incorp_params": {"inc_url": f"{PROD_BASE}/3/{STANDINGS_BASE}", "inc_code": "driver_id", "inc_name": "driver_name", "excl_lst": _STANDINGS_EXCL, "conv_dict": {"points": inc(int, default=0), "wins": inc(int, default=0), "top_10": inc(int, default=0), "top_5": inc(int, default=0), "laps_led": inc(int, default=0), "position": inc(int, default=0)}}, "refresh_params": None},
-            {"cls": LeagueRoster, "incorp_params": {"inc_file": str(HERE / "fixtures/league_teams.json"), "inc_code": "team_id", "inc_name": "team_id"}, "refresh_params": None},
+            # ── Static reference data — never refresh ──
+            {
+                "cls": Track,
+                "incorp_params": {
+                    "inc_url": f"{CFC_BASE}/tracks.json",
+                    "rec_path": "items",
+                    "inc_code": "track_id",
+                    "inc_name": "track_name",
+                },
+                "refresh_params": None,  # tracks never change
+            },
+            # ── Drivers refresh occasionally ──
+            {
+                "cls": Driver,
+                "incorp_params": {
+                    "inc_url": f"{CFC_BASE}/drivers.json",
+                    "rec_path": "response",
+                    "inc_code": "Nascar_Driver_ID",
+                    "inc_name": "Full_Name",
+                    "excl_lst": _DRIVER_EXCL,
+                    "conv_dict": {
+                        # drivers.json carries Manufacturer as a logo-image URL
+                        # (e.g. 'https://.../Chevrolet_2025-330x140.png').  Parse
+                        # the make name from the URL basename so that owner-seat
+                        # fallback in outflow.py yields a clean text string.
+                        # Empty Manufacturer fields are handled by is_garbage_value
+                        # before the callable runs and land as default='Unknown'.
+                        "Manufacturer": calc(_mfg_from_logo_url, "Manufacturer", default="Unknown", target_type=str),
+                    },
+                },
+                "refresh_params": None,
+            },
+            # ── Race schedule — depends on Track + Driver via inflow ──
+            # depends_on enables tiered-parallel seed: Track + Driver +
+            # the three Standings + LeagueRoster all fire concurrently in
+            # tier 0; Race fires in tier 1 once its peers' registries are
+            # available for link_to() resolution.
+            {
+                "cls": Race,
+                "incorp_params": {
+                    "inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/race_list_basic.json",
+                    "rec_path": "series_1",
+                    "inc_code": "race_id",
+                    "inc_name": "race_name",
+                    "excl_lst": ["schedule", "track_name"],
+                    "name_chg": [("track_id", "track")],
+                },
+                "depends_on": ["Track", "Driver"],
+                "refresh_params": None,
+            },
+            # ── Live standings, one source per series ──
+            {
+                "cls": CupStanding,
+                "incorp_params": {
+                    "inc_url": f"{PROD_BASE}/1/{STANDINGS_BASE}",
+                    "inc_code": "driver_id",
+                    "inc_name": "driver_name",
+                    "excl_lst": _STANDINGS_EXCL,
+                    "conv_dict": {
+                        "points": inc(int, default=0),
+                        "wins": inc(int, default=0),
+                        "top_10": inc(int, default=0),
+                        "top_5": inc(int, default=0),
+                        "laps_led": inc(int, default=0),
+                        "position": inc(int, default=0),
+                    },
+                },
+                "refresh_params": None,
+            },
+            {
+                "cls": BuschStanding,
+                "incorp_params": {
+                    "inc_url": f"{PROD_BASE}/2/{STANDINGS_BASE}",
+                    "inc_code": "driver_id",
+                    "inc_name": "driver_name",
+                    "excl_lst": _STANDINGS_EXCL,
+                    "conv_dict": {
+                        "points": inc(int, default=0),
+                        "wins": inc(int, default=0),
+                        "top_10": inc(int, default=0),
+                        "top_5": inc(int, default=0),
+                        "laps_led": inc(int, default=0),
+                        "position": inc(int, default=0),
+                    },
+                },
+                "refresh_params": None,
+            },
+            {
+                "cls": TruckStanding,
+                "incorp_params": {
+                    "inc_url": f"{PROD_BASE}/3/{STANDINGS_BASE}",
+                    "inc_code": "driver_id",
+                    "inc_name": "driver_name",
+                    "excl_lst": _STANDINGS_EXCL,
+                    "conv_dict": {
+                        "points": inc(int, default=0),
+                        "wins": inc(int, default=0),
+                        "top_10": inc(int, default=0),
+                        "top_5": inc(int, default=0),
+                        "laps_led": inc(int, default=0),
+                        "position": inc(int, default=0),
+                    },
+                },
+                "refresh_params": None,
+            },
+            # ── Owner-entry standings — Cup series ──
+            # Keyed by vehicle_number (string: '133', '3', '33') rather
+            # than owner_id because owner_id 553 repeats across all three
+            # RCR entries.  Used by outflow.OWNER_SCORED to score roster
+            # spots where a deceased/released Cup driver's pick is routed
+            # to the team's owner-entry points instead.
+            {
+                "cls": CupOwnerStanding,
+                "incorp_params": {
+                    "inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/1/final/1-owners-points.json",
+                    "inc_code": "vehicle_number",
+                    "inc_name": "owner_name",
+                    "excl_lst": _OWNER_EXCL,
+                    "conv_dict": {
+                        "points": inc(int, default=0),
+                        "wins": inc(int, default=0),
+                        "top_5": inc(int, default=0),
+                        "top_10": inc(int, default=0),
+                        "starts": inc(int, default=0),
+                        "position": inc(int, default=0),
+                        "dnf": inc(int, default=0),
+                        "winnings": inc(float, default=0),
+                    },
+                },
+                "refresh_params": None,
+            },
+            # ── Local-file source: the fantasy league rosters ──
+            # ``inc_file=`` routes through the same handler dispatch
+            # as the API sources above — JSON format is inferred from
+            # the file extension.  Rosters rarely change, so refresh
+            # is opted out.
+            {
+                "cls": LeagueRoster,
+                "incorp_params": {
+                    "inc_file": str(HERE / "fixtures/league_teams.json"),
+                    "inc_code": "team_id",
+                    "inc_name": "team_id",
+                },
+                "refresh_params": None,
+            },
         ],
-        inflow=str(HERE / "outflow.py"),
+        # The state-aware inflow sidecar (inflow.py) and output sidecar (outflow.py).
+        inflow=str(HERE / "inflow.py"),
         outflow=str(HERE / "outflow.py"),
+        # Per-class export_params — one entry per dict-key returned
+        # by outflow(state).  Detection: nested dict shape = multi-output.
         export_params={
-            "MonthlyRaceSchedule":     {"file_path": str(DATA / "nascar_monthly_schedule.ndjson")},
-            "FantasyTeam":             {"file_path": str(DATA / "nascar_fantasy_scoreboard.ndjson")},
+            "MonthlyRaceSchedule": {"file_path": str(DATA / "nascar_monthly_schedule.ndjson")},
+            "FantasyTeam": {"file_path": str(DATA / "nascar_fantasy_scoreboard.ndjson")},
             "ManufacturerLeaderboard": {"file_path": str(DATA / "nascar_manufacturer_leaderboard.ndjson")},
         },
+        # This is a one-shot test run — every source has
+        # ``refresh_params=None`` above so no refresh daemon spawns
+        # and the pipeline exits after a single outflow wave.
+        #
+        # For a production long-running daemon, drop the
+        # ``refresh_params=None`` lines and uncomment the cadence
+        # block below (per-class dict by name).
+        #
+        # refresh_interval={
+        #     "Driver":        3600,   # 1 h
+        #     "Race":          600,    # 10 min (pole finalises Sat)
+        #     "CupStanding":   300,    # 5 min on race day
+        #     "BuschStanding": 300,
+        #     "TruckStanding": 300,
+        # },
+        # export_interval=60,
     ):
         op = wave.operation
         if wave.failed_sources:
-            print(f"WARN  {op:35s} chunk {wave.chunk_index}: {wave.failed_sources}")
+            print(f"⚠️  {op:35s} chunk {wave.chunk_index}: {wave.failed_sources}")
         else:
-            print(f"OK    {op:35s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
+            print(f"✅ {op:35s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
+
+    print("\n✅ Pipeline complete.")
+    print(f"   • {DATA / 'nascar_monthly_schedule.ndjson'}")
+    print(f"   • {DATA / 'nascar_fantasy_scoreboard.ndjson'}")
+    print(f"   • {DATA / 'nascar_manufacturer_leaderboard.ndjson'}")
 
 
 if __name__ == "__main__":
@@ -664,7 +921,7 @@ if __name__ == "__main__":
 
 Notable wiring:
 
-* **Same-file inflow + outflow.**  Both `inflow=` and `outflow=` point at `outflow.py` because both callables live there.  Fjord loads the module once via `importlib`'s cache, so the second import is free.
+* **Split-file inflow + outflow.**  `inflow=` points at `inflow.py` (the incoming-data manipulation sidecar: `inflow(state)`, `_mfg_from_logo_url`, `_driver_id_or_none`, `_DATE_FIELDS`) and `outflow=` points at `outflow.py` (the output-shaping sidecar: source classes, `outflow(state)`, `OWNER_SCORED`).  The two files are split by direction of data flow.
 * **`refresh_params=None` everywhere = single-wave test mode.**  With no `export_interval` set either, the pipeline exits cleanly after one outflow wave.  Drop the `refresh_params=None` lines (refresh defaults on at 60s) and add `export_interval=60` to keep daemons alive for a production run.  Mix and match: leave `Track`'s refresh off (tracks never change) while letting standings refresh every 5 minutes.
 * **`export_params` is keyed by output class name.**  Each key matches a key returned by `outflow(state)`; fjord's multi-output detection is "is there a top-level `file_path`?  No → multi-output."
 * **Structured error surface.**  `wave.failed_sources` carries the bare-string view of any seed or refresh failures.  For structured per-source access use `LoggedIncorporator.get_error()` post-run — each record carries the source name, exception type, message, and HTTP retry metadata.  Honour any `retry_after` value and backoff on 429s without re-parsing the message string.
@@ -681,19 +938,24 @@ python nascar_fantasy.py
 Expected console output (numbers depend on which races have been run this season):
 
 ```text
-Initiating NASCAR Data Gateway (fjord)...
+🏁 Initiating NASCAR Data Gateway (fjord)...
 
-OK    fjord_incorp:Track                  chunk 1: 49 rows
-OK    fjord_incorp:Driver                 chunk 1: 917 rows
-OK    fjord_incorp:CupStanding            chunk 1: 39 rows
-OK    fjord_incorp:BuschStanding          chunk 1: 59 rows
-OK    fjord_incorp:TruckStanding          chunk 1: 61 rows
-OK    fjord_incorp:CupOwnerStanding       chunk 1: 46 rows
-OK    fjord_incorp:LeagueRoster           chunk 1: 8 rows
-OK    fjord_incorp:Race                   chunk 1: 40 rows
-OK    outflow:MonthlyRaceSchedule         chunk 1: 5 rows
-OK    outflow:FantasyTeam                 chunk 1: 8 rows
-OK    outflow:ManufacturerLeaderboard     chunk 1: 3 rows
+✅ fjord_incorp:Track                  chunk 1: 49 rows
+✅ fjord_incorp:Driver                 chunk 1: 917 rows
+✅ fjord_incorp:CupStanding            chunk 1: 39 rows
+✅ fjord_incorp:BuschStanding          chunk 1: 59 rows
+✅ fjord_incorp:TruckStanding          chunk 1: 61 rows
+✅ fjord_incorp:CupOwnerStanding       chunk 1: 46 rows
+✅ fjord_incorp:LeagueRoster           chunk 1: 8 rows
+✅ fjord_incorp:Race                   chunk 1: 40 rows
+✅ outflow:MonthlyRaceSchedule         chunk 1: 5 rows
+✅ outflow:FantasyTeam                 chunk 1: 8 rows
+✅ outflow:ManufacturerLeaderboard     chunk 1: 3 rows
+
+✅ Pipeline complete.
+   • examples/09-nascar-fantasy-fjord/out/nascar_monthly_schedule.ndjson
+   • examples/09-nascar-fantasy-fjord/out/nascar_fantasy_scoreboard.ndjson
+   • examples/09-nascar-fantasy-fjord/out/nascar_manufacturer_leaderboard.ndjson
 ```
 
 Notice `Race` lands **after** `Track` and `Driver` — that's `depends_on=["Track", "Driver"]` doing its job.  The engine groups sources into topo tiers: tier 0 (`Track`, `Driver`, `CupStanding`, `BuschStanding`, `TruckStanding`, `CupOwnerStanding`, `LeagueRoster`) fires concurrently via `asyncio.gather`; tier 1 (`Race`) starts only after all tier-0 registries are in state, so the `link_to()` closures in `inflow(state)` resolve against live data on every run.
@@ -835,7 +1097,7 @@ The same eight-source pipeline expressed as a JSON config — no Python wrapper 
 
 ```json
 {
-  "inflow":  "examples/09-nascar-fantasy-fjord/outflow.py",
+  "inflow":  "examples/09-nascar-fantasy-fjord/inflow.py",
   "outflow": "examples/09-nascar-fantasy-fjord/outflow.py",
   "stream_params": [
     {
@@ -906,6 +1168,26 @@ The same eight-source pipeline expressed as a JSON config — no Python wrapper 
       "incorp_params": { "...same shape as CupStanding, /3/ endpoint": "..." }
     },
     {
+      "cls_name": "CupOwnerStanding",
+      "incorp_params": {
+        "inc_url":   "https://cf.nascar.com/cacher/2026/1/final/1-owners-points.json",
+        "inc_code":  "vehicle_number",
+        "inc_name":  "owner_name",
+        "excl_lst":  ["owner_first_name", "owner_last_name", "owner_suffix"],
+        "conv_dict": {
+          "points":   "inc(int, default=0)",
+          "wins":     "inc(int, default=0)",
+          "top_5":    "inc(int, default=0)",
+          "top_10":   "inc(int, default=0)",
+          "starts":   "inc(int, default=0)",
+          "position": "inc(int, default=0)",
+          "dnf":      "inc(int, default=0)",
+          "winnings": "inc(float, default=0)"
+        }
+      },
+      "refresh_params": null
+    },
+    {
       "cls_name": "LeagueRoster",
       "incorp_params": {
         "inc_file":  "config/league_teams.json",
@@ -925,7 +1207,8 @@ The same eight-source pipeline expressed as a JSON config — no Python wrapper 
     "Race":          600,
     "CupStanding":   300,
     "BuschStanding": 300,
-    "TruckStanding": 300
+    "TruckStanding": 300,
+    "CupOwnerStanding": 300
   },
   "export_interval": 60
 }
@@ -938,6 +1221,7 @@ A few JSON-specific notes:
 * **`name_chg` uses arrays not tuples.**  JSON has no tuple literal; `["track_id", "track"]` deserialises to the same shape the Python code uses.
 * **`refresh_interval` as a dict** keyed by class name, exactly like Python — the JSON config accepts the same dict shape.
 * **`export_params` keyed by output class** — multi-output detection is "is there a top-level `file_path` key?  No → multi-output."
+* **Known limitation — `_mfg_from_logo_url` is not wired in the JSON form.**  The token resolver (`incorporator/usercode.py:121`) builds its allow-list from `extract_public_names`, which excludes any name beginning with an underscore (`not n.startswith("_")`).  Omitting the `conv_dict` for `Manufacturer` in the Driver entry means the field retains its raw CDN URL in the CLI form.  If you attempt to reference `_mfg_from_logo_url` by name in a JSON `conv_dict` string, the token resolver raises `TokenResolutionError` because the name is private.  To enable the converter in the CLI form, rename the helper to `mfg_from_logo_url` (drop the leading underscore) in `inflow.py` and reference it as `"calc(mfg_from_logo_url, 'Manufacturer', default='Unknown', target_type=str)"` in the Driver `conv_dict`.  The Python runner (`nascar_fantasy.py`) imports it directly and is unaffected.
 
 ### Validate + run
 
@@ -954,17 +1238,19 @@ The repo's `docker-compose.yml` and `Dockerfile` work for this pipeline as-is.  
 
 | Host | Container | What goes here |
 |---|---|---|
-| `./config` | `/app/config` *(read-only)* | `pipeline.json`, `outflow.py`, and `league_teams.json` |
+| `./config` | `/app/config` *(read-only)* | `pipeline.json`, `inflow.py`, `outflow.py`, and `league_teams.json` |
 | `./data` | `/app/data` | Three NDJSON outputs land here |
 | `./logs` | `/app/logs` | Rotating JSON log files (when `--logs` is set) |
 
-The wrinkle compared to a single-source fjord: **the `league_teams.json` file must live where the container can read it**.  Easiest pattern is to drop it next to `pipeline.json` in `config/` and reference it with a container-relative path (`"inc_file": "config/league_teams.json"` — *not* the `examples/...` path the host uses).  Same for `outflow.py`: copy it into `config/` and point both `inflow` and `outflow` at `"config/outflow.py"`.
+The wrinkle compared to a single-source fjord: **both sidecar files and `league_teams.json` must live where the container can read them**.  Easiest pattern is to drop them next to `pipeline.json` in `config/` and reference each with a container-relative path.  The two sidecars are now separate files — `inflow` and `outflow` each get their own copy:
 
 ```bash
 mkdir -p config data logs
 cp examples/09-nascar-fantasy-fjord/fixtures/league_teams.json config/league_teams.json
+cp examples/09-nascar-fantasy-fjord/inflow.py                  config/inflow.py
 cp examples/09-nascar-fantasy-fjord/outflow.py                 config/outflow.py
-# edit config/pipeline.json so inflow/outflow/inc_file point at config/* paths
+# edit config/pipeline.json so inflow points at config/inflow.py,
+# outflow points at config/outflow.py, and inc_file points at config/league_teams.json
 incorporator validate config/pipeline.json
 docker compose up -d
 docker compose logs -f
