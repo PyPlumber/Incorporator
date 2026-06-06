@@ -1,9 +1,9 @@
 """Outflow sidecar for the NASCAR fantasy-league fjord pipeline.
 
-Defines SEVEN source classes (Track, Driver, Race, three Standings,
-plus LeagueRoster from a local JSON file), the ``inflow(state)``
-callable that wires Race's foreign-key fields against the
-already-loaded Track + Driver registries, and the ``outflow(state)``
+Defines EIGHT source classes (Track, Driver, Race, three Standings,
+CupOwnerStanding, plus LeagueRoster from a local JSON file), the
+``inflow(state)`` callable that wires Race's foreign-key fields against
+the already-loaded Track + Driver registries, and the ``outflow(state)``
 function that emits THREE derived classes from one fused state:
 
 * ``MonthlyRaceSchedule`` — current-month Cup races with resolved
@@ -18,6 +18,17 @@ function that emits THREE derived classes from one fused state:
 Each derived class gets its own export file via fjord's multi-output
 contract.  No daemon plumbing, no lock acquisition, no per-class
 fanout — fjord handles all of it.
+
+**Kyle Busch / owner-seat scoring.**  Kyle Busch (driver_id 454,
+RCR #8) died mid-season.  Per league rules, the roster spot stays
+but scoring pivots from the driver's Cup points to the RCR #133
+owner-entry points (``CupOwnerStanding`` feed, vehicle_number '133').
+``OWNER_SCORED = {454: '133'}`` is the O(1) lookup map; inside the
+per-pick scoring loop the map's presence routes that driver_id to
+``CupOwnerStanding.inc_dict['133']`` instead of
+``CupStanding.inc_dict[454]``.  All other picks are unaffected.
+The #133 entry was originally renumbered from #33 after the mid-season
+switch; the feed now reports it as vehicle_number '133'.
 """
 
 from collections import Counter, defaultdict
@@ -26,12 +37,11 @@ from typing import Any
 
 from incorporator import Incorporator, inc, link_to
 
-
 # ── Source classes ─────────────────────────────────────────────────
-# Each fjord source needs its own subclass so the three Standings
-# don't share ``inc_dict``.  LeagueRoster is the seventh source —
-# the only one fed by a local JSON file, demonstrating that fjord
-# mixes API + filesystem sources without any special casing.
+# Each fjord source needs its own subclass so the Standings classes
+# don't share ``inc_dict``.  LeagueRoster is the only one fed by a
+# local JSON file, demonstrating that fjord mixes API + filesystem
+# sources without any special casing.
 
 
 class Track(Incorporator):
@@ -62,6 +72,41 @@ class LeagueRoster(Incorporator):
     """League membership read from ``league_teams.json``.  Keyed by
     ``team_id``; each instance carries a ``roster`` list of
     ``{series_id, driver_id}`` picks."""
+
+
+class CupOwnerStanding(Incorporator):
+    """Owner-entry standings for the Cup series.
+
+    Keyed by ``vehicle_number`` (a string: '133', '3', '33', …) rather than
+    ``owner_id`` because owner_id 553 repeats across all three RCR entries
+    (#3, #133, #33).  The RCR #133 row (position 27, 237 pts) is the
+    owner-seat substitute for Kyle Busch (driver_id 454) after his
+    mid-season death.  The car was renumbered from #33 to #133 at the
+    same time.
+    """
+
+
+# ── Deceased-driver owner-seat routing ────────────────────────────
+# Map driver_id → vehicle_number (string) for picks that must score
+# from the owner standings instead of the driver standings.
+# Adding a new entry here is sufficient to route any future deceased /
+# released driver; no other code changes are required.
+OWNER_SCORED: dict[int, str] = {454: "133"}
+
+# conv_dict for CupOwnerStanding — passed into incorp_params in the runner.
+# All source-key names match output-key names, so inc() is correct throughout.
+# vehicle_number is bound as inc_code; owner_name as inc_name; both are
+# top-level incorp() kwargs, not conv_dict entries.
+_OWNER_CONV: dict[str, Any] = {
+    "points": inc(int, default=0),
+    "wins": inc(int, default=0),
+    "top_5": inc(int, default=0),
+    "top_10": inc(int, default=0),
+    "starts": inc(int, default=0),
+    "position": inc(int, default=0),
+    "dnf": inc(int, default=0),
+    "winnings": inc(float, default=0),
+}
 
 
 # ── Constants ──────────────────────────────────────────────────────
@@ -154,6 +199,11 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     if drivers is None or races is None or league is None:
         return {}
 
+    # CupOwnerStanding is an optional eighth source — if it fails to load
+    # the outflow degrades gracefully (owner-scored picks score 0 pts)
+    # rather than aborting the entire run.
+    owner_standings = state.get("CupOwnerStanding")
+
     points_standings = {
         1: state.get("CupStanding"),
         2: state.get("BuschStanding"),
@@ -238,7 +288,19 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 continue
             series_cls = points_standings.get(series_id)
             for car_idx, driver in enumerate(roster[series_id], start=1):
-                stnd = series_cls.inc_dict.get(driver.inc_code) if series_cls else None
+                did = int(driver.inc_code)
+                if did in OWNER_SCORED and series_id == 1:
+                    # Kyle Busch (driver_id 454) and any future deceased Cup
+                    # driver: score from the owner-entry standings instead of
+                    # the driver standings.  The roster spot stays; only the
+                    # points source changes.
+                    owner_vnum = OWNER_SCORED[did]  # '133' — must be string key
+                    stnd = owner_standings.inc_dict.get(owner_vnum) if owner_standings else None
+                    owner_seat: str | None = owner_vnum
+                else:
+                    stnd = series_cls.inc_dict.get(driver.inc_code) if series_cls else None
+                    owner_seat = None
+
                 pts = getattr(stnd, "points", 0) if stnd else 0
                 wins = getattr(stnd, "wins", 0) if stnd else 0
                 per_series[series_id] += pts
@@ -247,37 +309,42 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 # Manufacturer can live on either the driver record or
                 # the standings row.  Prefer the standings copy (it's
                 # season-current) and fall back to the driver record.
+                # Owner standings don't carry manufacturer; fall back to
+                # the driver record for owner-seated picks.
                 mfg = (
-                    (getattr(stnd, "manufacturer", "") if stnd else "")
+                    (getattr(stnd, "manufacturer", "") if stnd and owner_seat is None else "")
                     or getattr(driver, "Manufacturer", "")
                     or "Unknown"
                 )
                 mfg = mfg.strip() or "Unknown"
                 mfg_counter[mfg] += 1
 
-                team_obj["roster"].append(
-                    {
-                        "series": series_name,
-                        "car_idx": car_idx,
-                        "name": getattr(driver, "inc_name", "Unknown").strip(),
-                        "car": getattr(driver, "Badge", "N/A"),
-                        "team": (getattr(driver, "Team", "") or "Unknown").strip(),
-                        "manufacturer": mfg,
-                        "hometown": _hometown(driver),
-                        "rank": getattr(stnd, "position", None) if stnd else None,
-                        "wins": wins,
-                        "t10": getattr(stnd, "top_10", 0) if stnd else 0,
-                        "top_5": getattr(stnd, "top_5", 0) if stnd else 0,
-                        "laps_led": getattr(stnd, "laps_led", 0) if stnd else 0,
-                        "points": pts,
-                        # ``delta_leader`` is signed in the raw feed (negative
-                        # for drivers behind the leader, 0 for the leader).
-                        # Fantasy UX wants "points behind leader" as a
-                        # positive number — abs() makes the column intuitive
-                        # without altering the underlying truth.
-                        "points_back": abs(getattr(stnd, "delta_leader", 0) or 0) if stnd else None,
-                    }
-                )
+                driver_name = getattr(driver, "inc_name", "Unknown").strip()
+                row: dict[str, Any] = {
+                    "series": series_name,
+                    "car_idx": car_idx,
+                    "name": f"{driver_name} [owner seat: RCR #{owner_seat}]" if owner_seat else driver_name,
+                    "car": getattr(driver, "Badge", "N/A"),
+                    "team": (getattr(driver, "Team", "") or "Unknown").strip(),
+                    "manufacturer": mfg,
+                    "hometown": _hometown(driver),
+                    "rank": getattr(stnd, "position", None) if stnd else None,
+                    "wins": wins,
+                    "t10": getattr(stnd, "top_10", 0) if stnd else 0,
+                    "top_5": getattr(stnd, "top_5", 0) if stnd else 0,
+                    # laps_led is not tracked in owner standings; emit 0.
+                    "laps_led": getattr(stnd, "laps_led", 0) if stnd and owner_seat is None else 0,
+                    "points": pts,
+                    # ``delta_leader`` is signed in the raw feed (negative
+                    # for drivers behind the leader, 0 for the leader).
+                    # Fantasy UX wants "points behind leader" as a
+                    # positive number — abs() makes the column intuitive
+                    # without altering the underlying truth.
+                    "points_back": abs(getattr(stnd, "delta_leader", 0) or 0) if stnd else None,
+                }
+                if owner_seat is not None:
+                    row["owner_seat"] = owner_seat
+                team_obj["roster"].append(row)
             team_score += per_series[series_id]
 
         for series_id, series_name in enumerate(_SERIES_LIST, start=1):

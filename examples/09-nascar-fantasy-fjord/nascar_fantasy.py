@@ -1,6 +1,6 @@
 """NASCAR fantasy league as a multi-output fjord pipeline.
 
-Seven-source fjord pipeline showcasing advanced fjord capabilities via
+Eight-source fjord pipeline showcasing advanced fjord capabilities via
 the fjord engine.  Demonstrates three advanced fjord capabilities in
 one config:
 
@@ -46,7 +46,9 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from outflow import (  # noqa: E402
+    _OWNER_CONV,
     BuschStanding,
+    CupOwnerStanding,
     CupStanding,
     Driver,
     LeagueRoster,
@@ -59,6 +61,10 @@ CURRENT_YEAR = datetime.now().year
 CFC_BASE = "https://cf.nascar.com/cacher"
 PROD_BASE = f"https://cf.nascar.com/data/cacher/production/{CURRENT_YEAR}"
 STANDINGS_BASE = "racinginsights-points-feed.json"
+
+# Owner-standings exclusion list — drop the redundant name-component
+# fields; ``owner_name`` is already the ``inc_name`` and is sufficient.
+_OWNER_EXCL = ["owner_first_name", "owner_last_name", "owner_suffix"]
 
 # Standings exclusion list — drop only the genuinely-noisy fields.
 # Keep ``position``, ``top_5``, ``laps_led``, ``delta_leader``,
@@ -206,6 +212,23 @@ async def main() -> None:
                         "laps_led": inc(int, default=0),
                         "position": inc(int, default=0),
                     },
+                },
+                "refresh_params": None,
+            },
+            # ── Owner-entry standings — Cup series ──
+            # Keyed by vehicle_number (string: '133', '3', '33') rather
+            # than owner_id because owner_id 553 repeats across all three
+            # RCR entries.  Used by outflow.OWNER_SCORED to score roster
+            # spots where a deceased/released Cup driver's pick is routed
+            # to the team's owner-entry points instead.
+            {
+                "cls": CupOwnerStanding,
+                "incorp_params": {
+                    "inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/1/final/1-owners-points.json",
+                    "inc_code": "vehicle_number",
+                    "inc_name": "owner_name",
+                    "excl_lst": _OWNER_EXCL,
+                    "conv_dict": _OWNER_CONV,
                 },
                 "refresh_params": None,
             },

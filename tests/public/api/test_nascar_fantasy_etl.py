@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -11,6 +13,13 @@ import pytest
 from incorporator import Incorporator
 from incorporator.io import fetch
 from incorporator.schema.converters import inc
+
+# ── outflow import setup ────────────────────────────────────────────────────────
+# Allow importing outflow.py from the example directory by ensuring the
+# example dir is on sys.path before the import runs.
+_EXAMPLE_DIR = Path(__file__).resolve().parents[3] / "examples" / "09-nascar-fantasy-fjord"
+if str(_EXAMPLE_DIR) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLE_DIR))
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -199,3 +208,154 @@ async def test_nascar_react_export_pipeline(monkeypatch: pytest.MonkeyPatch, tmp
 
         print(f"{t_name:<25} | {t_score:<15} | {t_drivers}")
     print("=" * 80 + "\n")
+
+
+# ── OWNER_SCORED routing tests ──────────────────────────────────────────────────
+
+
+def test_owner_scored_constant() -> None:
+    """OWNER_SCORED maps Kyle Busch (driver_id 454) to RCR #133 (string key).
+
+    Proves: the constant exists, has the correct key/value types,
+    and the vehicle_number is a string (not an int) so that
+    CupOwnerStanding.inc_dict.get('133') uses the correct key.
+    """
+    from outflow import OWNER_SCORED
+
+    assert 454 in OWNER_SCORED, "Kyle Busch driver_id 454 must be in OWNER_SCORED"
+    vehicle_num = OWNER_SCORED[454]
+    assert isinstance(vehicle_num, str), "vehicle_number must be a string, not int"
+    assert vehicle_num == "133", "RCR owner entry after renumber is #133"
+
+
+@pytest.mark.asyncio
+async def test_outflow_owner_seat_routing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """outflow(state) routes Kyle Busch (driver_id 454) to CupOwnerStanding.
+
+    Proves: for teams holding driver_id 454 as a Cup pick, the outflow reads
+    points from CupOwnerStanding.inc_dict['133'] (237 pts) rather than
+    CupStanding.inc_dict[454] (which would be missing / 0), and the
+    roster row carries the '[owner seat: RCR #133]' label plus owner_seat field.
+    The team total includes the 237 owner pts.  All other picks are unaffected.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    import outflow as of_mod
+
+    # Build minimal mock IncorporatorList objects using MagicMock.
+    # Each mock exposes .inc_dict and is iterable (for the ManufacturerLeaderboard loop).
+
+    def _mock_list(inc_dict: dict) -> MagicMock:
+        m = MagicMock()
+        m.inc_dict = inc_dict
+        m.__iter__ = lambda self: iter([])  # ManufacturerLeaderboard iterates cup
+        return m
+
+    # Driver registry: Kyle Busch (454) and one normal Cup driver (3989 = Kyle Larson)
+    kyle_busch = MagicMock()
+    kyle_busch.inc_code = 454  # driver inc_code
+    kyle_busch.inc_name = "Kyle Busch"
+    kyle_busch.Badge = "8"
+    kyle_busch.Team = "Richard Childress Racing"
+    kyle_busch.Manufacturer = "Chevrolet"
+    kyle_busch.Hometown_City = "Las Vegas"
+    kyle_busch.Hometown_State = "NV"
+
+    larson = MagicMock()
+    larson.inc_code = 3989
+    larson.inc_name = "Kyle Larson"
+    larson.Badge = "5"
+    larson.Team = "Hendrick Motorsports"
+    larson.Manufacturer = "Chevrolet"
+    larson.Hometown_City = "Elk Grove"
+    larson.Hometown_State = "CA"
+
+    driver_reg = _mock_list({454: kyle_busch, 3989: larson})
+
+    # CupStanding: only Larson has Cup points (Busch has no entry — he's dead)
+    larson_cup = MagicMock()
+    larson_cup.points = 500
+    larson_cup.wins = 2
+    larson_cup.top_5 = 5
+    larson_cup.top_10 = 10
+    larson_cup.laps_led = 200
+    larson_cup.position = 3
+    larson_cup.delta_leader = -100
+    larson_cup.manufacturer = "Chevrolet"
+
+    cup_reg = _mock_list({3989: larson_cup})
+
+    # CupOwnerStanding: RCR #133 row (vehicle_number = '133')
+    rcr_133 = MagicMock()
+    rcr_133.points = 237
+    rcr_133.wins = 0
+    rcr_133.top_5 = 0
+    rcr_133.top_10 = 0
+    rcr_133.laps_led = 0  # owner feed doesn't carry laps_led
+    rcr_133.position = 27
+    rcr_133.delta_leader = -420
+
+    owner_reg = _mock_list({"133": rcr_133})
+
+    # LeagueRoster: one team holding both Larson and Kyle Busch as Cup picks
+    pick_larson = MagicMock()
+    pick_larson.series_id = 1
+    pick_larson.driver_id = 3989
+
+    pick_busch = MagicMock()
+    pick_busch.series_id = 1
+    pick_busch.driver_id = 454
+
+    team = MagicMock()
+    team.team_id = "AlabamaG"
+    team.roster = [pick_larson, pick_busch]
+
+    league_reg = _mock_list({})
+    league_reg.__iter__ = lambda self: iter([team])
+
+    # Race + BuschStanding + TruckStanding: minimal empty mocks (not under test here)
+    empty_reg = _mock_list({})
+    race_reg = _mock_list({})
+    race_reg.__iter__ = lambda self: iter([])  # no races this month
+
+    state = {
+        "Driver": driver_reg,
+        "Race": race_reg,
+        "LeagueRoster": league_reg,
+        "CupStanding": cup_reg,
+        "BuschStanding": empty_reg,
+        "TruckStanding": empty_reg,
+        "CupOwnerStanding": owner_reg,
+    }
+
+    result = of_mod.outflow(state)
+
+    assert "FantasyTeam" in result
+    teams = result["FantasyTeam"]
+    assert len(teams) == 1
+
+    team_row = teams[0]
+    assert team_row["team_id"] == "AlabamaG"
+
+    roster = team_row["roster"]
+    # Both Cup picks should appear
+    assert len(roster) == 2
+
+    # Find Kyle Busch's row
+    busch_row = next((r for r in roster if "Kyle Busch" in r["name"]), None)
+    assert busch_row is not None, "Kyle Busch roster row must be present"
+    assert "owner seat: RCR #133" in busch_row["name"], "name must carry owner-seat label"
+    assert busch_row.get("owner_seat") == "133", "owner_seat field must be '133' (string)"
+    assert busch_row["points"] == 237, "owner-seat points must come from CupOwnerStanding (237)"
+    assert busch_row["rank"] == 27, "rank must come from owner standings (position 27)"
+    assert busch_row["laps_led"] == 0, "laps_led must be 0 for owner-seated picks"
+
+    # Find Larson's row
+    larson_row = next((r for r in roster if "Kyle Larson" in r["name"]), None)
+    assert larson_row is not None, "Larson roster row must be present"
+    assert "owner seat" not in larson_row["name"], "normal picks must not carry owner-seat label"
+    assert larson_row.get("owner_seat") is None or "owner_seat" not in larson_row
+    assert larson_row["points"] == 500, "Larson points must come from CupStanding (500)"
+
+    # Team total must include both contributions
+    assert team_row["total_score"] == 237 + 500, "team total must include owner-seat pts + Larson pts"
