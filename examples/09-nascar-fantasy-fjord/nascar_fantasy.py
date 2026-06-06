@@ -46,7 +46,6 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from outflow import (  # noqa: E402
-    _OWNER_CONV,
     BuschStanding,
     CupOwnerStanding,
     CupStanding,
@@ -228,7 +227,16 @@ async def main() -> None:
                     "inc_code": "vehicle_number",
                     "inc_name": "owner_name",
                     "excl_lst": _OWNER_EXCL,
-                    "conv_dict": _OWNER_CONV,
+                    "conv_dict": {
+                        "points": inc(int, default=0),
+                        "wins": inc(int, default=0),
+                        "top_5": inc(int, default=0),
+                        "top_10": inc(int, default=0),
+                        "starts": inc(int, default=0),
+                        "position": inc(int, default=0),
+                        "dnf": inc(int, default=0),
+                        "winnings": inc(float, default=0),
+                    },
                 },
                 "refresh_params": None,
             },

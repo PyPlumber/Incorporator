@@ -91,22 +91,8 @@ class CupOwnerStanding(Incorporator):
 # from the owner standings instead of the driver standings.
 # Adding a new entry here is sufficient to route any future deceased /
 # released driver; no other code changes are required.
+# Scoring policy only — conv_dict lives inline in the runner (nascar_fantasy.py).
 OWNER_SCORED: dict[int, str] = {454: "133"}
-
-# conv_dict for CupOwnerStanding — passed into incorp_params in the runner.
-# All source-key names match output-key names, so inc() is correct throughout.
-# vehicle_number is bound as inc_code; owner_name as inc_name; both are
-# top-level incorp() kwargs, not conv_dict entries.
-_OWNER_CONV: dict[str, Any] = {
-    "points": inc(int, default=0),
-    "wins": inc(int, default=0),
-    "top_5": inc(int, default=0),
-    "top_10": inc(int, default=0),
-    "starts": inc(int, default=0),
-    "position": inc(int, default=0),
-    "dnf": inc(int, default=0),
-    "winnings": inc(float, default=0),
-}
 
 
 # ── Constants ──────────────────────────────────────────────────────
