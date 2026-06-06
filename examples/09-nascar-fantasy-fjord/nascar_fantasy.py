@@ -34,7 +34,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from incorporator import Incorporator, inc
+from incorporator import Incorporator, calc, inc
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "out"  # examples/09-nascar-fantasy-fjord/out/
@@ -54,6 +54,7 @@ from outflow import (  # noqa: E402
     Race,
     Track,
     TruckStanding,
+    _mfg_from_logo_url,
 )
 
 CURRENT_YEAR = datetime.now().year
@@ -138,6 +139,15 @@ async def main() -> None:
                     "inc_code": "Nascar_Driver_ID",
                     "inc_name": "Full_Name",
                     "excl_lst": _DRIVER_EXCL,
+                    "conv_dict": {
+                        # drivers.json carries Manufacturer as a logo-image URL
+                        # (e.g. 'https://.../Chevrolet_2025-330x140.png').  Parse
+                        # the make name from the URL basename so that owner-seat
+                        # fallback in outflow.py yields a clean text string.
+                        # Empty Manufacturer fields are handled by is_garbage_value
+                        # before the callable runs and land as default='Unknown'.
+                        "Manufacturer": calc(_mfg_from_logo_url, "Manufacturer", default="Unknown", target_type=str),
+                    },
                 },
                 "refresh_params": None,
             },

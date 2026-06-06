@@ -147,6 +147,23 @@ def inflow(state: dict[str, Any]) -> dict[str, Any]:
 # ── Helpers ────────────────────────────────────────────────────────
 
 
+def _mfg_from_logo_url(url: str) -> str:
+    """Parse a NASCAR manufacturer logo URL into the make name.
+
+    'https://www.nascar.com/.../Chevrolet_2025-330x140.png' -> 'Chevrolet'
+    'https://www.nascar.com/.../Ford-Logo-1-320x180.png'   -> 'Ford'
+    'https://www.nascar.com/.../Toyota-180x180.png'         -> 'Toyota'
+    'https://www.nascar.com/.../Ram-330x115.png'            -> 'Ram'
+
+    Splits the basename on underscores and hyphens; first token is the make.
+    is_garbage_value pre-handles empty / None inputs — no defensive guard needed.
+    """
+    basename = url.rsplit("/", 1)[-1]  # 'Chevrolet_2025-330x140.png'
+    stem = basename.split(".")[0]  # 'Chevrolet_2025-330x140'
+    token = stem.replace("-", "_").split("_")[0]  # 'Chevrolet'
+    return token
+
+
 def _hometown(driver: Any) -> str:
     """Compose ``City, ST`` from the driver's hometown fields, or
     ``Unknown`` if either piece is missing.
