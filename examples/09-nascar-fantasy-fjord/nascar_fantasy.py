@@ -7,7 +7,7 @@ one config:
 1. **State-aware inflow** — ``Race.track_id`` and
    ``Race.pole_winner_driver_id`` resolve to live ``Track`` and
    ``Driver`` instances via ``inflow(state)`` in
-   ``outflow.py`` (sibling sidecar).  Track + Driver +
+   ``inflow.py`` (sibling sidecar).  Track + Driver +
    three standings classes seed in parallel; Race waits for its
    peers and gets state-wired conv_dict on every refresh wave.
 
@@ -45,6 +45,7 @@ DATA = HERE / "out"  # examples/09-nascar-fantasy-fjord/out/
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+from inflow import _mfg_from_logo_url  # noqa: E402
 from outflow import (  # noqa: E402
     BuschStanding,
     CupOwnerStanding,
@@ -54,7 +55,6 @@ from outflow import (  # noqa: E402
     Race,
     Track,
     TruckStanding,
-    _mfg_from_logo_url,
 )
 
 CURRENT_YEAR = datetime.now().year
@@ -265,8 +265,8 @@ async def main() -> None:
                 "refresh_params": None,
             },
         ],
-        # The state-aware inflow + outflow sidecar.
-        inflow=str(HERE / "outflow.py"),
+        # The state-aware inflow sidecar (inflow.py) and output sidecar (outflow.py).
+        inflow=str(HERE / "inflow.py"),
         outflow=str(HERE / "outflow.py"),
         # Per-class export_params — one entry per dict-key returned
         # by outflow(state).  Detection: nested dict shape = multi-output.

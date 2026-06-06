@@ -1,10 +1,9 @@
 """Outflow sidecar for the NASCAR fantasy-league fjord pipeline.
 
 Defines EIGHT source classes (Track, Driver, Race, three Standings,
-CupOwnerStanding, plus LeagueRoster from a local JSON file), the
-``inflow(state)`` callable that wires Race's foreign-key fields against
-the already-loaded Track + Driver registries, and the ``outflow(state)``
-function that emits THREE derived classes from one fused state:
+CupOwnerStanding, plus LeagueRoster from a local JSON file) and the
+``outflow(state)`` function that emits THREE derived classes from one
+fused state:
 
 * ``MonthlyRaceSchedule`` — current-month Cup races with resolved
   track, pole-winner, race-winner, and watchability metadata.
@@ -18,6 +17,10 @@ function that emits THREE derived classes from one fused state:
 Each derived class gets its own export file via fjord's multi-output
 contract.  No daemon plumbing, no lock acquisition, no per-class
 fanout — fjord handles all of it.
+
+Incoming-data manipulation (``_DATE_FIELDS``, ``_driver_id_or_none``,
+``_mfg_from_logo_url``, and the ``inflow(state)`` seed hook) lives in
+the sibling ``inflow.py``.
 
 **Kyle Busch / owner-seat scoring.**  Kyle Busch (driver_id 454,
 RCR #8) died mid-season.  Per league rules, the roster spot stays
@@ -35,7 +38,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Any
 
-from incorporator import Incorporator, inc, link_to
+from incorporator import Incorporator
 
 # ── Source classes ─────────────────────────────────────────────────
 # Each fjord source needs its own subclass so the Standings classes
@@ -97,71 +100,10 @@ OWNER_SCORED: dict[int, str] = {454: "133"}
 
 # ── Constants ──────────────────────────────────────────────────────
 
-_DATE_FIELDS = ("date_scheduled", "race_date", "qualifying_date", "tunein_date")
-
 _SERIES_LIST = ("Cup", "Busch", "Truck")
 
 
-# ── Sentinel filter for link_to ────────────────────────────────────
-
-
-def _driver_id_or_none(raw: Any) -> Any:
-    """NASCAR returns ``0`` for any driver-ID field whose underlying
-    event hasn't happened yet (qualifying not held, race not run,
-    rain-out).  Driver ID 0 coincidentally resolves to a real driver
-    in the registry, so without this filter every future race's
-    pole/winner column would show the same incidental name.  Mapping
-    falsy values (``0``, ``None``, ``""``) to ``None`` lets ``link_to``
-    short-circuit and downstream consumers see ``None``.
-    """
-    return raw if raw else None
-
-
-# ── State-aware inflow — wires Race.conv_dict against live peers ────
-
-
-def inflow(state: dict[str, Any]) -> dict[str, Any]:
-    """Build per-source ``conv_dict`` overrides from sibling registries.
-
-    Inflow is called before each source's ``incorp()``.  On the early
-    calls (Track / Driver / Standings / LeagueRoster) ``state`` is
-    empty or partial, so we only emit Race's override once its peers
-    exist — fjord then re-applies it on every refresh wave so Race's
-    ``track_id``, ``pole_winner_driver_id``, and ``winner_driver_id``
-    resolve to live ``Track`` / ``Driver`` instances rather than raw
-    integers.
-    """
-    overrides: dict[str, Any] = {}
-    if "Track" in state and "Driver" in state:
-        overrides["Race"] = {
-            "conv_dict": {
-                "track_id": link_to(state["Track"]),
-                "pole_winner_driver_id": link_to(state["Driver"], extractor=_driver_id_or_none),
-                "winner_driver_id": link_to(state["Driver"], extractor=_driver_id_or_none),
-                **{key: inc(datetime) for key in _DATE_FIELDS},
-            }
-        }
-    return overrides
-
-
 # ── Helpers ────────────────────────────────────────────────────────
-
-
-def _mfg_from_logo_url(url: str) -> str:
-    """Parse a NASCAR manufacturer logo URL into the make name.
-
-    'https://www.nascar.com/.../Chevrolet_2025-330x140.png' -> 'Chevrolet'
-    'https://www.nascar.com/.../Ford-Logo-1-320x180.png'   -> 'Ford'
-    'https://www.nascar.com/.../Toyota-180x180.png'         -> 'Toyota'
-    'https://www.nascar.com/.../Ram-330x115.png'            -> 'Ram'
-
-    Splits the basename on underscores and hyphens; first token is the make.
-    is_garbage_value pre-handles empty / None inputs — no defensive guard needed.
-    """
-    basename = url.rsplit("/", 1)[-1]  # 'Chevrolet_2025-330x140.png'
-    stem = basename.split(".")[0]  # 'Chevrolet_2025-330x140'
-    token = stem.replace("-", "_").split("_")[0]  # 'Chevrolet'
-    return token
 
 
 def _hometown(driver: Any) -> str:
