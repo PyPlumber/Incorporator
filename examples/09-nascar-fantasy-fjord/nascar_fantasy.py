@@ -114,7 +114,7 @@ _DRIVER_EXCL = [
 
 
 async def main() -> None:
-    print("🏁 Initiating NASCAR Data Gateway (fjord)...\n")
+    print("Initiating NASCAR Data Gateway (fjord)...\n")
     DATA.mkdir(exist_ok=True)
 
     async for wave in Incorporator.fjord(
@@ -294,14 +294,14 @@ async def main() -> None:
     ):
         op = wave.operation
         if wave.failed_sources:
-            print(f"⚠️  {op:35s} chunk {wave.chunk_index}: {wave.failed_sources}")
+            print(f"WARN  {op:35s} chunk {wave.chunk_index}: {wave.failed_sources}")
         else:
-            print(f"✅ {op:35s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
+            print(f"OK    {op:35s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
 
-    print("\n✅ Pipeline complete.")
-    print(f"   • {DATA / 'nascar_monthly_schedule.ndjson'}")
-    print(f"   • {DATA / 'nascar_fantasy_scoreboard.ndjson'}")
-    print(f"   • {DATA / 'nascar_manufacturer_leaderboard.ndjson'}")
+    print("\nPipeline complete.")
+    print(f"   - {DATA / 'nascar_monthly_schedule.ndjson'}")
+    print(f"   - {DATA / 'nascar_fantasy_scoreboard.ndjson'}")
+    print(f"   - {DATA / 'nascar_manufacturer_leaderboard.ndjson'}")
 
 
 if __name__ == "__main__":
