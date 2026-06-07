@@ -1,6 +1,7 @@
 """Integration tests for Concurrent Orchestration, React JSON Pipeline, and Null-Safe Math."""
 
 import asyncio
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -14,12 +15,15 @@ from incorporator import Incorporator
 from incorporator.io import fetch
 from incorporator.schema.converters import inc
 
-# ── outflow import setup ────────────────────────────────────────────────────────
-# Allow importing outflow.py from the example directory by ensuring the
-# example dir is on sys.path before the import runs.
+# ── outflow sidecar loader ──────────────────────────────────────────────────────
+# Loaded via importlib with a unique sys.modules key so concurrent pytest sessions
+# that also load other examples/*/outflow.py files never receive the wrong module.
 _EXAMPLE_DIR = Path(__file__).resolve().parents[3] / "examples" / "09-nascar-fantasy-fjord"
-if str(_EXAMPLE_DIR) not in sys.path:
-    sys.path.insert(0, str(_EXAMPLE_DIR))
+_OUTFLOW_CACHE_KEY = "nascar_fantasy_outflow"
+_outflow_spec = importlib.util.spec_from_file_location(_OUTFLOW_CACHE_KEY, _EXAMPLE_DIR / "outflow.py")
+_nascar_outflow = importlib.util.module_from_spec(_outflow_spec)
+sys.modules[_OUTFLOW_CACHE_KEY] = _nascar_outflow
+_outflow_spec.loader.exec_module(_nascar_outflow)
 
 
 # --- EXPLICIT SUBCLASSING ---
@@ -220,7 +224,7 @@ def test_owner_scored_constant() -> None:
     and the vehicle_number is a string (not an int) so that
     CupOwnerStanding.inc_dict.get('133') uses the correct key.
     """
-    from outflow import OWNER_SCORED
+    OWNER_SCORED = _nascar_outflow.OWNER_SCORED
 
     assert 454 in OWNER_SCORED, "Kyle Busch driver_id 454 must be in OWNER_SCORED"
     vehicle_num = OWNER_SCORED[454]
@@ -240,7 +244,7 @@ async def test_outflow_owner_seat_routing(monkeypatch: pytest.MonkeyPatch, tmp_p
     """
     monkeypatch.chdir(tmp_path)
 
-    import outflow as of_mod
+    of_mod = _nascar_outflow
 
     # Build minimal mock IncorporatorList objects using MagicMock.
     # Each mock exposes .inc_dict and is iterable (for the ManufacturerLeaderboard loop).
