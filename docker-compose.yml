@@ -28,13 +28,14 @@ services:
       # exfiltrate host files at startup.  See docs/deployment.md.
       INCORPORATOR_SECRETS_ROOT: /run/secrets
       # Honoured by `incorporator tideweaver run` to override the
-      # watershed.json drain_timeout — set this to match stop_grace_period
-      # below so SIGTERM drains complete before SIGKILL truncates them.
+      # watershed.json drain_timeout — keep this BELOW stop_grace_period
+      # below (which is this + 5s) so SIGTERM drains complete before SIGKILL.
       INCORPORATOR_DRAIN_TIMEOUT: "45"
-    # Match this to INCORPORATOR_DRAIN_TIMEOUT (or a few seconds longer).
-    # Default docker stop is 10s, which would truncate the default 30s
-    # drain.  45s gives the scheduler enough room to finish in-flight ticks.
-    stop_grace_period: 45s
+    # Must EXCEED INCORPORATOR_DRAIN_TIMEOUT (rule: drain + 5s) so SIGTERM
+    # drains finish before SIGKILL truncates the final flush. Default docker
+    # stop is 10s, which would truncate the default 30s drain.  50s = the 45s
+    # drain budget above + 5s of shutdown headroom.
+    stop_grace_period: 50s
     volumes:
       - ./config:/app/config:ro    # pipeline.json + outflow.py (read-only)
       - ./data:/app/data           # exported outputs
