@@ -10,6 +10,8 @@ from typing import Any
 from incorporator._deps import Category, DepInfo, install_hint, list_deps
 from incorporator._deps.typer import TYPER
 
+from .runners import _apply_glyph_fallbacks, _needs_fallback
+
 # Module-level alias (typer may be None if not installed)
 _typer = TYPER
 
@@ -32,6 +34,11 @@ def _get_version(name: str) -> str | None:
 def _status_text(dep: DepInfo, version: str | None) -> tuple[str, str]:
     """Return (display_text, color) for the dep's status column.
 
+    The returned display_text already has Unicode glyphs replaced with ASCII
+    stand-ins when stdout cannot encode them.  This must happen here — before
+    the caller uses ``len(display_text)`` for column-width math — not at the
+    ``secho`` call site.
+
     Args:
         dep: The dependency record to evaluate.
         version: Installed version string, or ``None``.
@@ -42,8 +49,14 @@ def _status_text(dep: DepInfo, version: str | None) -> tuple[str, str]:
     if not dep.is_available:
         if dep.platform_marker is not None:
             return ("n/a (platform)", _typer.colors.YELLOW)
-        return ("✗ not installed", _typer.colors.RED)
-    return (f"✓ {version or 'available'}", _typer.colors.GREEN)
+        text = "✗ not installed"
+        color = _typer.colors.RED
+    else:
+        text = f"✓ {version or 'available'}"
+        color = _typer.colors.GREEN
+    if _needs_fallback(err=False):
+        text = _apply_glyph_fallbacks(text)
+    return (text, color)
 
 
 def _apply_filters(deps: list[DepInfo], *, missing: bool, category: str | None) -> list[DepInfo]:

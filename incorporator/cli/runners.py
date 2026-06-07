@@ -47,8 +47,7 @@ def _err(msg: str, fg: Any = None) -> None:
     stdout stays parseable); otherwise prints to stdout — back-compat
     default for human terminal users and existing test assertions.
     """
-    if _typer:
-        _typer.secho(msg, fg=fg, err=_JSON_OUTPUT_MODE)
+    _safe_secho(msg, fg=fg, err=_JSON_OUTPUT_MODE)
 
 
 def _red() -> Any:
@@ -61,6 +60,100 @@ def _yellow() -> Any:
 
 def _green() -> Any:
     return _typer.colors.GREEN if _typer else None
+
+
+# Glyph→ASCII substitution applied when stdout/stderr cannot encode Unicode.
+# The map covers every emoji / special character used in CLI output.
+_GLYPH_FALLBACKS: dict[str, str] = {
+    "✅": "[OK]",
+    "🛑": "[STOP]",
+    "❌": "[X]",
+    "🚀": "[*]",
+    "🌊": "[*]",
+    "✗": "[X]",
+    "✓": "[OK]",
+}
+
+
+def _apply_glyph_fallbacks(msg: str) -> str:
+    """Replace Unicode glyphs with ASCII stand-ins (pure string transform, no I/O).
+
+    Args:
+        msg: The message string potentially containing emoji or special glyphs.
+
+    Returns:
+        The message with all ``_GLYPH_FALLBACKS`` entries substituted.
+    """
+    for glyph, fallback in _GLYPH_FALLBACKS.items():
+        msg = msg.replace(glyph, fallback)
+    return msg
+
+
+def _needs_fallback(*, err: bool) -> bool:
+    """Return ``True`` when the target stream cannot encode Unicode.
+
+    Checks ``sys.stderr.encoding`` when *err* is ``True``, otherwise
+    ``sys.stdout.encoding``.  ``None`` encoding (redirected pipes) is treated
+    as non-UTF-8 so the safe ASCII path fires.
+
+    Args:
+        err: When ``True``, inspect ``sys.stderr``; otherwise ``sys.stdout``.
+
+    Returns:
+        ``True`` if the target encoding is not UTF-8 (case-insensitive) or is
+        ``None``; ``False`` when the stream can safely render Unicode.
+    """
+    stream = sys.stderr if err else sys.stdout
+    enc: str | None = getattr(stream, "encoding", None)
+    if enc is None:
+        return True
+    return enc.lower() != "utf-8"
+
+
+def _safe_secho(msg: str, *, fg: Any = None, nl: bool = True, err: bool = False) -> None:
+    """Encoding-safe wrapper around ``typer.secho`` with ASCII fallback.
+
+    Substitutes known emoji / special glyphs with ASCII stand-ins before
+    printing whenever the target stream's encoding is not UTF-8 (e.g. Windows
+    cp1252 default console).  On UTF-8 streams the original string is emitted
+    unchanged so the emoji path is exercised on Unix/Mac.
+
+    Follows the same ``encode("ascii", errors="replace").decode("ascii")``
+    fallback idiom as the ``analyze_error`` inner ``p()`` helper.
+
+    Args:
+        msg: The message to display.
+        fg: Foreground colour constant (e.g. ``typer.colors.GREEN``).  Passed
+            through to ``typer.secho`` unchanged.
+        nl: When ``True`` (default), append a newline after the message.
+        err: When ``True``, write to ``stderr`` instead of ``stdout``.
+    """
+    if _typer is None:
+        return
+    if _needs_fallback(err=err):
+        msg = _apply_glyph_fallbacks(msg)
+    try:
+        _typer.secho(msg, fg=fg, nl=nl, err=err)
+    except UnicodeEncodeError:
+        _typer.secho(msg.encode("ascii", errors="replace").decode("ascii"), fg=fg, nl=nl, err=err)
+
+
+def _safe_print(msg: str) -> None:
+    """Encoding-safe ``print()`` fallback for use when ``_typer`` is ``None``.
+
+    Used only at the ``main()`` entry point reached precisely when Typer is not
+    installed — ``_safe_secho`` cannot be called there because it requires
+    ``_typer`` to be non-None.
+
+    Args:
+        msg: The message to print to stdout.
+    """
+    if _needs_fallback(err=False):
+        msg = _apply_glyph_fallbacks(msg)
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        print(msg.encode("ascii", errors="replace").decode("ascii"))
 
 
 # ---------------------------------------------------------------------------

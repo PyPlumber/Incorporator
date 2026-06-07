@@ -30,6 +30,8 @@ from .runners import (
     _run_fjord,
     _run_stream,
     _run_validation,
+    _safe_print,
+    _safe_secho,
     set_json_output_mode,
 )
 from .scaffold import write_scaffold
@@ -53,6 +55,8 @@ __all__ = [
     "_run_fjord",
     "_run_stream",
     "_run_validation",
+    "_safe_print",
+    "_safe_secho",
 ]
 
 if typer:
@@ -206,7 +210,7 @@ if typer:
         """
         pipeline_config = _load_pipeline_config(config)
         detected = _run_validation(pipeline_config, config.parent.resolve(), type_override=type_)
-        typer.secho(f"✅ {config} is valid ({detected}).", fg=typer.colors.GREEN)
+        _safe_secho(f"✅ {config} is valid ({detected}).", fg=typer.colors.GREEN)
 
     @app.command()  # type: ignore[untyped-decorator]
     def init(
@@ -248,9 +252,9 @@ if typer:
             typer.secho(f"Error: {e}", fg=typer.colors.RED)
             sys.exit(1)
 
-        typer.secho(f"✅ Wrote {len(written)} starter file(s):", fg=typer.colors.GREEN)
+        _safe_secho(f"✅ Wrote {len(written)} starter file(s):", fg=typer.colors.GREEN)
         for path in written:
-            typer.secho(f"  - {path}", fg=typer.colors.CYAN)
+            _safe_secho(f"  - {path}", fg=typer.colors.CYAN)
         # Config filename varies by scaffold type — pipeline.json for stream/fjord,
         # watershed.json for tideweaver.  The run verb differs too.
         config_path = next(
@@ -261,7 +265,7 @@ if typer:
             run_cmd = f"incorporator tideweaver run {config_path}"
         else:
             run_cmd = f"incorporator {type_} {config_path}"
-        typer.secho(
+        _safe_secho(
             "\nNext steps:\n"
             "  1. Edit the file(s) above and replace the placeholders.\n"
             f"  2. incorporator validate {config_path}\n"
@@ -288,7 +292,7 @@ if typer:
 def main() -> None:
     """Entry point for the setup.py / pyproject.toml console script."""
     if app is None:
-        print("❌ Typer is not installed. To use the CLI, run: pip install incorporator[orchestrate]")
+        _safe_print("❌ Typer is not installed. To use the CLI, run: pip install incorporator[orchestrate]")
         sys.exit(1)
     app()
 
