@@ -230,11 +230,40 @@ async def flush(
             # Prefer a user-pre-declared subclass with the matching name.
             user_cls = getattr(outflow_module, derived_name, None) if outflow_module is not None else None
             if user_cls is not None and isinstance(user_cls, type) and issubclass(user_cls, base_class):
-                derived_cls = cast(Any, user_cls)
-                # Defensive: warn once if the user's class is "bare" (no fields
-                # beyond Incorporator's base three) — Pydantic's default
-                # extra='ignore' would silently drop every row field.
-                _warn_on_bare_user_class(derived_cls, base_class, rows[0] if rows else None)
+                extra_fields = set(user_cls.model_fields) - set(base_class.model_fields)
+                allows_extra = user_cls.model_config.get("extra") == "allow"
+                if extra_fields or allows_extra:
+                    # User declared fields explicitly or opted into extra='allow' —
+                    # use their class directly; warn only if bare-class conditions
+                    # are somehow still triggered (safe: _warn_on_bare_user_class
+                    # returns early when extra_fields is non-empty or extra='allow').
+                    derived_cls = cast(Any, user_cls)
+                    _warn_on_bare_user_class(derived_cls, base_class, rows[0] if rows else None)
+                else:
+                    # Class is bare (no declared fields beyond base, no extra='allow').
+                    # Check whether the first row carries keys the bare class would drop.
+                    sample = rows[0] if rows else {}
+                    # Normalize to a plain key set: outflow() returns dicts, but a
+                    # model-instance row (rare) is iterable as (field, value) pairs —
+                    # iterating it directly would mis-key the drop check, so resolve
+                    # keys explicitly for both shapes.
+                    if isinstance(sample, dict):
+                        sample_dict = sample
+                    elif hasattr(sample, "model_dump"):
+                        sample_dict = sample.model_dump()
+                    else:
+                        sample_dict = {}
+                    undeclared = [k for k in sample_dict if k not in user_cls.model_fields]
+                    if undeclared:
+                        # Row carries fields the bare class would silently drop.
+                        # Warn once so the user knows their class was bypassed, then
+                        # fall through to inference so every row field is preserved.
+                        _warn_on_bare_user_class(user_cls, base_class, sample_dict)
+                        derived_cls = cast(Any, infer_dynamic_schema(derived_name, rows, base_class))
+                    else:
+                        # Row only contains declared fields — bare class is safe to use.
+                        derived_cls = cast(Any, user_cls)
+                        _warn_on_bare_user_class(derived_cls, base_class, sample_dict or None)
             else:
                 derived_cls = cast(Any, infer_dynamic_schema(derived_name, rows, base_class))
 

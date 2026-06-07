@@ -201,7 +201,7 @@ class Fjord(Current):
             head=binance_stream,
             middle=[coinbase_stream, kraken_stream],
             tail=tail,
-            outflow="arb_outflow.py",
+            outflow="outflow.py",
         )
 
     On every tick the current snapshots the upstream classes'

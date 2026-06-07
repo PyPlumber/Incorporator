@@ -546,12 +546,13 @@ def analyze_error(e: Exception) -> None:
     """Centralized DX Error Inspector providing actionable fixes for modern formats."""
 
     def p(text: str) -> None:
-        """print() that survives consoles that can't encode the inspector's emojis.
+        """print() that survives consoles that can't encode arbitrary non-ASCII.
 
-        Windows cp1252 console (the default for many users) can't encode
-        🚨 / 💡 / 👉.  Without this fallback, the inspector itself crashes on
-        ``UnicodeEncodeError`` and the actionable hint never reaches the user.
-        ASCII-replace and re-emit so the diagnosis still lands.
+        Exception messages from API responses, OS errors, and user-supplied
+        paths may contain characters outside Windows cp1252's repertoire.
+        Without this fallback, the inspector crashes on ``UnicodeEncodeError``
+        before the actionable hint reaches the user.  ASCII-replace and
+        re-emit so the diagnosis still lands on any console.
         """
         try:
             print(text)
