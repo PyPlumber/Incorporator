@@ -112,11 +112,10 @@ async def _run_tideweaver(
                 except OSError as exc:
                     logger.warning("Could not update heartbeat file %s: %s", resolved_hb, exc)
 
-    # G2: if any source failed to load and produced zero rows (as opposed to
-    # legitimately returning empty data), report a summary and exit non-zero.
-    # The SourceLoadFailure reject is appended by scheduler._tick_stream when
-    # accumulated is empty AND the stream emitted at least one wave with
-    # failed_sources.  A clean empty run produces no such entries → exit 0.
+    # When a current produced zero rows because a source failed to load, report a
+    # summary and exit non-zero so callers (CI, schedulers) can detect it. A run
+    # that legitimately returned empty data records no SourceLoadFailure reject and
+    # exits 0.
     source_failures = [r for r in tw.rejects if r.error_kind == "SourceLoadFailure"]
     if source_failures:
         sources = ", ".join(r.source for r in source_failures)

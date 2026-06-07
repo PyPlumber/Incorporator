@@ -979,17 +979,13 @@ class Tideweaver:
         accumulated: dict[Any, Any] = {}
         async for _wave in current.cls.stream(**kwargs):
             accumulated.update(current.cls.inc_dict)
-        # G2: when a configured inc_file doesn't exist on disk, incorp() handles
-        # the error internally (logs FETCH ERROR, returns empty IncorporatorList
-        # with rejects) without raising — so the stream produces zero rows but
-        # no exception.  Detect this by checking the inc_file path directly:
-        # if it was configured AND the file is absent AND zero rows were produced,
-        # it's a source load failure, not legitimately empty data.
-        # NOTE: this reject is appended from inside a fire-and-forget tick Task, so
-        # it may be counted in a LATER Tide's `canal_rejects_added` than the pass
-        # that triggered it.  Harmless for the post-run CLI summary (which reads the
-        # cumulative `tw.rejects`), but per-Tide `canal_rejects_added` metrics in
-        # observer tooling can lag the triggering pass by a tick.
+        # A stream that produces zero rows while its configured inc_file is absent
+        # is a source-load failure, not legitimately empty data: record a
+        # SourceLoadFailure reject so the run can surface it (incorp() logs the
+        # fetch error and returns an empty registry rather than raising).
+        # The reject is appended from a tick Task, so it can land in a later Tide's
+        # `canal_rejects_added` than the pass that produced it; the cumulative
+        # `tw.rejects`, read at run end, is authoritative.
         inc_file_path = incorp_params.get("inc_file")
         if not accumulated and inc_file_path and isinstance(inc_file_path, str) and not Path(inc_file_path).is_file():
             self._canal_rejects.append(

@@ -16,8 +16,8 @@ example runs without any network access or credentials:
     incorporator validate examples/appendix/nascar-tideweaver/watershed.json
     incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json
 
-Invoke the CLI commands from the repo root so the relative ``inc_file``
-paths inside ``watershed.json`` resolve correctly.
+Relative ``inc_file`` paths inside ``watershed.json`` resolve against the
+config file's directory, so these commands work from any directory.
 """
 
 from typing import Any
@@ -40,10 +40,10 @@ class FlagEvents(Incorporator):
 class DriverState(Incorporator):
     """Derived output class for the tail Fjord flush.
 
-    Because this name matches the tail current's ``class`` field in
-    watershed.json, the shared ``flush()`` primitive uses *this* declared
-    class verbatim each tick instead of inferring an anonymous schema
-    from the row keys.
+    Declaring this class lets ``watershed.json`` name it via ``class`` and the
+    Python runner pass it as ``cls=``.  The Fjord infers its fields from the
+    rows ``outflow(state)`` returns and instantiates them as ``DriverState``
+    records each tick — you never construct it yourself.
     """
 
 

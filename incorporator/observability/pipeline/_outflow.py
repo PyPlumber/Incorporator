@@ -156,7 +156,7 @@ def _resolve_export_params_for(
       * If the top-level ``export_params`` has a ``file_path`` key,
         treat the whole dict as a single-output config.
       * Otherwise (multi-output shape), look up by class name.  Missing
-        keys return an empty dict — the daemon will warn-and-skip (B5).
+        keys return an empty dict — the daemon warns and skips that class.
     """
     if "file_path" in export_params:
         # Single-output config — every derived class would write to the
@@ -440,7 +440,7 @@ async def _outflow_daemon(
                         # standard per-class failure wave shape.
                         raise err
 
-            # B6: warn about export_params keys that outflow didn't fill.
+            # Warn about export_params keys that outflow didn't produce rows for.
             # Only meaningful when the config is multi-output (> 1 nested-dict
             # entries keyed by class name).
             configured = {k for k, v in export_params.items() if k != "if_exists" and isinstance(v, dict)}

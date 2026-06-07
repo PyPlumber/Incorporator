@@ -18,13 +18,12 @@ Validation is intentionally **structural**, not behavioural:
 The three configs are auto-detected by their distinctive top-level keys —
 the developer can override with ``--type stream|fjord|tideweaver``.
 
-D2b implementation: schema rules delegate to the Pydantic models in
+Shape/schema rules delegate to the Pydantic models in
 :mod:`incorporator.cli._pipeline_config` (stream / fjord) and to
 :func:`incorporator.observability.tideweaver.config.build_watershed`
-(tideweaver).  Only sidecar-file existence, sidecar-module import, and
-``outflow(state)`` arity / ``cls_name`` symbol resolution remain in this
-file — they're runtime concerns the Pydantic schemas deliberately don't
-cover.
+(tideweaver).  This module covers the runtime concerns the schemas don't:
+sidecar-file existence, sidecar-module import, and ``outflow(state)`` arity /
+``cls_name`` symbol resolution.
 """
 
 from __future__ import annotations

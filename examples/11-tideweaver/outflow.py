@@ -10,7 +10,8 @@ Real scanners would build the normalization table from each exchange's
 ``/exchangeInfo`` (or equivalent) endpoint — add a 4th ``Stream`` current
 for that and let ``outflow(state)`` consume it.
 
-Run from the repo root so the relative inc_file / outflow paths resolve:
+Relative inc_file / outflow paths resolve against the config file's directory,
+so these commands work from any directory:
 
     incorporator validate examples/11-tideweaver/watershed.json
     incorporator tideweaver run examples/11-tideweaver/watershed.json --json-output

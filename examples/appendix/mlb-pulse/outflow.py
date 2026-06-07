@@ -14,7 +14,7 @@ Row filtering: the parent ``al_teams`` Stream uses URL-level filtering
 server-side. No post-fetch row filter is applied here — the outflow joins
 across whatever the parent's scope produced.
 
-Run from repo root:
+Relative paths in the config resolve against its directory; run from any directory:
 
     incorporator validate examples/appendix/mlb-pulse/watershed.json
     incorporator tideweaver run examples/appendix/mlb-pulse/watershed.json
