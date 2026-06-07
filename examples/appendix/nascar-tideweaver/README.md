@@ -143,7 +143,7 @@ def outflow(state):
 
 > **Guard against missing keys.** `outflow(state)` is called every Fjord tick — the first tick may fire before pits or flags have populated. Every `state.get(...)` defaults to `[]`, and every per-record read uses `getattr(..., None)` with an explicit fallback. Reading `state["PitStops"]` directly would `KeyError` on the first tide.
 
-Same structure as Tutorial 11's `arb_outflow.outflow()` — snapshot upstream registries, build a per-key composite, return as a list of dicts.
+Same structure as Tutorial 11's `outflow.outflow()` — snapshot upstream registries, build a per-key composite, return as a list of dicts.
 
 ---
 

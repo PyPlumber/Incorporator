@@ -85,7 +85,7 @@ async def run_race_window(start: datetime, end: datetime) -> None:
         head=...,
         middle=[...],
         tail=...,
-        outflow="race_outflow.py",
+        outflow="outflow.py",
     )
     async for tide in Tideweaver(watershed).run():
         # per-tick observability (Prefect logger picks this up)

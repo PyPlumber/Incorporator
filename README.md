@@ -161,7 +161,7 @@ watershed = Watershed.diamond(
             Stream(name="kraken",   cls=KrakenTicker,   interval=30, incorp_params={...})],
     tail=Fjord(name="best_market", cls=BestMarket, interval=30,
                export_params={"file_path": "arb_signals.ndjson"}),
-    outflow="arb_outflow.py",
+    outflow="outflow.py",
 )
 async for tide in Tideweaver(watershed).run():
     print(tide.tide_number, tide.fired, tide.skipped)

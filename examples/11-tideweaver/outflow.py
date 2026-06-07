@@ -18,13 +18,11 @@ Run from the repo root so the relative inc_file / outflow paths resolve:
 
 from typing import Any
 
+from incorporator import Incorporator
 
 # ---------------------------------------------------------------------------
 # Source classes (one per exchange feed)
 # ---------------------------------------------------------------------------
-
-
-from incorporator import Incorporator
 
 
 class BinanceBook(Incorporator):

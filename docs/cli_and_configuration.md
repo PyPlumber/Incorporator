@@ -444,7 +444,7 @@ zero-schema philosophy as `incorp()`. The class name is derived from the
 `outflow` filename: **snake_case → PascalCase**.
 
 - `coin_market.py` → `CoinMarket`
-- `arb_outflow.py` → `ArbOutflow`
+- `outflow.py` → `Outflow`
 - `nascar_fantasy.py` → `NascarFantasy`
 
 ### Configuration File (`fjord.json`)
@@ -622,7 +622,7 @@ The `validate` verb accepts no flags beyond the config path argument.
 {
   "window": {"start": "${RACE_START}", "end": "${RACE_END}"},
   "shape": "diamond",
-  "outflow": "race_outflow.py",
+  "outflow": "outflow.py",
   "drain_timeout": 30,
   "gate_mode": "hard",
   "head":   {"name": "laps",  "class": "LapData",     "verb": "stream", "interval": 30, "incorp_params": {"inc_url": "..."}},

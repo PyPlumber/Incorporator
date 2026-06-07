@@ -34,7 +34,7 @@ from incorporator import Fjord, Stream, Tideweaver, Watershed
 
 HERE = Path(__file__).resolve().parent
 SNAPSHOT_DIR = HERE / "fixtures"
-OUTFLOW_PATH = HERE / "arb_outflow.py"
+OUTFLOW_PATH = HERE / "outflow.py"
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
 
@@ -46,7 +46,7 @@ if str(HERE) not in sys.path:
 
 # Reuse the same class definitions + outflow() that the CLI watershed.json
 # loads, so the Python and JSON entry points stay in lockstep.
-from arb_outflow import (  # noqa: E402, F401
+from outflow import (  # noqa: E402, F401
     BestMarket,
     BinanceBook,
     CoinbaseTicker,

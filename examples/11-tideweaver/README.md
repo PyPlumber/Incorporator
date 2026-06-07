@@ -301,7 +301,7 @@ async def main() -> None:
                 "if_exists": "append",
             },
         ),
-        outflow="arb_outflow.py",
+        outflow="outflow.py",
         drain_timeout=10.0,
     )
 
@@ -322,31 +322,29 @@ The `BestMarket` Fjord current's tick is a **fjord flush**:
    the strong-ref `_tideweaver_snapshot` classvar the scheduler parks on
    each upstream Stream class (so the snapshot survives the chunking
    engine's weak-ref `inc_dict`).
-2. Hand them to `outflow(state)`, defined in `arb_outflow.py`.
+2. Hand them to `outflow(state)`, defined in `outflow.py`.
 3. Materialise the returned rows into the dynamic output class.
 4. Export them to `data/arb_signals.ndjson` (append-friendly — every flush adds rows).
 
-### `arb_outflow.py` — symbol normalization + best-market join
+### `outflow.py` — symbol normalization + best-market join
 
 The three exchanges return the same logical asset under different symbol shapes —
 Binance "BTCUSDT", Coinbase "BTC-USD", Kraken "XXBTZUSD" / "XBTUSD".  The outflow
 function normalizes to a canonical key (e.g. `"BTC"`), then computes best bid / best
 ask across venues.
 
-> **Sidecar naming is project convention, not a framework rule.**  The three
-> fjord/Tideweaver tutorials each pick differently — T9 and T10 both use
-> `outflow.py` (matches the `incorporator init --type fjord` scaffold);
-> T11 (here) names it after the entry verb (`arb_outflow.py`).  Both
-> are valid — pick whichever fits your deployment shape.
+> **Sidecar naming convention.**  All fjord/Tideweaver tutorials use the bare
+> semantic name `outflow.py` — matching the `incorporator init --type fjord`
+> scaffold and the DX convention established in T9/T10.
 >
 > **Output class is dynamic here.**  `outflow(state)` returns a list of
-> dicts, so fjord builds the output class from the row keys (named after
-> the sidecar stem).  Don't pre-declare a bare `class ArbOutflow(Incorporator):
+> dicts, so fjord builds the output class from the row keys (named `Outflow`
+> from the sidecar stem).  Don't pre-declare a bare `class Outflow(Incorporator):
 > pass` — Pydantic V2's `extra='ignore'` would silently drop every field.
 > The framework emits a one-time WARNING per bare-class trap.
 
 ```python
-# arb_outflow.py
+# outflow.py
 from typing import Any
 
 
@@ -456,7 +454,7 @@ applied at load time.
 {
   "window": {"start": "${WINDOW_START}", "end": "${WINDOW_END}"},
   "shape": "diamond",
-  "outflow": "arb_outflow.py",
+  "outflow": "outflow.py",
   "drain_timeout": 30,
   "gate_mode": "hard",
   "head":   {"name": "binance", "class": "BinanceBook",    "verb": "stream", "interval": 15,

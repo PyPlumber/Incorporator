@@ -205,7 +205,7 @@ examples/appendix/mlb-pulse/
 
 Matches the [Tutorial 11](../../11-tideweaver/) + [`nascar-tideweaver`](../nascar-tideweaver/) convention:
 - Entry script named after the demo
-- Outflow sidecar with prefix-style name (`pulse_outflow.py`, mirroring `arb_outflow.py` and `race_outflow.py`)
+- Outflow sidecar with prefix-style name (`pulse_outflow.py`)
 - Companion `watershed.json` for the CLI form
 
 ---

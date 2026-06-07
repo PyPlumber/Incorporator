@@ -16,7 +16,7 @@
   },
 
   "shape": "diamond",
-  "outflow": "arb_outflow.py",
+  "outflow": "outflow.py",
   "drain_timeout": 30,
   "gate_mode": "hard",
 
