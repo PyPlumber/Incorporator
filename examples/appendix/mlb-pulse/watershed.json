@@ -15,7 +15,7 @@
   },
 
   "shape": "diamond",
-  "outflow": "pulse_outflow.py",
+  "outflow": "outflow.py",
   "drain_timeout": 20,
   "gate_mode": "weir",
 

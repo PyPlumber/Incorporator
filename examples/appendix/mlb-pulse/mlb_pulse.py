@@ -44,7 +44,7 @@ from incorporator.observability.tideweaver.architect import tune
 from incorporator.schema.converters import calc
 
 HERE = Path(__file__).resolve().parent
-OUTFLOW_PATH = HERE / "pulse_outflow.py"
+OUTFLOW_PATH = HERE / "outflow.py"
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
 
@@ -56,7 +56,7 @@ if str(HERE) not in sys.path:
 
 # Import class definitions + outflow() from the shared sidecar so both the
 # Python entry and the CLI watershed.json form stay in lockstep.
-from pulse_outflow import (  # noqa: E402
+from outflow import (  # noqa: E402
     MLBAllTeam,
     MLBHitting,
     MLBPitching,
@@ -66,7 +66,7 @@ from pulse_outflow import (  # noqa: E402
 )
 
 # ---------------------------------------------------------------------------
-# Host throttle — also registered in pulse_outflow.py (CLI import path).
+# Host throttle — also registered in outflow.py (CLI import path).
 # Both registrations are idempotent; the last one wins the penstock registry.
 # ---------------------------------------------------------------------------
 

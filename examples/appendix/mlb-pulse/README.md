@@ -193,7 +193,7 @@ Plus console output:
 examples/appendix/mlb-pulse/
   README.md                  (this file)
   mlb_pulse.py               (entry point: probe + run + tune)
-  pulse_outflow.py           (Incorporator classes + outflow(state) join)
+  outflow.py                 (Incorporator classes + outflow(state) join)
   watershed.json             (CLI-equivalent declarative form)
   out/                       (runtime artifacts; gitignored)
     al_pulse.ndjson
@@ -203,9 +203,9 @@ examples/appendix/mlb-pulse/
     MLBPulse_debug.log
 ```
 
-Matches the [Tutorial 11](../../11-tideweaver/) + [`nascar-tideweaver`](../nascar-tideweaver/) convention:
+Matches the [Tutorial 9](../../09-nascar-fantasy-fjord/), [Tutorial 11](../../11-tideweaver/), and [`nascar-tideweaver`](../nascar-tideweaver/) convention:
 - Entry script named after the demo
-- Outflow sidecar with prefix-style name (`pulse_outflow.py`)
+- Outflow sidecar with bare semantic name (`outflow.py`) — all Tideweaver examples (T9, T11, nascar-tideweaver, mlb-pulse) use this naming
 - Companion `watershed.json` for the CLI form
 
 ---

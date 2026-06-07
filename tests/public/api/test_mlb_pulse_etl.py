@@ -15,6 +15,7 @@ Asserts:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -34,24 +35,27 @@ from incorporator.observability.tideweaver import (
 )
 
 # ---------------------------------------------------------------------------
-# Resolve sidecar path so pulse_outflow.py imports cleanly even when pytest
-# is invoked from the repo root (not from examples/appendix/mlb-pulse/).
+# Resolve sidecar path and load outflow.py via importlib with a unique
+# sys.modules key so concurrent pytest sessions that also load other
+# examples/*/outflow.py files (e.g. test_nascar_fantasy_etl.py) never
+# receive the wrong module.
 # ---------------------------------------------------------------------------
 
 _HERE = Path(__file__).resolve()
 _SIDECAR_DIR = _HERE.parents[3] / "examples" / "appendix" / "mlb-pulse"
 
-if str(_SIDECAR_DIR) not in sys.path:
-    sys.path.insert(0, str(_SIDECAR_DIR))
+_OUTFLOW_CACHE_KEY = "mlb_pulse_outflow"
+_outflow_spec = importlib.util.spec_from_file_location(_OUTFLOW_CACHE_KEY, _SIDECAR_DIR / "outflow.py")
+_mlb_outflow = importlib.util.module_from_spec(_outflow_spec)
+sys.modules[_OUTFLOW_CACHE_KEY] = _mlb_outflow
+_outflow_spec.loader.exec_module(_mlb_outflow)
 
-from pulse_outflow import (  # noqa: E402
-    MLBAllTeam,
-    MLBHitting,
-    MLBPitching,
-    MLBSchedule,
-    MLBStandings,
-    TeamPulseCard,
-)
+MLBAllTeam = _mlb_outflow.MLBAllTeam
+MLBHitting = _mlb_outflow.MLBHitting
+MLBPitching = _mlb_outflow.MLBPitching
+MLBSchedule = _mlb_outflow.MLBSchedule
+MLBStandings = _mlb_outflow.MLBStandings
+TeamPulseCard = _mlb_outflow.TeamPulseCard
 
 from incorporator.schema.converters import calc  # noqa: E402
 
@@ -355,7 +359,7 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
     strong_refs: dict = {}
 
     out_file = tmp_path / "al_pulse.ndjson"
-    outflow_path = _SIDECAR_DIR / "pulse_outflow.py"
+    outflow_path = _SIDECAR_DIR / "outflow.py"
 
     from datetime import datetime, timedelta, timezone
 
