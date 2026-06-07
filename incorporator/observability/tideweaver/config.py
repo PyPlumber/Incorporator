@@ -102,24 +102,24 @@ def build_watershed(raw: dict[str, Any], base_dir: Path) -> Watershed:
         return None, None
 
     if shape == "chain":
-        currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
+        currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module, base_dir)
         gate_mode, flow = _top_level_flow(raw)
         if flow is not None:
             return Watershed.chain(currents=currents, flow=flow, **common)
         return Watershed.chain(currents=currents, gate_mode=gate_mode or "hard", **common)
 
     if shape == "diamond":
-        head = _build_current(raw["head"], outflow_module, inflow_module)
-        middle = _build_currents(raw.get("middle", []), outflow_module, inflow_module)
-        tail = _build_current(raw["tail"], outflow_module, inflow_module)
+        head = _build_current(raw["head"], outflow_module, inflow_module, base_dir)
+        middle = _build_currents(raw.get("middle", []), outflow_module, inflow_module, base_dir)
+        tail = _build_current(raw["tail"], outflow_module, inflow_module, base_dir)
         gate_mode, flow = _top_level_flow(raw)
         if flow is not None:
             return Watershed.diamond(head=head, middle=middle, tail=tail, flow=flow, **common)
         return Watershed.diamond(head=head, middle=middle, tail=tail, gate_mode=gate_mode or "hard", **common)
 
     if shape == "fanout":
-        source = _build_current(raw["source"], outflow_module, inflow_module)
-        sinks = _build_currents(raw.get("sinks", []), outflow_module, inflow_module)
+        source = _build_current(raw["source"], outflow_module, inflow_module, base_dir)
+        sinks = _build_currents(raw.get("sinks", []), outflow_module, inflow_module, base_dir)
         gate_mode, flow = _top_level_flow(raw)
         if flow is not None:
             return Watershed.fanout(source=source, sinks=sinks, flow=flow, **common)
@@ -133,11 +133,11 @@ def build_watershed(raw: dict[str, Any], base_dir: Path) -> Watershed:
             )
         if "gate_mode" in raw or "flow" in raw:
             raise ValueError("shape='parallel' does not accept gate_mode/flow — there are no edges to govern.")
-        currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
+        currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module, base_dir)
         return Watershed.parallel(currents=currents, **common)
 
     if shape == "custom":
-        currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module)
+        currents = _build_currents(raw.get("currents", []), outflow_module, inflow_module, base_dir)
         edges = []
         for e in raw.get("edges", []):
             if "mode" in e:
@@ -191,14 +191,16 @@ def _build_currents(
     entries: list[dict[str, Any]],
     outflow_module: ModuleType | None,
     inflow_module: ModuleType | None,
+    base_dir: Path,
 ) -> list[Current]:
-    return [_build_current(e, outflow_module, inflow_module) for e in entries]
+    return [_build_current(e, outflow_module, inflow_module, base_dir) for e in entries]
 
 
 def _build_current(
     entry: dict[str, Any],
     outflow_module: ModuleType | None,
     inflow_module: ModuleType | None,
+    base_dir: Path,
 ) -> Current:
     verb = entry.get("verb", "stream")
     cls = _resolve_class(entry["class"], outflow_module, inflow_module)
@@ -218,9 +220,13 @@ def _build_current(
         )
 
     if verb == "stream":
+        incorp_params: dict[str, Any] = dict(entry.get("incorp_params", {}))
+        inc_file = incorp_params.get("inc_file")
+        if isinstance(inc_file, str) and inc_file and not Path(inc_file).is_absolute():
+            incorp_params["inc_file"] = str((base_dir / Path(inc_file)).resolve())
         return Stream(
             **common,
-            incorp_params=entry.get("incorp_params", {}),
+            incorp_params=incorp_params,
             refresh_params=entry.get("refresh_params"),
             export_params=entry.get("export_params"),
             parent_current=entry.get("parent_current"),

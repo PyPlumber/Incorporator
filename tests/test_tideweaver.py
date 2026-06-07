@@ -2698,6 +2698,68 @@ def test_json_unknown_class_raises(tmp_path: Path) -> None:
         load_watershed(cfg)
 
 
+def test_json_relative_inc_file_resolves_to_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relative ``inc_file`` in watershed.json is resolved against the config dir, not CWD.
+
+    Proves that loading a watershed.json from a different working directory still
+    resolves ``incorp_params['inc_file']`` to an absolute path under the config dir,
+    not under the process CWD.  Guards the guarantee stated in the watershed.json
+    comments.
+    """
+    from incorporator.observability.tideweaver.config import load_watershed
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+
+    # Write a minimal fixture file co-located with the config.
+    fixture = config_dir / "fixture.json"
+    fixture.write_text("[]", encoding="utf-8")
+
+    # Write a minimal outflow sidecar so class resolution succeeds.
+    (config_dir / "outflow.py").write_text(
+        "from incorporator import Incorporator\n"
+        "class MySource(Incorporator):\n    pass\n",
+        encoding="utf-8",
+    )
+
+    body = {
+        "window": {"start": "2026-05-16T00:00:00+00:00", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "parallel",
+        "outflow": "outflow.py",
+        "drain_timeout": 5,
+        "currents": [
+            {
+                "name": "src",
+                "class": "MySource",
+                "verb": "stream",
+                "interval": 30,
+                "incorp_params": {"inc_file": "fixture.json", "inc_code": "id"},
+            }
+        ],
+    }
+    cfg = config_dir / "watershed.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+
+    # Move CWD to tmp_path — "fixture.json" does NOT exist relative to CWD.
+    monkeypatch.chdir(tmp_path)
+
+    ws = load_watershed(cfg)
+    stream_current = ws.currents[0]
+    resolved_inc_file = stream_current.incorp_params["inc_file"]  # type: ignore[union-attr]
+
+    expected = str((config_dir / "fixture.json").resolve())
+    assert resolved_inc_file == expected, (
+        f"inc_file should resolve to config dir, not CWD.\n"
+        f"  got:      {resolved_inc_file!r}\n"
+        f"  expected: {expected!r}"
+    )
+    # Also confirm CWD-relative would have been wrong.
+    cwd_relative = str((tmp_path / "fixture.json").resolve())
+    assert resolved_inc_file != cwd_relative, "inc_file must NOT resolve relative to CWD"
+
+
 # ---------------------------------------------------------------------------
 # CLI verb
 # ---------------------------------------------------------------------------
