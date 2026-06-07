@@ -22,6 +22,7 @@ from types import ModuleType
 from typing import Any, cast
 
 from ...base import Incorporator
+from ...io.config_paths import resolve_config_paths
 from ...usercode import load_user_module
 from .current import Current, Export, Fjord, Stream
 from .flow import FlowControl, GateMode, flow_from_mode
@@ -64,9 +65,17 @@ def load_watershed(path: Path) -> Watershed:
 
 
 def build_watershed(raw: dict[str, Any], base_dir: Path) -> Watershed:
+    # Rebase all INPUT file fields (inflow, outflow, incorp_params.inc_file,
+    # inc_files, refresh_params.new_file) relative to the config directory.
+    # Called here (in addition to _load_pipeline_config for stream/fjord) so
+    # the tideweaver-specific nested current entries are also covered.
+    # Idempotent: already-absolute paths from a prior call pass through.
+    raw = resolve_config_paths(raw, base_dir)
     window = _parse_window(raw.get("window"))
-    inflow = _resolve_sidecar(raw.get("inflow"), base_dir)
-    outflow = _resolve_sidecar(raw.get("outflow"), base_dir)
+    inflow_val = raw.get("inflow")
+    outflow_val = raw.get("outflow")
+    inflow = Path(inflow_val) if isinstance(inflow_val, str) and inflow_val else None
+    outflow = Path(outflow_val) if isinstance(outflow_val, str) and outflow_val else None
     drain_timeout = float(raw.get("drain_timeout", 30.0))
 
     outflow_module = load_user_module(outflow) if outflow is not None else None
@@ -180,13 +189,6 @@ def _parse_dt(value: Any) -> datetime:
     raise ValueError(f"window timestamps must be ISO-8601 strings; got {type(value).__name__}.")
 
 
-def _resolve_sidecar(value: Any, base_dir: Path) -> Path | None:
-    if value is None:
-        return None
-    p = Path(value)
-    return p if p.is_absolute() else (base_dir / p).resolve()
-
-
 def _build_currents(
     entries: list[dict[str, Any]],
     outflow_module: ModuleType | None,
@@ -220,10 +222,9 @@ def _build_current(
         )
 
     if verb == "stream":
+        # incorp_params.inc_file is already config-dir-absolute — resolve_config_paths
+        # ran at the top of build_watershed before this current is built.
         incorp_params: dict[str, Any] = dict(entry.get("incorp_params", {}))
-        inc_file = incorp_params.get("inc_file")
-        if isinstance(inc_file, str) and inc_file and not Path(inc_file).is_absolute():
-            incorp_params["inc_file"] = str((base_dir / Path(inc_file)).resolve())
         return Stream(
             **common,
             incorp_params=incorp_params,

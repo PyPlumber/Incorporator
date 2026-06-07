@@ -187,3 +187,46 @@ def test_validate_fjord_accepts_outflow_canonical_key(tmp_path: Path) -> None:
     }
     errs = validate_fjord_config(cfg, tmp_path)
     assert errs == []
+
+
+# ----- inc_file existence checks via config-dir resolution -----
+
+
+def test_validate_stream_inc_file_exists_at_config_dir(tmp_path: Path) -> None:
+    """validate PASSES when inc_file exists at the config dir even from another CWD.
+
+    Proves the Docker policy: config at /app/config, runtime at /app.
+    validate resolves inc_file relative to config_dir, not CWD.
+    """
+    (tmp_path / "data.json").write_text("[{\"id\": 1}]", encoding="utf-8")
+    cfg = {
+        "incorp_params": {"inc_file": "data.json", "inc_code": "id"},
+    }
+    errs = validate_stream_config(cfg, tmp_path)
+    assert errs == []
+
+
+def test_validate_stream_inc_file_missing_at_config_dir(tmp_path: Path) -> None:
+    """validate FAILS when inc_file does not exist at the config dir.
+
+    Proves the A1 bug is caught: validate and run now agree on where
+    INPUT files must live (config-dir) — validate no longer silently
+    passes when the file is missing.
+    """
+    cfg = {
+        "incorp_params": {"inc_file": "ghost.json", "inc_code": "id"},
+    }
+    errs = validate_stream_config(cfg, tmp_path)
+    assert any("inc_file" in e and "not found" in e for e in errs), errs
+
+
+def test_validate_stream_output_file_path_not_required_to_preexist(tmp_path: Path) -> None:
+    """validate does NOT require export_params.file_path to exist (it's an OUTPUT)."""
+    cfg = {
+        "incorp_params": {"inc_url": "https://x", "inc_code": "id"},
+        "export_params": {"file_path": "data/output.ndjson"},
+    }
+    errs = validate_stream_config(cfg, tmp_path)
+    # No error about file_path not existing — OUTPUT files are CWD-relative and
+    # are created at runtime by the handler.
+    assert not any("file_path" in e and "not found" in e for e in errs)

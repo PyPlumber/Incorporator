@@ -37,6 +37,7 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from ..base import Incorporator
+from ..io.config_paths import resolve_config_paths
 from ._pipeline_config import parse_pipeline_config
 
 logger = logging.getLogger(__name__)
@@ -121,13 +122,26 @@ def validate_stream_config(config: dict[str, Any], config_dir: Path) -> list[str
     except ValidationError as exc:
         errors.extend(_format_pydantic_errors(exc))
 
+    # Rebase INPUT paths to config-dir before existence checks — matches what the
+    # runtime does via _load_pipeline_config so validate and run agree.
+    rebased = resolve_config_paths(config, config_dir)
+
     # Sidecar checks — runtime concerns, deliberately out of the Pydantic model.
-    _validate_sidecar_file(config, "inflow", config_dir, errors)
-    if config.get("outflow") and config.get("stateful_polling"):
-        _validate_sidecar_file(config, "outflow", config_dir, errors)
-    export_params = config.get("export_params")
+    _validate_sidecar_file(rebased, "inflow", config_dir, errors)
+    if rebased.get("outflow") and rebased.get("stateful_polling"):
+        _validate_sidecar_file(rebased, "outflow", config_dir, errors)
+    export_params = rebased.get("export_params")
     if isinstance(export_params, dict):
         _validate_sidecar_file(export_params, "outflow", config_dir, errors, file_label="export_params.outflow")
+
+    # inc_file / new_file — INPUT source files that must exist at runtime.
+    incorp_params = rebased.get("incorp_params")
+    if isinstance(incorp_params, dict):
+        _validate_input_file(incorp_params, "inc_file", errors, label="incorp_params.inc_file")
+    refresh_params = rebased.get("refresh_params")
+    if isinstance(refresh_params, dict):
+        _validate_input_file(refresh_params, "new_file", errors, label="refresh_params.new_file")
+
     return errors
 
 
@@ -153,14 +167,17 @@ def validate_fjord_config(config: dict[str, Any], config_dir: Path) -> list[str]
         # If schema is wrong, deeper checks would all fail the same way.
         return errors
 
+    # Rebase INPUT paths before existence checks — mirrors runtime resolution.
+    rebased = resolve_config_paths(config, config_dir)
+
     # Optional inflow file — must import cleanly if specified.
-    _validate_sidecar_file(config, "inflow", config_dir, errors)
+    _validate_sidecar_file(rebased, "inflow", config_dir, errors)
 
     # Required outflow — capture the loaded module for downstream symbol checks.
     # Bare ``"outflow"`` label (no "file") preserves the fjord-specific wording
     # asserted by tests/test_cli.py::test_cli_fjord_outflow_not_found.
     outflow_path, module = _validate_sidecar_file(
-        config, "outflow", config_dir, errors, capture_module=True, file_label="outflow"
+        rebased, "outflow", config_dir, errors, capture_module=True, file_label="outflow"
     )
     if outflow_path is None or module is None:
         return errors
@@ -178,7 +195,7 @@ def validate_fjord_config(config: dict[str, Any], config_dir: Path) -> list[str]
     # Per-entry cls_name resolution — the Pydantic FjordStreamEntry checks
     # the field is a non-empty string, but resolving against the loaded user
     # module is a runtime concern done here.
-    stream_params = config.get("stream_params") or []
+    stream_params = rebased.get("stream_params") or []
     if isinstance(stream_params, list):
         for idx, entry in enumerate(stream_params):
             if not isinstance(entry, dict):
@@ -319,12 +336,26 @@ def _format_pydantic_errors(error: ValidationError) -> list[str]:
     return out
 
 
-def _resolve_outflow_file(raw: str, config_dir: Path) -> Path:
-    """Resolve a sidecar (inflow/outflow) path either as absolute or relative to the config."""
+def _validate_input_file(params: dict[str, Any], key: str, errors: list[str], *, label: str) -> None:
+    """Check that an INPUT source file declared in *params[key]* exists on disk.
+
+    The path must already be config-dir-rebased (via
+    :func:`incorporator.io.config_paths.resolve_config_paths`) before this
+    helper is called.  Only non-empty string values are checked; absent or
+    ``None`` values are silently skipped.
+
+    Args:
+        params: Dict containing the key (e.g. ``incorp_params``).
+        key: The field name to check (e.g. ``"inc_file"``, ``"new_file"``).
+        errors: Running error list mutated in place.
+        label: Human-readable label for error messages.
+    """
+    raw = params.get(key)
+    if not raw or not isinstance(raw, str):
+        return
     p = Path(raw)
-    if not p.is_absolute():
-        p = (config_dir / p).resolve()
-    return p
+    if not p.is_file():
+        errors.append(f"{label} not found: {p}")
 
 
 def _try_import(code_path: Path) -> str | None:
@@ -387,7 +418,11 @@ def _validate_sidecar_file(
         errors.append(f"'{key}', if present, must be a string path.")
         return None, None
     label = file_label if file_label is not None else f"{key} file"
-    path = _resolve_outflow_file(raw, config_dir)
+    # When the caller passes a rebased config (as stream/fjord validators do),
+    # the path is already absolute.  For any remaining relative-path callers
+    # (e.g. nested export_params dict) fall back to config_dir resolution.
+    p = Path(raw)
+    path = p if p.is_absolute() else (config_dir / p).resolve()
     if not path.is_file():
         errors.append(f"{label} not found: {path}")
         return None, None

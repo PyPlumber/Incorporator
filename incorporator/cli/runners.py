@@ -19,6 +19,7 @@ from typing import Any, cast
 from incorporator._deps.typer import TYPER as _typer
 
 from .. import Incorporator, LoggedIncorporator
+from ..io.config_paths import resolve_config_paths
 from ._pipeline_config import parse_pipeline_config
 from .envexpand import EnvExpansionError, expand_env
 from .tokens import TokenResolutionError, resolve_tokens
@@ -101,18 +102,29 @@ def _load_pipeline_config(config_path: Path) -> dict[str, Any]:
         _err(f"Error: env-var expansion failed: {e}", fg=_red())
         sys.exit(1)
 
+    # Rebase all INPUT file fields (inflow, outflow, inc_file, inc_files,
+    # new_file) to be relative to the config file's directory.  OUTPUT
+    # fields (export_params.file_path, archive_target) and URL fields
+    # (inc_url, new_url) are intentionally left CWD-relative.  The function
+    # is idempotent: absolute paths (from a prior call or the JSON itself)
+    # pass through unchanged.  This single call covers stream, fjord, and
+    # tideweaver pipeline.json shapes because the field walk is shape-agnostic.
+    config_dir = config_path.parent.resolve()
+    rebased = resolve_config_paths(expanded, config_dir)
+
     # Load the optional inflow= sidecar once.  Its public symbols extend the
     # token resolver's allow-list, so JSON strings like "@calc_bst" or
     # "calc(my_reducer, 'stats')" resolve to real callables before the engine
     # ever sees the config.  importlib's sys.modules cache absorbs any
-    # later re-load via the same path.
+    # later re-load via the same path.  The inflow path is already config-dir-
+    # absolute after the resolve_config_paths call above.
     extra_names: dict[str, Any] = {}
-    inflow_field = expanded.get("inflow")
+    inflow_field = rebased.get("inflow")
     if inflow_field:
         try:
             from ..usercode import extract_public_names, load_user_module
 
-            inflow_path = (config_path.parent / str(inflow_field)).resolve()
+            inflow_path = Path(str(inflow_field))
             module = load_user_module(inflow_path, name_hint="_inc_cli_inflow")
             extra_names = extract_public_names(module)
         except (FileNotFoundError, ImportError, SyntaxError) as e:
@@ -124,7 +136,7 @@ def _load_pipeline_config(config_path: Path) -> dict[str, Any]:
     # the engine.  Tokens needing user-defined classes still require an
     # outflow file (fjord pattern).
     try:
-        return cast(dict[str, Any], resolve_tokens(expanded, extra_names=extra_names))
+        return cast(dict[str, Any], resolve_tokens(rebased, extra_names=extra_names))
     except TokenResolutionError as e:
         _err(f"Error: token resolution failed: {e}", fg=_red())
         sys.exit(1)
@@ -310,10 +322,9 @@ async def _run_fjord(
     refresh_interval = config.get("refresh_interval")
     export_interval = config.get("export_interval")
 
+    # outflow_raw is already config-dir-absolute after resolve_config_paths
+    # ran inside _load_pipeline_config — no further rebasing needed here.
     outflow_path = Path(outflow_raw)
-    if not outflow_path.is_absolute():
-        outflow_path = (config_dir / outflow_path).resolve()
-
     user_module = _load_user_module(outflow_path)
 
     resolved_streams: list[dict[str, Any]] = []

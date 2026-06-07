@@ -212,3 +212,67 @@ def test_cli_tideweaver_run_drain_timeout_default(monkeypatch: pytest.MonkeyPatc
     assert result.exit_code == 0, result.stdout
     assert captured, "Tideweaver.run must have been called"
     assert captured[0] == pytest.approx(30.0), f"Default drain_timeout must be 30.0; got {captured[0]}"
+
+
+# ---------------------------------------------------------------------------
+# G2 regression: missing inc_file → non-zero exit; clean empty run → exit 0
+# ---------------------------------------------------------------------------
+
+
+def _write_watershed_with_missing_inc_file(tmp_path: Path) -> Path:
+    """Write a watershed.json that references a non-existent inc_file.
+
+    The current uses verb='stream' with an inc_file that does not exist on
+    disk.  When the Tideweaver runs, the stream will emit a wave with
+    failed_sources (file-not-found) and produce zero rows — triggering G2.
+    """
+    (tmp_path / "outflow.py").write_text(_OUTFLOW_SRC, encoding="utf-8")
+    cfg = tmp_path / "watershed.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "window": _PAST_WINDOW,
+                "shape": "parallel",
+                "outflow": "outflow.py",
+                "currents": [
+                    {
+                        "name": "laps",
+                        "class": "LapData",
+                        "verb": "stream",
+                        "interval": 30,
+                        "incorp_params": {
+                            "inc_file": "does_not_exist.json",
+                            "inc_code": "id",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return cfg
+
+
+def test_cli_tideweaver_run_missing_inc_file_exits_nonzero(tmp_path: Path) -> None:
+    """G2: a watershed run that fails to load every source exits non-zero.
+
+    Writes a watershed.json with an inc_file that does not exist.  The
+    stream produces zero rows with failed_sources populated, which the
+    scheduler records as a SourceLoadFailure reject.  The CLI must detect
+    this and exit with code 1 + a summary message.
+    """
+    cfg = _write_watershed_with_missing_inc_file(tmp_path)
+    result = runner.invoke(app, ["tideweaver", "run", str(cfg), "--json-output"])
+    assert result.exit_code == 1, f"Expected exit 1 for missing inc_file; got {result.exit_code}: {result.stdout}"
+
+
+def test_cli_tideweaver_run_clean_empty_run_exits_zero(tmp_path: Path) -> None:
+    """G2: a watershed run that produces zero rows WITHOUT source failure exits 0.
+
+    Uses the standard fixture where the current has no incorp source at all
+    (empty incorp_params), so the stream produces no rows cleanly — no
+    failed_sources.  The CLI must exit 0.
+    """
+    cfg = _write_watershed_fixture(tmp_path)
+    result = runner.invoke(app, ["tideweaver", "run", str(cfg), "--json-output"])
+    assert result.exit_code == 0, f"Expected exit 0 for clean empty run; got {result.exit_code}: {result.stdout}"

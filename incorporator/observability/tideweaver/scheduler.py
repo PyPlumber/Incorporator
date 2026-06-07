@@ -36,6 +36,7 @@ import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -978,6 +979,36 @@ class Tideweaver:
         accumulated: dict[Any, Any] = {}
         async for _wave in current.cls.stream(**kwargs):
             accumulated.update(current.cls.inc_dict)
+        # G2: when a configured inc_file doesn't exist on disk, incorp() handles
+        # the error internally (logs FETCH ERROR, returns empty IncorporatorList
+        # with rejects) without raising — so the stream produces zero rows but
+        # no exception.  Detect this by checking the inc_file path directly:
+        # if it was configured AND the file is absent AND zero rows were produced,
+        # it's a source load failure, not legitimately empty data.
+        # NOTE: this reject is appended from inside a fire-and-forget tick Task, so
+        # it may be counted in a LATER Tide's `canal_rejects_added` than the pass
+        # that triggered it.  Harmless for the post-run CLI summary (which reads the
+        # cumulative `tw.rejects`), but per-Tide `canal_rejects_added` metrics in
+        # observer tooling can lag the triggering pass by a tick.
+        inc_file_path = incorp_params.get("inc_file")
+        if not accumulated and inc_file_path and isinstance(inc_file_path, str) and not Path(inc_file_path).is_file():
+            self._canal_rejects.append(
+                RejectEntry.model_construct(
+                    source=current.cls.__name__,
+                    error_kind="SourceLoadFailure",
+                    message=(
+                        f"Stream '{current.name}' produced zero rows because the configured "
+                        f"inc_file does not exist: {inc_file_path}"
+                    ),
+                    retry_after=None,
+                    wave_index=self._tide_number,
+                    from_name=None,
+                    to_name=None,
+                    attempt_number=1,
+                    duration_sec=None,
+                    cooldown_sec=None,
+                )
+            )
         # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
         # Runtime-only escape-hatch attribute (no field on Incorporator itself).
         # ``_outflow.py:flush`` parks the same attribute on Fjord output

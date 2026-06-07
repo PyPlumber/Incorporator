@@ -553,8 +553,9 @@ def test_cli_stream_forwards_inflow_and_outflow_to_stream(tmp_path: Path) -> Non
     assert result.exit_code == 0, result.stdout
     assert "inflow" in captured_kwargs, "inflow must be forwarded to stream()"
     assert "outflow" in captured_kwargs, "outflow must be forwarded to stream()"
-    assert captured_kwargs["inflow"] == "inflow.py"
-    assert captured_kwargs["outflow"] == "outflow.py"
+    # After resolve_config_paths, inflow/outflow are config-dir-absolute paths.
+    assert str(inflow_file.resolve()) == captured_kwargs["inflow"]
+    assert str(outflow_file.resolve()) == captured_kwargs["outflow"]
 
 
 def test_cli_stream_inflow_outflow_absent_stays_none(tmp_path: Path) -> None:

@@ -15,9 +15,7 @@ Asserts:
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +31,8 @@ from incorporator.observability.tideweaver import (
     Tideweaver,
     Watershed,
 )
+from incorporator.schema.converters import calc
+from tests.helpers import load_sidecar
 
 # ---------------------------------------------------------------------------
 # Resolve sidecar path and load outflow.py via importlib with a unique
@@ -44,11 +44,7 @@ from incorporator.observability.tideweaver import (
 _HERE = Path(__file__).resolve()
 _SIDECAR_DIR = _HERE.parents[3] / "examples" / "appendix" / "mlb-pulse"
 
-_OUTFLOW_CACHE_KEY = "mlb_pulse_outflow"
-_outflow_spec = importlib.util.spec_from_file_location(_OUTFLOW_CACHE_KEY, _SIDECAR_DIR / "outflow.py")
-_mlb_outflow = importlib.util.module_from_spec(_outflow_spec)
-sys.modules[_OUTFLOW_CACHE_KEY] = _mlb_outflow
-_outflow_spec.loader.exec_module(_mlb_outflow)
+_mlb_outflow = load_sidecar(_SIDECAR_DIR / "outflow.py", "mlb_pulse_outflow")
 
 MLBAllTeam = _mlb_outflow.MLBAllTeam
 MLBHitting = _mlb_outflow.MLBHitting
@@ -56,8 +52,6 @@ MLBPitching = _mlb_outflow.MLBPitching
 MLBSchedule = _mlb_outflow.MLBSchedule
 MLBStandings = _mlb_outflow.MLBStandings
 TeamPulseCard = _mlb_outflow.TeamPulseCard
-
-from incorporator.schema.converters import calc  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # AL team IDs by division (canonical, season-stable)

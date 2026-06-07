@@ -1,9 +1,7 @@
 """Integration tests for Concurrent Orchestration, React JSON Pipeline, and Null-Safe Math."""
 
 import asyncio
-import importlib.util
 import json
-import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -14,16 +12,13 @@ import pytest
 from incorporator import Incorporator
 from incorporator.io import fetch
 from incorporator.schema.converters import inc
+from tests.helpers import load_sidecar
 
 # ── outflow sidecar loader ──────────────────────────────────────────────────────
 # Loaded via importlib with a unique sys.modules key so concurrent pytest sessions
 # that also load other examples/*/outflow.py files never receive the wrong module.
 _EXAMPLE_DIR = Path(__file__).resolve().parents[3] / "examples" / "09-nascar-fantasy-fjord"
-_OUTFLOW_CACHE_KEY = "nascar_fantasy_outflow"
-_outflow_spec = importlib.util.spec_from_file_location(_OUTFLOW_CACHE_KEY, _EXAMPLE_DIR / "outflow.py")
-_nascar_outflow = importlib.util.module_from_spec(_outflow_spec)
-sys.modules[_OUTFLOW_CACHE_KEY] = _nascar_outflow
-_outflow_spec.loader.exec_module(_nascar_outflow)
+_nascar_outflow = load_sidecar(_EXAMPLE_DIR / "outflow.py", "nascar_fantasy_outflow")
 
 
 # --- EXPLICIT SUBCLASSING ---

@@ -19,6 +19,7 @@ from typing import Any
 
 from incorporator._deps.typer import TYPER as _typer
 
+from ..io.config_paths import resolve_output_path
 from ..observability.tideweaver import LoggedTideweaver, Tide, Tideweaver
 from ..observability.tideweaver.config import build_watershed
 
@@ -90,6 +91,12 @@ async def _run_tideweaver(
     if drain_timeout_override is not None:
         # Watershed is not frozen — direct assignment is the contract here.
         watershed.drain_timeout = drain_timeout_override
+
+    # Route the heartbeat file through resolve_output_path so its parent
+    # directory is auto-created and the path is CWD/WORKDIR-relative (not
+    # config-dir-relative — heartbeat is an OUTPUT, not an INPUT source).
+    resolved_hb: Path | None = resolve_output_path(heartbeat_file) if heartbeat_file is not None else None
+
     tw: Tideweaver
     if logs:
         tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="Tideweaver")
@@ -99,11 +106,27 @@ async def _run_tideweaver(
         try:
             _emit_tide(tide, json_output=json_output)
         finally:
-            if heartbeat_file is not None:
+            if resolved_hb is not None:
                 try:
-                    heartbeat_file.touch()
+                    resolved_hb.touch()
                 except OSError as exc:
-                    logger.warning("Could not update heartbeat file %s: %s", heartbeat_file, exc)
+                    logger.warning("Could not update heartbeat file %s: %s", resolved_hb, exc)
+
+    # G2: if any source failed to load and produced zero rows (as opposed to
+    # legitimately returning empty data), report a summary and exit non-zero.
+    # The SourceLoadFailure reject is appended by scheduler._tick_stream when
+    # accumulated is empty AND the stream emitted at least one wave with
+    # failed_sources.  A clean empty run produces no such entries → exit 0.
+    source_failures = [r for r in tw.rejects if r.error_kind == "SourceLoadFailure"]
+    if source_failures:
+        sources = ", ".join(r.source for r in source_failures)
+        logger.warning(
+            "Tideweaver: run completed with %d source-load failure(s) — zero rows produced for: %s. "
+            "Check inc_file paths and the error log.",
+            len(source_failures),
+            sources,
+        )
+        sys.exit(1)
 
 
 def _emit_tide(tide: Tide, *, json_output: bool) -> None:

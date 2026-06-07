@@ -640,6 +640,17 @@ Five `shape` values are supported, each driving a different edge layout:
 list for mixed-mode topologies).  See [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md)
 for the full walk-through plus the Python-API equivalents.
 
+> **Path resolution — inputs vs outputs.** Relative **input** paths declared in any
+> config file (`inflow`, `outflow`, and `incorp_params.inc_file` / `inc_files` /
+> `refresh_params.new_file`, at the top level and per-current) resolve against the
+> **config file's directory** — so the same `watershed.json` / `fjord.json` /
+> `pipeline.json` runs from any working directory and reads alongside a read-only
+> Docker config mount. Relative **output** paths (`export_params.file_path`,
+> `archive_target`) stay **CWD / `WORKDIR`-relative**, so writes land in the
+> writable runtime dir (e.g. Docker's `/app/data`). Absolute paths and `inc_url` /
+> `new_url` are never rewritten. The in-process Python API
+> (`Incorporator.incorp(...)`) keeps its arguments CWD-relative.
+
 > **Removed keys.** `"dependency_mode"` (top-level) and `"mode"` (per-edge)
 > were removed in v1.3.0. Using either now raises `ValueError` with migration
 > guidance: rename to `"gate_mode"`. There is no silent back-compat path.
