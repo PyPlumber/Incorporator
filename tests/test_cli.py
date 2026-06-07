@@ -3,7 +3,7 @@
 import json
 import sys
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Iterator
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +15,22 @@ from incorporator.cli import app
 from incorporator.observability.logger import Wave
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _reset_json_output_mode() -> Iterator[None]:
+    """Reset the module-level ``_JSON_OUTPUT_MODE`` global after every test.
+
+    The ``--json-output`` tests flip ``set_json_output_mode(True)`` and never
+    restore it.  Under randomized ordering (pytest-randomly), a leaked ``True``
+    routes ``_err`` output to STDERR, emptying ``result.stdout`` and breaking
+    the error-path tests' substring assertions.  This autouse teardown keeps the
+    global state isolated between tests regardless of execution order.
+    """
+    yield
+    from incorporator.cli.runners import set_json_output_mode
+
+    set_json_output_mode(False)
 
 
 async def mock_stream(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
