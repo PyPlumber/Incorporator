@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-06-07
+
+### Added
+
+- `incorporator/io/config_paths.py`: a shared helper that resolves the file paths
+  declared in a `pipeline.json` / `watershed.json`, used uniformly by the run,
+  validate, and log code paths.
+
+### Changed
+
+- Config path resolution: relative **input** paths in a CLI config (`inc_file`,
+  `inc_files`, `inflow`, `outflow`, and `refresh`'s `new_file`) now resolve against
+  the **config file's own directory**, so a pipeline/watershed JSON runs from any
+  working directory (and reads alongside a read-only Docker config mount).
+  **Output** paths (`export_params.file_path`) and URLs stay relative to the current
+  working directory. The in-process `Incorporator.incorp(...)` API is unchanged.
+- `incorporator tideweaver run` now exits non-zero with a summary when a current
+  produced zero rows because every source failed to load; a legitimately empty run
+  still exits 0.
+- CLI and log output is now ASCII-only, so commands no longer raise
+  `UnicodeEncodeError` on Windows (cp1252) consoles when piped or redirected.
+- The Tideweaver examples (09, 10, 11, nascar-tideweaver, mlb-pulse) use the bare
+  `outflow.py` / `inflow.py` sidecar naming shared by both the Python runner and the
+  `watershed.json` CLI form, with `conv_dict` declared inline in `incorp_params`.
+
+### Fixed
+
+- A Fjord tail whose declared output class has no fields now infers the output
+  schema from the `outflow(state)` rows (emitting a one-time warning) instead of
+  risking silently dropped fields.
+- `incorporator validate` resolves config paths the same way a run does, so it
+  catches a relative `inc_file` that would otherwise fail only at run time.
+- Docker `stop_grace_period` is set above `INCORPORATOR_DRAIN_TIMEOUT` so SIGTERM
+  drains complete before SIGKILL.
+- Example 09 (NASCAR fantasy): the manufacturer make is parsed from the driver
+  logo URL, and console output is ASCII-safe.
+
+### Docs
+
+- Refreshed the Tideweaver example READMEs and code comments to describe current
+  runtime behavior (output-class inference; input-vs-output path resolution) and
+  removed stale "run from the repo root" guidance.
+- Example 09 split into `inflow.py` / `outflow.py` sidecars with owner-seat scoring;
+  READMEs synced to the split-sidecar layout.
+
 ## [1.3.1] - 2026-06-05
 
 ### Fixed
