@@ -396,7 +396,7 @@ async def execute_request(
                 # Intercept Post-to-Get Downgrades
                 if response.history and method.upper() in ["POST", "PUT", "PATCH"]:
                     logger.warning(
-                        f"⚠️ NETWORK REDIRECT DETECTED: Your {method.upper()} request to '{url}' "
+                        f"NETWORK REDIRECT DETECTED: Your {method.upper()} request to '{url}' "
                         f"was redirected (HTTP {response.history[0].status_code}). "
                         f"Most servers drop the payload and downgrade to GET during a redirect. "
                         f"If you receive empty data, verify your URL exactness "
@@ -767,7 +767,7 @@ async def fetch_concurrent_payloads(
         except IncorporatorFormatError as e:
             duration = time.perf_counter() - start
             # Format errors are not retried by Tenacity, so attempt_number is unavailable.
-            logger.warning(f"⚠️ PARSE FAILED for '{src}': {e}. Skipping.")
+            logger.warning(f"PARSE FAILED for '{src}': {e}. Skipping.")
             rejects.append(_build_reject_entry(src, e, duration_sec=duration))
             return []
 
@@ -799,7 +799,7 @@ async def fetch_concurrent_payloads(
                         # CancelledError / SystemExit / KeyboardInterrupt — propagate.
                         raise res
                     if isinstance(res, Exception):
-                        logger.warning(f"⚠️ FETCH ERROR on '{src}': {type(res).__name__}: {res}. Skipping.")
+                        logger.warning(f"FETCH ERROR on '{src}': {type(res).__name__}: {res}. Skipping.")
                         rejects.append(_build_reject_entry(str(src), res))
                     elif res:
                         all_parsed_data.extend(res)
@@ -832,7 +832,7 @@ async def fetch_concurrent_payloads(
                     try:
                         res = await _safe_execute(str(src), p)
                     except Exception as exc:
-                        logger.warning(f"⚠️ FETCH ERROR on '{src}': {type(exc).__name__}: {exc}. Skipping.")
+                        logger.warning(f"FETCH ERROR on '{src}': {type(exc).__name__}: {exc}. Skipping.")
                         rejects.append(_build_reject_entry(str(src), exc))
                         continue
                     if res:

@@ -600,14 +600,14 @@ def render_report(named_profiles: list[tuple[str, SourceProfile]], plan: Orchest
         analyze_data(profile.parsed_data, profile.provided_kwargs)
 
     print("\n" + "=" * 70)
-    print("🌊  6. ORCHESTRATION HINTS (cross-source)")
+    print("6. ORCHESTRATION HINTS (cross-source)")
     print("=" * 70)
     print(f"   Suggested watershed shape: {plan.shape}")
     print(f"     ({plan.shape_rationale})")
     print("   Currents:")
     for spec in plan.currents:
         pag = f"[pagination: {spec.inc_page_suggestion}]" if spec.inc_page_suggestion else "[no pagination]"
-        print(f"     - {spec.name:<12} → {spec.verb.capitalize()}(interval={spec.interval_hint})  {pag}")
+        print(f"     - {spec.name:<12} -> {spec.verb.capitalize()}(interval={spec.interval_hint})  {pag}")
     if plan.edges:
         print("   Edges:")
         for edge in plan.edges:
@@ -616,11 +616,11 @@ def render_report(named_profiles: list[tuple[str, SourceProfile]], plan: Orchest
                 if edge.penstock
                 else ""
             )
-            print(f"     - {edge.from_name} → {edge.to_name}  (gate_mode={edge.gate_mode!r}{penstock_note})")
+            print(f"     - {edge.from_name} -> {edge.to_name}  (gate_mode={edge.gate_mode!r}{penstock_note})")
     else:
-        print("   Edges: (none — see notes)")
+        print("   Edges: (none - see notes)")
     if plan.needs_tail_current:
-        print("   ⚠️  Tail current not provided — pass `{'verb': 'fjord'}` for the merging current")
+        print("   Tail current not provided - pass `{'verb': 'fjord'}` for the merging current")
         print("       to make this a runnable diamond watershed.")
     if plan.notes:
         print("   Notes:")

@@ -61,7 +61,7 @@ async def run_incorporator_stream(
         raise RuntimeError("Prefect is not installed. Run: pip install incorporator[orchestrate]")
 
     logger = get_run_logger()
-    logger.info("🚀 Starting Incorporator stream orchestration.")
+    logger.info("Starting Incorporator stream orchestration.")
 
     results: list[Wave] = []
 
@@ -78,15 +78,15 @@ async def run_incorporator_stream(
 
             status = f"Chunk {wave.chunk_index} | {wave.rows_processed} rows in {wave.processing_time_sec:.2f}s"
             if wave.failed_sources:
-                logger.warning(f"⚠️ {status} with failures: {wave.failed_sources}")
+                logger.warning(f"{status} with failures: {wave.failed_sources}")
             else:
-                logger.info(f"✅ {status}")
+                logger.info(f"{status}")
 
-        logger.info("🏁 Incorporator stream completed successfully.")
+        logger.info("Incorporator stream completed successfully.")
         return results
 
     except Exception as e:
-        logger.error(f"❌ Fatal Pipeline Error: {str(e)}", exc_info=True)
+        logger.error(f"Fatal Pipeline Error: {str(e)}", exc_info=True)
         raise
 
 
@@ -94,7 +94,7 @@ async def run_incorporator_stream(
 async def run_incorporator_flow(config_path: str, poll_interval: float | None = None) -> list[Wave]:
     """Prefect flow entry point: load ``pipeline.json`` and run the stream task."""
     if not HAS_PREFECT:
-        print("❌ Prefect is not installed. Run: pip install incorporator[orchestrate]")
+        print("Prefect is not installed. Run: pip install incorporator[orchestrate]")
         sys.exit(1)
 
     path = Path(config_path).resolve()

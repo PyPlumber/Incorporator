@@ -30,8 +30,6 @@ from .runners import (
     _run_fjord,
     _run_stream,
     _run_validation,
-    _safe_print,
-    _safe_secho,
     set_json_output_mode,
 )
 from .scaffold import write_scaffold
@@ -55,8 +53,6 @@ __all__ = [
     "_run_fjord",
     "_run_stream",
     "_run_validation",
-    "_safe_print",
-    "_safe_secho",
 ]
 
 if typer:
@@ -139,7 +135,7 @@ if typer:
                 )
             )
         except KeyboardInterrupt:
-            _err("\n🛑 Stream stopped by user.", fg=typer.colors.YELLOW)
+            _err("\nStream stopped by user.", fg=typer.colors.YELLOW)
 
     @app.command()  # type: ignore[untyped-decorator]
     def fjord(
@@ -188,7 +184,7 @@ if typer:
                 )
             )
         except KeyboardInterrupt:
-            _err("\n🛑 Fjord stopped by user.", fg=typer.colors.YELLOW)
+            _err("\nFjord stopped by user.", fg=typer.colors.YELLOW)
 
     @app.command()  # type: ignore[untyped-decorator]
     def validate(
@@ -210,7 +206,7 @@ if typer:
         """
         pipeline_config = _load_pipeline_config(config)
         detected = _run_validation(pipeline_config, config.parent.resolve(), type_override=type_)
-        _safe_secho(f"✅ {config} is valid ({detected}).", fg=typer.colors.GREEN)
+        typer.secho(f"{config} is valid ({detected}).", fg=typer.colors.GREEN)
 
     @app.command()  # type: ignore[untyped-decorator]
     def init(
@@ -252,9 +248,9 @@ if typer:
             typer.secho(f"Error: {e}", fg=typer.colors.RED)
             sys.exit(1)
 
-        _safe_secho(f"✅ Wrote {len(written)} starter file(s):", fg=typer.colors.GREEN)
+        typer.secho(f"Wrote {len(written)} starter file(s):", fg=typer.colors.GREEN)
         for path in written:
-            _safe_secho(f"  - {path}", fg=typer.colors.CYAN)
+            typer.secho(f"  - {path}", fg=typer.colors.CYAN)
         # Config filename varies by scaffold type — pipeline.json for stream/fjord,
         # watershed.json for tideweaver.  The run verb differs too.
         config_path = next(
@@ -265,7 +261,7 @@ if typer:
             run_cmd = f"incorporator tideweaver run {config_path}"
         else:
             run_cmd = f"incorporator {type_} {config_path}"
-        _safe_secho(
+        typer.secho(
             "\nNext steps:\n"
             "  1. Edit the file(s) above and replace the placeholders.\n"
             f"  2. incorporator validate {config_path}\n"
@@ -292,7 +288,7 @@ if typer:
 def main() -> None:
     """Entry point for the setup.py / pyproject.toml console script."""
     if app is None:
-        _safe_print("❌ Typer is not installed. To use the CLI, run: pip install incorporator[orchestrate]")
+        print("Typer is not installed. To use the CLI, run: pip install incorporator[orchestrate]")
         sys.exit(1)
     app()
 

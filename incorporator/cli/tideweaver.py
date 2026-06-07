@@ -21,7 +21,6 @@ from incorporator._deps.typer import TYPER as _typer
 
 from ..observability.tideweaver import LoggedTideweaver, Tide, Tideweaver
 from ..observability.tideweaver.config import build_watershed
-from .runners import _safe_secho
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +173,7 @@ def build_app() -> Any:
                 )
             )
         except KeyboardInterrupt:
-            _safe_secho("\n🛑 Tideweaver stopped by user.", fg=_typer.colors.YELLOW)
+            _typer.secho("\nTideweaver stopped by user.", fg=_typer.colors.YELLOW)
         except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
             _typer.secho(f"Error: {exc}", fg=_typer.colors.RED)
             sys.exit(1)
@@ -197,6 +196,6 @@ def build_app() -> Any:
             sys.exit(1)
         raw_config = _load_pipeline_config(config)
         _run_validation(raw_config, config.parent.resolve(), type_override="tideweaver")
-        _safe_secho(f"✅ {config} is valid (tideweaver).", fg=_typer.colors.GREEN)
+        _typer.secho(f"{config} is valid (tideweaver).", fg=_typer.colors.GREEN)
 
     return tideweaver_app

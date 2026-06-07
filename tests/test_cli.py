@@ -1,7 +1,6 @@
 """Unit tests for the Incorporator Typer CLI."""
 
 import json
-import sys
 from pathlib import Path
 from typing import Any, AsyncGenerator, Iterator
 from unittest.mock import patch
@@ -360,49 +359,26 @@ def test_cli_validate_unset_env_var_reports_clearly(tmp_path: Path) -> None:
     assert "NONEXISTENT_TEST_VAR" in result.stdout
 
 
-def test_cli_validate_exits_0_on_cp1252_stdout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """validate exits 0 on success when stdout encoding is cp1252 (Windows default).
+def test_cli_validate_exits_0_on_cp1252_stdout(tmp_path: Path) -> None:
+    """validate exits 0 and emits pure-ASCII output for a well-formed stream config.
 
-    Proves that the encoding-safe helper emits ASCII fallback text instead of
-    raising UnicodeEncodeError, so ``incorporator validate`` never misleadingly
-    exits non-zero on a Windows cp1252 console after validation has passed.
+    Proves that success output contains no non-ASCII characters, so it can never
+    raise UnicodeEncodeError on a Windows cp1252 console.  The approach is
+    "literals only" — all emoji/glyphs were removed from runtime output rather
+    than translated, so the assertion is structural: every byte in result.stdout
+    must round-trip through cp1252 encoding.
     """
-    import incorporator.cli.runners as runners_mod
-
     cfg = tmp_path / "pipeline.json"
     cfg.write_text(json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8")
-
-    # Patch _needs_fallback to simulate a cp1252 stdout without replacing sys.stdout itself
-    # (CliRunner captures output via its own StringIO; patching the encoding-detection
-    # function is the reliable way to exercise the ASCII-fallback branch under CliRunner).
-    monkeypatch.setattr(runners_mod, "_needs_fallback", lambda *, err: True)
 
     result = runner.invoke(app, ["validate", str(cfg)])
 
     assert result.exit_code == 0, result.stdout
     assert "is valid" in result.stdout
-    assert "[OK]" in result.stdout
-    assert "✅" not in result.stdout
-
-
-def test_cli_validate_emits_emoji_on_utf8_stdout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """validate emits the ✅ emoji unchanged when stdout encoding is UTF-8.
-
-    Proves that the encoding-safe helper does NOT substitute glyphs on
-    UTF-8 capable streams (Unix/Mac standard terminal).
-    """
-    import incorporator.cli.runners as runners_mod
-
-    cfg = tmp_path / "pipeline.json"
-    cfg.write_text(json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8")
-
-    monkeypatch.setattr(runners_mod, "_needs_fallback", lambda *, err: False)
-
-    result = runner.invoke(app, ["validate", str(cfg)])
-
-    assert result.exit_code == 0, result.stdout
-    assert "is valid" in result.stdout
-    assert "✅" in result.stdout
+    # Pure-ASCII: no character above U+007F survives in the success message.
+    assert result.stdout.isascii()
+    # Belt-and-suspenders: encoding to cp1252 must not raise UnicodeEncodeError.
+    result.stdout.encode("cp1252")
 
 
 # ==========================================

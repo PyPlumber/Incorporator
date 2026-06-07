@@ -451,28 +451,28 @@ def analyze_data(parsed_data: list[Any], provided_kwargs: dict[str, Any]) -> Non
     :mod:`incorporator.observability.tideweaver.architect`.
     """
     if not parsed_data:
-        print("\n🔍 INCORPORATOR INSPECTOR: No data returned to inspect.\n")
+        print("\nINCORPORATOR INSPECTOR: No data returned to inspect.\n")
         return
 
     profile = capture_signals(parsed_data, provided_kwargs)
 
     print("\n" + "=" * 70)
-    print("🕵️‍♂️  INCORPORATOR DX INSPECTOR")
+    print("INCORPORATOR DX INSPECTOR")
     print("=" * 70)
 
     # 1. Structure & rec_path suggestion.
-    print("\n📦 1. PAYLOAD STRUCTURE:")
+    print("\n1. PAYLOAD STRUCTURE:")
     _print_tree(profile.sample, "   ")
 
     if profile.rec_path_candidates:
         inventory = ", ".join(f"{k} ({n})" for k, n in profile.rec_path_candidates)
         biggest = profile.rec_path_candidates[0][0]
-        print(f"\n   ⚠️  The root object also contains nested arrays:  {inventory}")
-        print("   💡 To map one of those instead, add `rec_path` and re-run test():")
+        print(f"\n   The root object also contains nested arrays:  {inventory}")
+        print("   To map one of those instead, add `rec_path` and re-run test():")
         print(f"      await YourClass.test(inc_url=..., rec_path='{biggest}')")
 
     if not profile.is_dict_shaped:
-        print("\n   ℹ️  Data is not a dictionary. No further attribute suggestions can be made.")
+        print("\n   Data is not a dictionary. No further attribute suggestions can be made.")
         print("=" * 70 + "\n")
         return
 
@@ -488,24 +488,24 @@ def analyze_data(parsed_data: list[Any], provided_kwargs: dict[str, Any]) -> Non
 
 def _print_identity_mapping(profile: SourceProfile) -> None:
     """Print section 2: best inc_code / inc_name picks."""
-    print("\n🔑 2. IDENTITY MAPPING:")
+    print("\n2. IDENTITY MAPPING:")
     print("   Recommended kwargs for O(1) Memory Registry:")
     if profile.primary_key_field:
-        print(f"   ✅ inc_code='{profile.primary_key_field}'")
+        print(f"   inc_code='{profile.primary_key_field}'")
     else:
-        print("   ❓ inc_code=None (Could not accurately identify a unique primary key)")
+        print("   inc_code=None (Could not accurately identify a unique primary key)")
     if profile.display_name_field:
-        print(f"   ✅ inc_name='{profile.display_name_field}'")
+        print(f"   inc_name='{profile.display_name_field}'")
     else:
-        print("   ❓ inc_name=None (Could not accurately identify a display name)")
+        print("   inc_name=None (Could not accurately identify a display name)")
 
 
 def _print_type_casting(profile: SourceProfile) -> None:
     """Print section 3: conv_dict template."""
-    print("\n🛠️  3. ETL / TYPE CASTING SUGGESTIONS:")
+    print("\n3. ETL / TYPE CASTING SUGGESTIONS:")
     any_suggestion = bool(profile.datetime_fields or profile.int_fields or profile.float_fields)
     if any_suggestion:
-        print("   💡 The framework's runtime parsers would coerce these. Consider:")
+        print("   The framework's runtime parsers would coerce these. Consider:")
         print("      conv_dict={")
         for c in profile.datetime_fields:
             print(f"          '{c}': inc(datetime),")
@@ -515,29 +515,29 @@ def _print_type_casting(profile: SourceProfile) -> None:
             print(f"          '{c}': inc(float),")
         print("      }")
     else:
-        print("   ✅ No string fields look like dates or numbers requiring conversion.")
+        print("   No string fields look like dates or numbers requiring conversion.")
 
 
 def _print_pagination_hints(profile: SourceProfile) -> None:
     """Print section 4: pagination paginator suggestion (only when detected)."""
     if profile.pagination_kind == "ambiguous":
         present = ", ".join(profile.pagination_meta_keys_present)
-        print("\n📑 4. PAGINATION HINTS:")
-        print(f"   ⚠️  Found pagination metadata ({present}) but no clear cursor.")
-        print("   💡 Re-fetch the next page manually and check which kwarg the API expects:")
-        print("      `page=` / `offset=` / `cursor=` — then wrap with the matching paginator.")
+        print("\n4. PAGINATION HINTS:")
+        print(f"   Found pagination metadata ({present}) but no clear cursor.")
+        print("   Re-fetch the next page manually and check which kwarg the API expects:")
+        print("      `page=` / `offset=` / `cursor=` - then wrap with the matching paginator.")
         return
     if profile.pagination_suggestion:
-        print("\n📑 4. PAGINATION HINTS:")
-        print(f"   💡 This endpoint looks paginated — {profile.pagination_description}. Consider:")
+        print("\n4. PAGINATION HINTS:")
+        print(f"   This endpoint looks paginated - {profile.pagination_description}. Consider:")
         print(f"      inc_page={profile.pagination_suggestion}")
 
 
 def _print_heavy_field_hints(profile: SourceProfile) -> None:
     """Print section 5: excl_lst suggestion (only when heavy fields detected)."""
     if profile.heavy_fields:
-        print("\n🗑️  5. HEAVY-FIELD HINTS:")
-        print("   💡 Fields likely to bloat the payload — consider excluding:")
+        print("\n5. HEAVY-FIELD HINTS:")
+        print("   Fields likely to bloat the payload - consider excluding:")
         formatted = ", ".join(f"'{k}'" for k in profile.heavy_fields)
         print(f"      excl_lst=[{formatted}]")
 
@@ -559,10 +559,10 @@ def analyze_error(e: Exception) -> None:
             print(text.encode("ascii", errors="replace").decode("ascii"))
 
     p("\n" + "=" * 70)
-    p("🚨 INCORPORATOR DX INSPECTOR: EXECUTION FAILED")
+    p("INCORPORATOR DX INSPECTOR: EXECUTION FAILED")
     p("=" * 70)
     p(f"[{e.__class__.__name__}] {e}")
-    p("\n💡 QUICK FIX SUGGESTIONS:")
+    p("\nQUICK FIX SUGGESTIONS:")
 
     if isinstance(e, IncorporatorNetworkError):
         cause = getattr(e, "__cause__", None)
@@ -571,23 +571,23 @@ def analyze_error(e: Exception) -> None:
         if cause_name == "HTTPStatusError":
             status = getattr(getattr(cause, "response", None), "status_code", 0)
             if status in (401, 403):
-                p(f"   👉 Auth Blocked (HTTP {status}): Pass `headers={{'Authorization': 'Bearer ...'}}`.")
+                p(f"Auth Blocked (HTTP {status}): Pass `headers={{'Authorization': 'Bearer ...'}}`.")
             elif status == 406:
-                p("   👉 Format Rejected (HTTP 406): Try `headers={{'Accept': 'application/json'}}`.")
+                p("Format Rejected (HTTP 406): Try `headers={{'Accept': 'application/json'}}`.")
             else:
-                p(f"   👉 Server returned HTTP {status}. Verify the endpoint requirements.")
+                p(f"Server returned HTTP {status}. Verify the endpoint requirements.")
 
         elif cause_name == "ConnectError":
             cause_str = str(cause).upper()
             if "SSL" in cause_str or "CERTIFICATE" in cause_str:
-                p("   👉 SSL Verification Failed: Add `ignore_ssl=True` to bypass proxies.")
+                p("SSL Verification Failed: Add `ignore_ssl=True` to bypass proxies.")
             else:
-                p("   👉 Connection Refused: Verify the URL or check if a VPN is required.")
+                p("Connection Refused: Verify the URL or check if a VPN is required.")
 
         elif cause_name in ("TimeoutException", "ReadTimeout", "ConnectTimeout"):
-            p("   👉 Connection Timed Out: The server is unresponsive. Add `timeout=30.0` if it's just slow.")
+            p("Connection Timed Out: The server is unresponsive. Add `timeout=30.0` if it's just slow.")
         else:
-            p("   👉 Check your URL or network connection.")
+            p("Check your URL or network connection.")
 
     elif isinstance(e, IncorporatorFormatError):
         e_str = str(e).lower()
@@ -595,30 +595,30 @@ def analyze_error(e: Exception) -> None:
         # Modern Format Hints
         if "avro" in e_str or "fastavro" in e_str:
             p(
-                "   👉 Missing Dependency: Apache Avro requires `fastavro`. Run `pip install incorporator[orchestrate]`."  # noqa: E501
+                "Missing Dependency: Apache Avro requires `fastavro`. Run `pip install incorporator[orchestrate]`."  # noqa: E501
             )
         elif "sqlite" in e_str or "sql" in e_str:
-            p("   👉 SQLite Execution: Ensure you provide `sql_query='SELECT * FROM ...'`.")
+            p("SQLite Execution: Ensure you provide `sql_query='SELECT * FROM ...'`.")
             p("      Or check that the file path resolves to a valid `.db` / `.sqlite` file.")
         elif "json" in e_str and ("decode" in e_str or "invalid" in e_str):
-            p("   👉 JSON Decode Failed: If the file is JSON Lines, specify `format_type=FormatType.NDJSON`.")
+            p("JSON Decode Failed: If the file is JSON Lines, specify `format_type=FormatType.NDJSON`.")
             p("      If it's an API, it might be returning a text/html firewall or CAPTCHA.")
         elif "xml" in e_str:
             p(
-                "   👉 XML Parsing Failed: Check if the XML declaration is malformed, or if DTDs are blocked by security policy."  # noqa: E501
+                "XML Parsing Failed: Check if the XML declaration is malformed, or if DTDs are blocked by security policy."  # noqa: E501
             )
         elif "delimited" in e_str or "csv" in e_str:
             p(
-                "   👉 CSV Parsing Failed: Check the delimiter. Use `format_type=FormatType.TSV` or `PSV` if it's not a comma."  # noqa: E501
+                "CSV Parsing Failed: Check the delimiter. Use `format_type=FormatType.TSV` or `PSV` if it's not a comma."  # noqa: E501
             )
         elif "cramjam" in e_str:
-            p("   👉 Missing Dependency: Rust compression requires Cramjam. Run `pip install incorporator[cramjam]`.")
+            p("Missing Dependency: Rust compression requires Cramjam. Run `pip install incorporator[cramjam]`.")
         else:
-            p("   👉 HTML Firewall/Login Page: If the parser choked, the API likely returned HTML.")
+            p("HTML Firewall/Login Page: If the parser choked, the API likely returned HTML.")
             p("      Open the URL in your browser to check for captchas or login portals.")
-            p("   👉 Local File: Check `format_type=...` if relying on a file without an extension.")
+            p("Local File: Check `format_type=...` if relying on a file without an extension.")
 
     else:
-        p("   👉 A schema or configuration error occurred. Check your payload syntax.")
+        p("A schema or configuration error occurred. Check your payload syntax.")
 
     p("=" * 70 + "\n")
