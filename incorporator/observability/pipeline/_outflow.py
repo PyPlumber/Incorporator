@@ -230,8 +230,9 @@ async def flush(
             # Prefer a user-pre-declared subclass with the matching name.
             user_cls = getattr(outflow_module, derived_name, None) if outflow_module is not None else None
             if user_cls is not None and isinstance(user_cls, type) and issubclass(user_cls, base_class):
-                extra_fields = set(user_cls.model_fields) - set(base_class.model_fields)
-                allows_extra = user_cls.model_config.get("extra") == "allow"
+                user_any = cast(Any, user_cls)
+                extra_fields = set(user_any.model_fields) - set(base_class.model_fields)
+                allows_extra = user_any.model_config.get("extra") == "allow"
                 if extra_fields or allows_extra:
                     # User declared fields explicitly or opted into extra='allow' —
                     # use their class directly; warn only if bare-class conditions
@@ -253,7 +254,7 @@ async def flush(
                         sample_dict = sample.model_dump()
                     else:
                         sample_dict = {}
-                    undeclared = [k for k in sample_dict if k not in user_cls.model_fields]
+                    undeclared = [k for k in sample_dict if k not in user_any.model_fields]
                     if undeclared:
                         # Row carries fields the bare class would silently drop.
                         # Warn once so the user knows their class was bypassed, then
