@@ -104,7 +104,7 @@ async def main() -> None:
 
 The runnable version is at [`examples/appendix/nascar-tideweaver/nascar_tideweaver.py`](./nascar_tideweaver.py).
 
-> **`DriverState` is declared in the sidecar — don't instantiate it.** The tail Fjord's output class lives in `outflow.py` and is passed via `cls=DriverState`, so the `flush()` primitive uses that declared class verbatim each tick (rather than inferring an anonymous schema from the row keys). Never call `DriverState(...)` yourself; let the Fjord build the records from the `outflow(state)` return rows.
+> **`DriverState` is declared in the sidecar — don't instantiate it.** The tail Fjord's output class lives in `outflow.py` and is passed via `cls=DriverState`. `flush()` infers the output class fields from the dict keys that `outflow(state)` returns — the declaration gives the class its name, but the schema comes from the rows. `DriverState` is a bare class (no declared fields, no `extra='allow'`), so if the rows carry undeclared keys the framework emits one WARNING and falls through to inference, preserving every field. Never call `DriverState(...)` yourself; let the Fjord build the records from the `outflow(state)` return rows.
 
 ---
 
@@ -156,7 +156,7 @@ incorporator validate examples/appendix/nascar-tideweaver/watershed.json
 incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json --json-output
 ```
 
-Run from the repo root so the relative `inc_file` / `outflow` paths resolve.
+The CLI resolves `inc_file`, `inflow`, and `outflow` relative to `watershed.json`'s directory, so these commands work from any working directory. `export_params.file_path` (`"data/driver_state.ndjson"`) is CWD-relative — the output file lands in `<your working directory>/data/`, not alongside the config.
 
 ---
 

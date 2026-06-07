@@ -337,11 +337,16 @@ ask across venues.
 > semantic name `outflow.py` — matching the `incorporator init --type fjord`
 > scaffold and the DX convention established in T9/T10.
 >
-> **Output class is dynamic here.**  `outflow(state)` returns a list of
-> dicts, so fjord builds the output class from the row keys (named `Outflow`
-> from the sidecar stem).  Don't pre-declare a bare `class Outflow(Incorporator):
-> pass` — Pydantic V2's `extra='ignore'` would silently drop every field.
-> The framework emits a one-time WARNING per bare-class trap.
+> **Output class is inferred here.**  `outflow(state)` returns a list of
+> dicts; `flush()` infers the output class fields from the dict keys.  The
+> inferred class is named after the class declared in the watershed.json
+> `"class"` field (here, `BestMarket`) — the declaration supplies the name,
+> but the schema comes from the rows.  `BestMarket` must stay declared so
+> the watershed.json `"class"` field (and the `arb_scanner.py` import)
+> can resolve it by name; declaring it bare is fine because `flush()`
+> infers the fields from the rows and, if a bare class would drop
+> undeclared keys, emits a one-time WARNING and falls through to inference
+> so no fields are lost.  Declare the fields explicitly to silence the WARNING.
 
 ```python
 # outflow.py
@@ -488,6 +493,8 @@ convention as `fjord()`).  Run it:
 ```bash
 incorporator tideweaver run watershed.json --json-output
 ```
+
+The CLI resolves `outflow`, `inflow`, and `inc_file` paths relative to `watershed.json`'s directory, so the command works from any working directory. `export_params.file_path` (`"data/arb_signals.ndjson"`) is CWD-relative — the output file lands in `<your working directory>/data/`, not alongside the config.
 
 One NDJSON `Tide` record per scheduler pass lands on stdout; status banners go to
 stderr so log shippers can ingest stdout directly.
