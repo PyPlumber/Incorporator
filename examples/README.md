@@ -72,4 +72,6 @@ incorporator validate examples/11-tideweaver/watershed.json
 incorporator tideweaver run examples/11-tideweaver/watershed.json
 ```
 
-Run from the repo root so relative `inc_file` paths inside the JSON resolve correctly.
+Relative `inc_file` / `inflow` / `outflow` paths inside the JSON resolve against the
+config file's own directory, so these commands work from any working directory; output
+paths (`export_params.file_path`) are relative to where you run the command.
