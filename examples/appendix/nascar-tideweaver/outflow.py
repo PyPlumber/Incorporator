@@ -1,18 +1,23 @@
-"""Outflow logic for examples/appendix/nascar-tideweaver/watershed.json.
+"""Shared sidecar for examples/appendix/nascar-tideweaver/.
 
-Defines the four ``Incorporator`` subclasses referenced from the
-watershed config (head, two middles, and the tail's output class) plus
-the ``outflow(state)`` function the Fjord current calls each tick.
+Defines the four ``Incorporator`` subclasses and the ``outflow(state)``
+function used by BOTH entry points in this directory:
 
-The three middle / head streams read from local JSON files in this
-directory so the CLI smoke-test runs without any network or
-credentials:
+* ``nascar_tideweaver.py`` — Python runner, imports classes directly.
+* ``watershed.json`` — CLI entry, references this file via ``"outflow": "outflow.py"``.
 
+Both entry points stay in lockstep because they load the same class
+definitions and the same join logic from this single module.
+
+The three head / middle streams read from local JSON fixtures so the
+example runs without any network access or credentials:
+
+    python examples/appendix/nascar-tideweaver/nascar_tideweaver.py
     incorporator validate examples/appendix/nascar-tideweaver/watershed.json
     incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json
 
-Run paths inside the JSON config are relative to the *current working
-directory* of the CLI process — invoke from the repo root.
+Invoke the CLI commands from the repo root so the relative ``inc_file``
+paths inside ``watershed.json`` resolve correctly.
 """
 
 from typing import Any

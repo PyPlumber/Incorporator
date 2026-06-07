@@ -12,7 +12,7 @@
   },
 
   "shape": "diamond",
-  "outflow": "race_outflow.py",
+  "outflow": "outflow.py",
   "drain_timeout": 30,
 
   "_flow_note_": "Full FlowControl literal on every diamond edge — same runtime semantics as the gate_mode='hard' shorthand, but adds a LoggingObserver so per-edge fire / skip / spillway events emit through Python logging.  Switch any field's `type` value to swap strategies (see docs/api_atlas.md#canal-toolkit-primitives).",

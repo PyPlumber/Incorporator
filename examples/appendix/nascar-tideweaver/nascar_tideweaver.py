@@ -14,112 +14,44 @@ tail Fjord current's tick is a *fjord flush* — snapshot upstream
 registries, run ``outflow(state)``, build the dynamic ``DriverState``
 class, export.
 
-To stay runnable without credentials, all three sources read from
-local JSON files this script writes into a temp directory before
-starting the watershed.  Real pipelines swap ``inc_file`` for
-``inc_url`` against your live race-data feeds.
+All three sources read from local JSON fixtures in ``fixtures/`` so the
+example runs without network access.  Real pipelines swap ``inc_file``
+for ``inc_url`` against your live race-data feeds.
 
 Run with:
-    python examples/appendix/nascar_tideweaver.py
+    python examples/appendix/nascar-tideweaver/nascar_tideweaver.py
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from incorporator import Incorporator, Fjord, Stream, Tideweaver, Watershed
+from incorporator import Fjord, Stream, Tideweaver, Watershed
 
+HERE = Path(__file__).resolve().parent
+FIXTURES = HERE / "fixtures"
+OUTFLOW_PATH = HERE / "outflow.py"
+OUT = HERE / "out"
+OUT.mkdir(exist_ok=True)
 
-# --- Source classes -------------------------------------------------------
+# Make the sidecar importable when this script is run via ``python -m`` or
+# from a working directory other than HERE.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
-
-class Lap(Incorporator):
-    """One row of per-driver lap data."""
-
-
-class Pit(Incorporator):
-    """One row of per-driver pit-stop data."""
-
-
-class Flag(Incorporator):
-    """One row of race-flag events."""
-
-
-class DriverState(Incorporator):
-    """Derived per-driver state — built dynamically by the fjord flush."""
-
-
-# --- Outflow function -----------------------------------------------------
-
-OUTFLOW_SOURCE = """
-def outflow(state):
-    laps  = state.get('Lap', [])
-    pits  = state.get('Pit', [])
-    flags = state.get('Flag', [])
-    by_driver = {}
-    for lap in laps:
-        d = getattr(lap, 'driver', None) or getattr(lap, 'inc_code', None)
-        if d is None:
-            continue
-        row = by_driver.setdefault(d, {'driver': d, 'laps': 0, 'pits': 0, 'flag': None})
-        row['laps'] = max(row['laps'], int(getattr(lap, 'lap_number', 0) or 0))
-    for pit in pits:
-        d = getattr(pit, 'driver', None) or getattr(pit, 'inc_code', None)
-        if d is None:
-            continue
-        row = by_driver.setdefault(d, {'driver': d, 'laps': 0, 'pits': 0, 'flag': None})
-        row['pits'] += 1
-    if flags:
-        latest = flags[-1]
-        for row in by_driver.values():
-            row['flag'] = getattr(latest, 'color', None)
-    return list(by_driver.values())
-"""
-
-
-def _seed_source_files(tmpdir: Path) -> dict[str, Path]:
-    """Write toy JSON source files so the example runs without network access."""
-    laps_path = tmpdir / "laps.json"
-    pits_path = tmpdir / "pits.json"
-    flags_path = tmpdir / "flags.json"
-    laps_path.write_text(
-        json.dumps(
-            [
-                {"driver": "Larson", "lap_number": 42},
-                {"driver": "Hamlin", "lap_number": 41},
-                {"driver": "Byron", "lap_number": 42},
-            ]
-        ),
-        encoding="utf-8",
-    )
-    pits_path.write_text(
-        json.dumps([{"driver": "Hamlin", "stop": 1}, {"driver": "Byron", "stop": 2}]),
-        encoding="utf-8",
-    )
-    flags_path.write_text(json.dumps([{"color": "green", "lap": 1}, {"color": "yellow", "lap": 42}]), encoding="utf-8")
-    return {"laps": laps_path, "pits": pits_path, "flags": flags_path}
-
-
-def _write_outflow(tmpdir: Path) -> Path:
-    path = tmpdir / "outflow.py"
-    path.write_text(OUTFLOW_SOURCE, encoding="utf-8")
-    return path
+# Reuse the same class definitions + outflow() that watershed.json loads,
+# so the Python and JSON entry points stay in lockstep.
+from outflow import DriverState, FlagEvents, LapData, PitStops  # noqa: E402
 
 
 async def main() -> None:
-    # Outputs live next to the script (``examples/appendix/nascar-tideweaver/out/``)
-    # so you can inspect the driver-state log after each run.
-    # ``examples/**/out/`` is gitignored — nothing leaks into git.  Delete
-    # the directory before re-running for a clean log.
-    here = Path(__file__).resolve().parent
-    out_dir = here / "out"
-    out_dir.mkdir(exist_ok=True)
-    files = _seed_source_files(out_dir)
-    outflow_path = _write_outflow(out_dir)
-    out_file = out_dir / "driver_state.ndjson"
+    # Outputs live next to the script so you can inspect the driver-state
+    # log after each run.  ``examples/**/out/`` is gitignored — nothing
+    # leaks into git.  Delete the directory before re-running for a clean log.
+    out_file = OUT / "driver_state.ndjson"
 
     now = datetime.now(timezone.utc)
     window = (now, now + timedelta(seconds=15))
@@ -128,22 +60,22 @@ async def main() -> None:
         window=window,
         head=Stream(
             name="laps",
-            cls=Lap,
+            cls=LapData,
             interval=3.0,
-            incorp_params={"inc_file": str(files["laps"]), "inc_code": "driver"},
+            incorp_params={"inc_file": str(FIXTURES / "laps.json"), "inc_code": "driver"},
         ),
         middle=[
             Stream(
                 name="pits",
-                cls=Pit,
+                cls=PitStops,
                 interval=3.0,
-                incorp_params={"inc_file": str(files["pits"]), "inc_code": "driver"},
+                incorp_params={"inc_file": str(FIXTURES / "pits.json"), "inc_code": "driver"},
             ),
             Stream(
                 name="flags",
-                cls=Flag,
+                cls=FlagEvents,
                 interval=3.0,
-                incorp_params={"inc_file": str(files["flags"]), "inc_code": "color"},
+                incorp_params={"inc_file": str(FIXTURES / "flags.json"), "inc_code": "color"},
             ),
         ],
         tail=Fjord(
@@ -156,7 +88,7 @@ async def main() -> None:
                 "if_exists": "append",
             },
         ),
-        outflow=outflow_path,
+        outflow=str(OUTFLOW_PATH),
         drain_timeout=10.0,
     )
 

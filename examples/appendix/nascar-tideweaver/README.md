@@ -22,16 +22,13 @@ The cadence map:
 
 Three Stream currents feed one Fjord tail. Same shape as the crypto arb scanner; different sources, different outflow logic, same five-name vocabulary. Verified: a 15-second window emits ~15 Tides and writes ~20-25 driver-state rows to NDJSON.
 
-> **Two entry points in this directory.** `nascar_tideweaver.py` is the
-> standalone Python runner — defines `Lap` / `Pit` / `Flag` source
-> classes plus an inline `outflow(state)` that reads
-> `state.get("Lap")` / `state.get("Pit")` / `state.get("Flag")`.
-> `race_outflow.py` is the CLI sidecar referenced from
-> `watershed.json` and uses different class names — `LapData` /
-> `PitStops` / `FlagEvents` — to keep the CLI-side declarations
-> distinct from the Python script's. The walkthrough below tracks
-> the Python runner (the simpler entry). The CLI form at the end
-> uses the sidecar.
+> **One shared sidecar.** Both `nascar_tideweaver.py` (Python runner)
+> and `watershed.json` (CLI entry) load their class definitions and
+> `outflow(state)` logic from the same `outflow.py` sidecar. The
+> Python runner imports `LapData`, `PitStops`, `FlagEvents`, and
+> `DriverState` directly; `watershed.json` references the file via
+> `"outflow": "outflow.py"`. Both entry points stay in lockstep — a
+> change to `outflow.py` is reflected in both immediately.
 
 ---
 
@@ -39,30 +36,26 @@ Three Stream currents feed one Fjord tail. Same shape as the crypto arb scanner;
 
 ```python
 import asyncio
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from incorporator import Incorporator, Fjord, Stream, Tideweaver, Watershed
-
-
-class Lap(Incorporator):
-    """One row of per-driver lap data."""
-
-
-class Pit(Incorporator):
-    """One row of per-driver pit-stop data."""
-
-
-class Flag(Incorporator):
-    """One row of race-flag events."""
-
+from incorporator import Fjord, Stream, Tideweaver, Watershed
 
 HERE = Path(__file__).resolve().parent
+FIXTURES = HERE / "fixtures"
+OUTFLOW_PATH = HERE / "outflow.py"
 OUT = HERE / "out"
+OUT.mkdir(exist_ok=True)
+
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from outflow import DriverState, FlagEvents, LapData, PitStops  # noqa: E402
 
 
 async def main() -> None:
-    OUT.mkdir(exist_ok=True)
+    out_file = OUT / "driver_state.ndjson"
     now = datetime.now(timezone.utc)
     window = (now, now + timedelta(seconds=15))
 
@@ -70,37 +63,35 @@ async def main() -> None:
         window=window,
         head=Stream(
             name="laps",
-            cls=Lap,
+            cls=LapData,
             interval=3.0,
-            incorp_params={"inc_file": str(HERE / "fixtures/laps.json"),
-                           "inc_code": "driver"},
+            incorp_params={"inc_file": str(FIXTURES / "laps.json"), "inc_code": "driver"},
         ),
         middle=[
             Stream(
                 name="pits",
-                cls=Pit,
+                cls=PitStops,
                 interval=3.0,
-                incorp_params={"inc_file": str(HERE / "fixtures/pits.json"),
-                               "inc_code": "driver"},
+                incorp_params={"inc_file": str(FIXTURES / "pits.json"), "inc_code": "driver"},
             ),
             Stream(
                 name="flags",
-                cls=Flag,
+                cls=FlagEvents,
                 interval=3.0,
-                incorp_params={"inc_file": str(HERE / "fixtures/flags.json"),
-                               "inc_code": "color"},
+                incorp_params={"inc_file": str(FIXTURES / "flags.json"), "inc_code": "color"},
             ),
         ],
         tail=Fjord(
             name="state",
+            cls=DriverState,
             interval=3.0,
             export_params={
-                "file_path": str(OUT / "driver_state.ndjson"),
+                "file_path": str(out_file),
                 "format": "ndjson",
                 "if_exists": "append",
             },
         ),
-        outflow=str(HERE / "_inline_outflow.py"),    # see below
+        outflow=str(OUTFLOW_PATH),
         drain_timeout=10.0,
     )
 
@@ -109,27 +100,23 @@ async def main() -> None:
             f"Tide {tide.tide_number:3d} | fired: {','.join(tide.fired) or '-':<20} "
             f"| skipped: {len(tide.skipped):2d} | {tide.duration_sec:.3f}s"
         )
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
 ```
 
-The runnable version at [`examples/appendix/nascar-tideweaver/nascar_tideweaver.py`](./nascar_tideweaver.py) inlines the outflow into the same file via a tempdir trick rather than a sibling `.py`; the code above splits them for narrative clarity.
+The runnable version is at [`examples/appendix/nascar-tideweaver/nascar_tideweaver.py`](./nascar_tideweaver.py).
 
-> **Don't pre-declare `DriverState` records.** The tail Fjord current's output class is built dynamically by the engine from the `outflow(state)` return rows. Never instantiate the output class yourself; let the Fjord build it.
+> **`DriverState` is declared in the sidecar — don't instantiate it.** The tail Fjord's output class lives in `outflow.py` and is passed via `cls=DriverState`, so the `flush()` primitive uses that declared class verbatim each tick (rather than inferring an anonymous schema from the row keys). Never call `DriverState(...)` yourself; let the Fjord build the records from the `outflow(state)` return rows.
 
 ---
 
 ## The outflow function
 
-The tail Fjord current's `outflow(state)` joins laps + pits + flags into one row per driver. The keys of `state` are the upstream **class names** (`"Lap"`, `"Pit"`, `"Flag"`):
+The tail Fjord current's `outflow(state)` joins laps + pits + flags into one row per driver. The keys of `state` are the upstream **class names** (`"LapData"`, `"PitStops"`, `"FlagEvents"`):
 
 ```python
 def outflow(state):
-    laps  = state.get("Lap", [])
-    pits  = state.get("Pit", [])
-    flags = state.get("Flag", [])
+    laps  = state.get("LapData", [])
+    pits  = state.get("PitStops", [])
+    flags = state.get("FlagEvents", [])
 
     by_driver = {}
     for lap in laps:
@@ -154,7 +141,7 @@ def outflow(state):
     return list(by_driver.values())
 ```
 
-> **Guard against missing keys.** `outflow(state)` is called every Fjord tick — the first tick may fire before pits or flags have populated. Every `state.get(...)` defaults to `[]`, and every per-record read uses `getattr(..., None)` with an explicit fallback. Reading `state["Pit"]` directly would `KeyError` on the first tide.
+> **Guard against missing keys.** `outflow(state)` is called every Fjord tick — the first tick may fire before pits or flags have populated. Every `state.get(...)` defaults to `[]`, and every per-record read uses `getattr(..., None)` with an explicit fallback. Reading `state["PitStops"]` directly would `KeyError` on the first tide.
 
 Same structure as Tutorial 11's `arb_outflow.outflow()` — snapshot upstream registries, build a per-key composite, return as a list of dicts.
 
@@ -162,7 +149,7 @@ Same structure as Tutorial 11's `arb_outflow.outflow()` — snapshot upstream re
 
 ## CLI form
 
-The CLI version uses a SEPARATE sidecar — [`race_outflow.py`](./race_outflow.py) — with different class names (`LapData` / `PitStops` / `FlagEvents`) referenced from `watershed.json`. The two forms are intentionally independent; pick whichever fits your deployment shape:
+The CLI entry uses [`watershed.json`](./watershed.json) with `"outflow": "outflow.py"` — the same sidecar the Python runner imports. Class names (`LapData` / `PitStops` / `FlagEvents` / `DriverState`) are shared:
 
 ```bash
 incorporator validate examples/appendix/nascar-tideweaver/watershed.json
