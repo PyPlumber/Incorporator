@@ -211,6 +211,13 @@ async def child_incorp(
     if extracted_data and child_path:
         extracted_data = _deduplicate_extracted(extracted_data)
 
+    if not extracted_data:
+        EmptyClass = cast(
+            "type[Incorporator]",
+            schema_builder.infer_dynamic_schema("DynamicModel", [{}], cls),
+        )
+        return IncorporatorList(EmptyClass, [], rejects=[])
+
     raw_method = kwargs.pop("method", kwargs.pop("http_method", "GET"))
     kwargs["http_method"] = raw_method.upper() if isinstance(raw_method, str) else "GET"
 
