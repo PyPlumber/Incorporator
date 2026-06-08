@@ -118,12 +118,12 @@ async def _run_tideweaver(
     # exits 0.
     source_failures = [r for r in tw.rejects if r.error_kind == "SourceLoadFailure"]
     if source_failures:
-        sources = ", ".join(r.source for r in source_failures)
+        failure_lines = "; ".join(str(r) for r in source_failures)
         logger.warning(
-            "Tideweaver: run completed with %d source-load failure(s) — zero rows produced for: %s. "
+            "Tideweaver: run completed with %d source-load failure(s) — %s. "
             "Check inc_file paths and the error log.",
             len(source_failures),
-            sources,
+            failure_lines,
         )
         sys.exit(1)
 

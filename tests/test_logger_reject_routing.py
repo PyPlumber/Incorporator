@@ -144,10 +144,11 @@ def test_route_reject_meta_has_all_fields() -> None:
 
 
 def test_route_reject_no_edge_no_status() -> None:
-    """Reject with no from_name and no status_code produces a clean message without edge or HTTP suffix."""
+    """Reject with no from_name, no status_code, and no message renders as 'kind: source'."""
     reject = _make_reject(
         source="SomeClass",
         error_kind="GateBlocked",
+        message="",
         from_name=None,
         to_name=None,
         host=None,
@@ -163,4 +164,4 @@ def test_route_reject_no_edge_no_status() -> None:
     level_arg = mock_logger.log.call_args[0][0]
     assert level_arg == logging.ERROR
     msg = mock_logger.log.call_args[0][1]
-    assert "GateBlocked: SomeClass" == msg
+    assert msg == "GateBlocked: SomeClass"

@@ -193,9 +193,7 @@ def _route_reject_to_log(cls_name: str, reject: RejectEntry) -> None:
         f'from:"{reject.from_name}", to:"{reject.to_name}", host:"{reject.host}", '
         f"status_code:{reject.status_code}"
     )
-    maybe_edge = f" ({reject.from_name}->{reject.to_name})" if reject.from_name else ""
-    maybe_status = f" [HTTP {reject.status_code}]" if reject.status_code else ""
-    msg = f"{reject.error_kind}: {reject.source}{maybe_edge}{maybe_status}"
+    msg = str(reject)
     _emit_payload(cls_name, logging.ERROR, msg, "reject", reject.model_dump(mode="json"), meta)
 
 
