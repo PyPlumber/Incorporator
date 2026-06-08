@@ -784,7 +784,7 @@ Tideweaver(watershed, backlog_backoff_factor=2.0).run()
 For the full method-level signature of `fjord()`, see the pdoc-built
 [Library reference](./library_reference.md).
 
-### Structured session logging (v1.4.0)
+### Structured session logging (v1.3.3)
 
 `LoggedTideweaver` writes three categories of structured JSONL records to disk.
 The files are named after the resolved `logger_name`.
