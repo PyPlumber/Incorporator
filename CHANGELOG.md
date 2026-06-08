@@ -31,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a separate `logger.info` call with no emoji.
 - **`incorporator/schema/factory.py`** no longer emits a `warnings.warn` inside
   the `asyncio.to_thread` worker (the old call that resolved to `thread.py`).
+- **`Tide` model shape** gained the `session: str | None` field (default
+  `None`).  Code that unpacks `Tide` by positional index or that treats the
+  Pydantic `model_fields` set as stable is a breaking consumer.
+- **`RejectEntry` model shape** gained the `session: str | None` field (default
+  `None`).  Same caveat as `Tide`.
+- **`Watershed` model shape** gained the `name: str | None` field (default
+  `None`).  `extra="forbid"` still rejects unregistered keys; the field
+  round-trips through `watershed.json`.
+- **`Tideweaver.__init__`** gained the `logger_name: str | None = None` keyword
+  argument.  Callers that construct `Tideweaver` with positional-only arguments
+  beyond `watershed` and `tick_factory` must verify argument positions.
 
 ### Added
 
@@ -44,13 +55,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `incorporator/observability/logger.py` — routes Tideweaver scheduler
   diagnostics (isolated tick failures, parked ticks, empty output, empty parent
   snapshots, fjord flush failures) to the session's structured error log under
-  a top-level `"scheduler_event"` key, retrievable by a Phase-4
-  `get_scheduler_events()` reader via `_read_filtered(filename, "scheduler_event")`.
+  a top-level `"scheduler_event"` key.
+- `LoggedTideweaver.get_scheduler_events(logger_name)` — async classmethod
+  that reads the session `error.log`, filters for `"scheduler_event"` records,
+  and returns them sorted ascending by `tide_number`.  Returns `[]` when no
+  matching records exist.  Completes the three-reader surface alongside
+  `get_tides(logger_name)` and `get_rejects(logger_name)`.
 - `Tideweaver.logger_name: str | None` — new keyword argument on
-  `Tideweaver.__init__` (default `None`).  When set, the 6 diagnostic
-  `logger.warning/error` sites in the scheduler route through
-  `_route_scheduler_event_to_log` instead; when `None` the existing bare module
-  logger fallback is retained unchanged.
+  `Tideweaver.__init__` (default `None`).  When set, the scheduler diagnostic
+  sites route through `_route_scheduler_event_to_log` instead of the bare
+  module logger; when `None` the existing fallback is retained unchanged.
 - `LoggedTideweaver` now passes `self._logger_name` to the base
   `Tideweaver.__init__(logger_name=...)` so structured scheduler-event routing
   activates automatically for all `enable_logging=True` runs.
@@ -67,9 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`RejectEntry.session: str | None`** — new field (default `None`);
   populated at all five canal skip sites (`_build_canal_reject`) from
   `self.logger_name`; HTTP-layer rejects retain `session=None`.
-- **`scheduler_event` payload** now includes a `session` key equal to
-  `logger_name`, making concurrent-run records distinguishable inside the
-  file.
+- **`scheduler_event` payload** includes a `session` key equal to
+  `logger_name`, making concurrent-run records distinguishable inside the file.
 - **`_SCHEDULER_ERROR_EVENTS`** promoted from a per-call local `set` to a
   module-level `frozenset` in `observability/logger.py`; no behaviour change.
 - **`empty_parent_snapshot` detail strings** in `scheduler.py` module-logger

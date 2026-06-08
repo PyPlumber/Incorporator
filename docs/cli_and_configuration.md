@@ -784,6 +784,76 @@ Tideweaver(watershed, backlog_backoff_factor=2.0).run()
 For the full method-level signature of `fjord()`, see the pdoc-built
 [Library reference](./library_reference.md).
 
+### Structured session logging (v1.4.0)
+
+`LoggedTideweaver` writes three categories of structured JSONL records to disk.
+The files are named after the resolved `logger_name`.
+
+**Session log naming via `Watershed.name`**
+
+`Watershed` accepts an optional `name: str | None` field.  When set, a
+`LoggedTideweaver` without an explicit `logger_name` argument resolves its
+logger name — and therefore its log file prefix — to `watershed.name`.  An
+explicit `logger_name` always wins.
+
+```python
+ws = Watershed(name="NightlyPrices", window=(...), currents=[...])
+# LoggedTideweaver(ws, enable_logging=True) → logger_name resolves to "NightlyPrices"
+# → logs/NightlyPrices_tide.log, logs/NightlyPrices_error.log, logs/NightlyPrices_debug.log
+```
+
+**`session` field on `Tide` and `RejectEntry`**
+
+Every `Tide` record yielded by `Tideweaver` carries a `session: str | None`
+field populated from `logger_name`; `None` when no `logger_name` is set.
+Canal-layer `RejectEntry` records (`PenstockLimited`, `SurgeHalted`,
+`SkipAhead`, `GateBlocked`) carry the same `session` field so concurrent-run
+records are distinguishable inside a single file or aggregated view.
+
+**Scheduler-event diagnostics**
+
+Five scheduler-level conditions are routed as structured records to the session
+`error.log` under a top-level `"scheduler_event"` key:
+
+| `event_type` | Condition |
+| :--- | :--- |
+| `isolated_tick_failure` | A tick raised and `on_error="isolate"` was set |
+| `tick_parked` | Retry loop exhausted (`on_error="restart"`) — current parked |
+| `empty_output` | A tick completed but produced zero rows |
+| `empty_parent_snapshot` | A dependent current had no parent snapshot at tick time |
+| `fjord_flush_failure` | A fjord-flush step raised an unhandled exception |
+
+Each record includes: `event_type`, `current_name`, `cls_name`, `tide_number`
+(`int | null`), `session` (matching `logger_name`), and `detail`.  Records land
+in `logs/<logger_name>_error.log` alongside canal-layer reject records.
+
+**Reader methods on `LoggedTideweaver`**
+
+Three `@classmethod` async readers provide structured access to the log files
+written during a run.  All three take the `logger_name` string as their sole
+argument and return a list of dicts.
+
+| Method | Source file | Top-level key | Sorted by |
+| :--- | :--- | :--- | :--- |
+| `get_tides(logger_name)` | `<name>_tide.log` | `"tide"` | `tide_number` ascending |
+| `get_rejects(logger_name)` | `<name>_error.log` | `"reject"` | file order (already sequential) |
+| `get_scheduler_events(logger_name)` | `<name>_error.log` | `"scheduler_event"` | `tide_number` ascending, then `event_type`, then `current_name` |
+
+```python
+events = await LoggedTideweaver.get_scheduler_events("NightlyPrices")
+for rec in events:
+    evt = rec["scheduler_event"]
+    print(evt["event_type"], evt["current_name"], evt["tide_number"])
+
+tides = await LoggedTideweaver.get_tides("NightlyPrices")
+rejects = await LoggedTideweaver.get_rejects("NightlyPrices")
+```
+
+Each method returns `[]` when no log file exists (run not yet started or
+`enable_logging=False`).  The `jq` expression
+`.[] | select(.scheduler_event.session == "NightlyPrices")` filters records by
+session in a mixed-session log file.
+
 ---
 
 ## 10. The `deps` Subcommand — Optional-Dependency Introspection
