@@ -9,14 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.3] - 2026-06-08
 
-### Changed (breaking)
+### Changed
+
+Observability / log-surface changes only — rendered diagnostic strings, warning
+attribution, and additive structured fields. None of these change execution,
+data flow, or the result of any verb; existing pipelines run unchanged.
 
 - **`RejectEntry.__str__`** now renders a fully-decorated form:
   `"{error_kind}: {source}"` + ` ({from_name}->{to_name})` when `from_name`
   is set + ` [HTTP {status_code}]` when `status_code` is set + ` — {message[:120]}`
   when message is present and distinct from source.  All output is cp1252-safe.
-  Callers that parsed the old `"error_kind: message"` form must update their
-  assertions or parsing logic.
+  Anything that scraped the old `"error_kind: message"` string (log parsers,
+  custom formatters) will see the richer form.
 - **Partial-data `UserWarning`** now fires from the `await incorp()` /
   `await refresh()` call site (via `warnings.warn` in `base.py` after the
   `asyncio.to_thread` join) instead of from inside the worker thread
@@ -32,16 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`incorporator/schema/factory.py`** no longer emits a `warnings.warn` inside
   the `asyncio.to_thread` worker (the old call that resolved to `thread.py`).
 - **`Tide` model shape** gained the `session: str | None` field (default
-  `None`).  Code that unpacks `Tide` by positional index or that treats the
-  Pydantic `model_fields` set as stable is a breaking consumer.
+  `None`), so `model_dump()` output now includes a `session` key.
 - **`RejectEntry` model shape** gained the `session: str | None` field (default
-  `None`).  Same caveat as `Tide`.
+  `None`); same `model_dump()` note as `Tide`.
 - **`Watershed` model shape** gained the `name: str | None` field (default
   `None`).  `extra="forbid"` still rejects unregistered keys; the field
   round-trips through `watershed.json`.
-- **`Tideweaver.__init__`** gained the `logger_name: str | None = None` keyword
-  argument.  Callers that construct `Tideweaver` with positional-only arguments
-  beyond `watershed` and `tick_factory` must verify argument positions.
+- **`Tideweaver.__init__`** gained the `logger_name: str | None = None`
+  keyword-only argument (additive; existing constructions are unaffected).
 
 ### Added
 
