@@ -175,6 +175,66 @@ def _route_tide_to_log(cls_name: str, tide: Tide) -> None:
         _emit_payload(cls_name, logging.DEBUG, msg, "tide", dump, meta, is_tide=True)
 
 
+def _route_scheduler_event_to_log(
+    logger_name: str,
+    event_type: str,
+    current_name: str,
+    detail: str,
+    *,
+    cls_name: str | None = None,
+    edge: tuple[str, str] | None = None,
+    tide_number: int | None = None,
+) -> None:
+    """Route one scheduler diagnostic event to the session's structured error log.
+
+    Parallel to :func:`_route_tide_to_log` / :func:`_route_reject_to_log` but
+    for internal scheduler events that the bare module logger previously emitted
+    to stderr only (never reaching any session log file).  A Phase-4
+    ``get_scheduler_events()`` reader will call
+    ``_read_filtered(filename, "scheduler_event")`` against the error log to
+    retrieve these records.
+
+    **Destination choice:** ``is_tide=False`` is intentional.  Scheduler events
+    are not per-pass tide summaries; they belong in the error log (``error.log``)
+    where operational failures accumulate, not in ``tide.log``.  The
+    ``debug.log`` superset also receives them via the level routing.
+
+    Level mapping:
+
+    - ``"isolated_tick_failure"`` / ``"empty_output"`` / ``"empty_parent_snapshot"``
+      → ``WARNING``
+    - ``"tick_parked"`` / ``"fjord_flush_failure"`` → ``ERROR``
+
+    Args:
+        logger_name: Named logger to emit to (the session's
+            :func:`setup_class_logger`-registered name).
+        event_type: Canonical event label (e.g. ``"isolated_tick_failure"``).
+        current_name: :class:`~incorporator.observability.tideweaver.current.Current`
+            name where the event originated.
+        detail: Human-readable description of the event.
+        cls_name: ``current.cls.__name__`` when available.
+        edge: ``(from_name, to_name)`` tuple for edge-scoped events.
+        tide_number: Scheduler pass number when available.
+    """
+    _ERROR_EVENTS = {"tick_parked", "fjord_flush_failure"}
+    level = logging.ERROR if event_type in _ERROR_EVENTS else logging.WARNING
+    payload: dict[str, Any] = {
+        "event_type": event_type,
+        "current_name": current_name,
+        "cls_name": cls_name,
+        "edge": list(edge) if edge is not None else None,
+        "tide_number": tide_number,
+        "detail": detail,
+    }
+    meta = (
+        f'logger:"{logger_name}", event_type:"{event_type}", current:"{current_name}"'
+        + (f', cls:"{cls_name}"' if cls_name else "")
+        + (f', edge:"{edge[0]}->{edge[1]}"' if edge else "")
+        + (f", tide:{tide_number}" if tide_number is not None else "")
+    )
+    _emit_payload(logger_name, level, detail, "scheduler_event", payload, meta)
+
+
 def _route_reject_to_log(cls_name: str, reject: RejectEntry) -> None:
     """Route one RejectEntry to error log with structured edge and HTTP metadata.
 
@@ -302,6 +362,8 @@ class JSONFormatter(logging.Formatter):
             log_obj["tide"] = record.tide
         if hasattr(record, "reject"):
             log_obj["reject"] = record.reject
+        if hasattr(record, "scheduler_event"):
+            log_obj["scheduler_event"] = record.scheduler_event
         if record.exc_info:
             log_obj["exc_info"] = self.formatException(record.exc_info)
         return _orjson_mod.dumps_str(log_obj)

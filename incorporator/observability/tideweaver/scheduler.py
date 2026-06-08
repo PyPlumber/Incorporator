@@ -54,6 +54,7 @@ from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_
 from ...io.fetch import HTTPClientBuilder
 from ...io.penstock import FlowState
 from ...rejects import RejectEntry
+from ..logger import _route_scheduler_event_to_log
 from ..pipeline._outflow import flush
 from ._retry_defaults import (
     _CANAL_OUTER_STOP,
@@ -228,9 +229,11 @@ class Tideweaver:
         tick_factory: TickFactory | None = None,
         pass_interval: float | None = None,
         backlog_backoff_factor: float = 1.0,
+        logger_name: str | None = None,
     ) -> None:
         self.watershed = watershed
         self.tick_factory = tick_factory
+        self.logger_name = logger_name
         self.pass_interval = pass_interval or max(
             0.05,
             min(1.0, min(c.interval for c in watershed.currents) / 2.0),
@@ -776,7 +779,17 @@ class Tideweaver:
                 try:
                     await self._invoke_tick(current)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Tideweaver: isolated tick failure on %s: %s", current.name, exc)
+                    if isinstance(self.logger_name, str):
+                        _route_scheduler_event_to_log(
+                            self.logger_name,
+                            "isolated_tick_failure",
+                            current.name,
+                            f"Tideweaver: isolated tick failure on {current.name}: {exc}",
+                            cls_name=current.cls.__name__,
+                            tide_number=self._tide_number,
+                        )
+                    else:
+                        logger.warning("Tideweaver: isolated tick failure on %s: %s", current.name, exc)
                     _tick_raised = True
             else:  # fail_watershed
                 await self._invoke_tick(current)
@@ -789,7 +802,17 @@ class Tideweaver:
             _tick_raised = True
             if current.on_error == "fail_watershed":
                 raise
-            logger.error("Tideweaver: tick failed for %s after retries; current parked.", current.name)
+            if isinstance(self.logger_name, str):
+                _route_scheduler_event_to_log(
+                    self.logger_name,
+                    "tick_parked",
+                    current.name,
+                    f"Tideweaver: tick failed for {current.name} after retries; current parked.",
+                    cls_name=current.cls.__name__,
+                    tide_number=self._tide_number,
+                )
+            else:
+                logger.error("Tideweaver: tick failed for %s after retries; current parked.", current.name)
         finally:
             # Record the wave timestamp + bump consumed for hard upstreams.
             wave_at = datetime.now(timezone.utc)
@@ -851,14 +874,29 @@ class Tideweaver:
                 )
                 if upstream_had_data:
                     upstream_names = ", ".join(up for up, _ in self._upstream[current.name])
-                    logger.warning(
-                        "Tideweaver: %s tick produced empty output despite non-empty "
-                        "upstream snapshot(s) (%s); check the tick body / predicate / "
-                        "missing conv_dict on the upstream (fires each tick while the "
-                        "condition persists).",
-                        current.name,
-                        upstream_names,
+                    _empty_detail = (
+                        f"Tideweaver: {current.name} tick produced empty output despite non-empty "
+                        f"upstream snapshot(s) ({upstream_names}); check the tick body / predicate / "
+                        f"missing conv_dict on the upstream (fires each tick while the condition persists)."
                     )
+                    if isinstance(self.logger_name, str):
+                        _route_scheduler_event_to_log(
+                            self.logger_name,
+                            "empty_output",
+                            current.name,
+                            _empty_detail,
+                            cls_name=current.cls.__name__,
+                            tide_number=self._tide_number,
+                        )
+                    else:
+                        logger.warning(
+                            "Tideweaver: %s tick produced empty output despite non-empty "
+                            "upstream snapshot(s) (%s); check the tick body / predicate / "
+                            "missing conv_dict on the upstream (fires each tick while the "
+                            "condition persists).",
+                            current.name,
+                            upstream_names,
+                        )
             if wave_snapshot:
                 for downstream_name, edge_flow in self._downstream[current.name]:
                     edge_key = (current.name, downstream_name)
@@ -986,13 +1024,28 @@ class Tideweaver:
             upstream_current = self._currents_by_name[current.parent_current]
             pre_snap = getattr(upstream_current.cls, "_tideweaver_snapshot", None)
             if not pre_snap:
-                logger.warning(
-                    "Tideweaver: Stream %r parent_current=%r snapshot is empty; "
-                    "skipping tick (no rows to drill). Fires each tick while the "
-                    "condition persists — confirm the parent's tick is firing.",
-                    current.name,
-                    current.parent_current,
+                _snap_detail = (
+                    f"Tideweaver: Stream {current.name!r} parent_current={current.parent_current!r} snapshot is "
+                    f"empty; skipping tick (no rows to drill). Fires each tick while the condition persists "
+                    f"-- confirm the parent's tick is firing."
                 )
+                if isinstance(self.logger_name, str):
+                    _route_scheduler_event_to_log(
+                        self.logger_name,
+                        "empty_parent_snapshot",
+                        current.name,
+                        _snap_detail,
+                        cls_name=current.cls.__name__,
+                        tide_number=self._tide_number,
+                    )
+                else:
+                    logger.warning(
+                        "Tideweaver: Stream %r parent_current=%r snapshot is empty; "
+                        "skipping tick (no rows to drill). Fires each tick while the "
+                        "condition persists — confirm the parent's tick is firing.",
+                        current.name,
+                        current.parent_current,
+                    )
                 return
             incorp_call_params = {**params_with_client, "inc_parent": cast(Any, list(pre_snap))}
             await current.cls.incorp(**incorp_call_params)
@@ -1095,13 +1148,27 @@ class Tideweaver:
                 rows: list[Any] = list(snapshot) if snapshot is not None else list(dep.cls.inc_dict.values())
                 state[dep.cls.__name__] = rows
                 if not rows:
-                    logger.warning(
-                        "Tideweaver: Fjord %r parent_currents=%r upstream snapshot is empty; "
-                        "state[%r] is [] this tick — confirm the parent's tick is firing.",
-                        current.name,
-                        up_name,
-                        dep.cls.__name__,
+                    _fjord_snap_detail = (
+                        f"Tideweaver: Fjord {current.name!r} parent_currents={up_name!r} upstream snapshot is "
+                        f"empty; state[{dep.cls.__name__!r}] is [] this tick -- confirm the parent's tick is firing."
                     )
+                    if isinstance(self.logger_name, str):
+                        _route_scheduler_event_to_log(
+                            self.logger_name,
+                            "empty_parent_snapshot",
+                            current.name,
+                            _fjord_snap_detail,
+                            cls_name=dep.cls.__name__,
+                            tide_number=self._tide_number,
+                        )
+                    else:
+                        logger.warning(
+                            "Tideweaver: Fjord %r parent_currents=%r upstream snapshot is empty; "
+                            "state[%r] is [] this tick — confirm the parent's tick is firing.",
+                            current.name,
+                            up_name,
+                            dep.cls.__name__,
+                        )
                 continue
             edge_state = self._edge_state.get((up_name, current.name))
             if edge_state is not None and edge_state.waves:
@@ -1127,12 +1194,25 @@ class Tideweaver:
             outflow_module=outflow_module,
         ):
             if err is not None:
-                logger.warning(
-                    "Tideweaver: Fjord flush %r raised on derived class %r: %s",
-                    current.name,
-                    derived_name,
-                    err,
+                _flush_detail = (
+                    f"Tideweaver: Fjord flush {current.name!r} raised on derived class {derived_name!r}: {err}"
                 )
+                if isinstance(self.logger_name, str):
+                    _route_scheduler_event_to_log(
+                        self.logger_name,
+                        "fjord_flush_failure",
+                        current.name,
+                        _flush_detail,
+                        cls_name=derived_name,
+                        tide_number=self._tide_number,
+                    )
+                else:
+                    logger.warning(
+                        "Tideweaver: Fjord flush %r raised on derived class %r: %s",
+                        current.name,
+                        derived_name,
+                        err,
+                    )
 
     async def _tick_export(self, current: Export) -> None:
         """One ``cls.export(...)`` call against the upstream class's registry.

@@ -40,6 +40,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `_build_canal_reject(...)` module-level helper in
   `incorporator/observability/tideweaver/scheduler.py` — single
   `model_construct` site for all five canal skip kinds.
+- `_route_scheduler_event_to_log(logger_name, event_type, current_name, detail, ...)` in
+  `incorporator/observability/logger.py` — routes Tideweaver scheduler
+  diagnostics (isolated tick failures, parked ticks, empty output, empty parent
+  snapshots, fjord flush failures) to the session's structured error log under
+  a top-level `"scheduler_event"` key, retrievable by a Phase-4
+  `get_scheduler_events()` reader via `_read_filtered(filename, "scheduler_event")`.
+- `Tideweaver.logger_name: str | None` — new keyword argument on
+  `Tideweaver.__init__` (default `None`).  When set, the 6 diagnostic
+  `logger.warning/error` sites in the scheduler route through
+  `_route_scheduler_event_to_log` instead; when `None` the existing bare module
+  logger fallback is retained unchanged.
+- `LoggedTideweaver` now passes `self._logger_name` to the base
+  `Tideweaver.__init__(logger_name=...)` so structured scheduler-event routing
+  activates automatically for all `enable_logging=True` runs.
 
 ## [1.3.2] - 2026-06-07
 

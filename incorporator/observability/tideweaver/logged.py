@@ -101,16 +101,17 @@ class LoggedTideweaver(Tideweaver):
         enable_logging: bool = False,
         logger_name: str = "Tideweaver",
     ) -> None:
+        self._enable_logging = enable_logging
+        self._logger_name = logger_name
+        if enable_logging:
+            setup_class_logger(logger_name)
         super().__init__(
             watershed,
             tick_factory=tick_factory,
             pass_interval=pass_interval,
             backlog_backoff_factor=backlog_backoff_factor,
+            logger_name=logger_name if enable_logging else None,
         )
-        self._enable_logging = enable_logging
-        self._logger_name = logger_name
-        if enable_logging:
-            setup_class_logger(logger_name)
 
     async def run(self) -> AsyncIterator[Tide]:
         """Orchestrate the watershed, routing each Tide and final RejectEntries to disk.
