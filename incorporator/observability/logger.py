@@ -175,6 +175,9 @@ def _route_tide_to_log(cls_name: str, tide: Tide) -> None:
         _emit_payload(cls_name, logging.DEBUG, msg, "tide", dump, meta, is_tide=True)
 
 
+_SCHEDULER_ERROR_EVENTS: frozenset[str] = frozenset({"tick_parked", "fjord_flush_failure"})
+
+
 def _route_scheduler_event_to_log(
     logger_name: str,
     event_type: str,
@@ -216,14 +219,14 @@ def _route_scheduler_event_to_log(
         edge: ``(from_name, to_name)`` tuple for edge-scoped events.
         tide_number: Scheduler pass number when available.
     """
-    _ERROR_EVENTS = {"tick_parked", "fjord_flush_failure"}
-    level = logging.ERROR if event_type in _ERROR_EVENTS else logging.WARNING
+    level = logging.ERROR if event_type in _SCHEDULER_ERROR_EVENTS else logging.WARNING
     payload: dict[str, Any] = {
         "event_type": event_type,
         "current_name": current_name,
         "cls_name": cls_name,
         "edge": list(edge) if edge is not None else None,
         "tide_number": tide_number,
+        "session": logger_name,
         "detail": detail,
     }
     meta = (

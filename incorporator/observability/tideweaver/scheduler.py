@@ -148,6 +148,7 @@ def _build_canal_reject(
     to_name: str | None = None,
     duration_sec: float | None = None,
     cooldown_sec: float | None = None,
+    session: str | None = None,
 ) -> RejectEntry:
     """Construct a canal-layer :class:`~incorporator.rejects.RejectEntry`.
 
@@ -165,6 +166,7 @@ def _build_canal_reject(
         to_name: Downstream current name, or ``None`` for source-load failures.
         duration_sec: Elapsed seconds since the edge became eligible, or ``None``.
         cooldown_sec: Penstock-state cooldown hint, or ``None``.
+        session: Logger name for the active session, or ``None``.
 
     Returns:
         A frozen :class:`~incorporator.rejects.RejectEntry` ready to append
@@ -181,6 +183,7 @@ def _build_canal_reject(
         attempt_number=1,
         duration_sec=duration_sec,
         cooldown_sec=cooldown_sec,
+        session=session,
     )
 
 
@@ -564,6 +567,7 @@ class Tideweaver:
             in_flight_count_at_start=in_flight_at_start,
             canal_rejects_added=len(self._canal_rejects) - rejects_before,
             next_due_in_sec=next_due_in_sec,
+            session=self.logger_name,
             timestamp=datetime.now(timezone.utc),
         )
         if self._backlog_backoff_factor > 1.0:
@@ -631,6 +635,7 @@ class Tideweaver:
                                     if edge_state is not None and edge_state.eligibility_start_perf is not None
                                     else None
                                 ),
+                                session=self.logger_name,
                             )
                         )
                         return SkipReason.SKIP_AHEAD, frozenset()
@@ -649,6 +654,7 @@ class Tideweaver:
                                     if edge_state is not None and edge_state.eligibility_start_perf is not None
                                     else None
                                 ),
+                                session=self.logger_name,
                             )
                         )
                         return SkipReason.SURGE_HALTED, frozenset()
@@ -688,6 +694,7 @@ class Tideweaver:
                                 if edge_state is not None and edge_state.eligibility_start_perf is not None
                                 else None
                             ),
+                            session=self.logger_name,
                         )
                     )
                 return gate_skip, frozenset()
@@ -726,6 +733,7 @@ class Tideweaver:
                                 else None
                             ),
                             cooldown_sec=cooldown_sec,
+                            session=self.logger_name,
                         )
                     )
                     return penstock_skip, frozenset()
@@ -1042,7 +1050,7 @@ class Tideweaver:
                     logger.warning(
                         "Tideweaver: Stream %r parent_current=%r snapshot is empty; "
                         "skipping tick (no rows to drill). Fires each tick while the "
-                        "condition persists — confirm the parent's tick is firing.",
+                        "condition persists -- confirm the parent's tick is firing.",
                         current.name,
                         current.parent_current,
                     )
@@ -1089,6 +1097,7 @@ class Tideweaver:
                     to_name=None,
                     duration_sec=None,
                     cooldown_sec=None,
+                    session=self.logger_name,
                 )
             )
         # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
@@ -1164,7 +1173,7 @@ class Tideweaver:
                     else:
                         logger.warning(
                             "Tideweaver: Fjord %r parent_currents=%r upstream snapshot is empty; "
-                            "state[%r] is [] this tick — confirm the parent's tick is firing.",
+                            "state[%r] is [] this tick -- confirm the parent's tick is firing.",
                             current.name,
                             up_name,
                             dep.cls.__name__,

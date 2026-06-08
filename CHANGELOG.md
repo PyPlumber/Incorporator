@@ -54,6 +54,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LoggedTideweaver` now passes `self._logger_name` to the base
   `Tideweaver.__init__(logger_name=...)` so structured scheduler-event routing
   activates automatically for all `enable_logging=True` runs.
+- **`Watershed.name: str | None`** — optional human-readable label on
+  `Watershed`; declared field so `extra="forbid"` still rejects truly unknown
+  keys and the field round-trips through `watershed.json` config.
+- **`LoggedTideweaver` default `logger_name`** now resolves to
+  `watershed.name or "Tideweaver"` when no explicit `logger_name` is passed;
+  an explicit non-`None` value always wins.  Named watersheds automatically
+  name their session log files.
+- **`Tide.session: str | None`** — new field (default `None`); populated from
+  `self.logger_name` in `_run_pass` via `Tide.model_construct` so every
+  structured tide record is queryable by session.
+- **`RejectEntry.session: str | None`** — new field (default `None`);
+  populated at all five canal skip sites (`_build_canal_reject`) from
+  `self.logger_name`; HTTP-layer rejects retain `session=None`.
+- **`scheduler_event` payload** now includes a `session` key equal to
+  `logger_name`, making concurrent-run records distinguishable inside the
+  file.
+- **`_SCHEDULER_ERROR_EVENTS`** promoted from a per-call local `set` to a
+  module-level `frozenset` in `observability/logger.py`; no behaviour change.
+- **`empty_parent_snapshot` detail strings** in `scheduler.py` module-logger
+  fallback paths now use `--` (ASCII) consistently; previously used the
+  em-dash `—`, which differs from the structured-path strings.
 
 ## [1.3.2] - 2026-06-07
 

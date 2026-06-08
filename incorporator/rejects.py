@@ -148,6 +148,13 @@ class RejectEntry(BaseModel):
             "carries penstock-state cooldown at canal sites."
         ),
     )
+    session: str | None = Field(
+        default=None,
+        description=(
+            "Logger name for the Tideweaver session that produced this reject; None for "
+            "HTTP-layer and non-session rejects."
+        ),
+    )
 
     def __str__(self) -> str:
         """Canonical human renderer — ASCII-safe, cp1252-compatible.

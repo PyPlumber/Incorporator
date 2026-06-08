@@ -111,6 +111,12 @@ class Tide(BaseModel):
         default=None,
         description="Seconds until the nearest heap entry fires; None when the heap is empty.",
     )
+    session: str | None = Field(
+        default=None,
+        description=(
+            "Logger name for the session that produced this tide; None when structured logging is not active."
+        ),
+    )
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_serializer("current_outcomes")

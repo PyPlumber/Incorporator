@@ -160,6 +160,9 @@ def test_tide_model_dump_json_serializes_current_outcomes() -> None:
         "last_wave_at": None,
         "parent_snapshot_size": None,
     }
+    # session field must be present with its default None when no session is active.
+    assert "session" in dumped
+    assert dumped["session"] is None
 
 
 def test_tide_serializer_fires_under_model_construct() -> None:

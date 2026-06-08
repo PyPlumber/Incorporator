@@ -282,3 +282,220 @@ async def test_bare_tideweaver_isolated_failure_emits_via_module_logger(
         f"bare Tideweaver must emit 'isolated tick failure' via the module logger; "
         f"caplog records: {[r.message for r in caplog.records]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test D — scheduler_event payload carries session key
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scheduler_event_payload_carries_session(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """scheduler_event structured records carry a 'session' key matching the logger_name.
+
+    Proves that _route_scheduler_event_to_log includes session=logger_name in
+    the payload so two concurrent runs are distinguishable by session inside a
+    record, not just by filename.
+    """
+    monkeypatch.chdir(tmp_path)
+    _reset_registries(_StableSource, _BoomSink)
+
+    logger_name = "TestSessionPayload"
+
+    class _RaisingIsolated(CustomCurrent):
+        auto_park_snapshot: ClassVar[bool] = False
+
+        async def tick(self, scheduler: Any) -> None:
+            raise RuntimeError("session-payload test failure")
+
+    dn_current = _RaisingIsolated(
+        name="session_current",
+        cls=_BoomSink,
+        interval=0.04,
+        on_error="isolate",
+    )
+
+    ws = Watershed(
+        window=_short_window(400),
+        currents=[dn_current],
+        edges=[],
+    )
+
+    tw = LoggedTideweaver(ws, enable_logging=True, logger_name=logger_name, pass_interval=0.03)
+    async for _ in tw.run():
+        pass
+
+    _wait_for_log_flush()
+
+    records = _read_error_log(logger_name)
+    sched_records = [r for r in records if "scheduler_event" in r]
+    assert sched_records, "expected at least one scheduler_event record"
+    for rec in sched_records:
+        evt = rec["scheduler_event"]
+        assert "session" in evt, f"scheduler_event payload must have 'session' key; got {evt}"
+        assert evt["session"] == logger_name, (
+            f"session must equal logger_name={logger_name!r}; got {evt['session']!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test E — _SCHEDULER_ERROR_EVENTS module-level constant
+# ---------------------------------------------------------------------------
+
+
+def test_scheduler_error_events_module_constant_exists() -> None:
+    """_SCHEDULER_ERROR_EVENTS is a module-level frozenset in logger.py (not per-call).
+
+    Proves the Phase-4 nit: the constant is defined at module level and contains
+    the expected error event names.
+    """
+    from incorporator.observability.logger import _SCHEDULER_ERROR_EVENTS
+
+    assert isinstance(_SCHEDULER_ERROR_EVENTS, frozenset), (
+        f"_SCHEDULER_ERROR_EVENTS must be a frozenset; got {type(_SCHEDULER_ERROR_EVENTS)}"
+    )
+    assert "tick_parked" in _SCHEDULER_ERROR_EVENTS
+    assert "fjord_flush_failure" in _SCHEDULER_ERROR_EVENTS
+
+
+# ---------------------------------------------------------------------------
+# Test F — canal RejectEntry carries session
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_canal_reject_entry_carries_session(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Canal-layer RejectEntry records carry a session field matching the scheduler's logger_name.
+
+    Proves that _build_canal_reject passes session=self.logger_name so two
+    concurrent runs produce distinguishable reject records.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    from incorporator import Incorporator
+    from incorporator.observability.tideweaver import Edge, FlowControl, HardLock
+    from incorporator.observability.tideweaver import SurgeBarrier
+    from incorporator.observability.tideweaver.scheduler import Tideweaver
+    from incorporator.observability.tideweaver.watershed import Watershed
+    from incorporator.observability.tideweaver.current import Stream
+
+    class _UpSrc(Incorporator):
+        pass
+
+    class _DownSrc(Incorporator):
+        pass
+
+    async def slow_up(current: Any) -> None:
+        if current.name == "up":
+            import asyncio
+
+            await asyncio.sleep(0.6)
+
+    now = datetime.now(timezone.utc)
+    up = Stream(name="up", cls=_UpSrc, interval=0.1, incorp_params={})
+    dn = Stream(name="dn", cls=_DownSrc, interval=0.1, incorp_params={})
+    halt_flow = FlowControl(
+        gate=HardLock(),
+        surge_barrier=SurgeBarrier(threshold_multiple=2.0, action="halt"),
+    )
+    ws = Watershed(
+        window=(now, now + __import__("datetime").timedelta(milliseconds=700)),
+        currents=[up, dn],
+        edges=[Edge(from_name="up", to_name="dn", flow=halt_flow)],
+    )
+
+    session_name = "TestCanalSession"
+    tw = Tideweaver(ws, tick_factory=slow_up, pass_interval=0.05, logger_name=session_name)
+
+    tides = [t async for t in tw.run()]
+    assert tides
+
+    surge_rejects = [r for r in tw.rejects if r.error_kind == "SurgeHalted"]
+    assert surge_rejects, f"expected SurgeHalted rejects; got {tw.rejects}"
+    for r in surge_rejects:
+        assert r.session == session_name, (
+            f"canal reject must carry session={session_name!r}; got session={r.session!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test G — Tide model carries session
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tide_carries_session_from_scheduler(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tide records yielded by Tideweaver carry the session field matching logger_name.
+
+    Proves that _run_pass passes session=self.logger_name into Tide.model_construct
+    so each structured record is queryable by session.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    from incorporator import Incorporator
+    from incorporator.observability.tideweaver.scheduler import Tideweaver
+    from incorporator.observability.tideweaver.watershed import Watershed
+    from incorporator.observability.tideweaver.current import Stream
+
+    class _SimpleSrc(Incorporator):
+        pass
+
+    async def noop(current: Any) -> None:
+        pass
+
+    now = datetime.now(timezone.utc)
+    ws = Watershed(
+        window=(now, now + __import__("datetime").timedelta(milliseconds=300)),
+        currents=[Stream(name="s", cls=_SimpleSrc, interval=0.1, incorp_params={})],
+    )
+
+    session_name = "TestTideSession"
+    tw = Tideweaver(ws, tick_factory=noop, pass_interval=0.05, logger_name=session_name)
+    tides = [t async for t in tw.run()]
+    assert tides
+    for tide in tides:
+        assert tide.session == session_name, (
+            f"Tide must carry session={session_name!r}; got {tide.session!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_tide_session_is_none_without_logger_name(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tide records have session=None when no logger_name is set on the scheduler.
+
+    Proves that the default (no logger_name) still produces session=None on
+    every Tide — backward-compatible with callers that never set logger_name.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    from incorporator import Incorporator
+    from incorporator.observability.tideweaver.scheduler import Tideweaver
+    from incorporator.observability.tideweaver.watershed import Watershed
+    from incorporator.observability.tideweaver.current import Stream
+
+    class _AnonSrc(Incorporator):
+        pass
+
+    async def noop(current: Any) -> None:
+        pass
+
+    now = datetime.now(timezone.utc)
+    ws = Watershed(
+        window=(now, now + __import__("datetime").timedelta(milliseconds=200)),
+        currents=[Stream(name="s", cls=_AnonSrc, interval=0.1, incorp_params={})],
+    )
+
+    tw = Tideweaver(ws, tick_factory=noop, pass_interval=0.05)
+    assert tw.logger_name is None
+    tides = [t async for t in tw.run()]
+    assert tides
+    for tide in tides:
+        assert tide.session is None, f"Tide session must be None without logger_name; got {tide.session!r}"
