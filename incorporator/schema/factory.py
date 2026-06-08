@@ -11,7 +11,6 @@ Dependency direction: ``base.py → schema/factory.py → schema/{builder,router
 from __future__ import annotations
 
 import logging
-import warnings
 from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -275,12 +274,6 @@ def build_instances(
         A single :class:`Incorporator` instance or an
         :class:`IncorporatorList`.
     """
-    if rejects:
-        warnings.warn(
-            f"Incorporator partial data returned: {len(rejects)} source(s) failed.",
-            stacklevel=2,
-        )
-
     if not parsed_data:
         # Generate a safe empty class if an API returns 200 OK but 0 records
         EmptyClass = cast(
