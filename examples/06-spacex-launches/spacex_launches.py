@@ -55,8 +55,19 @@ async def parent_child_demo() -> None:
         inc_url="https://api.spacexdata.com/v4/launches/upcoming",
         inc_code="id",
         inc_name="name",
+        timeout=5,
     )
     print(f"✅ Loaded {len(launches)} upcoming launches.")
+
+    # Graceful degradation: if the feed is unreachable there's nothing to drill —
+    # surface why (per-source RejectEntry detail) and stop, rather than fanning out
+    # into more failing requests and printing an empty table.
+    if not launches:
+        print("\n⚠️  SpaceX feed unreachable — no launches loaded.")
+        for entry in launches.rejects:
+            print(f"   • {entry}")
+        print("   The pipeline is fine; the upstream API is down. Re-run when it recovers.\n")
+        return
 
     # Concurrent fan-out — dedup collapses ~36 child refs into ~5 unique IDs.
     rockets, pads = await asyncio.gather(
@@ -65,12 +76,14 @@ async def parent_child_demo() -> None:
             inc_parent=launches,
             inc_child="rocket",
             inc_code="id",
+            timeout=5,
         ),
         Pad.incorp(
             inc_url="https://api.spacexdata.com/v4/launchpads/{}",
             inc_parent=launches,
             inc_child="launchpad",
             inc_code="id",
+            timeout=5,
         ),
     )
     print(f"✅ Loaded {len(rockets)} unique rockets, {len(pads)} unique launchpads.\n")
