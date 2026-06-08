@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 import threading
+import warnings
 import weakref
 from collections.abc import AsyncGenerator, Iterable, Mapping
 from datetime import datetime, timezone
@@ -32,6 +33,7 @@ from .io import handlers as format_parsers
 from .io.formats import FormatType, infer_format
 from .io.pagination.base import AsyncPaginator
 from .list import IncorporatorList, _deduplicate_extracted
+from .rejects import _format_reject_warning
 from .schema import JsonSchemaProperty, router
 from .schema import factory as _factory
 from .schema.directives import _normalize_etl_kwargs
@@ -693,6 +695,9 @@ class Incorporator(BaseModel):
             normalized=_normalized,
         )
 
+        if isinstance(result, IncorporatorList) and result.rejects:
+            warnings.warn(_format_reject_warning(result.rejects), stacklevel=2)
+
         # Retain parent linking instructions for potential nested refreshes
         if inc_child is not None and isinstance(result, IncorporatorList):
             result.inc_child_path = inc_child
@@ -952,6 +957,9 @@ class Incorporator(BaseModel):
             name_chg=name_chg,
             normalized=_normalized,
         )
+
+        if isinstance(result, IncorporatorList) and result.rejects:
+            warnings.warn(_format_reject_warning(result.rejects), stacklevel=2)
 
         if inc_child is not None and isinstance(result, IncorporatorList):
             result.inc_child_path = inc_child
