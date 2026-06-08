@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-06-08
+
+### Changed (breaking)
+
+- **`RejectEntry.__str__`** now renders a fully-decorated form:
+  `"{error_kind}: {source}"` + ` ({from_name}->{to_name})` when `from_name`
+  is set + ` [HTTP {status_code}]` when `status_code` is set + ` — {message[:120]}`
+  when message is present and distinct from source.  All output is cp1252-safe.
+  Callers that parsed the old `"error_kind: message"` form must update their
+  assertions or parsing logic.
+- **Partial-data `UserWarning`** now fires from the `await incorp()` /
+  `await refresh()` call site (via `warnings.warn` in `base.py` after the
+  `asyncio.to_thread` join) instead of from inside the worker thread
+  (`schema/factory.py`).  The attributed source frame is now the user's
+  `incorp()`/`refresh()` call site — no longer `thread.py` internals.
+- **`_route_reject_to_log`** (`observability/logger.py`) now uses `str(reject)`
+  as its sole message renderer; the prior three-rendering hand-assembly is removed.
+- **`cli/tideweaver.py` source-failure summary** now renders each failure via
+  `str(reject)` (structured detail) rather than listing only the source name.
+- **`incorporator/io/fetch.py`** all five error log sites now call
+  `logger.warning(str(reject))` after building the `RejectEntry`; the 429 tip
+  is a separate `logger.info` call with no emoji.
+- **`incorporator/schema/factory.py`** no longer emits a `warnings.warn` inside
+  the `asyncio.to_thread` worker (the old call that resolved to `thread.py`).
+
+### Added
+
+- `_format_reject_warning(rejects, cap=5)` module-level helper in
+  `incorporator/rejects.py` — count headline + up to `cap` rendered entries +
+  overflow line.  Used by `base.py`'s warning emission.
+- `_build_canal_reject(...)` module-level helper in
+  `incorporator/observability/tideweaver/scheduler.py` — single
+  `model_construct` site for all five canal skip kinds.
+
 ## [1.3.2] - 2026-06-07
 
 ### Added
