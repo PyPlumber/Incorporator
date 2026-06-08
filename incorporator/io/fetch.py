@@ -8,13 +8,14 @@ import logging
 import re
 import socket
 import time
+from collections.abc import Callable
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_random_exponential
+from tenacity import AsyncRetrying, RetryCallState, retry_if_exception, wait_random_exponential
 
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from ..rejects import RejectEntry
@@ -116,43 +117,127 @@ def _is_retryable_status(exc: httpx.HTTPStatusError) -> bool:
     return exc.response.is_server_error or exc.response.status_code == httpx.codes.TOO_MANY_REQUESTS
 
 
-def _is_retryable_error(exc: BaseException, method: str, attempt_num: int = 1) -> bool:
-    """Classify a request-layer exception as retryable given the HTTP method and attempt.
+def _is_network_class_error(exc: BaseException, method: str) -> bool:
+    """Return True for connect-phase errors and idempotent-method post-send errors.
+
+    Used by both ``_is_retryable_error`` (type gate) and the retry_state-aware
+    stop/wait callables to dispatch per-class attempt caps and backoff bounds.
+
+    Args:
+        exc: The exception to classify.
+        method: HTTP verb string.  Case-insensitive.
+
+    Returns:
+        ``True`` for connect-phase errors (unconditional) and post-send errors
+        on idempotent methods; ``False`` otherwise.
+    """
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+        return True
+    if isinstance(
+        exc, (httpx.ReadTimeout, httpx.ReadError, httpx.WriteTimeout, httpx.WriteError, httpx.RemoteProtocolError)
+    ):
+        return method.upper() in _IDEMPOTENT_METHODS
+    return False
+
+
+def _is_retryable_error(exc: BaseException, method: str) -> bool:
+    """Classify a request-layer exception as retryable given the HTTP method.
 
     Mirrors httpx/httpcore's own stance: connect-establishment failures are
     safe to retry unconditionally; post-send failures are only safe when the
     method is idempotent (avoids double-submitting non-idempotent requests).
+    Attempt-count bounding is handled separately by ``_make_http_stop``.
 
     Args:
         exc: The exception raised inside the tenacity ``with attempt:`` block.
         method: HTTP verb string (e.g. ``"GET"``, ``"POST"``).  Case-insensitive.
-        attempt_num: Current tenacity attempt number (1-based).  Post-send and
-            connect-phase retries stop after :data:`_HTTP_NETWORK_RETRY_STOP`
-            attempts; server-responded errors (5xx/429) use the larger
-            :data:`_HTTP_INNER_STOP` budget set on the ``AsyncRetrying`` stop.
 
     Returns:
-        ``True`` if tenacity should retry; ``False`` to stop and re-raise.
+        ``True`` if the error type and method allow a retry; ``False`` to
+        stop and re-raise immediately (non-idempotent post-send, unknown type).
     """
-    from ..observability.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
-
     if isinstance(exc, httpx.HTTPStatusError):
         # Fatal 4xx already converted to IncorporatorNetworkError before this
         # predicate fires, so in practice this branch sees 429 / 5xx only.
         return _is_retryable_status(exc)
+    return _is_network_class_error(exc, method)
 
-    # Connect-phase errors: pre-send, safe to retry regardless of method.
-    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
-        return attempt_num <= _HTTP_NETWORK_RETRY_STOP
 
-    # Post-send errors: safe only for idempotent methods (avoid double-submit).
-    if isinstance(
-        exc, (httpx.ReadTimeout, httpx.ReadError, httpx.WriteTimeout, httpx.WriteError, httpx.RemoteProtocolError)
-    ):
-        return method.upper() in _IDEMPOTENT_METHODS and attempt_num <= _HTTP_NETWORK_RETRY_STOP
+def _make_http_stop(method: str) -> Callable[[RetryCallState], bool]:
+    """Return a tenacity stop callable that dispatches per-class attempt caps.
 
-    # Unknown RequestError subtype — non-retryable by default (safe fallback).
-    return False
+    Reads ``retry_state.attempt_number`` and ``retry_state.outcome.exception()``
+    directly from the live retry state — reliable unlike a closure over
+    ``retrying.statistics`` which is not live when ``retry_if_exception``
+    fires.
+
+    Network-class errors (connect-phase + idempotent post-send) stop after
+    :data:`_HTTP_NETWORK_RETRY_STOP` total attempts; server-responded errors
+    (5xx / 429) stop after :data:`_HTTP_INNER_STOP` total attempts.
+
+    Args:
+        method: HTTP verb string.  Case-insensitive.  Forwarded to
+            :func:`_is_network_class_error` to distinguish post-send phase.
+
+    Returns:
+        A callable ``(retry_state: RetryCallState) -> bool`` suitable for
+        ``AsyncRetrying(stop=...)``.
+    """
+    from ..observability.tideweaver._retry_defaults import _HTTP_INNER_STOP, _HTTP_NETWORK_RETRY_STOP
+
+    def _stop(retry_state: RetryCallState) -> bool:
+        exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
+        if exc is None:
+            # Success path — tenacity calls stop after a successful attempt
+            # only to confirm; returning False lets the result propagate.
+            return False
+        n = retry_state.attempt_number
+        if _is_network_class_error(exc, method):
+            return n >= _HTTP_NETWORK_RETRY_STOP
+        return n >= _HTTP_INNER_STOP
+
+    return _stop
+
+
+def _make_http_wait(method: str) -> Callable[[RetryCallState], float]:
+    """Return a tenacity wait callable that dispatches per-class backoff bounds.
+
+    Network-class errors use a short bounded backoff
+    (:data:`_HTTP_NETWORK_WAIT_MIN` .. :data:`_HTTP_NETWORK_WAIT_MAX`) so a
+    dead host fails quickly.  Server-responded errors (5xx / 429) keep the
+    existing slower exponential to respect back-pressure signals.
+
+    Args:
+        method: HTTP verb string.  Case-insensitive.  Forwarded to
+            :func:`_is_network_class_error`.
+
+    Returns:
+        A callable ``(retry_state: RetryCallState) -> float`` suitable for
+        ``AsyncRetrying(wait=...)``.
+    """
+    from ..observability.tideweaver._retry_defaults import (
+        _HTTP_INNER_WAIT_MAX,
+        _HTTP_INNER_WAIT_MIN,
+        _HTTP_INNER_WAIT_MULTIPLIER,
+        _HTTP_NETWORK_WAIT_MAX,
+        _HTTP_NETWORK_WAIT_MIN,
+        _HTTP_NETWORK_WAIT_MULTIPLIER,
+    )
+
+    _network_wait = wait_random_exponential(
+        multiplier=_HTTP_NETWORK_WAIT_MULTIPLIER, min=_HTTP_NETWORK_WAIT_MIN, max=_HTTP_NETWORK_WAIT_MAX
+    )
+    _inner_wait = wait_random_exponential(
+        multiplier=_HTTP_INNER_WAIT_MULTIPLIER, min=_HTTP_INNER_WAIT_MIN, max=_HTTP_INNER_WAIT_MAX
+    )
+
+    def _wait(retry_state: RetryCallState) -> float:
+        exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
+        if exc is not None and _is_network_class_error(exc, method):
+            return _network_wait(retry_state)
+        return _inner_wait(retry_state)
+
+    return _wait
 
 
 # ==========================================
@@ -411,21 +496,10 @@ async def execute_request(
         httpx.HTTPStatusError: For 429 / 5xx errors after all retries are exhausted.
         httpx.RequestError: For network-layer failures after all retries are exhausted.
     """
-    from ..observability.tideweaver._retry_defaults import (
-        _HTTP_INNER_STOP,
-        _HTTP_INNER_WAIT_MAX,
-        _HTTP_INNER_WAIT_MIN,
-        _HTTP_INNER_WAIT_MULTIPLIER,
-    )
-
     retrying = AsyncRetrying(
-        stop=stop_after_attempt(_HTTP_INNER_STOP),
-        wait=wait_random_exponential(
-            multiplier=_HTTP_INNER_WAIT_MULTIPLIER, min=_HTTP_INNER_WAIT_MIN, max=_HTTP_INNER_WAIT_MAX
-        ),
-        retry=retry_if_exception(
-            lambda exc: _is_retryable_error(exc, method, retrying.statistics.get("attempt_number", 1))
-        ),
+        stop=_make_http_stop(method),
+        wait=_make_http_wait(method),
+        retry=retry_if_exception(lambda exc: _is_retryable_error(exc, method)),
         reraise=True,
     )
     try:

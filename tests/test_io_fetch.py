@@ -912,39 +912,31 @@ def test_is_retryable_status_fatal_4xx() -> None:
 
 
 def test_is_retryable_error_connect_phase_retried() -> None:
-    """ConnectError and ConnectTimeout are retried unconditionally (connect-phase)."""
+    """ConnectError and ConnectTimeout are retried unconditionally (connect-phase).
+
+    Attempt-count bounding is handled by _make_http_stop; this function only
+    classifies the error type and method idempotency.
+    """
     from incorporator.io.fetch import _is_retryable_error
 
-    assert _is_retryable_error(httpx.ConnectError("refused"), "GET", 1) is True
-    assert _is_retryable_error(httpx.ConnectTimeout("timeout"), "POST", 1) is True
-    assert _is_retryable_error(httpx.PoolTimeout("pool"), "POST", 1) is True
-
-
-def test_is_retryable_error_connect_phase_stops_at_budget() -> None:
-    """Connect-phase errors stop once the network budget is exhausted."""
-    from incorporator.io.fetch import _is_retryable_error
-    from incorporator.observability.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
-
-    assert _is_retryable_error(httpx.ConnectError("refused"), "GET", _HTTP_NETWORK_RETRY_STOP) is True
-    assert _is_retryable_error(httpx.ConnectError("refused"), "GET", _HTTP_NETWORK_RETRY_STOP + 1) is False
+    assert _is_retryable_error(httpx.ConnectError("refused"), "GET") is True
+    assert _is_retryable_error(httpx.ConnectTimeout("timeout"), "POST") is True
+    assert _is_retryable_error(httpx.PoolTimeout("pool"), "POST") is True
 
 
 def test_is_retryable_error_read_timeout_get_retried() -> None:
-    """ReadTimeout on a GET (idempotent) is retried up to the network budget."""
+    """ReadTimeout on a GET (idempotent) is retryable — attempt cap is in _make_http_stop."""
     from incorporator.io.fetch import _is_retryable_error
-    from incorporator.observability.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
 
-    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "GET", 1) is True
-    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "GET", _HTTP_NETWORK_RETRY_STOP) is True
-    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "GET", _HTTP_NETWORK_RETRY_STOP + 1) is False
+    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "GET") is True
 
 
 def test_is_retryable_error_read_timeout_post_not_retried() -> None:
     """ReadTimeout on a POST (non-idempotent) is never retried (avoids double-submit)."""
     from incorporator.io.fetch import _is_retryable_error
 
-    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "POST", 1) is False
-    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "post", 1) is False
+    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "POST") is False
+    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "post") is False
 
 
 def test_is_retryable_error_post_send_idempotent_methods() -> None:
@@ -952,9 +944,9 @@ def test_is_retryable_error_post_send_idempotent_methods() -> None:
     from incorporator.io.fetch import _IDEMPOTENT_METHODS, _is_retryable_error
 
     for verb in _IDEMPOTENT_METHODS:
-        assert _is_retryable_error(httpx.ReadTimeout("t"), verb, 1) is True, f"{verb} should allow post-send retry"
+        assert _is_retryable_error(httpx.ReadTimeout("t"), verb) is True, f"{verb} should allow post-send retry"
     for verb in ("POST", "PATCH"):
-        assert _is_retryable_error(httpx.ReadTimeout("t"), verb, 1) is False, f"{verb} must not allow post-send retry"
+        assert _is_retryable_error(httpx.ReadTimeout("t"), verb) is False, f"{verb} must not allow post-send retry"
 
 
 # ----------------------------------------------------------------------
@@ -967,10 +959,12 @@ async def test_execute_request_connect_error_retried_up_to_network_budget(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ConnectError is retried up to _HTTP_NETWORK_RETRY_STOP then exhausted.
+    """ConnectError is retried up to _HTTP_NETWORK_RETRY_STOP total attempts.
 
-    Proves the predicate caps connect-phase errors at _HTTP_NETWORK_RETRY_STOP
-    total attempts (1 original + retries capped at budget).
+    The stop callable fires when attempt_number >= _HTTP_NETWORK_RETRY_STOP, so
+    total invocations equal _HTTP_NETWORK_RETRY_STOP exactly.  This is the
+    assertion that was FALSE with the old retry_if_exception closure: the broken
+    code ran all 8 attempts (~74 s); the real async loop now caps at 3.
     """
     import asyncio
 
@@ -989,11 +983,9 @@ async def test_execute_request_connect_error_retried_up_to_network_budget(
         with pytest.raises(httpx.ConnectError):
             await execute_request(url="https://dead.example.com/", client=client)
 
-    # tenacity attempt_number is 1-based; predicate returns False when
-    # attempt_num > _HTTP_NETWORK_RETRY_STOP, so retries exhaust at budget+1
-    # (budget hits are 1..budget; attempt budget+1 fires predicate → False → stop).
-    assert call_count == _HTTP_NETWORK_RETRY_STOP + 1, (
-        f"Expected {_HTTP_NETWORK_RETRY_STOP + 1} attempts, got {call_count}"
+    # stop fires at attempt_number >= _HTTP_NETWORK_RETRY_STOP → total calls == budget.
+    assert call_count == _HTTP_NETWORK_RETRY_STOP, (
+        f"Expected {_HTTP_NETWORK_RETRY_STOP} attempts, got {call_count}"
     )
 
     await asyncio.sleep(0)  # allow event loop cleanup
@@ -1004,7 +996,12 @@ async def test_execute_request_read_timeout_get_retried_up_to_network_budget(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ReadTimeout on GET is retried up to _HTTP_NETWORK_RETRY_STOP total attempts."""
+    """ReadTimeout on GET is capped at _HTTP_NETWORK_RETRY_STOP total attempts.
+
+    Mirrors the ConnectError test: the stop callable reads the live attempt_number
+    from retry_state, so the cap is reliable (not subject to the broken statistics
+    closure that let the old code run all 8 attempts).
+    """
     import asyncio
 
     from incorporator.io.fetch import execute_request
@@ -1022,8 +1019,8 @@ async def test_execute_request_read_timeout_get_retried_up_to_network_budget(
         with pytest.raises(httpx.ReadTimeout):
             await execute_request(url="https://slow.example.com/", client=client, method="GET")
 
-    assert call_count == _HTTP_NETWORK_RETRY_STOP + 1, (
-        f"Expected {_HTTP_NETWORK_RETRY_STOP + 1} attempts (GET), got {call_count}"
+    assert call_count == _HTTP_NETWORK_RETRY_STOP, (
+        f"Expected {_HTTP_NETWORK_RETRY_STOP} attempts (GET), got {call_count}"
     )
 
     await asyncio.sleep(0)
@@ -1136,5 +1133,67 @@ async def test_execute_request_404_fatal_exactly_one_attempt(
             await execute_request(url="https://example.com/missing", client=client)
 
     assert call_count == 1, f"404 must not be retried; got {call_count} calls"
+
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_execute_request_network_error_wait_is_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Network-class errors use short bounded waits, not the 30 s server-error exponential.
+
+    Patches asyncio.sleep (the function ultimately called by tenacity's AsyncRetrying
+    default sleep) so wall-clock time is not consumed.  Asserts that the total faked
+    sleep over all retries is bounded by _HTTP_NETWORK_RETRY_STOP * _HTTP_NETWORK_WAIT_MAX
+    — far below the ~58 s that wait_random_exponential(max=30) over 3 retries would produce.
+
+    Also proves the attempt count: _incorporator_attempt_number attached to the raised
+    exception equals _HTTP_NETWORK_RETRY_STOP (the total cap).
+    """
+    import asyncio
+
+    from incorporator.io.fetch import execute_request
+    from incorporator.observability.tideweaver._retry_defaults import (
+        _HTTP_NETWORK_RETRY_STOP,
+        _HTTP_NETWORK_WAIT_MAX,
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    total_slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        # Record waits triggered by tenacity backoff (seconds > 0).
+        # Pass seconds=0 calls through so event-loop cleanup still works.
+        if seconds > 0:
+            total_slept.append(seconds)
+        else:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+    def _raising_transport(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("simulated connect failure", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_raising_transport)) as client:
+        with pytest.raises(httpx.ConnectError) as exc_info:
+            await execute_request(url="https://dead.example.com/", client=client)
+
+    raised = exc_info.value
+    attempt_on_exc = getattr(raised, "_incorporator_attempt_number", None)
+    assert attempt_on_exc == _HTTP_NETWORK_RETRY_STOP, (
+        f"attempt_number on exception should be {_HTTP_NETWORK_RETRY_STOP}, got {attempt_on_exc}"
+    )
+
+    # Total faked sleep must be bounded by network budget, not the 30 s inner exponential.
+    total = sum(total_slept)
+    budget = _HTTP_NETWORK_RETRY_STOP * _HTTP_NETWORK_WAIT_MAX
+    assert total <= budget, (
+        f"Total faked sleep {total:.2f}s exceeded network wait budget {budget:.2f}s "
+        f"(individual sleeps: {total_slept})"
+    )
 
     await asyncio.sleep(0)

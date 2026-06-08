@@ -11,16 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Phase-aware retry classifier** (`incorporator/io/fetch.py`,
-  `incorporator/observability/tideweaver/_retry_defaults.py`): `execute_request`
-  now classifies `httpx.RequestError` subtypes by phase and idempotency before
-  retrying.  Connect-phase errors (`ConnectError`, `ConnectTimeout`, `PoolTimeout`)
-  and post-send errors on idempotent methods (`ReadTimeout`, `ReadError`,
-  `WriteTimeout`, `WriteError`, `RemoteProtocolError`) are capped at
-  `_HTTP_NETWORK_RETRY_STOP=3` attempts; POST/PATCH post-send errors are not
-  retried at all (avoids double-submit).  5xx and 429 responses retain the full
-  `_HTTP_INNER_STOP=8` budget.  The two duplicate inline status gates were
-  consolidated into a single `_is_retryable_status()` helper.
+- **Phase-aware retry classifier — real async-path fix** (`incorporator/io/fetch.py`,
+  `incorporator/observability/tideweaver/_retry_defaults.py`): the network-retry
+  cap introduced in the prior commit was broken in the real async path.  A
+  dead host ran all 8 attempts (~74 s measured) because `retry_if_exception`
+  passes only the exception to its predicate — any attempt-count closure over
+  `retrying.statistics` is unreliable at predicate-fire time.  Root fix: the
+  attempt cap now lives in `_make_http_stop(method)`, a stop callable that reads
+  `retry_state.attempt_number` and `retry_state.outcome.exception()` directly.
+  A companion `_make_http_wait(method)` dispatches short bounded backoffs
+  (`min=0.25 s`, `max=3 s`) for network-class errors vs. the existing slow
+  exponential for server-responded (5xx/429) errors, eliminating ~58 s of
+  excess sleeping on a dead host.  The unusable `attempt_num` parameter is
+  dropped from `_is_retryable_error` (type + idempotency classification only;
+  attempt bounding moved to stop).  Measured result: ConnectError / ConnectTimeout
+  / ReadTimeout-GET exhaust in exactly `_HTTP_NETWORK_RETRY_STOP=3` total
+  attempts with total sleep ≤ `3 × 3 = 9 s`; 5xx=8 attempts, 429=8 attempts,
+  404=1 attempt, POST-ReadTimeout=1 attempt are all unchanged.
 - **Empty-parent child-drill short-circuit** (`incorporator/schema/factory.py`):
   `child_incorp` now returns an empty `IncorporatorList` immediately when the
   parent dataset yields zero child IDs, without issuing any HTTP request.
