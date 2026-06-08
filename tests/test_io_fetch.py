@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -871,3 +872,269 @@ async def test_rec_path_dict_only_smoke_post_drill_path_refactor(
     assert len(result) == 2
     assert result.inc_dict[10].id == 10
     assert result.inc_dict[20].id == 20
+
+
+# ----------------------------------------------------------------------
+# Phase-aware retry classifier — _is_retryable_status / _is_retryable_error
+# ----------------------------------------------------------------------
+
+
+def test_is_retryable_status_retries_5xx() -> None:
+    """5xx server errors are retryable."""
+    from incorporator.io.fetch import _is_retryable_status
+
+    req = httpx.Request("GET", "https://example.com/")
+    for code in (500, 502, 503, 504):
+        resp = httpx.Response(code, request=req)
+        exc = httpx.HTTPStatusError(f"{code}", request=req, response=resp)
+        assert _is_retryable_status(exc) is True, f"{code} should be retryable"
+
+
+def test_is_retryable_status_retries_429() -> None:
+    """HTTP 429 (rate-limit) is retryable."""
+    from incorporator.io.fetch import _is_retryable_status
+
+    req = httpx.Request("GET", "https://example.com/")
+    resp = httpx.Response(429, request=req)
+    exc = httpx.HTTPStatusError("429", request=req, response=resp)
+    assert _is_retryable_status(exc) is True
+
+
+def test_is_retryable_status_fatal_4xx() -> None:
+    """4xx errors other than 429 are fatal (not retryable)."""
+    from incorporator.io.fetch import _is_retryable_status
+
+    req = httpx.Request("GET", "https://example.com/")
+    for code in (400, 401, 403, 404, 422):
+        resp = httpx.Response(code, request=req)
+        exc = httpx.HTTPStatusError(f"{code}", request=req, response=resp)
+        assert _is_retryable_status(exc) is False, f"{code} should be fatal"
+
+
+def test_is_retryable_error_connect_phase_retried() -> None:
+    """ConnectError and ConnectTimeout are retried unconditionally (connect-phase)."""
+    from incorporator.io.fetch import _is_retryable_error
+
+    assert _is_retryable_error(httpx.ConnectError("refused"), "GET", 1) is True
+    assert _is_retryable_error(httpx.ConnectTimeout("timeout"), "POST", 1) is True
+    assert _is_retryable_error(httpx.PoolTimeout("pool"), "POST", 1) is True
+
+
+def test_is_retryable_error_connect_phase_stops_at_budget() -> None:
+    """Connect-phase errors stop once the network budget is exhausted."""
+    from incorporator.io.fetch import _is_retryable_error
+    from incorporator.observability.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
+
+    assert _is_retryable_error(httpx.ConnectError("refused"), "GET", _HTTP_NETWORK_RETRY_STOP) is True
+    assert _is_retryable_error(httpx.ConnectError("refused"), "GET", _HTTP_NETWORK_RETRY_STOP + 1) is False
+
+
+def test_is_retryable_error_read_timeout_get_retried() -> None:
+    """ReadTimeout on a GET (idempotent) is retried up to the network budget."""
+    from incorporator.io.fetch import _is_retryable_error
+    from incorporator.observability.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
+
+    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "GET", 1) is True
+    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "GET", _HTTP_NETWORK_RETRY_STOP) is True
+    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "GET", _HTTP_NETWORK_RETRY_STOP + 1) is False
+
+
+def test_is_retryable_error_read_timeout_post_not_retried() -> None:
+    """ReadTimeout on a POST (non-idempotent) is never retried (avoids double-submit)."""
+    from incorporator.io.fetch import _is_retryable_error
+
+    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "POST", 1) is False
+    assert _is_retryable_error(httpx.ReadTimeout("timeout"), "post", 1) is False
+
+
+def test_is_retryable_error_post_send_idempotent_methods() -> None:
+    """All idempotent methods allow post-send retry; PATCH and POST do not."""
+    from incorporator.io.fetch import _IDEMPOTENT_METHODS, _is_retryable_error
+
+    for verb in _IDEMPOTENT_METHODS:
+        assert _is_retryable_error(httpx.ReadTimeout("t"), verb, 1) is True, f"{verb} should allow post-send retry"
+    for verb in ("POST", "PATCH"):
+        assert _is_retryable_error(httpx.ReadTimeout("t"), verb, 1) is False, f"{verb} must not allow post-send retry"
+
+
+# ----------------------------------------------------------------------
+# execute_request — per-class call-count assertions via MockTransport
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_request_connect_error_retried_up_to_network_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ConnectError is retried up to _HTTP_NETWORK_RETRY_STOP then exhausted.
+
+    Proves the predicate caps connect-phase errors at _HTTP_NETWORK_RETRY_STOP
+    total attempts (1 original + retries capped at budget).
+    """
+    import asyncio
+
+    from incorporator.io.fetch import execute_request
+    from incorporator.observability.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
+
+    monkeypatch.chdir(tmp_path)
+    call_count = 0
+
+    def _raising_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ConnectError("simulated connect failure", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_raising_transport)) as client:
+        with pytest.raises(httpx.ConnectError):
+            await execute_request(url="https://dead.example.com/", client=client)
+
+    # tenacity attempt_number is 1-based; predicate returns False when
+    # attempt_num > _HTTP_NETWORK_RETRY_STOP, so retries exhaust at budget+1
+    # (budget hits are 1..budget; attempt budget+1 fires predicate → False → stop).
+    assert call_count == _HTTP_NETWORK_RETRY_STOP + 1, (
+        f"Expected {_HTTP_NETWORK_RETRY_STOP + 1} attempts, got {call_count}"
+    )
+
+    await asyncio.sleep(0)  # allow event loop cleanup
+
+
+@pytest.mark.asyncio
+async def test_execute_request_read_timeout_get_retried_up_to_network_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ReadTimeout on GET is retried up to _HTTP_NETWORK_RETRY_STOP total attempts."""
+    import asyncio
+
+    from incorporator.io.fetch import execute_request
+    from incorporator.observability.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
+
+    monkeypatch.chdir(tmp_path)
+    call_count = 0
+
+    def _raising_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ReadTimeout("simulated read timeout", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_raising_transport)) as client:
+        with pytest.raises(httpx.ReadTimeout):
+            await execute_request(url="https://slow.example.com/", client=client, method="GET")
+
+    assert call_count == _HTTP_NETWORK_RETRY_STOP + 1, (
+        f"Expected {_HTTP_NETWORK_RETRY_STOP + 1} attempts (GET), got {call_count}"
+    )
+
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_execute_request_read_timeout_post_exactly_one_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ReadTimeout on POST (non-idempotent) is never retried — exactly 1 attempt."""
+    import asyncio
+
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+    call_count = 0
+
+    def _raising_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ReadTimeout("simulated read timeout", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_raising_transport)) as client:
+        with pytest.raises(httpx.ReadTimeout):
+            await execute_request(url="https://slow.example.com/api", client=client, method="POST")
+
+    assert call_count == 1, f"POST ReadTimeout must not be retried; got {call_count} calls"
+
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_execute_request_503_retried_up_to_inner_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """503 (server error) uses the full _HTTP_INNER_STOP=8 budget (unchanged)."""
+    import asyncio
+
+    from incorporator.io.fetch import execute_request
+    from incorporator.observability.tideweaver._retry_defaults import _HTTP_INNER_STOP
+
+    monkeypatch.chdir(tmp_path)
+    call_count = 0
+
+    def _503_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(503, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_503_transport)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await execute_request(url="https://flaky.example.com/", client=client)
+
+    assert call_count == _HTTP_INNER_STOP, f"503 should exhaust full inner budget {_HTTP_INNER_STOP}, got {call_count}"
+
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_execute_request_429_retried_up_to_inner_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """429 (rate-limit) uses the full _HTTP_INNER_STOP=8 budget (unchanged)."""
+    import asyncio
+
+    from incorporator.io.fetch import execute_request
+    from incorporator.observability.tideweaver._retry_defaults import _HTTP_INNER_STOP
+
+    monkeypatch.chdir(tmp_path)
+    call_count = 0
+
+    def _429_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(429, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_429_transport)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await execute_request(url="https://throttled.example.com/", client=client)
+
+    assert call_count == _HTTP_INNER_STOP, f"429 should exhaust full inner budget {_HTTP_INNER_STOP}, got {call_count}"
+
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_execute_request_404_fatal_exactly_one_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """404 is fatal — IncorporatorNetworkError raised after exactly 1 attempt."""
+    import asyncio
+
+    from incorporator.exceptions import IncorporatorNetworkError
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+    call_count = 0
+
+    def _404_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(404, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_404_transport)) as client:
+        with pytest.raises(IncorporatorNetworkError):
+            await execute_request(url="https://example.com/missing", client=client)
+
+    assert call_count == 1, f"404 must not be retried; got {call_count} calls"
+
+    await asyncio.sleep(0)

@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.3] - 2026-06-08
 
+### Fixed
+
+- **Phase-aware retry classifier** (`incorporator/io/fetch.py`,
+  `incorporator/observability/tideweaver/_retry_defaults.py`): `execute_request`
+  now classifies `httpx.RequestError` subtypes by phase and idempotency before
+  retrying.  Connect-phase errors (`ConnectError`, `ConnectTimeout`, `PoolTimeout`)
+  and post-send errors on idempotent methods (`ReadTimeout`, `ReadError`,
+  `WriteTimeout`, `WriteError`, `RemoteProtocolError`) are capped at
+  `_HTTP_NETWORK_RETRY_STOP=3` attempts; POST/PATCH post-send errors are not
+  retried at all (avoids double-submit).  5xx and 429 responses retain the full
+  `_HTTP_INNER_STOP=8` budget.  The two duplicate inline status gates were
+  consolidated into a single `_is_retryable_status()` helper.
+- **Empty-parent child-drill short-circuit** (`incorporator/schema/factory.py`):
+  `child_incorp` now returns an empty `IncorporatorList` immediately when the
+  parent dataset yields zero child IDs, without issuing any HTTP request.
+  Previously the unsubstituted `{}` template URL was dispatched, producing bogus
+  requests, retry storms, `{}` output rows, and misattributed warnings.
+
 ### Changed
 
 Observability / log-surface changes only — rendered diagnostic strings, warning

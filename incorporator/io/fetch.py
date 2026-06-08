@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_random_exponential
+from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_random_exponential
 
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from ..rejects import RejectEntry
@@ -94,6 +94,66 @@ logger = logging.getLogger(__name__)
 
 # 64 KB — consistent with decompress_data buffer discipline.
 _STREAM_CHUNK_SIZE: int = 65_536
+
+# Mirrors urllib3's DEFAULT_ALLOWED_METHODS — inlined so we don't depend on
+# urllib3 being importable (it is only a transitive dep via httpx).
+_IDEMPOTENT_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "PUT", "DELETE", "OPTIONS", "TRACE"})
+
+
+def _is_retryable_status(exc: httpx.HTTPStatusError) -> bool:
+    """Return True when the HTTP status warrants a retry.
+
+    Retries 5xx server errors and 429 rate-limiting.  All other 4xx client
+    errors are immediately fatal — retrying them cannot succeed and burns the
+    budget.
+
+    Args:
+        exc: The :class:`httpx.HTTPStatusError` whose response status is tested.
+
+    Returns:
+        ``True`` for 5xx responses and HTTP 429; ``False`` for all other 4xx.
+    """
+    return exc.response.is_server_error or exc.response.status_code == httpx.codes.TOO_MANY_REQUESTS
+
+
+def _is_retryable_error(exc: BaseException, method: str, attempt_num: int = 1) -> bool:
+    """Classify a request-layer exception as retryable given the HTTP method and attempt.
+
+    Mirrors httpx/httpcore's own stance: connect-establishment failures are
+    safe to retry unconditionally; post-send failures are only safe when the
+    method is idempotent (avoids double-submitting non-idempotent requests).
+
+    Args:
+        exc: The exception raised inside the tenacity ``with attempt:`` block.
+        method: HTTP verb string (e.g. ``"GET"``, ``"POST"``).  Case-insensitive.
+        attempt_num: Current tenacity attempt number (1-based).  Post-send and
+            connect-phase retries stop after :data:`_HTTP_NETWORK_RETRY_STOP`
+            attempts; server-responded errors (5xx/429) use the larger
+            :data:`_HTTP_INNER_STOP` budget set on the ``AsyncRetrying`` stop.
+
+    Returns:
+        ``True`` if tenacity should retry; ``False`` to stop and re-raise.
+    """
+    from ..observability.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        # Fatal 4xx already converted to IncorporatorNetworkError before this
+        # predicate fires, so in practice this branch sees 429 / 5xx only.
+        return _is_retryable_status(exc)
+
+    # Connect-phase errors: pre-send, safe to retry regardless of method.
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+        return attempt_num <= _HTTP_NETWORK_RETRY_STOP
+
+    # Post-send errors: safe only for idempotent methods (avoid double-submit).
+    if isinstance(
+        exc, (httpx.ReadTimeout, httpx.ReadError, httpx.WriteTimeout, httpx.WriteError, httpx.RemoteProtocolError)
+    ):
+        return method.upper() in _IDEMPOTENT_METHODS and attempt_num <= _HTTP_NETWORK_RETRY_STOP
+
+    # Unknown RequestError subtype — non-retryable by default (safe fallback).
+    return False
+
 
 # ==========================================
 # 1. THROTTLING & RESILIENCE
@@ -363,7 +423,9 @@ async def execute_request(
         wait=wait_random_exponential(
             multiplier=_HTTP_INNER_WAIT_MULTIPLIER, min=_HTTP_INNER_WAIT_MIN, max=_HTTP_INNER_WAIT_MAX
         ),
-        retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
+        retry=retry_if_exception(
+            lambda exc: _is_retryable_error(exc, method, retrying.statistics.get("attempt_number", 1))
+        ),
         reraise=True,
     )
     try:
@@ -385,9 +447,10 @@ async def execute_request(
                     try:
                         return await _stream_to_path_request(client, method, url, req_kwargs, stream_to_path)
                     except httpx.HTTPStatusError as exc:
-                        status = exc.response.status_code
-                        if status < 500 and status != 429:
-                            raise IncorporatorNetworkError(f"Fatal client error {status} for URL {url}: {exc}") from exc
+                        if not _is_retryable_status(exc):
+                            raise IncorporatorNetworkError(
+                                f"Fatal client error {exc.response.status_code} for URL {url}: {exc}"
+                            ) from exc
                         raise
 
                 # method.upper() natively supports 'POST', 'PUT', etc.
@@ -406,11 +469,11 @@ async def execute_request(
                 try:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as e:
-                    status = e.response.status_code
-                    # Immediately break Tenacity retry loop for permanent Client Errors (except 429 Throttling)
-                    if status < 500 and status != 429:
-                        raise IncorporatorNetworkError(f"Fatal client error {status} for URL {url}: {e}") from e
-                    raise e
+                    if not _is_retryable_status(e):
+                        raise IncorporatorNetworkError(
+                            f"Fatal client error {e.response.status_code} for URL {url}: {e}"
+                        ) from e
+                    raise
 
                 # Capture retry count for Wave.http_retry_count on the success
                 # path (mirrors the exception-attribute pattern below for

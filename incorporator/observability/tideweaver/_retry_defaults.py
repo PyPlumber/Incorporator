@@ -14,6 +14,10 @@ _HTTP_INNER_WAIT_MAX: float = 30.0
 _HTTP_INNER_WAIT_MIN: float = 2.0
 _HTTP_INNER_WAIT_MULTIPLIER: float = 1.5
 
+# Separate attempt cap for network-layer errors (connect-phase and post-send
+# on idempotent methods).  Kept low so a dead host stops quickly.
+_HTTP_NETWORK_RETRY_STOP: int = 3
+
 _CANAL_OUTER_STOP: int = 5
 _CANAL_OUTER_WAIT_MAX: float = 8.0
 _CANAL_OUTER_WAIT_MIN: float = 0.5
