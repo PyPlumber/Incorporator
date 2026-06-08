@@ -137,6 +137,52 @@ class _CurrentState(BaseModel):
     still inspect the finished task for restart / error-isolation logic."""
 
 
+def _build_canal_reject(
+    source: str,
+    error_kind: str,
+    message: str,
+    *,
+    wave_index: int,
+    from_name: str | None = None,
+    to_name: str | None = None,
+    duration_sec: float | None = None,
+    cooldown_sec: float | None = None,
+) -> RejectEntry:
+    """Construct a canal-layer :class:`~incorporator.rejects.RejectEntry`.
+
+    All five canal skip sites (SkipAhead, SurgeHalted, GateBlocked,
+    PenstockLimited, SourceLoadFailure) share identical field semantics:
+    ``retry_after`` is always ``None`` (no HTTP context), ``attempt_number``
+    is always 1 (no retry loop at the canal layer).
+
+    Args:
+        source: Class name of the current being skipped.
+        error_kind: Canal skip kind string (e.g. ``"SkipAhead"``).
+        message: Human-readable skip detail including edge label.
+        wave_index: Current tide/wave index from the scheduler.
+        from_name: Upstream current name, or ``None`` for source-load failures.
+        to_name: Downstream current name, or ``None`` for source-load failures.
+        duration_sec: Elapsed seconds since the edge became eligible, or ``None``.
+        cooldown_sec: Penstock-state cooldown hint, or ``None``.
+
+    Returns:
+        A frozen :class:`~incorporator.rejects.RejectEntry` ready to append
+        to the scheduler's ``_canal_rejects`` list.
+    """
+    return RejectEntry.model_construct(
+        source=source,
+        error_kind=error_kind,
+        message=message,
+        retry_after=None,
+        wave_index=wave_index,
+        from_name=from_name,
+        to_name=to_name,
+        attempt_number=1,
+        duration_sec=duration_sec,
+        cooldown_sec=cooldown_sec,
+    )
+
+
 class Tideweaver:
     """Orchestrate multiple Incorporator pipelines on independent intervals within one time window.
 
@@ -570,42 +616,36 @@ class Tideweaver:
                     if surge.action == "skip":
                         flow.observer.on_skip(self, edge, SkipReason.SKIP_AHEAD)
                         self._canal_rejects.append(
-                            RejectEntry.model_construct(
-                                source=current.cls.__name__,
-                                error_kind="SkipAhead",
-                                message=f"edge {edge[0]}→{edge[1]}: surge skip-ahead",
-                                retry_after=None,
+                            _build_canal_reject(
+                                current.cls.__name__,
+                                "SkipAhead",
+                                f"edge {edge[0]}→{edge[1]}: surge skip-ahead",
                                 wave_index=self._tide_number,
                                 from_name=up_name,
                                 to_name=current.name,
-                                attempt_number=1,
                                 duration_sec=(
                                     (time.perf_counter() - edge_state.eligibility_start_perf)
                                     if edge_state is not None and edge_state.eligibility_start_perf is not None
                                     else None
                                 ),
-                                cooldown_sec=None,
                             )
                         )
                         return SkipReason.SKIP_AHEAD, frozenset()
                     if surge.action == "halt":
                         flow.observer.on_skip(self, edge, SkipReason.SURGE_HALTED)
                         self._canal_rejects.append(
-                            RejectEntry.model_construct(
-                                source=current.cls.__name__,
-                                error_kind="SurgeHalted",
-                                message=f"edge {edge[0]}→{edge[1]}: surge halted",
-                                retry_after=None,
+                            _build_canal_reject(
+                                current.cls.__name__,
+                                "SurgeHalted",
+                                f"edge {edge[0]}→{edge[1]}: surge halted",
                                 wave_index=self._tide_number,
                                 from_name=up_name,
                                 to_name=current.name,
-                                attempt_number=1,
                                 duration_sec=(
                                     (time.perf_counter() - edge_state.eligibility_start_perf)
                                     if edge_state is not None and edge_state.eligibility_start_perf is not None
                                     else None
                                 ),
-                                cooldown_sec=None,
                             )
                         )
                         return SkipReason.SURGE_HALTED, frozenset()
@@ -633,21 +673,18 @@ class Tideweaver:
                 # subclasses may emit new ones) DO populate rejects.
                 if gate_skip != SkipReason.AWAITING_UPSTREAM:
                     self._canal_rejects.append(
-                        RejectEntry.model_construct(
-                            source=current.cls.__name__,
-                            error_kind="GateBlocked",
-                            message=f"edge {edge[0]}→{edge[1]}: {gate_skip.value}",
-                            retry_after=None,
+                        _build_canal_reject(
+                            current.cls.__name__,
+                            "GateBlocked",
+                            f"edge {edge[0]}→{edge[1]}: {gate_skip.value}",
                             wave_index=self._tide_number,
                             from_name=up_name,
                             to_name=current.name,
-                            attempt_number=1,
                             duration_sec=(
                                 (time.perf_counter() - edge_state.eligibility_start_perf)
                                 if edge_state is not None and edge_state.eligibility_start_perf is not None
                                 else None
                             ),
-                            cooldown_sec=None,
                         )
                     )
                 return gate_skip, frozenset()
@@ -673,15 +710,13 @@ class Tideweaver:
                     )
                     flow.observer.on_skip(self, edge, penstock_skip)
                     self._canal_rejects.append(
-                        RejectEntry.model_construct(
-                            source=current.cls.__name__,
-                            error_kind="PenstockLimited",
-                            message=f"edge {edge[0]}→{edge[1]}: {penstock_skip.value}",
-                            retry_after=None,
+                        _build_canal_reject(
+                            current.cls.__name__,
+                            "PenstockLimited",
+                            f"edge {edge[0]}→{edge[1]}: {penstock_skip.value}",
                             wave_index=self._tide_number,
                             from_name=up_name,
                             to_name=current.name,
-                            attempt_number=1,
                             duration_sec=(
                                 (time.perf_counter() - edge_state.eligibility_start_perf)
                                 if edge_state.eligibility_start_perf is not None
@@ -989,18 +1024,16 @@ class Tideweaver:
         inc_file_path = incorp_params.get("inc_file")
         if not accumulated and inc_file_path and isinstance(inc_file_path, str) and not Path(inc_file_path).is_file():
             self._canal_rejects.append(
-                RejectEntry.model_construct(
-                    source=current.cls.__name__,
-                    error_kind="SourceLoadFailure",
-                    message=(
+                _build_canal_reject(
+                    current.cls.__name__,
+                    "SourceLoadFailure",
+                    (
                         f"Stream '{current.name}' produced zero rows because the configured "
                         f"inc_file does not exist: {inc_file_path}"
                     ),
-                    retry_after=None,
                     wave_index=self._tide_number,
                     from_name=None,
                     to_name=None,
-                    attempt_number=1,
                     duration_sec=None,
                     cooldown_sec=None,
                 )
