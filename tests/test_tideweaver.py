@@ -215,6 +215,41 @@ def test_custom_mixed_mode_edges() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_watershed_name_field_defaults_to_none() -> None:
+    """Watershed.name defaults to None when not supplied."""
+    ws = Watershed.parallel(window=_window(), currents=[_stream("a")])
+    assert ws.name is None
+
+
+def test_watershed_name_field_round_trips() -> None:
+    """Watershed.name='X' is stored and accessible; all four shape constructors accept it via **kwargs."""
+    ws_chain = Watershed.chain(window=_window(), currents=[_stream("a"), _stream("b")], name="ChainRun")
+    assert ws_chain.name == "ChainRun"
+
+    ws_parallel = Watershed.parallel(window=_window(), currents=[_stream("a"), _stream("b")], name="ParRun")
+    assert ws_parallel.name == "ParRun"
+
+    ws_fanout = Watershed.fanout(window=_window(), source=_stream("a"), sinks=[_stream("b")], name="FanRun")
+    assert ws_fanout.name == "FanRun"
+
+    ws_diamond = Watershed.diamond(
+        window=_window(), head=_stream("a"), middle=[_stream("b")], tail=_stream("c"), name="DiamRun"
+    )
+    assert ws_diamond.name == "DiamRun"
+
+
+def test_watershed_extra_forbid_still_rejects_unknown_keys() -> None:
+    """extra='forbid' continues to reject truly unknown keys after adding the name field."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Watershed(  # type: ignore[call-arg]
+            window=_window(),
+            currents=[_stream("a")],
+            unknown_key="oops",
+        )
+
+
 def test_watershed_rejects_duplicate_names() -> None:
     """Duplicate current names raise a clear ValueError listing the duplicates."""
     a, a2 = _stream("a"), _stream("a")

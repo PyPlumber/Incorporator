@@ -177,6 +177,13 @@ class Watershed(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     window: tuple[datetime, datetime] = Field(..., description="Inclusive start, exclusive end.")
+    name: str | None = Field(
+        default=None,
+        description=(
+            "Optional human-readable label for this run; drives the default logger_name in "
+            "LoggedTideweaver when no explicit logger_name is passed."
+        ),
+    )
     currents: list[Current] = Field(..., min_length=1)
     edges: list[Edge] = Field(default_factory=list)
     inflow: Path | None = None

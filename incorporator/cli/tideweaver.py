@@ -99,7 +99,7 @@ async def _run_tideweaver(
 
     tw: Tideweaver
     if logs:
-        tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="Tideweaver")
+        tw = LoggedTideweaver(watershed, enable_logging=True, logger_name=watershed.name or "Tideweaver")
     else:
         tw = Tideweaver(watershed)
     async for tide in tw.run():

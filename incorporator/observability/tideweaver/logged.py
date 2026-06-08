@@ -76,9 +76,11 @@ class LoggedTideweaver(Tideweaver):
             :class:`Tide` and :class:`~incorporator.RejectEntry` to disk.
             Off by default.
         logger_name: Name used for log files and :mod:`logging` logger lookup.
-            Defaults to ``"Tideweaver"``.  Two :class:`LoggedTideweaver`
-            instances sharing the same ``logger_name`` share one log-file set,
-            mirroring the existing per-class-name behaviour for
+            When ``None`` (default), resolves to ``watershed.name`` if set,
+            otherwise falls back to ``"Tideweaver"``.  An explicit non-``None``
+            value always wins.  Two :class:`LoggedTideweaver` instances sharing
+            the same resolved name share one log-file set, mirroring the
+            existing per-class-name behaviour for
             :class:`~incorporator.observability.logger.LoggedIncorporator`.
 
     Example::
@@ -99,18 +101,19 @@ class LoggedTideweaver(Tideweaver):
         pass_interval: float | None = None,
         backlog_backoff_factor: float = 1.0,
         enable_logging: bool = False,
-        logger_name: str = "Tideweaver",
+        logger_name: str | None = None,
     ) -> None:
+        resolved_name = logger_name or watershed.name or "Tideweaver"
         self._enable_logging = enable_logging
-        self._logger_name = logger_name
+        self._logger_name = resolved_name
         if enable_logging:
-            setup_class_logger(logger_name)
+            setup_class_logger(resolved_name)
         super().__init__(
             watershed,
             tick_factory=tick_factory,
             pass_interval=pass_interval,
             backlog_backoff_factor=backlog_backoff_factor,
-            logger_name=logger_name if enable_logging else None,
+            logger_name=resolved_name if enable_logging else None,
         )
 
     async def run(self) -> AsyncIterator[Tide]:

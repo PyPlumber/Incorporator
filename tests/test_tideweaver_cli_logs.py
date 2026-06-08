@@ -126,6 +126,73 @@ async def test_run_tideweaver_logs_true_builds_logged_tideweaver(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_logged_tideweaver_defaults_logger_name_from_watershed_name(tmp_path: Path) -> None:
+    """LoggedTideweaver defaults ``_logger_name`` to ``watershed.name`` when no explicit name is passed.
+
+    Proves the Commit 2 resolution chain: watershed.name='MySession' →
+    resolved_name='MySession' when logger_name kwarg is omitted.
+    """
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    ws = Watershed(
+        window=(now + timedelta(hours=1), now + timedelta(hours=2)),
+        name="MySession",
+        currents=[
+            Stream(name="src", cls=_Source, interval=30.0, incorp_params={}),
+        ],
+    )
+    tw = LoggedTideweaver(ws, enable_logging=False)
+    assert tw._logger_name == "MySession", (
+        f"_logger_name must default to watershed.name; got {tw._logger_name!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_logged_tideweaver_explicit_logger_name_wins_over_watershed_name(tmp_path: Path) -> None:
+    """An explicit logger_name kwarg beats watershed.name in LoggedTideweaver.
+
+    Proves the resolution chain: explicit logger_name='Override' wins over
+    watershed.name='MySession'.
+    """
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    ws = Watershed(
+        window=(now + timedelta(hours=1), now + timedelta(hours=2)),
+        name="MySession",
+        currents=[
+            Stream(name="src", cls=_Source, interval=30.0, incorp_params={}),
+        ],
+    )
+    tw = LoggedTideweaver(ws, enable_logging=False, logger_name="Override")
+    assert tw._logger_name == "Override", (
+        f"explicit logger_name must win; got {tw._logger_name!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_logged_tideweaver_falls_back_to_tideweaver_when_no_name(tmp_path: Path) -> None:
+    """LoggedTideweaver resolves to 'Tideweaver' when both watershed.name and logger_name are absent.
+
+    Proves the fallback: no watershed.name and no explicit logger_name → 'Tideweaver'.
+    """
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    ws = Watershed(
+        window=(now + timedelta(hours=1), now + timedelta(hours=2)),
+        currents=[
+            Stream(name="src", cls=_Source, interval=30.0, incorp_params={}),
+        ],
+    )
+    tw = LoggedTideweaver(ws, enable_logging=False)
+    assert tw._logger_name == "Tideweaver", (
+        f"fallback must be 'Tideweaver'; got {tw._logger_name!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_tideweaver_logs_true_does_not_call_basicconfig(tmp_path: Path) -> None:
     """``_run_tideweaver(logs=True)`` must not call ``logging.basicConfig``.
 
