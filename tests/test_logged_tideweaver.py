@@ -5,13 +5,14 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, ClassVar, List, Tuple
 
 import pytest
 
 from incorporator import Incorporator
 from incorporator.observability.tideweaver import (
     Current,
+    CustomCurrent,
     LoggedTideweaver,
     Stream,
     Tide,
@@ -181,3 +182,103 @@ async def test_logged_tideweaver_same_logger_name_shares_file(
 
     # Both must point to the same listener (setup_class_logger early-exits on duplicate).
     assert listener_before is listener_after
+
+
+# ---------------------------------------------------------------------------
+# get_scheduler_events reader
+# ---------------------------------------------------------------------------
+
+
+def _wait_flush() -> None:
+    """Give the QueueHandler background thread time to drain its queue to disk."""
+    import time
+
+    time.sleep(0.25)
+
+
+@pytest.mark.asyncio
+async def test_get_scheduler_events_returns_records_for_failing_tick(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """get_scheduler_events returns structured records when a tick fails with on_error='isolate'.
+
+    A failing isolated tick must be retrievable via
+    LoggedTideweaver.get_scheduler_events(logger_name): at least one
+    record with a top-level 'scheduler_event' key, correct event_type and
+    current_name, and a populated 'session' field matching logger_name.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class _IsolateSrc(Incorporator):
+        pass
+
+    class _RaisingCurrent(CustomCurrent):
+        auto_park_snapshot: ClassVar[bool] = False
+
+        async def tick(self, scheduler: Any) -> None:
+            raise RuntimeError("deliberate get_scheduler_events failure")
+
+    logger_name = "TestGetSchedEvents"
+    current = _RaisingCurrent(
+        name="failing_current",
+        cls=_IsolateSrc,
+        interval=0.04,
+        on_error="isolate",
+    )
+    now = datetime.now(timezone.utc)
+    ws = Watershed(
+        window=(now, now + timedelta(milliseconds=400)),
+        currents=[current],
+        edges=[],
+    )
+
+    tw = LoggedTideweaver(ws, enable_logging=True, logger_name=logger_name, pass_interval=0.03)
+    async for _ in tw.run():
+        pass
+
+    _wait_flush()
+
+    records = await LoggedTideweaver.get_scheduler_events(logger_name)
+
+    assert len(records) >= 1, f"expected >= 1 scheduler_event records; got {records}"
+    for rec in records:
+        assert "scheduler_event" in rec, f"each record must have 'scheduler_event' key; got {rec}"
+    evt = records[0]["scheduler_event"]
+    assert evt.get("event_type") == "isolated_tick_failure", f"event_type mismatch: {evt}"
+    assert evt.get("current_name") == "failing_current", f"current_name mismatch: {evt}"
+    assert "session" in evt, f"'session' key missing from payload: {evt}"
+    assert evt["session"] == logger_name, f"session mismatch: expected {logger_name!r}, got {evt['session']!r}"
+
+
+@pytest.mark.asyncio
+async def test_get_scheduler_events_returns_empty_list_when_no_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """get_scheduler_events returns an empty list when a clean run produces no scheduler events.
+
+    Proves that a successful LoggedTideweaver run with no tick failures yields
+    [] from get_scheduler_events(logger_name) — no false positives.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    logger_name = "TestGetSchedEventsEmpty"
+    now = datetime.now(timezone.utc)
+    ws = Watershed.parallel(
+        window=(now, now + timedelta(milliseconds=200)),
+        currents=[Stream(name="clean", cls=_Src, interval=0.05, incorp_params={})],
+    )
+
+    tw = LoggedTideweaver(
+        ws, tick_factory=_noop_tick, pass_interval=0.05, enable_logging=True, logger_name=logger_name
+    )
+    async for _ in tw.run():
+        pass
+
+    _wait_flush()
+
+    records = await LoggedTideweaver.get_scheduler_events(logger_name)
+    assert records == [], f"expected empty list for clean run; got {records}"

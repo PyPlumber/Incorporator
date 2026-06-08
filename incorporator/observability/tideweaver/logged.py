@@ -204,3 +204,54 @@ class LoggedTideweaver(Tideweaver):
         """
         filename = _safe_log_filename(logger_name, "error.log")
         return await asyncio.to_thread(_read_filtered, filename, "reject")
+
+    @classmethod
+    async def get_scheduler_events(cls, logger_name: str) -> list[dict[str, Any]]:
+        """Return all scheduler-event records from ``error.log`` for ``logger_name``.
+
+        Scheduler diagnostics routed by
+        :func:`~incorporator.observability.logger._route_scheduler_event_to_log`
+        land in the session's ``error.log`` under a top-level
+        ``"scheduler_event"`` key (the router calls ``_emit_payload`` with
+        ``is_tide=False`` so :class:`~incorporator.observability.logger.TideFilter`
+        never diverts them to ``tide.log``).  Reading ``error.log`` filtered by
+        the ``"scheduler_event"`` key is therefore the correct and complete
+        source of truth for structured scheduler diagnostics.
+
+        The five event types that produce records here are:
+        ``isolated_tick_failure``, ``tick_parked``, ``empty_output``,
+        ``empty_parent_snapshot``, and ``fjord_flush_failure``.
+
+        Records are sorted ascending by ``tide_number`` (``None`` → ``0``),
+        then by ``event_type``, then by ``current_name`` for deterministic
+        ordering when multiple events share a tide number.
+
+        Args:
+            logger_name: The name used when the :class:`LoggedTideweaver` was
+                constructed (e.g. ``"PriceSession"``).  Controls which
+                ``logs/<logger_name>_error.log`` file is read.
+
+        Returns:
+            List of scheduler-event record dicts sorted ascending by
+            ``tide_number``.  Each dict contains a top-level
+            ``"scheduler_event"`` key whose value includes ``event_type``,
+            ``current_name``, ``cls_name``, ``tide_number``, ``session``, and
+            ``detail``.  Returns an empty list when no matching records exist.
+
+        Example::
+
+            events = await LoggedTideweaver.get_scheduler_events("PriceSession")
+            for rec in events:
+                evt = rec["scheduler_event"]
+                print(evt["event_type"], evt["current_name"], evt["tide_number"])
+        """
+        filename = _safe_log_filename(logger_name, "error.log")
+        records = await asyncio.to_thread(_read_filtered, filename, "scheduler_event")
+        return sorted(
+            records,
+            key=lambda r: (
+                r.get("scheduler_event", {}).get("tide_number") or 0,
+                r.get("scheduler_event", {}).get("event_type") or "",
+                r.get("scheduler_event", {}).get("current_name") or "",
+            ),
+        )
