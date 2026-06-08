@@ -750,25 +750,28 @@ async def fetch_concurrent_payloads(
             duration = time.perf_counter() - start
             attempt = getattr(e, "_incorporator_attempt_number", None)
             if e.response.status_code == 429:
-                logger.warning(
-                    f"🚦 RATE LIMITED (HTTP 429) on '{src}'. Skipping. "
-                    f"Tip: Lower `requests_per_second` (e.g. 0.2 for ~12 req/min); "
-                    f"check the host's free-tier docs for the correct ceiling."
+                reject = _build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration)
+                logger.warning(str(reject))
+                logger.info(
+                    "Tip: Lower requests_per_second (e.g. 0.2 for ~12 req/min);"
+                    " check the host's free-tier docs for the correct ceiling."
                 )
-                rejects.append(_build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration))
+                rejects.append(reject)
                 return []
             raise IncorporatorNetworkError(f"HTTP error {e.response.status_code}") from e
         except httpx.RequestError as e:
             duration = time.perf_counter() - start
             attempt = getattr(e, "_incorporator_attempt_number", None)
-            logger.warning(f"Network Connection Error for '{src}': {e.__class__.__name__}. Skipping.")
-            rejects.append(_build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration))
+            reject = _build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration)
+            logger.warning(str(reject))
+            rejects.append(reject)
             return []
         except IncorporatorFormatError as e:
             duration = time.perf_counter() - start
             # Format errors are not retried by Tenacity, so attempt_number is unavailable.
-            logger.warning(f"PARSE FAILED for '{src}': {e}. Skipping.")
-            rejects.append(_build_reject_entry(src, e, duration_sec=duration))
+            reject = _build_reject_entry(src, e, duration_sec=duration)
+            logger.warning(str(reject))
+            rejects.append(reject)
             return []
 
     try:
@@ -799,8 +802,9 @@ async def fetch_concurrent_payloads(
                         # CancelledError / SystemExit / KeyboardInterrupt — propagate.
                         raise res
                     if isinstance(res, Exception):
-                        logger.warning(f"FETCH ERROR on '{src}': {type(res).__name__}: {res}. Skipping.")
-                        rejects.append(_build_reject_entry(str(src), res))
+                        reject = _build_reject_entry(str(src), res)
+                        logger.warning(str(reject))
+                        rejects.append(reject)
                     elif res:
                         all_parsed_data.extend(res)
 
@@ -832,8 +836,9 @@ async def fetch_concurrent_payloads(
                     try:
                         res = await _safe_execute(str(src), p)
                     except Exception as exc:
-                        logger.warning(f"FETCH ERROR on '{src}': {type(exc).__name__}: {exc}. Skipping.")
-                        rejects.append(_build_reject_entry(str(src), exc))
+                        reject = _build_reject_entry(str(src), exc)
+                        logger.warning(str(reject))
+                        rejects.append(reject)
                         continue
                     if res:
                         ordered_results[idx] = res
