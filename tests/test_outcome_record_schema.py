@@ -344,8 +344,8 @@ class TestRejectEntryNewFields:
         assert entry.duration_sec is None
         assert entry.cooldown_sec is None
 
-    def test_str_unchanged_with_new_fields(self) -> None:
-        """__str__ format is unchanged when new fields are populated."""
+    def test_str_with_new_fields_fully_decorated(self) -> None:
+        """__str__ renders the fully decorated form when status_code is set and message differs from source."""
         entry = RejectEntry(
             source="https://x.com",
             error_kind="HTTPStatusError",
@@ -354,7 +354,7 @@ class TestRejectEntryNewFields:
             status_code=429,
             cooldown_sec=12.0,
         )
-        assert str(entry) == "HTTPStatusError: 429 Too Many Requests"
+        assert str(entry) == "HTTPStatusError: https://x.com [HTTP 429] — 429 Too Many Requests"
 
     def test_build_reject_entry_populates_host_and_cooldown(self) -> None:
         """fetch._build_reject_entry populates host, status_code, and cooldown_sec."""

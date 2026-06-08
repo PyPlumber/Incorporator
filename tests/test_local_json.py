@@ -37,19 +37,28 @@ async def test_incorporator_reads_local_json_successfully(clean_json_file: str) 
 async def test_incorporator_warns_and_skips_on_bad_json(
     broken_json_file: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Malformed JSON is logged as a warning and the call returns an empty list."""
+    """Malformed JSON is logged as a warning and the call returns an empty list.
+
+    The log now uses ``str(reject)`` — format is
+    ``"IncorporatorFormatError: {path} — {error detail}"``.
+    A ``UserWarning`` is also emitted via ``warnings.warn`` after the
+    ``asyncio.to_thread`` join in ``base.py``.
+    """
 
     class BadPokemon(Incorporator):
         pass
 
-    with caplog.at_level(logging.WARNING):
-        results = await BadPokemon.incorp(inc_file=broken_json_file)
+    import warnings
 
-    # 2. Assert that the framework survived and safely returned an empty list
+    with caplog.at_level(logging.WARNING):
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            results = await BadPokemon.incorp(inc_file=broken_json_file)
+
+    # Assert that the framework survived and safely returned an empty list.
     assert isinstance(results, list)
     assert len(results) == 0
 
-    # 3. Assert the warning message contains our helpful fault-tolerance context.
-    # Parse errors now surface via network._safe_execute: "⚠️ PARSE FAILED for '{src}': {error}"
-    assert "PARSE FAILED for" in caplog.text
+    # Parse errors are now logged via str(reject): "IncorporatorFormatError: {path} — {detail}".
+    assert "IncorporatorFormatError" in caplog.text
     assert "Invalid JSON" in caplog.text

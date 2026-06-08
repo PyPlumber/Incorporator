@@ -120,8 +120,7 @@ async def _run_tideweaver(
     if source_failures:
         failure_lines = "; ".join(str(r) for r in source_failures)
         logger.warning(
-            "Tideweaver: run completed with %d source-load failure(s) — %s. "
-            "Check inc_file paths and the error log.",
+            "Tideweaver: run completed with %d source-load failure(s) — %s. Check inc_file paths and the error log.",
             len(source_failures),
             failure_lines,
         )
