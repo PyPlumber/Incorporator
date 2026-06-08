@@ -150,13 +150,40 @@ class RejectEntry(BaseModel):
     )
 
     def __str__(self) -> str:
-        """Back-compat string form for callers that log the entry directly.
+        """Canonical human renderer — ASCII-safe, cp1252-compatible.
 
-        Returns ``error_kind: message`` when both are available, falling back
-        to the source identifier when no richer context exists.
+        Format: ``"{error_kind}: {source}"``
+        + `` ({from_name}->{to_name})`` when ``from_name`` is set
+        + `` [HTTP {status_code}]`` when ``status_code`` is set
+        + `` — {message[:120]}`` when ``message`` is non-empty and distinct
+          from ``source`` (avoids repeating the source as both position and
+          detail).
         """
-        if self.error_kind and self.error_kind != "Unknown":
-            if self.message:
-                return f"{self.error_kind}: {self.message}"
-            return self.error_kind
-        return self.message or self.source
+        parts = [f"{self.error_kind}: {self.source}"]
+        if self.from_name is not None:
+            parts.append(f" ({self.from_name}->{self.to_name})")
+        if self.status_code is not None:
+            parts.append(f" [HTTP {self.status_code}]")
+        if self.message and self.message != self.source:
+            parts.append(f" — {self.message[:120]}")
+        return "".join(parts)
+
+
+def _format_reject_warning(rejects: list[RejectEntry], cap: int = 5) -> str:
+    """Format a structured reject list into a multi-line ``warnings.warn`` message.
+
+    Args:
+        rejects: Non-empty list of :class:`RejectEntry` instances to summarise.
+        cap: Maximum number of individual entries to render before emitting
+            an overflow line.  Defaults to 5.
+
+    Returns:
+        A newline-separated string with a count headline, up to ``cap`` rendered
+        entries (via :meth:`RejectEntry.__str__`), and an optional overflow line.
+    """
+    lines = [f"{len(rejects)} source(s) returned partial data."]
+    for r in rejects[:cap]:
+        lines.append(str(r))
+    if len(rejects) > cap:
+        lines.append(f"... and {len(rejects) - cap} more.")
+    return "\n".join(lines)

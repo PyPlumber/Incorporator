@@ -67,27 +67,27 @@ def test_entry_requires_source() -> None:
 
 
 def test_str_with_error_kind_and_message() -> None:
-    """``str(entry)`` returns ``"{error_kind}: {message}"`` when both are set."""
+    """``str(entry)`` renders ``"{error_kind}: {source} - {message}"`` when both are set and message differs from source."""
     entry = RejectEntry(source="x", error_kind="RequestError", message="connection refused")
-    assert str(entry) == "RequestError: connection refused"
+    assert str(entry) == "RequestError: x — connection refused"
 
 
 def test_str_with_error_kind_only() -> None:
-    """``str(entry)`` falls back to ``error_kind`` when message is empty."""
+    """``str(entry)`` renders ``"{error_kind}: {source}"`` when message is empty."""
     entry = RejectEntry(source="x", error_kind="RequestError")
-    assert str(entry) == "RequestError"
+    assert str(entry) == "RequestError: x"
 
 
 def test_str_unknown_falls_back_to_source() -> None:
-    """``str(entry)`` returns the source string when no error context is available."""
+    """``str(entry)`` renders ``"Unknown: {source}"`` when no message is set."""
     entry = RejectEntry(source="https://x")
-    assert str(entry) == "https://x"
+    assert str(entry) == "Unknown: https://x"
 
 
 def test_str_unknown_with_message_falls_back_to_message() -> None:
-    """When error_kind is Unknown but message is set, ``str(entry)`` returns the message."""
+    """``str(entry)`` renders ``"Unknown: {source} — {message}"`` when message is distinct from source."""
     entry = RejectEntry(source="x", message="some descriptive error")
-    assert str(entry) == "some descriptive error"
+    assert str(entry) == "Unknown: x — some descriptive error"
 
 
 # ---------------------------------------------------------------------------
@@ -232,17 +232,19 @@ def test_cooldown_sec_coexists_with_retry_after() -> None:
     assert entry.cooldown_sec == 30.0
 
 
-def test_str_unchanged_with_new_fields_populated() -> None:
-    """__str__ output is unaffected by new fields — back-compat for log consumers."""
+def test_str_fully_decorated_with_all_optional_fields() -> None:
+    """``str(entry)`` renders the fully decorated form: kind, source, edge, HTTP status, and message."""
     entry = RejectEntry(
         source="https://x",
         error_kind="HTTPStatusError",
         message="429 Too Many Requests",
         host="x.com",
         status_code=429,
+        from_name="SourceA",
+        to_name="DestB",
         cooldown_sec=15.0,
     )
-    assert str(entry) == "HTTPStatusError: 429 Too Many Requests"
+    assert str(entry) == "HTTPStatusError: https://x (SourceA->DestB) [HTTP 429] — 429 Too Many Requests"
 
 
 def test_build_reject_entry_populates_host_and_status_code() -> None:
@@ -272,6 +274,73 @@ def test_build_reject_entry_no_header_sets_cooldown_none() -> None:
     assert entry.retry_after is None
     assert entry.cooldown_sec is None
     assert entry.host == "api.example.com"
+
+
+# ---------------------------------------------------------------------------
+# _format_reject_warning
+# ---------------------------------------------------------------------------
+
+
+def test_format_reject_warning_count_headline() -> None:
+    """First line of ``_format_reject_warning`` is the count headline."""
+    from incorporator.rejects import _format_reject_warning
+
+    rejects = [RejectEntry(source=f"s{i}", error_kind="RequestError") for i in range(3)]
+    msg = _format_reject_warning(rejects)
+    lines = msg.splitlines()
+    assert lines[0] == "3 source(s) returned partial data."
+
+
+def test_format_reject_warning_entries_rendered() -> None:
+    """Each of the first ``cap`` entries is rendered via ``str(r)``."""
+    from incorporator.rejects import _format_reject_warning
+
+    rejects = [RejectEntry(source=f"s{i}", error_kind="E") for i in range(3)]
+    msg = _format_reject_warning(rejects)
+    lines = msg.splitlines()
+    assert lines[1] == str(rejects[0])
+    assert lines[2] == str(rejects[1])
+    assert lines[3] == str(rejects[2])
+
+
+def test_format_reject_warning_overflow_line() -> None:
+    """When rejects exceed cap, an overflow line '... and N more.' is appended."""
+    from incorporator.rejects import _format_reject_warning
+
+    rejects = [RejectEntry(source=f"s{i}", error_kind="E") for i in range(8)]
+    msg = _format_reject_warning(rejects, cap=5)
+    lines = msg.splitlines()
+    # headline + 5 entries + overflow
+    assert len(lines) == 7
+    assert lines[-1] == "... and 3 more."
+
+
+def test_format_reject_warning_no_overflow_when_at_cap() -> None:
+    """Exactly ``cap`` entries produces no overflow line."""
+    from incorporator.rejects import _format_reject_warning
+
+    rejects = [RejectEntry(source=f"s{i}", error_kind="E") for i in range(5)]
+    msg = _format_reject_warning(rejects, cap=5)
+    lines = msg.splitlines()
+    assert len(lines) == 6  # headline + 5 entries
+    assert not lines[-1].startswith("...")
+
+
+def test_str_renderer_is_cp1252_safe() -> None:
+    """``str(entry)`` is encodable as cp1252 — no emoji or characters outside the Windows Western code page."""
+    entry = RejectEntry(
+        source="https://api.example.com/users",
+        error_kind="HTTPStatusError",
+        message="429 Too Many Requests",
+        status_code=429,
+        from_name="SourceA",
+        to_name="DestB",
+    )
+    rendered = str(entry)
+    try:
+        rendered.encode("cp1252")
+    except UnicodeEncodeError as exc:
+        raise AssertionError(f"str(RejectEntry) is not cp1252-safe: {exc}\nRendered: {rendered!r}") from exc
 
 
 # Suppress an unused-import lint when typing checkers narrow Type.
