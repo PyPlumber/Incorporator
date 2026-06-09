@@ -63,7 +63,7 @@ async def run_pipeline(
     adapt_chunk_size: bool = False,
     chunk_size_min: int = 100,
     chunk_size_max: int = 100_000,
-    target_min_sec: float = 0.030,
+    target_min_sec: float = 0.001,
     target_max_sec: float = 0.100,
 ) -> AsyncGenerator[Wave, None]:
     """Run a single-source chunking pipeline — the engine behind ``stream()``.
@@ -88,10 +88,10 @@ async def run_pipeline(
             chunks.  Default ``False`` preserves existing behaviour.
         chunk_size_min: Floor for AIMD shrinkage.  Default 100.
         chunk_size_max: Ceiling for AIMD growth.  Default 100 000.
-        target_min_sec: Processing time below which chunk_size grows.
-            Default 30 ms.
-        target_max_sec: Processing time above which chunk_size shrinks.
-            Default 100 ms.
+        target_min_sec: Parse-only time below which chunk_size grows.
+            Default 1 ms (derived from architect._PARSE_TOO_FAST_P50).
+        target_max_sec: Parse-only time above which chunk_size shrinks.
+            Default 100 ms (derived from architect._PARSE_MEMORY_P99).
 
     Yields:
         Wave: one per chunk, success or failure.  The chunking engine

@@ -31,7 +31,12 @@ async def _run_chunking_engine(
     adapt_chunk_size: bool = False,
     chunk_size_min: int = 100,
     chunk_size_max: int = 100_000,
-    target_min_sec: float = 0.030,
+    # Parse-only signal target window — derived from architect.py constants:
+    #   _PARSE_TOO_FAST_P50=0.001s (1 ms, chunk instant-to-parse / noise floor)
+    #   _PARSE_MEMORY_P99=0.100s   (100 ms, parse/validate dominates)
+    # Old 0.030 s floor was calibrated for end-to-end including HTTP latency;
+    # with HTTP stripped the "too fast" threshold is 1 ms, not 30 ms.
+    target_min_sec: float = 0.001,
     target_max_sec: float = 0.100,
 ) -> AsyncGenerator[Wave, None]:
     """Stream a paginated source one chunk at a time, with flat memory.
@@ -127,7 +132,13 @@ async def _run_chunking_engine(
                     yield wave_obj
 
                     if _aimd_enabled and paginator is not None:
-                        _ring.append(wave_obj.processing_time_sec)
+                        # Parse-only signal: aligns AIMD window with _tune_chunk_size's split-time path.
+                        # Thresholds derived from architect.py: _PARSE_TOO_FAST_P50=0.001s, _PARSE_MEMORY_P99=0.100s.
+                        # For file-mode (http_fetch_time_sec=None after P0 reset), end-to-end IS parse/IO only.
+                        if wave_obj.http_fetch_time_sec is not None:
+                            _ring.append(max(0.0, wave_obj.processing_time_sec - wave_obj.http_fetch_time_sec))
+                        else:
+                            _ring.append(wave_obj.processing_time_sec)
                         if len(_ring) == _ring.maxlen:
                             med = statistics.median(_ring)
                             current_cs = paginator.chunk_size

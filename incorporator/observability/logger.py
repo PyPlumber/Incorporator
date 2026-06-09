@@ -1019,7 +1019,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         adapt_chunk_size: bool = False,
         chunk_size_min: int = 100,
         chunk_size_max: int = 100_000,
-        target_min_sec: float = 0.030,
+        target_min_sec: float = 0.001,
         target_max_sec: float = 0.100,
     ) -> AsyncGenerator[Wave, None]:
         """Production-observable variant of :meth:`Incorporator.stream`.

@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_last_bytes_downloaded`, `_last_http_fetch_time_sec`, and
   `_last_bytes_processed` to `None`, preventing stale HTTP telemetry from
   bleeding into subsequent non-HTTP chunks on the same class.
+- **AIMD parse-only steering** (`incorporator/observability/pipeline/chunked.py`): online AIMD ring now uses the parse-only remainder (`processing_time_sec - http_fetch_time_sec`) for HTTP sources, matching the offline `_tune_chunk_size` signal; file/SQLite sources fall back to end-to-end correctly; target window re-derived from `_PARSE_TOO_FAST_P50=0.001s` / `_PARSE_MEMORY_P99=0.100s`.
 
 ### Changed
 
