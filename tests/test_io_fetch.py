@@ -778,6 +778,171 @@ async def test_paginator_branch_resets_http_telemetry_classvars(
 
 
 # ----------------------------------------------------------------------
+# HTTP write-site telemetry — ClassVar population and WIRE/DECODED distinction
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_http_write_site_populates_all_three_classvars(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """HTTP branch of _process_single_source writes all three telemetry ClassVars.
+
+    Proves that after a successful HTTP fetch the write site at
+    ``fetch.py``'s ``else`` branch assigns:
+      - ``_last_bytes_processed`` = len(res.content)  (DECODED)
+      - ``_last_bytes_downloaded`` = res.num_bytes_downloaded  (WIRE)
+      - ``_last_http_fetch_time_sec`` = res.elapsed.total_seconds()
+
+    ``num_bytes_downloaded`` is 0 on hand-constructed ``httpx.Response``
+    objects because ``__init__`` resets ``_num_bytes_downloaded`` after
+    ``read()`` (httpx implementation detail).  The attribute is seeded
+    explicitly here to exercise the write site with a non-zero WIRE value.
+    """
+    import datetime
+
+    from incorporator import Incorporator
+    from incorporator.io import fetch
+    from incorporator.io.fetch import _CURRENT_CHUNK_CLASS, _process_single_source
+
+    monkeypatch.chdir(tmp_path)
+
+    DECODED_CONTENT = b'[{"id": "btc", "price": 100}]'
+    WIRE_BYTES = 18  # simulates a partially-compressed response
+
+    class _HttpTelClass(Incorporator):
+        price: int = 0
+
+    async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        res = httpx.Response(200, content=DECODED_CONTENT, request=httpx.Request("GET", url))
+        # httpx resets _num_bytes_downloaded to 0 in __init__; seed the WIRE value manually.
+        res._num_bytes_downloaded = WIRE_BYTES
+        res.elapsed = datetime.timedelta(seconds=0.123)
+        return res
+
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+
+    async with httpx.AsyncClient() as client:
+        token = _CURRENT_CHUNK_CLASS.set(_HttpTelClass)
+        try:
+            await _process_single_source(
+                "https://api.example.com/coins",
+                is_file_mode=False,
+                client=client,
+                rate_limiter=None,
+                inc_code="id",
+            )
+        finally:
+            _CURRENT_CHUNK_CLASS.reset(token)
+
+    assert _HttpTelClass._last_bytes_downloaded == WIRE_BYTES
+    assert _HttpTelClass._last_bytes_processed == len(DECODED_CONTENT)
+    assert _HttpTelClass._last_http_fetch_time_sec == pytest.approx(0.123)
+
+
+@pytest.mark.asyncio
+async def test_http_write_site_elapsed_unset_guard(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """When res.elapsed raises RuntimeError the guard sets _last_http_fetch_time_sec to None.
+
+    httpx.Response.elapsed raises ``RuntimeError`` (not ``AttributeError``) when
+    ``_elapsed`` has never been set, e.g. on hand-constructed mock responses that
+    skip the AsyncClient streaming path.  The ``except RuntimeError`` guard must
+    catch this and assign None rather than propagating the exception.
+    """
+    from incorporator import Incorporator
+    from incorporator.io import fetch
+    from incorporator.io.fetch import _CURRENT_CHUNK_CLASS, _process_single_source
+
+    monkeypatch.chdir(tmp_path)
+
+    DECODED_CONTENT = b'[{"id": "eth"}]'
+
+    class _HttpTelElapsedClass(Incorporator):
+        pass
+
+    async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        # No res.elapsed assignment — accessing .elapsed raises RuntimeError.
+        return httpx.Response(200, content=DECODED_CONTENT, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+
+    async with httpx.AsyncClient() as client:
+        token = _CURRENT_CHUNK_CLASS.set(_HttpTelElapsedClass)
+        try:
+            await _process_single_source(
+                "https://api.example.com/tokens",
+                is_file_mode=False,
+                client=client,
+                rate_limiter=None,
+            )
+        finally:
+            _CURRENT_CHUNK_CLASS.reset(token)
+
+    # Guard fired: no crash, and _last_http_fetch_time_sec is None.
+    assert _HttpTelElapsedClass._last_http_fetch_time_sec is None
+
+
+@pytest.mark.asyncio
+async def test_http_write_site_wire_vs_decoded_distinction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """WIRE bytes_downloaded is strictly less than DECODED bytes_processed for compressed responses.
+
+    Constructs a scenario where WIRE < DECODED (as in gzip-compressed HTTP responses)
+    and asserts the two ClassVars carry the correct independent values.
+
+    This locks the wire-vs-decoded distinction; swapping ``res.num_bytes_downloaded``
+    and ``len(res.content)`` at the write site must fail this test.
+    """
+    import datetime
+
+    from incorporator import Incorporator
+    from incorporator.io import fetch
+    from incorporator.io.fetch import _CURRENT_CHUNK_CLASS, _process_single_source
+
+    monkeypatch.chdir(tmp_path)
+
+    # 13 decoded bytes; 7 simulates the smaller wire size of a compressed response.
+    DECODED_CONTENT = b'[{"id": "x"}]'
+    WIRE_BYTES = 7
+    assert WIRE_BYTES < len(DECODED_CONTENT), "test invariant: WIRE must be smaller than DECODED"
+
+    class _WireClass(Incorporator):
+        pass
+
+    async def mock_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        res = httpx.Response(200, content=DECODED_CONTENT, request=httpx.Request("GET", url))
+        # httpx resets _num_bytes_downloaded to 0 in __init__; seed the WIRE value manually.
+        res._num_bytes_downloaded = WIRE_BYTES
+        res.elapsed = datetime.timedelta(seconds=0.05)
+        return res
+
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+
+    async with httpx.AsyncClient() as client:
+        token = _CURRENT_CHUNK_CLASS.set(_WireClass)
+        try:
+            await _process_single_source(
+                "https://api.example.com/data",
+                is_file_mode=False,
+                client=client,
+                rate_limiter=None,
+            )
+        finally:
+            _CURRENT_CHUNK_CLASS.reset(token)
+
+    assert _WireClass._last_bytes_downloaded == WIRE_BYTES
+    assert _WireClass._last_bytes_processed == len(DECODED_CONTENT)
+    # Semantic lock: WIRE must be strictly less than DECODED for a compressed response.
+    assert _WireClass._last_bytes_downloaded < _WireClass._last_bytes_processed  # type: ignore[operator]
+
+
+# ----------------------------------------------------------------------
 # rec_path — integer-index list navigation
 # ----------------------------------------------------------------------
 
