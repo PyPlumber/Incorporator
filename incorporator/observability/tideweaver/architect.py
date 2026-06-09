@@ -1044,22 +1044,32 @@ def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
 
     Groups waves by ``source_url``, then chooses between two signal paths:
 
-    **Split-time path** (when all waves in a group carry ``http_fetch_time_sec``):
-    Computes p50/p99 of the parse-only remainder
-    (``processing_time_sec - http_fetch_time_sec``).  Thresholds are calibrated
+    **Split-time path** (when the majority of waves in a group carry
+    ``http_fetch_time_sec``, i.e. ``http_count / n > _HTTP_MAJORITY_FRACTION``):
+    Analyzes only the HTTP-subset waves (those with non-``None``
+    ``http_fetch_time_sec``).  Computes p50/p99 of the parse-only remainder
+    ``max(0.0, processing_time_sec - http_fetch_time_sec)`` — clamped to zero to
+    guard against clock-skew or measurement jitter that can make
+    ``http_fetch_time_sec > processing_time_sec``.  Thresholds are calibrated
     for the parse-only slice: CPython ``json.loads`` throughput is ~300-500 MB/s
     on 3.11+ (Python Performance Benchmark Suite), so a 100 KB chunk parses in
     ~0.2 ms and a 10 MB chunk in ~25 ms.  Practically measured:
-    - ``p50_parse < 0.001`` (1 ms): chunk is almost certainly too small; parse
-      completes in the noise floor and all measurable latency is per-request
-      overhead.
-    - ``p99_parse > 0.100`` (100 ms): chunk is too large; the parse/validate
-      pass dominates each tick and memory footprint per chunk is high.
+
+    - ``p50_parse < _PARSE_TOO_FAST_P50`` (1 ms): chunk is almost certainly too
+      small; parse completes in the noise floor and all measurable latency is
+      per-request overhead.
+    - ``p99_parse > _PARSE_MEMORY_P99`` (100 ms): chunk is too large; the
+      parse/validate pass dominates each tick and memory footprint per chunk is
+      high.
+
+    ``sample_size`` on split-path hints always reflects ``n`` (the full group
+    size), not the HTTP-subset count.
 
     **End-to-end fallback path** (when ``http_fetch_time_sec`` is ``None`` for
-    any wave in the group): uses ``processing_time_sec`` directly with the
-    original thresholds (p50 < 10 ms / p99 > 500 ms), which were calibrated
-    for the full round-trip including HTTP latency.
+    the majority of waves — pure file/SQLite/local-paginator groups or minority-
+    HTTP groups): uses ``processing_time_sec`` directly with the original
+    thresholds (p50 < 10 ms / p99 > 500 ms), which were calibrated for the full
+    round-trip including HTTP latency.
 
     Args:
         waves: List of :class:`~incorporator.Wave` records from a run.
@@ -1069,12 +1079,6 @@ def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
         triggered a rule, including INFO hints for well-tuned or
         data-insufficient groups.
     """
-    # Thresholds for the parse-only slice (HTTP stripped):
-    # Derived from CPython json.loads ~300-500 MB/s; see docstring for basis.
-    _PARSE_TOO_FAST_P50 = 0.001  # 1 ms -- chunk effectively instant to parse
-    _PARSE_TOO_FAST_P99 = 0.005  # 5 ms -- p99 still in the noise floor
-    _PARSE_MEMORY_P99 = 0.100  # 100 ms -- parse dominates, chunk is too large
-
     # Group by source_url (may be None for file-mode or one-shot sources).
     groups: dict[str | None, list[Wave]] = {}
     for w in waves:
@@ -1099,14 +1103,19 @@ def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
             )
             continue
 
-        # Use split-time path only when every wave carries http_fetch_time_sec.
+        # Use split-time path when HTTP waves are the majority of the group.
+        # Strict > so a 50/50 split (== _HTTP_MAJORITY_FRACTION) stays on end-to-end.
         http_times = [w.http_fetch_time_sec for w in group]
-        use_split = all(t is not None for t in http_times)
+        http_count = sum(1 for t in http_times if t is not None)
+        use_split = http_count > len(group) * _HTTP_MAJORITY_FRACTION
 
         if use_split:
-            # http_times is all non-None here (use_split guard); cast to float list.
-            http_times_f: list[float] = [t for t in http_times if t is not None]
-            parse_times = [w.processing_time_sec - h for w, h in zip(group, http_times_f, strict=True)]
+            # Select only waves with non-None http_fetch_time_sec for the parse-only computation.
+            http_waves = [(w, t) for w, t in zip(group, http_times, strict=True) if t is not None]
+            http_times_f: list[float] = [t for _, t in http_waves]
+            # Clamp to max(0.0, ...) to guard against clock-skew / measurement jitter
+            # where http_fetch_time_sec > processing_time_sec.  Mirrors chunked.py line 139.
+            parse_times = [max(0.0, w.processing_time_sec - t) for w, t in http_waves]
             p50 = _percentile(parse_times, 50)
             p99 = _percentile(parse_times, 99)
             p50_http = _percentile(http_times_f, 50)
@@ -1805,8 +1814,40 @@ def _tune_parent_child(
     return hints
 
 
-# Timeout-tuning thresholds (cited derivations follow):
-#
+# ---------------------------------------------------------------------------
+# Chunk-size tuning thresholds for _tune_chunk_size (cited derivations follow).
+# ---------------------------------------------------------------------------
+
+# _PARSE_TOO_FAST_P50 = 0.001  (1 ms)
+#   CPython json.loads throughput ~300–500 MB/s on 3.11+ (Python Performance
+#   Benchmark Suite).  A 100 KB chunk parses in ~0.2 ms; p50 < 1 ms means the
+#   chunk is almost certainly in the noise floor and all measurable latency is
+#   per-request overhead.
+_PARSE_TOO_FAST_P50: float = 0.001
+
+# _PARSE_TOO_FAST_P99 = 0.005  (5 ms)
+#   Companion to _PARSE_TOO_FAST_P50: if both p50 and p99 are in the noise
+#   floor (< 5 ms) the chunk is too small by both measures simultaneously.
+_PARSE_TOO_FAST_P99: float = 0.005
+
+# _PARSE_MEMORY_P99 = 0.100  (100 ms)
+#   At ~300–500 MB/s, 100 ms of parse-only work implies ~30–50 MB per chunk —
+#   where memory pressure and GC pauses begin to dominate throughput.
+_PARSE_MEMORY_P99: float = 0.100
+
+# _HTTP_MAJORITY_FRACTION = 0.5
+#   Partition rule: if > this fraction of a source group carries
+#   http_fetch_time_sec, steer on the HTTP-subset parse-only path rather than
+#   the coarse end-to-end path.  Basis: simple majority ensures the dominant
+#   signal wins; same 50% split semantics used by _tune_retry_policy's ceiling
+#   detection.  Strict > means a 50/50 split stays on end-to-end (identical
+#   to the pre-hardening all-or-nothing boundary for that edge case).
+_HTTP_MAJORITY_FRACTION: float = 0.5
+
+# ---------------------------------------------------------------------------
+# Timeout-tuning thresholds (cited derivations follow).
+# ---------------------------------------------------------------------------
+
 # _DEFAULT_TIMEOUT_PROXY_SEC = 5.0
 #   The framework's default request timeout used by Incorporator.test() and
 #   the fetch layer (httpx AsyncClient default).  Used as a fallback proxy when

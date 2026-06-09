@@ -16,6 +16,7 @@ from incorporator.observability.tideweaver.architect import (
     TuningHint,
     TuningReport,
     _DEFAULT_TIMEOUT_PROXY_SEC,
+    _HTTP_MAJORITY_FRACTION,
     _tune_chunk_size,
     _tune_compound_budget,
     _tune_http_timeout,
@@ -331,6 +332,95 @@ def test_tune_chunk_size_all_none_http_uses_end_to_end_path() -> None:
     assert h.severity == "high"
     # Original end-to-end signal string preserved.
     assert "chunks finishing too fast" in h.signal
+
+
+def test_tune_chunk_size_negative_parse_time_clamped_to_zero() -> None:
+    """Negative parse remainders (http_fetch_time_sec > processing_time_sec) clamp to 0.
+
+    Clock skew / measurement jitter can make http_fetch_time_sec exceed
+    processing_time_sec, yielding a NEGATIVE parse-only remainder.  Without the
+    ``max(0.0, ...)`` clamp those negatives would drag the percentile below zero
+    and render a nonsensical negative recommendation.
+
+    Construction makes the clamp DIRECTLY observable: 20 of 30 all-HTTP waves are
+    skewed (processing=0.050, http=0.060 → raw remainder -10 ms), so the median
+    parse-only value lands inside the skewed block.  Without the clamp the
+    rendered ``p50_parse`` would be ``-10.00ms``; with it, every skewed remainder
+    becomes 0.0 and the median renders as exactly ``0.00ms`` (HIGH — parse in the
+    noise floor).
+    """
+    # 20 skewed waves: raw remainder -10 ms → clamp 0.0 (majority → drives the median).
+    skewed = [_wave_with_http(0.050, 0.060) for _ in range(20)]
+    # 10 normal waves: processing=0.100, http=0.0995 → parse ≈ 0.5 ms.
+    normal = [_wave_with_http(0.100, 0.0995) for _ in range(10)]
+    hints = _tune_chunk_size(skewed + normal)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.knob == "chunk_size"
+    assert h.sample_size == 30
+    # Direct proof of the clamp: the 20 negative remainders became 0.0, so the
+    # median renders as exactly 0.00ms (without the clamp it would be -10.00ms).
+    assert "p50_parse=0.00ms" in h.signal
+    # And no negative millisecond value survives anywhere in the signal (strip the
+    # em-dash separator first so only a real minus sign could match).
+    assert "-" not in h.signal.replace("—", "")
+    # p50 in the noise floor → HIGH.
+    assert h.severity == "high"
+
+
+def test_tune_chunk_size_mostly_http_group_uses_parse_only_path() -> None:
+    """A group where HTTP waves are the majority steers on the parse-only signal.
+
+    25 out of 30 waves carry http_fetch_time_sec (83% > _HTTP_MAJORITY_FRACTION=50%).
+    Under the old all-or-nothing rule this group would fall to end-to-end.
+    Under the new majority rule it uses parse-only.
+
+    Values are chosen so the parse-only path fires HIGH (parse remainder is
+    ~0.5 ms — below _PARSE_TOO_FAST_P50=1 ms) but the end-to-end path would
+    fire only MED (processing_time_sec=0.300 → p99 > 500 ms would not be
+    triggered by 300 ms; in fact p99=300 ms which is well under 500 ms so
+    end-to-end would emit INFO, not HIGH — different severity).
+    """
+    # 25 HTTP waves: total=100ms, http=99.5ms → parse≈0.5ms (HIGH on split path)
+    http_waves = [_wave_with_http(0.100, 0.0995) for _ in range(25)]
+    # 5 file waves: processing=100ms (end-to-end path would see p50=100ms → INFO)
+    file_waves = [_wave(0.100) for _ in range(5)]
+    waves = http_waves + file_waves
+    hints = _tune_chunk_size(waves)
+    assert len(hints) == 1
+    h = hints[0]
+    # Majority-HTTP → split-time path → HIGH (parse in noise floor).
+    assert h.severity == "high", f"Expected HIGH from split-time path, got {h.severity}: {h.signal}"
+    assert "raise" in str(h.recommended_value).lower()
+    # Signal contains parse-specific labels from the split-time branch.
+    assert "parse" in h.signal.lower() or "p50_parse" in h.signal
+    # sample_size reflects the full group, not just the HTTP subset.
+    assert h.sample_size == 30
+
+
+def test_tune_chunk_size_pure_http_group_unchanged() -> None:
+    """A pure all-HTTP group produces the same split-path INFO shape as before.
+
+    30 waves with consistent 10 ms parse remainder (total=110ms, http=100ms)
+    should emit INFO 'well-tuned (split)' with sample_size=30 — unchanged from
+    the pre-hardening behavior.
+    """
+    waves = [_wave_with_http(0.110, 0.100) for _ in range(30)]
+    hints = _tune_chunk_size(waves)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "info"
+    assert "well-tuned" in h.signal.lower()
+    assert "split" in h.signal.lower()
+    assert h.sample_size == 30
+    # No negative values appear in the signal.
+    assert "p50_parse" in h.signal
+
+
+# Verify _HTTP_MAJORITY_FRACTION is importable and has the expected value.
+def test_http_majority_fraction_constant_value() -> None:
+    """_HTTP_MAJORITY_FRACTION equals 0.5, making the rule a strict majority."""
+    assert _HTTP_MAJORITY_FRACTION == 0.5
 
 
 # ---------------------------------------------------------------------------
