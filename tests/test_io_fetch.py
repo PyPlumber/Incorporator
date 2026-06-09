@@ -682,6 +682,101 @@ async def test_wave_bytes_processed_resets_between_classes(
     assert _ClassB._last_bytes_processed == 200
 
 
+@pytest.mark.asyncio
+async def test_file_mode_resets_http_telemetry_classvars(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """File-mode branch resets all three HTTP telemetry ClassVars to None.
+
+    Proves that a class whose ClassVars were populated by a prior HTTP fetch
+    has those values cleared to None when the same class is subsequently used
+    as a file-mode source, preventing stale HTTP telemetry from bleeding into
+    downstream consumers (e.g., the AIMD tuner that reads http_fetch_time_sec
+    to choose split-time vs end-to-end steering).
+    """
+    from incorporator import Incorporator
+    from incorporator.io.fetch import _CURRENT_CHUNK_CLASS, _process_single_source
+
+    monkeypatch.chdir(tmp_path)
+
+    class _FileClass(Incorporator):
+        val: str = ""
+
+    # Seed the ClassVars with non-None sentinel values simulating a prior HTTP fetch.
+    _FileClass._last_bytes_processed = 42
+    _FileClass._last_bytes_downloaded = 10
+    _FileClass._last_http_fetch_time_sec = 0.5
+
+    # Write a minimal NDJSON file for the file-mode path to consume.
+    ndjson_file = tmp_path / "data.ndjson"
+    ndjson_file.write_text('{"val": "x"}\n', encoding="utf-8")
+
+    token = _CURRENT_CHUNK_CLASS.set(_FileClass)
+    try:
+        await _process_single_source(
+            str(ndjson_file),
+            is_file_mode=True,
+            client=None,
+            rate_limiter=None,
+        )
+    finally:
+        _CURRENT_CHUNK_CLASS.reset(token)
+
+    assert _FileClass._last_bytes_downloaded is None
+    assert _FileClass._last_http_fetch_time_sec is None
+    assert _FileClass._last_bytes_processed is None
+
+
+@pytest.mark.asyncio
+async def test_paginator_branch_resets_http_telemetry_classvars(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """Paginator branch resets all three HTTP telemetry ClassVars to None.
+
+    Proves that when the inc_page branch is taken, stale non-None HTTP telemetry
+    values left over from a prior HTTP fetch are cleared before the paginator
+    loop begins.  The reset happens once per source invocation, not per page,
+    so all pages share the correct no-HTTP-telemetry signal.
+    """
+    from incorporator import Incorporator
+    from incorporator.io.fetch import _CURRENT_CHUNK_CLASS, _process_single_source
+    from incorporator.io.pagination.base import AsyncPaginator
+
+    monkeypatch.chdir(tmp_path)
+
+    class _PageClass(Incorporator):
+        val: str = ""
+
+    # Seed the ClassVars with non-None sentinel values simulating a prior HTTP fetch.
+    _PageClass._last_bytes_processed = 99
+    _PageClass._last_bytes_downloaded = 55
+    _PageClass._last_http_fetch_time_sec = 1.2
+
+    class _StubPaginator(AsyncPaginator):
+        """Minimal paginator that yields one JSON string then stops."""
+
+        async def paginate(self, start_url: str):  # type: ignore[override]
+            yield '{"val": "y"}'
+
+    token = _CURRENT_CHUNK_CLASS.set(_PageClass)
+    try:
+        await _process_single_source(
+            "https://stub.example.com/",
+            is_file_mode=False,
+            client=None,
+            rate_limiter=None,
+            inc_page=_StubPaginator(),
+        )
+    finally:
+        _CURRENT_CHUNK_CLASS.reset(token)
+
+    assert _PageClass._last_bytes_downloaded is None
+    assert _PageClass._last_http_fetch_time_sec is None
+    assert _PageClass._last_bytes_processed is None
+
+
 # ----------------------------------------------------------------------
 # rec_path — integer-index list navigation
 # ----------------------------------------------------------------------

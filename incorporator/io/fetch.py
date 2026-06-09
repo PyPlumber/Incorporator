@@ -707,6 +707,14 @@ async def _process_single_source(
 
     # 3. Execution Routing
     if is_file_mode:
+        chunk_cls = _CURRENT_CHUNK_CLASS.get()
+        if chunk_cls is not None:
+            try:
+                chunk_cls._last_bytes_downloaded = None
+                chunk_cls._last_http_fetch_time_sec = None
+                chunk_cls._last_bytes_processed = None
+            except (AttributeError, TypeError):
+                pass  # Class doesn't carry the ClassVar (non-Incorporator caller); ignore.
         payload = await resolve_source_payload(
             source_val,
             is_file_mode=True,
@@ -716,6 +724,14 @@ async def _process_single_source(
         await _process_payload(payload)
 
     elif inc_page:
+        chunk_cls = _CURRENT_CHUNK_CLASS.get()
+        if chunk_cls is not None:
+            try:
+                chunk_cls._last_bytes_downloaded = None
+                chunk_cls._last_http_fetch_time_sec = None
+                chunk_cls._last_bytes_processed = None
+            except (AttributeError, TypeError):
+                pass  # Class doesn't carry the ClassVar (non-Incorporator caller); ignore.
         inc_page.fetch_func = bound_fetch
         inc_page.call_lim = call_lim
         if kwargs.get("__inspect"):

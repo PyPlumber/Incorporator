@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parent dataset yields zero child IDs, without issuing any HTTP request.
   Previously the unsubstituted `{}` template URL was dispatched, producing bogus
   requests, retry storms, `{}` output rows, and misattributed warnings.
+- **File-mode and paginator telemetry guard** (`incorporator/io/fetch.py`): the
+  `is_file_mode` and `inc_page` branches in `_process_single_source` now reset
+  `_last_bytes_downloaded`, `_last_http_fetch_time_sec`, and
+  `_last_bytes_processed` to `None`, preventing stale HTTP telemetry from
+  bleeding into subsequent non-HTTP chunks on the same class.
 
 ### Changed
 
