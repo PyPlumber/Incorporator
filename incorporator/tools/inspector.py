@@ -21,6 +21,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
 from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from ..schema.converters import classify
 from ..schema.kind import DataKind
@@ -571,9 +573,9 @@ def analyze_error(e: Exception) -> None:
 
         if cause_name == "HTTPStatusError":
             status = getattr(getattr(cause, "response", None), "status_code", 0)
-            if status in (401, 403):
+            if status in (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN):
                 p(f"Auth Blocked (HTTP {status}): Pass `headers={{'Authorization': 'Bearer ...'}}`.")
-            elif status == 406:
+            elif status == httpx.codes.NOT_ACCEPTABLE:
                 p("Format Rejected (HTTP 406): Try `headers={{'Accept': 'application/json'}}`.")
             else:
                 p(f"Server returned HTTP {status}. Verify the endpoint requirements.")

@@ -285,7 +285,7 @@ class CustomCurrent(Current):
         class HealthcheckPing(CustomCurrent):
             async def tick(self, scheduler):
                 response = await httpx.get("https://internal.acme/health")
-                if response.status_code != 200:
+                if response.status_code != httpx.codes.OK:
                     raise RuntimeError(f"health check failed: {response.status_code}")
 
         watershed = Watershed.parallel(

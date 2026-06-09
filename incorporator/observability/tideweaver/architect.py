@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
+import httpx
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PydanticField
 
@@ -1149,7 +1150,8 @@ def _tune_penstock_rate(rejects: list[RejectEntry], window_sec: float = 600.0) -
     penstock_rejects = [
         r
         for r in rejects
-        if r.error_kind == "PenstockLimited" or (r.error_kind == "HTTPStatusError" and r.status_code == 429)
+        if r.error_kind == "PenstockLimited"
+        or (r.error_kind == "HTTPStatusError" and r.status_code == httpx.codes.TOO_MANY_REQUESTS)
     ]
 
     hints: list[TuningHint] = []

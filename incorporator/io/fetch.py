@@ -395,7 +395,7 @@ async def _block_internal_redirect_hook(response: httpx.Response) -> None:
     request URL so a ``Location: /admin`` from an external host still
     targets the external host, not an internal one.
     """
-    if not (300 <= response.status_code < 400):
+    if not response.is_redirect:
         return
     location = response.headers.get("Location") or response.headers.get("location")
     if not location:
@@ -886,7 +886,7 @@ async def fetch_concurrent_payloads(
         except httpx.HTTPStatusError as e:
             duration = time.perf_counter() - start
             attempt = getattr(e, "_incorporator_attempt_number", None)
-            if e.response.status_code == 429:
+            if e.response.status_code == httpx.codes.TOO_MANY_REQUESTS:
                 reject = _build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration)
                 logger.warning(str(reject))
                 logger.info(
