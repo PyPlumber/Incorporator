@@ -35,6 +35,9 @@ from collections.abc import AsyncGenerator, Callable
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
+from ...rejects import RejectEntry
 from ..logger import Wave
 from . import DEFAULT_EXPORT_INTERVAL_SEC, DEFAULT_REFRESH_INTERVAL_SEC
 from ._shared import _row_count
@@ -99,11 +102,26 @@ async def stream_stateful_via_fjord(
         try:
             initial_dataset = await receiver_cls.incorp(**incorp_params)
         except Exception as exc:
+            # No IncorporatorList was returned — synthesise a RejectEntry for
+            # httpx errors so URL-traffic failures reach api.log via wave.rejects.
+            _is_url_exc = isinstance(exc, (httpx.HTTPStatusError, httpx.RequestError)) or isinstance(
+                getattr(exc, "__cause__", None), (httpx.HTTPStatusError, httpx.RequestError)
+            )
+            _shim_reject = RejectEntry.model_construct(
+                source=cls_name,
+                error_kind=type(exc).__name__,
+                message=f"Seed Error: {exc}",
+                retry_after=None,
+                wave_index=None,
+                duration_sec=None,
+                is_url_traffic_error=_is_url_exc,
+            )
             yield Wave.model_construct(
                 chunk_index=1,
                 operation="incorp",
                 rows_processed=0,
                 failed_sources=[f"Seed Error: {exc}"],
+                rejects=[_shim_reject],
                 processing_time_sec=time.perf_counter() - seed_start,
                 source_url=None,
                 bytes_processed=None,
@@ -121,6 +139,7 @@ async def stream_stateful_via_fjord(
                 operation="incorp",
                 rows_processed=0,
                 failed_sources=["Initial incorp() yielded no data"],
+                rejects=list(initial_dataset.rejects) if hasattr(initial_dataset, "rejects") else [],
                 processing_time_sec=seed_elapsed,
                 source_url=None,
                 bytes_processed=None,
@@ -135,6 +154,7 @@ async def stream_stateful_via_fjord(
             chunk_index=1,
             operation="incorp",
             rows_processed=_row_count(initial_dataset),
+            rejects=list(initial_dataset.rejects) if hasattr(initial_dataset, "rejects") else [],
             processing_time_sec=seed_elapsed,
             source_url=None,
             bytes_processed=None,

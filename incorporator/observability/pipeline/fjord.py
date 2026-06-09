@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from types import ModuleType
 from typing import Any, cast
 
+import httpx
+
 from ...rejects import RejectEntry
 from ..logger import Wave
 from ._daemons import _export_daemon, _refresh_daemon
@@ -342,11 +344,26 @@ async def _run_fjord_engine(
         cls_name = entry["cls"].__name__
         result = results_by_idx[original_idx]
         if isinstance(result, Exception):
+            _inflow_active = inflow_callable is not None
+            _is_url_exc = isinstance(result, (httpx.HTTPStatusError, httpx.RequestError)) or isinstance(
+                getattr(result, "__cause__", None), (httpx.HTTPStatusError, httpx.RequestError)
+            )
+            _seed_base = _build_seed_reject(cls_name, result, _inflow_active)
+            _seed_reject = RejectEntry.model_construct(
+                source=_seed_base.source,
+                error_kind=_seed_base.error_kind,
+                message=_seed_base.message,
+                retry_after=None,
+                wave_index=None,
+                duration_sec=None,
+                is_url_traffic_error=_is_url_exc,
+            )
             yield Wave.model_construct(
                 chunk_index=1,
                 operation=f"fjord_incorp:{cls_name}",
                 rows_processed=0,
-                failed_sources=[_format_seed_error(cls_name, result, inflow_callable is not None)],
+                failed_sources=[_format_seed_error(cls_name, result, _inflow_active)],
+                rejects=[_seed_reject],
                 processing_time_sec=seed_elapsed,
                 source_url=None,
                 bytes_processed=None,
@@ -363,6 +380,7 @@ async def _run_fjord_engine(
                 operation=f"fjord_incorp:{cls_name}",
                 rows_processed=0,
                 failed_sources=[f"Initial incorp() for {cls_name} yielded no data"],
+                rejects=list(result.rejects) if hasattr(result, "rejects") else [],
                 processing_time_sec=seed_elapsed,
                 source_url=None,
                 bytes_processed=None,
@@ -378,6 +396,7 @@ async def _run_fjord_engine(
             chunk_index=1,
             operation=f"fjord_incorp:{cls_name}",
             rows_processed=_row_count(result),
+            rejects=list(result.rejects) if hasattr(result, "rejects") else [],
             processing_time_sec=seed_elapsed,
             source_url=None,
             bytes_processed=None,

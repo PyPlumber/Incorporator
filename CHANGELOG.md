@@ -185,6 +185,25 @@ data flow, or the result of any verb; existing pipelines run unchanged.
   `LoggingMixin.get_rejects()` now reads both `error.log` and `api.log`
   (filtered on `"reject"` key) and returns the combined list, so callers need
   not know which file a particular reject landed in.
+  **Stream / fjord per-chunk reject surfacing (concern 2):** `Wave` gains an
+  additive `rejects: list[RejectEntry] = Field(default_factory=list)` field
+  (default `[]`).  `chunked.py` populates it from `dataset.rejects` on the
+  success-wave and empty-result paths; `fjord.py` seed-success and
+  empty-result waves carry `result.rejects`, and seed-exception waves carry a
+  synthetic `RejectEntry` stamped `is_url_traffic_error=True` when the
+  underlying exception is an httpx transport / HTTP-status error.
+  `_stateful_shim.py`'s seed-only short-circuit treats the exception path
+  identically — a synthetic reject is built so a `ReadTimeout` through
+  `stream(stateful_polling=True)` reaches `api.log` via `wave.rejects`,
+  not just the string "Seed Error: ..." in `failed_sources`.  `LoggedIncorporator.stream`
+  and `.fjord` now iterate `wave.rejects` after `_route_wave_to_log` and call
+  `_route_reject_to_log` for each, so URL-traffic chunk rejects land in
+  `<Class>_api.log` and file-mode / parse-error rejects stay in `error.log`.
+  Wave-failure SUMMARY routing (the `failed_sources` string in `error.log`)
+  is unchanged.  All `Wave.model_construct` call sites across `chunked.py`,
+  `fjord.py`, `_stateful_shim.py`, `_shared.py`, and `_outflow.py` are
+  updated to include `rejects=` so the field is never absent from a
+  live wave object.
   `get_error()` docstring now notes that URL-traffic rejects live in
   `api.log` / `get_api()` and will not appear in `get_error()` results.
 

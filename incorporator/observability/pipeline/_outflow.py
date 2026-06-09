@@ -463,6 +463,7 @@ async def _outflow_daemon(
                     operation=f"outflow:{output_class_name}",
                     rows_processed=0,
                     failed_sources=[f"Outflow Error: {exc}"],
+                    rejects=[],
                     processing_time_sec=0.0,
                     source_url=None,
                     bytes_processed=None,

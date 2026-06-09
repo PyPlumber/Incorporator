@@ -104,6 +104,25 @@ async def _run_chunking_engine(
                     conv_elapsed = time.perf_counter() - conv_start
 
                     if not dataset and not paginator:
+                        _pending_rejects = list(dataset.rejects) if hasattr(dataset, "rejects") else []
+                        if _pending_rejects:
+                            yield Wave.model_construct(
+                                chunk_index=chunk_idx,
+                                operation="chunk",
+                                rows_processed=0,
+                                failed_sources=[],
+                                rejects=_pending_rejects,
+                                processing_time_sec=time.perf_counter() - start_time,
+                                source_url=getattr(cls, "inc_url", None) or getattr(cls, "inc_file", None),
+                                bytes_processed=None,
+                                bytes_downloaded=None,
+                                http_fetch_time_sec=None,
+                                http_retry_count=cls._last_http_retry_count,
+                                validation_error_count=0,
+                                schema_cache_hit=True,
+                                conv_dict_time_sec=conv_elapsed,
+                                timestamp=datetime.now(timezone.utc),
+                            )
                         break
                     if getattr(paginator, "is_exhausted", False) and not dataset:
                         break
@@ -118,6 +137,7 @@ async def _run_chunking_engine(
                         operation="chunk",
                         rows_processed=rows,
                         failed_sources=[],
+                        rejects=list(dataset.rejects) if hasattr(dataset, "rejects") else [],
                         processing_time_sec=time.perf_counter() - start_time,
                         source_url=getattr(cls, "inc_url", None) or getattr(cls, "inc_file", None),
                         bytes_processed=cls._last_bytes_processed,
@@ -164,6 +184,7 @@ async def _run_chunking_engine(
                         operation="chunk",
                         rows_processed=0,
                         failed_sources=[str(e)],
+                        rejects=[],
                         processing_time_sec=time.perf_counter() - start_time,
                         source_url=getattr(cls, "inc_url", None) or getattr(cls, "inc_file", None),
                         bytes_processed=None,

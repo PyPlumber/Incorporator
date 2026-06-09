@@ -1174,6 +1174,8 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             ):
                 if enable_logging:
                     _route_wave_to_log(cls.__name__, wave)
+                    for reject in getattr(wave, "rejects", []):
+                        _route_reject_to_log(cls.__name__, reject)
 
                 # Yield downstream to the caller natively
                 yield wave
@@ -1253,6 +1255,8 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             ):
                 if enable_logging:
                     _route_wave_to_log(cls.__name__, wave)
+                    for reject in getattr(wave, "rejects", []):
+                        _route_reject_to_log(cls.__name__, reject)
 
                 yield wave
 

@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..rejects import RejectEntry
+
 
 class Wave(BaseModel):
     """Per-chunk telemetry record yielded by a running pipeline — what a DX inspects to watch progress.
@@ -40,6 +42,15 @@ class Wave(BaseModel):
             chunk.
         failed_sources: Source URIs that errored during the chunk —
             non-empty means partial-failure semantics kicked in.
+        rejects: Structured :class:`~incorporator.rejects.RejectEntry`
+            records accumulated during the chunk.  Populated from
+            ``IncorporatorList.rejects`` at every incorp / seed call
+            that completes (success with partial failures or empty
+            result).  Empty list when no structured rejects are
+            available — exception-path waves where no
+            ``IncorporatorList`` was returned always carry ``[]``.
+            Additive field: callers that only inspect
+            :attr:`failed_sources` are unaffected.
         processing_time_sec: Wall-clock duration of the chunk in
             seconds, useful for live mark-to-market latency tracking.
         source_url: Origin URL or file path the chunk was fetched from.
@@ -103,6 +114,14 @@ class Wave(BaseModel):
     )
     rows_processed: int = Field(..., description="Number of rows successfully processed.")
     failed_sources: list[str] = Field(default_factory=list, description="Failed source URIs.")
+    rejects: list[RejectEntry] = Field(
+        default_factory=list,
+        description=(
+            "Structured RejectEntry records from the chunk's incorp / seed call. "
+            "Empty when no IncorporatorList was available (exception-path waves). "
+            "Additive: callers that inspect only failed_sources are unaffected."
+        ),
+    )
     processing_time_sec: float = Field(..., description="Chunk processing duration in seconds.")
     source_url: str | None = Field(default=None, description="Origin URL or file path for the chunk.")
     bytes_processed: int | None = Field(

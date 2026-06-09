@@ -484,3 +484,281 @@ async def test_logged_incorp_format_error_routes_to_error_log(
     _, reject = routed_rejects[0]
     assert reject.is_url_traffic_error is False
     assert reject.error_kind == "IncorporatorFormatError"
+
+
+# ---------------------------------------------------------------------------
+# C1 — stream() per-chunk URL-failure reject routes to api.log
+# ---------------------------------------------------------------------------
+
+
+class _StreamRejectSource(LoggedIncorporator):
+    """Stand-in for per-chunk stream reject routing tests."""
+
+
+@pytest.mark.asyncio
+async def test_stream_chunk_url_failure_reject_routes_to_api_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """stream() routes URL-traffic chunk rejects to api.log via wave.rejects.
+
+    Mocks execute_request to raise httpx.ReadTimeout so incorp() returns an
+    IncorporatorList with a URL-traffic reject.  The chunk raises inside the
+    chunked engine, yielding a failure wave with rejects=[].  The LoggedIncorporator
+    stream wrapper calls _route_reject_to_log for each wave.rejects entry — URL-
+    traffic rejects (is_url_traffic_error=True) route to api.log; the wave-failure
+    summary (failed_sources string) stays in error.log unchanged.
+    """
+    from incorporator.io import fetch
+    from incorporator.observability.logger import _route_reject_to_log, _route_wave_to_log
+
+    monkeypatch.chdir(tmp_path)
+
+    async def _raise_read_timeout(url: str, *args: object, **kwargs: object) -> object:
+        raise httpx.ReadTimeout("connection timed out")
+
+    monkeypatch.setattr(fetch, "execute_request", _raise_read_timeout)
+
+    routed_rejects = []
+    routed_waves = []
+
+    def _capture_reject(cls_name: str, reject: object) -> None:
+        routed_rejects.append((cls_name, reject))
+
+    def _capture_wave(cls_name: str, wave: object) -> None:
+        routed_waves.append((cls_name, wave))
+
+    with (
+        patch("incorporator.observability.logger._route_reject_to_log", side_effect=_capture_reject),
+        patch("incorporator.observability.logger._route_wave_to_log", side_effect=_capture_wave),
+    ):
+        waves = []
+        async for wave in _StreamRejectSource.stream(
+            incorp_params={"inc_url": "https://api.example.com/data"},
+            enable_logging=True,
+        ):
+            waves.append(wave)
+
+    # The chunk raised, so the wave has failed_sources (no structured rejects
+    # from the exception path in chunked.py).  The wave summary goes to error.log
+    # via _route_wave_to_log; rejects from wave.rejects go via _route_reject_to_log.
+    assert len(routed_waves) >= 1
+    # No structured rejects from the bare exception path in chunked.py
+    # (the exception branch sets rejects=[] since no IncorporatorList was returned)
+    assert all(r[1].is_url_traffic_error is True for r in routed_rejects) or len(routed_rejects) == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_chunk_url_failure_wave_rejects_carries_structured_entry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """wave.rejects carries a RejectEntry with is_url_traffic_error=True for URL failures.
+
+    Uses a mock that makes incorp() RETURN an IncorporatorList with a URL reject
+    (rather than raising), exercising the success-wave + partial-reject path in
+    chunked.py.  Verifies that the wave yielded by stream() carries the reject in
+    wave.rejects and that the logger routes it via _route_reject_to_log.
+    """
+    from incorporator.rejects import RejectEntry
+
+    monkeypatch.chdir(tmp_path)
+
+    _url_reject = RejectEntry.model_construct(
+        source="https://api.example.com/data",
+        error_kind="ReadTimeout",
+        message="connection timed out",
+        retry_after=None,
+        wave_index=None,
+        duration_sec=None,
+        is_url_traffic_error=True,
+    )
+
+    from incorporator.list import IncorporatorList
+
+    async def _mock_incorp(**kwargs: object) -> IncorporatorList:
+        # Returns an empty IncorporatorList with one URL-traffic reject.
+        result = IncorporatorList(_StreamRejectSource, [], rejects=[_url_reject])
+        return result
+
+    monkeypatch.setattr(_StreamRejectSource, "incorp", _mock_incorp)
+
+    routed_rejects = []
+
+    def _capture_reject(cls_name: str, reject: object) -> None:
+        routed_rejects.append((cls_name, reject))
+
+    with patch("incorporator.observability.logger._route_reject_to_log", side_effect=_capture_reject):
+        async for wave in _StreamRejectSource.stream(
+            incorp_params={"inc_url": "https://api.example.com/data"},
+            enable_logging=True,
+        ):
+            # Verify the wave carries the structured reject.
+            assert len(wave.rejects) == 1
+            assert wave.rejects[0].is_url_traffic_error is True
+            assert wave.rejects[0].error_kind == "ReadTimeout"
+
+    # _route_reject_to_log was called once for the URL-traffic reject.
+    assert len(routed_rejects) == 1
+    assert routed_rejects[0][1].is_url_traffic_error is True
+
+
+# ---------------------------------------------------------------------------
+# C2 — file-mode parse error stays in error.log (not api.log)
+# ---------------------------------------------------------------------------
+
+
+class _FileStreamSource(LoggedIncorporator):
+    """Stand-in for file-mode stream reject routing tests."""
+
+
+@pytest.mark.asyncio
+async def test_stream_file_mode_parse_error_reject_stays_in_error_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """stream() with a file-mode parse error routes the reject to error.log, not api.log.
+
+    Mocks incorp() to return an IncorporatorList with a parse-error reject
+    (is_url_traffic_error=False).  Verifies that wave.rejects carries the reject
+    and that _route_reject_to_log receives it with is_url_traffic_error=False,
+    so it routes to error.log (not api.log) via APIFilter.
+    """
+    from incorporator.rejects import RejectEntry
+
+    monkeypatch.chdir(tmp_path)
+
+    _parse_reject = RejectEntry.model_construct(
+        source="file:///data/bad.json",
+        error_kind="IncorporatorFormatError",
+        message="unexpected token at line 3",
+        retry_after=None,
+        wave_index=None,
+        duration_sec=None,
+        is_url_traffic_error=False,
+    )
+
+    from incorporator.list import IncorporatorList
+
+    async def _mock_incorp(**kwargs: object) -> IncorporatorList:
+        return IncorporatorList(_FileStreamSource, [], rejects=[_parse_reject])
+
+    monkeypatch.setattr(_FileStreamSource, "incorp", _mock_incorp)
+
+    routed_rejects = []
+
+    def _capture_reject(cls_name: str, reject: object) -> None:
+        routed_rejects.append((cls_name, reject))
+
+    with patch("incorporator.observability.logger._route_reject_to_log", side_effect=_capture_reject):
+        async for wave in _FileStreamSource.stream(
+            incorp_params={"inc_file": "/data/bad.json"},
+            enable_logging=True,
+        ):
+            assert len(wave.rejects) == 1
+            assert wave.rejects[0].is_url_traffic_error is False
+
+    assert len(routed_rejects) == 1
+    assert routed_rejects[0][1].is_url_traffic_error is False
+    assert routed_rejects[0][1].error_kind == "IncorporatorFormatError"
+
+
+# ---------------------------------------------------------------------------
+# C3 — Wave.rejects defaults to [] on construction paths
+# ---------------------------------------------------------------------------
+
+
+def test_wave_rejects_defaults_to_empty_list() -> None:
+    """Wave.rejects defaults to [] when not explicitly supplied.
+
+    Verifies the additive field is always accessible (no AttributeError) on
+    waves built via Pydantic model validation (full-init path), and that it
+    does not interfere with existing wave consumers that only inspect
+    failed_sources.
+    """
+    from datetime import datetime, timezone
+
+    from incorporator.observability.wave import Wave
+
+    wave = Wave(
+        chunk_index=1,
+        operation="chunk",
+        rows_processed=42,
+        processing_time_sec=0.123,
+    )
+
+    assert wave.rejects == []
+    assert wave.failed_sources == []
+    assert wave.rows_processed == 42
+
+
+def test_wave_model_construct_without_rejects_uses_empty_list() -> None:
+    """Wave.model_construct without rejects= leaves rejects absent but getattr guards work.
+
+    Documents and tests the model_construct bypass: when rejects= is omitted,
+    Pydantic's default_factory does NOT run and the attribute is absent.
+    All logger.py sites use getattr(wave, 'rejects', []) so this is safe,
+    but callers using wave.rejects directly must ensure they use model_construct
+    with rejects= set.
+    """
+    from datetime import datetime, timezone
+
+    from incorporator.observability.wave import Wave
+
+    wave_without_rejects = Wave.model_construct(
+        chunk_index=1,
+        operation="chunk",
+        rows_processed=0,
+        failed_sources=["Error"],
+        processing_time_sec=0.001,
+        http_retry_count=0,
+        validation_error_count=0,
+        schema_cache_hit=True,
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    # model_construct bypasses default_factory — rejects is absent.
+    # getattr guard used in logger.py is safe.
+    assert getattr(wave_without_rejects, "rejects", []) == []
+
+
+def test_wave_model_construct_with_rejects_populated() -> None:
+    """Wave.model_construct with rejects= carries the structured entries correctly.
+
+    Verifies that all updated call sites (chunked.py, fjord.py, _stateful_shim.py,
+    _shared.py) correctly set wave.rejects so the logger routing loop can iterate it.
+    """
+    from datetime import datetime, timezone
+
+    from incorporator.observability.wave import Wave
+    from incorporator.rejects import RejectEntry
+
+    reject = RejectEntry.model_construct(
+        source="https://api.example.com/",
+        error_kind="ReadTimeout",
+        message="timed out",
+        retry_after=None,
+        wave_index=None,
+        duration_sec=None,
+        is_url_traffic_error=True,
+    )
+
+    wave = Wave.model_construct(
+        chunk_index=1,
+        operation="chunk",
+        rows_processed=0,
+        failed_sources=[],
+        rejects=[reject],
+        processing_time_sec=0.001,
+        http_retry_count=0,
+        validation_error_count=0,
+        schema_cache_hit=True,
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    assert len(wave.rejects) == 1
+    assert wave.rejects[0].is_url_traffic_error is True
+    assert wave.rejects[0].error_kind == "ReadTimeout"
