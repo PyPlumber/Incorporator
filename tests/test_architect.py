@@ -722,3 +722,85 @@ def test_plan_to_watershed_custom_verb_without_subclass_raises_actionable() -> N
 
     with pytest.raises(ValueError, match="CustomCurrent"):
         plan.to_watershed(classes={"ping": JustAnIncorporator})
+
+
+# ---------------------------------------------------------------------------
+# Probe seeding — ResponseMeta.wire_bytes / http_latency_sec (sub-concern a).
+# ---------------------------------------------------------------------------
+
+
+def test_probe_seeding_http_populates_response_meta_size_latency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP backfill path: _probe_one reads the probe-class telemetry ClassVars.
+
+    Stubs ``Incorporator.test`` so that — exactly like ``fetch.py`` after a real
+    HTTP fetch — it sets ``_last_bytes_downloaded`` / ``_last_http_fetch_time_sec``
+    on the throwaway probe subclass (``cls`` of the classmethod) and feeds a
+    ``SourceProfile`` into the inspector capture hook.  The REAL ``_probe_one``
+    then runs its backfill (``getattr(probe_cls, "_last_bytes_downloaded", None)``
+    → ``meta.wire_bytes`` / ``meta.http_latency_sec``), so the positive read+assign
+    branch is genuinely exercised with no network I/O.
+    """
+    import asyncio
+
+    from incorporator.observability.tideweaver import architect as _arch
+
+    async def _stub_test(cls: Any, **kwargs: Any) -> None:
+        # Mirror what fetch.py's _process_single_source sets on the class after an
+        # HTTP fetch, then feed the inspector capture hook a captured profile so
+        # _probe_one proceeds to the backfill instead of the empty-capture path.
+        cls._last_bytes_downloaded = 8192
+        cls._last_http_fetch_time_sec = 0.42
+        capture = kwargs.get("__capture_into")
+        if capture is not None:
+            capture.append(_arch.SourceProfile(parsed_data=[{"id": 1}], provided_kwargs={}))
+
+    monkeypatch.setattr(Incorporator, "test", classmethod(_stub_test))
+
+    loop = asyncio.new_event_loop()
+    try:
+        result_name, profile = loop.run_until_complete(
+            _arch._probe_one(Incorporator, "items", {"inc_url": "https://api.example.com/items"})
+        )
+    finally:
+        loop.close()
+
+    assert result_name == "items"
+    assert profile.response_meta is not None
+    # The backfill READ probe_cls._last_bytes_downloaded / _last_http_fetch_time_sec
+    # (set by the stub) and assigned them into response_meta — the positive path.
+    assert profile.response_meta.wire_bytes == 8192
+    assert profile.response_meta.http_latency_sec == 0.42
+    # inc_url host also resolved into the freshly-created ResponseMeta.
+    assert profile.response_meta.host == "api.example.com"
+
+
+def test_probe_seeding_file_mode_leaves_size_latency_none(tmp_path: Path) -> None:
+    """File-mode probe leaves ResponseMeta.wire_bytes and http_latency_sec as None.
+
+    fetch.py resets the ClassVars to None for file-mode sources; _probe_one
+    must not invent values when those ClassVars are None.
+    """
+    import asyncio
+
+    from incorporator.observability.tideweaver import architect as _arch
+
+    data_file = tmp_path / "records.json"
+    data_file.write_text(
+        json.dumps([{"record_id": "r1", "value": 42}]),
+        encoding="utf-8",
+    )
+
+    loop = asyncio.new_event_loop()
+    try:
+        _name, profile = loop.run_until_complete(
+            _arch._probe_one(Incorporator, "records", {"inc_file": str(data_file)})
+        )
+    finally:
+        loop.close()
+
+    assert profile.response_meta is not None
+    # File-mode: no HTTP round trip → both fields must be None.
+    assert profile.response_meta.wire_bytes is None
+    assert profile.response_meta.http_latency_sec is None

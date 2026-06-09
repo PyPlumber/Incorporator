@@ -62,6 +62,13 @@ class ResponseMeta:
     ``capture_signals`` tolerates ``response_meta=None`` — file-mode probes
     leave it unset.  Architect uses this for ``Penstock`` recommendations
     (host rate registry hit / 429 observed during probe / Retry-After parsing).
+
+    ``wire_bytes`` and ``http_latency_sec`` are populated by
+    :func:`~incorporator.observability.tideweaver.architect._probe_one` after
+    :meth:`~incorporator.Incorporator.test` returns, by reading the probe
+    class's ``_last_bytes_downloaded`` and ``_last_http_fetch_time_sec``
+    ClassVars.  Both remain ``None`` for file-mode probes (the fetch layer
+    resets those ClassVars to ``None`` for non-HTTP sources).
     """
 
     host: str | None = None
@@ -70,6 +77,8 @@ class ResponseMeta:
     retry_after_sec: float | None = None
     response_time_ms: float | None = None
     content_type: str | None = None
+    wire_bytes: int | None = None
+    http_latency_sec: float | None = None
 
 
 @dataclass

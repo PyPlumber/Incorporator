@@ -15,8 +15,10 @@ from incorporator import Incorporator
 from incorporator.observability.tideweaver.architect import (
     TuningHint,
     TuningReport,
+    _DEFAULT_TIMEOUT_PROXY_SEC,
     _tune_chunk_size,
     _tune_compound_budget,
+    _tune_http_timeout,
     _tune_pass_interval,
     _tune_penstock_rate,
     _tune_retry_policy,
@@ -75,6 +77,31 @@ def _wave_with_http(
         source_url=source_url,
         bytes_processed=None,
         bytes_downloaded=None,
+        http_fetch_time_sec=http_fetch_time_sec,
+        http_retry_count=0,
+        validation_error_count=0,
+        schema_cache_hit=True,
+        conv_dict_time_sec=None,
+        timestamp=_NOW,
+    )
+
+
+def _wave_with_bytes(
+    processing_time_sec: float,
+    http_fetch_time_sec: float,
+    bytes_downloaded: int,
+    source_url: str = "https://api.example.com/data",
+) -> Wave:
+    """Build a Wave with processing_time_sec, http_fetch_time_sec, and bytes_downloaded set."""
+    return Wave.model_construct(
+        chunk_index=0,
+        operation="stream",
+        rows_processed=10,
+        failed_sources=[],
+        processing_time_sec=processing_time_sec,
+        source_url=source_url,
+        bytes_processed=bytes_downloaded,
+        bytes_downloaded=bytes_downloaded,
         http_fetch_time_sec=http_fetch_time_sec,
         http_retry_count=0,
         validation_error_count=0,
@@ -701,3 +728,179 @@ def test_tune_compound_budget_skipped_via_tune_pass_interval_none() -> None:
     """tune(pass_interval=None) returns a report with no hints at all."""
     report = tune(pass_interval=None)
     assert report.hints == []
+
+
+# ---------------------------------------------------------------------------
+# _tune_http_timeout
+# ---------------------------------------------------------------------------
+
+
+def test_tune_http_timeout_high_when_p99_near_timeout() -> None:
+    """HIGH hint when p99 latency >= 85% of the configured 5s timeout (4.3s threshold).
+
+    30 waves each with http_fetch_time_sec=4.5s triggers HIGH because
+    4.5 / 5.0 = 90% >= 85% (_TIMEOUT_PROXIMITY_FACTOR).  Passes explicit
+    timeout=5.0 so current_value reflects the known configured ceiling.
+    """
+    waves = [_wave_with_http(4.6, 4.5) for _ in range(30)]
+    hints = _tune_http_timeout(waves, timeout=5.0)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "high"
+    assert h.knob == "timeout"
+    assert h.current_value == 5.0
+    assert h.recommended_value is not None
+    assert h.recommended_value > 4.5  # recommended > measured p99
+    assert "raise" in h.rationale.lower() or "cliff" in h.rationale.lower()
+    assert h.sample_size == 30
+
+
+def test_tune_http_timeout_low_when_timeout_much_greater_than_p99() -> None:
+    """LOW hint when the configured timeout (5s) >= 3x p99 latency.
+
+    30 waves with http_fetch_time_sec=0.5s: timeout / p99 = 5.0 / 0.5 = 10x
+    which exceeds _TIMEOUT_HEADROOM_FACTOR=3.0.  Passes explicit timeout=5.0
+    so current_value reflects the known configured ceiling.
+    """
+    waves = [_wave_with_http(0.6, 0.5) for _ in range(30)]
+    hints = _tune_http_timeout(waves, timeout=5.0)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "low"
+    assert h.knob == "timeout"
+    assert h.current_value == 5.0
+    assert h.recommended_value is not None
+    assert h.recommended_value < 5.0  # recommended lower than configured
+    assert "lower" in h.rationale.lower() or "headroom" in h.rationale.lower()
+    assert h.sample_size == 30
+
+
+def test_tune_http_timeout_info_when_mid_band() -> None:
+    """INFO hint when p99 is in the healthy mid-band (not near cliff, not excessive headroom).
+
+    30 waves with http_fetch_time_sec=2.0s: p99=2.0s, timeout=5.0s.
+    2.0 / 5.0 = 40%, and 5.0 / 2.0 = 2.5x — both within the thresholds.
+    Passes explicit timeout=5.0 so current_value reflects the known ceiling.
+    """
+    waves = [_wave_with_http(2.1, 2.0) for _ in range(30)]
+    hints = _tune_http_timeout(waves, timeout=5.0)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "info"
+    assert h.knob == "timeout"
+    assert h.current_value == 5.0
+    assert "well-sized" in h.signal or "timeout well-sized" in h.signal
+    assert h.sample_size == 30
+
+
+def test_tune_http_timeout_info_when_insufficient_data() -> None:
+    """INFO hint about insufficient data when fewer than 20 waves carry HTTP telemetry.
+
+    10 waves: n=10 < 20 threshold.  Passes explicit timeout=5.0 so current_value
+    reflects the known configured ceiling even on the insufficient-data branch.
+    """
+    waves = [_wave_with_http(1.0, 0.8) for _ in range(10)]
+    hints = _tune_http_timeout(waves, timeout=5.0)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "info"
+    assert h.current_value == 5.0
+    assert "insufficient" in h.signal.lower()
+    assert h.sample_size == 10
+
+
+def test_tune_http_timeout_skips_non_http_sources() -> None:
+    """Groups where all http_fetch_time_sec are None (file-mode) produce no hints."""
+    waves = [_wave(0.050) for _ in range(30)]  # all http_fetch_time_sec=None
+    hints = _tune_http_timeout(waves)
+    assert hints == []
+
+
+def test_tune_http_timeout_fallback_when_timeout_none() -> None:
+    """When timeout is omitted, current_value is None and signal references the default proxy.
+
+    Omitting timeout triggers the _DEFAULT_TIMEOUT_PROXY_SEC fallback path.
+    current_value must be None (actual setting unknown) and the signal/rationale
+    must mention 'default timeout proxy' rather than 'configured timeout'.
+    """
+    waves = [_wave_with_http(2.1, 2.0) for _ in range(30)]
+    hints = _tune_http_timeout(waves)  # timeout omitted — use fallback
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.current_value is None
+    assert "default timeout proxy" in h.signal or "default timeout proxy" in h.rationale
+
+
+def test_tune_http_timeout_registered_in_tune() -> None:
+    """tune() with waves emits timeout hints; tune(timeout=...) sets current_value on hints."""
+    waves = [_wave_with_http(2.1, 2.0) for _ in range(30)]
+
+    # Without timeout: INFO hint, current_value=None (fallback path).
+    report = tune(waves=waves)
+    timeout_hints = [h for h in report.hints if h.knob == "timeout"]
+    assert len(timeout_hints) >= 1, f"Expected timeout hints; got {report.hints}"
+    assert timeout_hints[0].severity == "info"
+    assert timeout_hints[0].current_value is None
+
+    # With timeout=5.0: same severity, current_value reflects the known ceiling.
+    report_with_timeout = tune(waves=waves, timeout=5.0)
+    timeout_hints_t = [h for h in report_with_timeout.hints if h.knob == "timeout"]
+    assert len(timeout_hints_t) >= 1
+    assert timeout_hints_t[0].current_value == 5.0
+
+
+# ---------------------------------------------------------------------------
+# _tune_penstock_rate — byte-rate awareness via waves
+# ---------------------------------------------------------------------------
+
+
+def test_tune_penstock_rate_byte_rate_augments_rationale_for_429s() -> None:
+    """Byte-rate signal appended to HIGH rationale when waves carry bytes/sec for the host.
+
+    10 HTTP 429 rejects for api.example.com + 30 waves with bytes_downloaded
+    and http_fetch_time_sec set → rationale includes KB/s measurement.
+    """
+    rejects = [_reject_http(host="api.example.com", cooldown_sec=10.0) for _ in range(10)]
+    # 30 waves from the same host — 50 KB each in 0.5s = 100 KB/s
+    waves = [_wave_with_bytes(0.6, 0.5, 51200, source_url="https://api.example.com/data") for _ in range(30)]
+    hints = _tune_penstock_rate(rejects, waves=waves)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "high"
+    assert h.scope.get("host") == "api.example.com"
+    # Byte-rate signal must appear in rationale.
+    assert "KB/s" in h.rationale or "bytes/sec" in h.rationale
+
+
+def test_tune_penstock_rate_falls_back_to_req_s_when_bytes_downloaded_none() -> None:
+    """Existing req/s rationale unchanged when all waves have bytes_downloaded=None (file-mode).
+
+    10 HTTP 429 rejects + 30 waves with bytes_downloaded=None → no KB/s note in rationale,
+    hint shape matches the pre-byte-rate baseline.
+    """
+    rejects = [_reject_http(host="api.example.com", cooldown_sec=10.0) for _ in range(10)]
+    # Waves with no bytes_downloaded (file-mode or pre-telemetry).
+    waves = [_wave(0.050, source_url="https://api.example.com/data") for _ in range(30)]
+    hints = _tune_penstock_rate(rejects, waves=waves)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "high"
+    assert h.recommended_value == pytest.approx(0.1, abs=1e-4)
+    # No byte-rate note injected.
+    assert "KB/s" not in h.rationale
+    assert "bytes/sec" not in h.rationale
+
+
+def test_tune_penstock_rate_without_waves_unchanged() -> None:
+    """_tune_penstock_rate(rejects) with no waves kwarg behaves identically to baseline.
+
+    Regression guard: adding the waves parameter must not change the hint
+    when waves=None (the default).
+    """
+    rejects = [_reject_http(host="api.example.com", cooldown_sec=5.0) for _ in range(10)]
+    hints = _tune_penstock_rate(rejects)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "high"
+    assert h.recommended_value == pytest.approx(0.2, abs=1e-4)
+    assert "KB/s" not in h.rationale

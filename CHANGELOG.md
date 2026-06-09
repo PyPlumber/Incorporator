@@ -46,6 +46,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bleeding into subsequent non-HTTP chunks on the same class.
 - **AIMD parse-only steering** (`incorporator/observability/pipeline/chunked.py`): online AIMD ring now uses the parse-only remainder (`processing_time_sec - http_fetch_time_sec`) for HTTP sources, matching the offline `_tune_chunk_size` signal; file/SQLite sources fall back to end-to-end correctly; target window re-derived from `_PARSE_TOO_FAST_P50=0.001s` / `_PARSE_MEMORY_P99=0.100s`.
 
+### Added
+
+- **Architect wire-bytes / HTTP-latency telemetry** (`incorporator/observability/tideweaver/architect.py`,
+  `incorporator/tools/inspector.py`): three enhancements that close the feedback loop between the
+  E′ per-Wave telemetry and the offline architect tuner.
+
+  - **(a) Probe seeding**: `ResponseMeta` gains two optional fields — `wire_bytes: int | None` and
+    `http_latency_sec: float | None`.  `_probe_one` in `architect.py` backfills them after
+    `test()` returns by reading the probe class's `_last_bytes_downloaded` and
+    `_last_http_fetch_time_sec` ClassVars (populated by `fetch.py` for HTTP sources; reset to
+    `None` for file-mode so file-probe fields stay `None` correctly).
+
+  - **(b) `_tune_penstock_rate` byte-rate awareness**: the function gains an optional `waves`
+    parameter.  When supplied, it builds a host → bytes/sec map by grouping waves on the
+    hostname extracted from `Wave.source_url` and appends the measured throughput to the rationale
+    string for HTTP-reject host groups.  The existing req/s logic is unchanged when
+    `bytes_downloaded` is `None` on all matching waves (file-mode / pre-telemetry fallback).
+    Reject-to-wave linkage is keyed on hostname rather than `wave_index`, because HTTP-layer
+    rejects carry `wave_index=None` and canal-layer rejects set it to a tide counter (not a
+    `Wave.chunk_index`); the host-keyed join is the only reliable correlation.
+
+  - **(c) New `_tune_http_timeout` rule**: groups waves by `source_url`, computes p99 HTTP
+    latency for each group (skips non-HTTP sources where all `http_fetch_time_sec` are `None`),
+    and emits **HIGH** "raise timeout" / **LOW** "lower timeout" / **INFO** "well-sized" hints
+    relative to the configured timeout (passed via `tune(timeout=...)`) or the
+    `_DEFAULT_TIMEOUT_PROXY_SEC = 5.0` module constant when unspecified.
+    Thresholds: `_TIMEOUT_PROXIMITY_FACTOR = 0.85` (p99 ≥ 85% of timeout = SRE headroom
+    breach) and `_TIMEOUT_HEADROOM_FACTOR = 3.0` (timeout > 3× p99 = fail-fast budget wasted),
+    both module-level constants with derivation citations.  `tune()` accepts a new `timeout`
+    keyword argument forwarded to `_tune_http_timeout`; when omitted, `_DEFAULT_TIMEOUT_PROXY_SEC`
+    is used and `current_value` on timeout hints is `None`.  Registered in `tune()` alongside
+    `_tune_chunk_size` (both consume waves).
+
 ### Changed
 
 Observability / log-surface changes only — rendered diagnostic strings, warning

@@ -394,6 +394,12 @@ async def _probe_one(
             parsed = urlparse(inc_url)
             meta.host = parsed.hostname
         profile.response_meta = meta
+    # Backfill wire-bytes and HTTP-latency from the probe class's ClassVars.
+    # fetch.py's _process_single_source resets both to None before any non-HTTP
+    # source, so reading them here is safe for file-mode probes (yields None).
+    meta = profile.response_meta
+    meta.wire_bytes = getattr(probe_cls, "_last_bytes_downloaded", None)
+    meta.http_latency_sec = getattr(probe_cls, "_last_http_fetch_time_sec", None)
     return (name, profile)
 
 
@@ -1227,7 +1233,11 @@ def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
     return hints
 
 
-def _tune_penstock_rate(rejects: list[RejectEntry], window_sec: float = 600.0) -> list[TuningHint]:
+def _tune_penstock_rate(
+    rejects: list[RejectEntry],
+    window_sec: float = 600.0,
+    waves: list[Wave] | None = None,
+) -> list[TuningHint]:
     """Analyse reject records to recommend penstock rate adjustments.
 
     Filters to ``PenstockLimited`` and HTTP 429 rejects, then groups
@@ -1235,14 +1245,41 @@ def _tune_penstock_rate(rejects: list[RejectEntry], window_sec: float = 600.0) -
     ``host``.  For groups with more than 5 entries, computes the median
     ``cooldown_sec`` and derives a recommended ``rate_per_sec``.
 
+    When ``waves`` is supplied, builds a host → bytes/sec map by grouping
+    waves on the hostname extracted from ``Wave.source_url`` and computing
+    ``sum(bytes_downloaded) / sum(http_fetch_time_sec)``.  For HTTP-reject
+    host groups that already fire a hint, the measured bytes/sec is appended
+    to the rationale so bandwidth-limited hosts get a meaningful signal.
+
+    The wave_index join (RejectEntry.wave_index → Wave.chunk_index) is NOT
+    used because HTTP-layer rejects set wave_index=None and canal-layer
+    rejects set wave_index to a tide counter, not a Wave.chunk_index.  The
+    host-keyed approach is the only reliable linkage.
+
     Args:
         rejects: List of :class:`~incorporator.RejectEntry` records.
         window_sec: Observation window in seconds (informational only;
             not used in rate computation).
+        waves: Optional list of :class:`~incorporator.Wave` records from
+            the same run.  Used to derive per-host byte-rate signals.
 
     Returns:
         List of :class:`TuningHint`.
     """
+    # Build host → bytes/sec from waves where both telemetry fields are set.
+    host_bytes_per_sec: dict[str, float] = {}
+    if waves:
+        host_wave_groups: dict[str, list[Wave]] = {}
+        for w in waves:
+            if w.source_url:
+                parsed_url = urlparse(w.source_url)
+                if parsed_url.hostname:
+                    host_wave_groups.setdefault(parsed_url.hostname, []).append(w)
+        for host, wgroup in host_wave_groups.items():
+            total_bytes = sum(w.bytes_downloaded for w in wgroup if w.bytes_downloaded is not None)
+            total_secs = sum(w.http_fetch_time_sec for w in wgroup if w.http_fetch_time_sec is not None)
+            if total_bytes > 0 and total_secs > 0:
+                host_bytes_per_sec[host] = total_bytes / total_secs
     # Filter to penstock-related rejects only.
     penstock_rejects = [
         r
@@ -1311,6 +1348,11 @@ def _tune_penstock_rate(rejects: list[RejectEntry], window_sec: float = 600.0) -
         if len(group) <= 5:
             continue
         cooldowns = [r.cooldown_sec for r in group if r.cooldown_sec is not None]
+        # Augment rationale with measured byte-rate when waves supplied for this host.
+        bps = host_bytes_per_sec.get(host)
+        bps_note = (
+            f"\nMeasured throughput: {bps / 1024:.1f} KB/s ({bps:.0f} bytes/sec) — bandwidth-limited." if bps else ""
+        )
         if cooldowns:
             median_cooldown = statistics.median(cooldowns)
             recommended = round(1.0 / median_cooldown, 4) if median_cooldown > 0 else None
@@ -1325,7 +1367,7 @@ def _tune_penstock_rate(rejects: list[RejectEntry], window_sec: float = 600.0) -
                     rationale=(
                         f"{len(group)} HTTPStatusError(429) rejects for host {host!r}.\n"
                         f"Median cooldown_sec={median_cooldown:.3f}s "
-                        f"→ recommended rate_per_sec={recommended} (1 req per cooldown period)."
+                        f"→ recommended rate_per_sec={recommended} (1 req per cooldown period).{bps_note}"
                     ),
                     sample_size=len(group),
                 )
@@ -1341,8 +1383,8 @@ def _tune_penstock_rate(rejects: list[RejectEntry], window_sec: float = 600.0) -
                     signal=f"{len(group)} HTTP 429 rejects for host {host!r}; no cooldown_sec data",
                     rationale=(
                         f"{len(group)} HTTPStatusError(429) rejects for host {host!r}, "
-                        "but no cooldown_sec values were recorded.\n"
-                        "Raise rate; cooldown_sec data unavailable for precise recommendation."
+                        f"but no cooldown_sec values were recorded.\n"
+                        f"Raise rate; cooldown_sec data unavailable for precise recommendation.{bps_note}"
                     ),
                     sample_size=len(group),
                 )
@@ -1763,12 +1805,192 @@ def _tune_parent_child(
     return hints
 
 
+# Timeout-tuning thresholds (cited derivations follow):
+#
+# _DEFAULT_TIMEOUT_PROXY_SEC = 5.0
+#   The framework's default request timeout used by Incorporator.test() and
+#   the fetch layer (httpx AsyncClient default).  Used as a fallback proxy when
+#   the caller does not supply the configured timeout to tune().
+_DEFAULT_TIMEOUT_PROXY_SEC = 5.0
+
+# _TIMEOUT_PROXIMITY_FACTOR = 0.85
+#   A p99 latency at ≥85% of the configured timeout means roughly 1-in-100
+#   real fetches is within 15% of the cliff.  Standard SRE headroom practice
+#   for 99th-percentile network latency: ≥20% safety margin is the common
+#   recommendation (Google SRE Book, ch.19).  85% of timeout leaves only 15%
+#   headroom — tighter than the 20% threshold for pass_interval (which uses
+#   80%) because network latency variance is higher than scheduler variance.
+_TIMEOUT_PROXIMITY_FACTOR = 0.85
+
+# _TIMEOUT_HEADROOM_FACTOR = 3.0
+#   When the configured timeout is more than 3× p99 latency, every failed
+#   request waits at least 3× longer than the 99th-percentile of real
+#   latency before the error propagates.  Tighter fail-fast behaviour is
+#   almost always preferable for idempotent retryable requests.  Derived
+#   from: if p99=100ms and timeout=300ms, the 1% of failed requests each
+#   wait 300ms instead of ~105ms — a 3× penalty per failure.  3× is the
+#   canonical "reasonable headroom" constant in circuit-breaker literature.
+_TIMEOUT_HEADROOM_FACTOR = 3.0
+
+
+def _tune_http_timeout(waves: list[Wave], *, timeout: float | None = None) -> list[TuningHint]:
+    """Analyse observed HTTP latency to recommend timeout adjustments.
+
+    Groups waves by ``source_url``.  For each group with ``n >= 20``
+    waves carrying a non-``None`` ``http_fetch_time_sec``, computes the
+    p99 latency and emits a raise / lower / mid-band hint relative to the
+    configured timeout.
+
+    When ``timeout`` is supplied, it is used as the comparison base and
+    ``current_value`` on every emitted hint reflects the actual configured
+    setting.  When ``timeout`` is ``None``, the function falls back to the
+    ``_DEFAULT_TIMEOUT_PROXY_SEC`` module constant and ``current_value`` is
+    left ``None`` to signal that the actual setting is not known.
+
+    Severity rules (thresholds from module constants):
+
+    * **HIGH** "raise timeout": p99 ≥ ``timeout × _TIMEOUT_PROXIMITY_FACTOR``
+      (p99 is within 15% of the ceiling — standard SRE headroom).
+    * **LOW** "lower timeout": ``timeout ≥ p99 × _TIMEOUT_HEADROOM_FACTOR``
+      (timeout is more than 3× p99 — fail-fast budget wasted).
+    * **INFO** "well-sized": mid-band — p99 and timeout are in a healthy ratio.
+    * **INFO** "insufficient data": fewer than 20 waves carrying non-``None``
+      ``http_fetch_time_sec`` per source.
+    * Group skipped entirely when all ``http_fetch_time_sec`` are ``None``
+      (file-mode / paginator-driven / non-HTTP sources).
+
+    Args:
+        waves: List of :class:`~incorporator.Wave` records from a run.
+        timeout: The timeout the fetch layer was configured with, in seconds.
+            Enables comparison against the real ceiling.  When omitted or
+            ``None``, falls back to ``_DEFAULT_TIMEOUT_PROXY_SEC``.
+
+    Returns:
+        List of :class:`TuningHint` — one per source group, or empty when
+        all sources are non-HTTP.
+    """
+    # Group by source_url (may be None for file-mode or one-shot sources).
+    groups: dict[str | None, list[Wave]] = {}
+    for w in waves:
+        groups.setdefault(w.source_url, []).append(w)
+
+    hints: list[TuningHint] = []
+    for source_url, group in groups.items():
+        scope = {"source": str(source_url)}
+
+        # Skip non-HTTP sources: all http_fetch_time_sec are None.
+        latencies = [w.http_fetch_time_sec for w in group if w.http_fetch_time_sec is not None]
+        if not latencies:
+            continue
+
+        # WARNING 1 fix: gate and sample_size reflect the ACTUAL p99 sample count,
+        # not the group size (which may include waves without latency telemetry).
+        n = len(latencies)
+        if n < 20:
+            hints.append(
+                TuningHint.model_construct(
+                    severity="info",
+                    knob="timeout",
+                    scope=scope,
+                    current_value=timeout,
+                    recommended_value=None,
+                    signal=f"insufficient data (n={n})",
+                    rationale=f"Need at least 20 waves per source to compute reliable p99. Got {n}.",
+                    sample_size=n,
+                )
+            )
+            continue
+
+        p99 = _percentile(latencies, 99)
+        # Resolve effective timeout: use the caller-supplied value when known,
+        # else fall back to the named module constant.
+        timeout_proxy = timeout if timeout is not None else _DEFAULT_TIMEOUT_PROXY_SEC
+        timeout_label = "configured timeout" if timeout is not None else "default timeout proxy"
+        current_value: float | None = timeout  # None when caller omits it
+
+        if p99 >= timeout_proxy * _TIMEOUT_PROXIMITY_FACTOR:
+            # p99 is within 15% of the timeout cliff.
+            hints.append(
+                TuningHint.model_construct(
+                    severity="high",
+                    knob="timeout",
+                    scope=scope,
+                    current_value=current_value,
+                    recommended_value=round(p99 * (1.0 / _TIMEOUT_PROXIMITY_FACTOR), 3),
+                    signal=(
+                        f"p99_latency={p99 * 1000:.1f}ms is {p99 / timeout_proxy:.0%} of"
+                        f" the {timeout_proxy}s {timeout_label} — near the cliff"
+                    ),
+                    rationale=(
+                        f"p99 HTTP latency={p99 * 1000:.1f}ms is {p99 / timeout_proxy:.1%} of the"
+                        f" {timeout_proxy}s {timeout_label}.\n"
+                        f"SRE headroom rule: p99 at ≥{_TIMEOUT_PROXIMITY_FACTOR:.0%} of timeout"
+                        f" leaves <15% margin — raise timeout to at least p99 ÷ {_TIMEOUT_PROXIMITY_FACTOR}"
+                        f" = {round(p99 / _TIMEOUT_PROXIMITY_FACTOR, 3):.3f}s."
+                    ),
+                    sample_size=n,
+                )
+            )
+        elif timeout_proxy >= p99 * _TIMEOUT_HEADROOM_FACTOR:
+            # Timeout is more than 3× p99 — fail-fast budget wasted.
+            hints.append(
+                TuningHint.model_construct(
+                    severity="low",
+                    knob="timeout",
+                    scope=scope,
+                    current_value=current_value,
+                    recommended_value=round(p99 * _TIMEOUT_HEADROOM_FACTOR, 3),
+                    signal=(
+                        f"{timeout_label} ({timeout_proxy}s) is"
+                        f" {timeout_proxy / p99:.1f}× p99_latency={p99 * 1000:.1f}ms"
+                        f" — fail-fast budget wasted"
+                    ),
+                    rationale=(
+                        f"The {timeout_proxy}s {timeout_label} is {timeout_proxy / p99:.1f}× p99 HTTP"
+                        f" latency={p99 * 1000:.1f}ms.\n"
+                        f"Every failed request waits >{timeout_proxy / p99:.1f}× the p99 latency before"
+                        f" the error propagates, wasting fail-fast budget.\n"
+                        f"Circuit-breaker literature recommends ≤{_TIMEOUT_HEADROOM_FACTOR:.0f}× p99"
+                        f" headroom; consider lowering timeout to"
+                        f" ≈{round(p99 * _TIMEOUT_HEADROOM_FACTOR, 3):.3f}s."
+                    ),
+                    sample_size=n,
+                )
+            )
+        else:
+            hints.append(
+                TuningHint.model_construct(
+                    severity="info",
+                    knob="timeout",
+                    scope=scope,
+                    current_value=current_value,
+                    recommended_value=None,
+                    signal=(
+                        f"timeout well-sized. p99_latency={p99 * 1000:.1f}ms,"
+                        f" {timeout_label}={timeout_proxy}s"
+                        f" ({p99 / timeout_proxy:.0%} utilisation)"
+                    ),
+                    rationale=(
+                        f"p99 HTTP latency={p99 * 1000:.1f}ms is in the healthy band"
+                        f" [{_TIMEOUT_PROXIMITY_FACTOR * 100:.0f}% threshold ="
+                        f" {timeout_proxy * _TIMEOUT_PROXIMITY_FACTOR * 1000:.0f}ms;"
+                        f" {_TIMEOUT_HEADROOM_FACTOR:.0f}× ceiling ="
+                        f" {p99 * _TIMEOUT_HEADROOM_FACTOR * 1000:.0f}ms].\n"
+                        "No timeout change recommended."
+                    ),
+                    sample_size=n,
+                )
+            )
+    return hints
+
+
 def tune(
     *,
     rejects: list[RejectEntry] | None = None,
     tides: list[Tide] | None = None,
     waves: list[Wave] | None = None,
     pass_interval: float | None = None,
+    timeout: float | None = None,
 ) -> TuningReport:
     """Generate tuning recommendations from accumulated outcome records.
 
@@ -1788,6 +2010,10 @@ def tune(
         pass_interval: The ``pass_interval`` the scheduler was configured
             with, in seconds.  Required for the ``_tune_pass_interval``
             rule; ignored if ``tides`` is also omitted.
+        timeout: The timeout the fetch layer was configured with, in seconds.
+            Forwarded to ``_tune_http_timeout`` so hints compare against the
+            real ceiling.  When omitted or ``None``, ``_tune_http_timeout``
+            falls back to ``_DEFAULT_TIMEOUT_PROXY_SEC``.
 
     Returns:
         A :class:`TuningReport` with structured hints and a summary dict.
@@ -1799,8 +2025,9 @@ def tune(
     hints: list[TuningHint] = []
     if waves:
         hints.extend(_tune_chunk_size(waves))
+        hints.extend(_tune_http_timeout(waves, timeout=timeout))
     if rejects:
-        hints.extend(_tune_penstock_rate(rejects))
+        hints.extend(_tune_penstock_rate(rejects, waves=waves))
     if rejects and tides:
         hints.extend(_tune_surge_threshold(rejects, tides))
     if tides and pass_interval is not None:
