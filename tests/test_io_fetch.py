@@ -1560,3 +1560,103 @@ def test_is_retryable_status_fatal_404_unchanged() -> None:
     resp = httpx.Response(404, request=req)
     exc = httpx.HTTPStatusError("404", request=req, response=resp)
     assert _is_retryable_status(exc) is False
+
+
+# ----------------------------------------------------------------------
+# RejectEntry.is_url_traffic_error — classification at _build_reject_entry
+# ----------------------------------------------------------------------
+
+
+def test_build_reject_entry_http_status_error_is_url_traffic_error() -> None:
+    """HTTPStatusError sets is_url_traffic_error=True on the built RejectEntry.
+
+    Proves the isinstance(exc, (httpx.HTTPStatusError, httpx.RequestError))
+    check at the _build_reject_entry build site correctly classifies 4xx/5xx
+    HTTP responses as URL-traffic errors.
+    """
+    from incorporator.io.fetch import _build_reject_entry
+
+    req = httpx.Request("GET", "https://api.example.com/data")
+    resp = httpx.Response(500, request=req)
+    exc = httpx.HTTPStatusError("500 Internal Server Error", request=req, response=resp)
+
+    entry = _build_reject_entry("https://api.example.com/data", exc)
+
+    assert entry.is_url_traffic_error is True
+    assert entry.error_kind == "HTTPStatusError"
+
+
+def test_build_reject_entry_request_error_read_timeout_is_url_traffic_error() -> None:
+    """httpx.ReadTimeout (a RequestError subclass) sets is_url_traffic_error=True.
+
+    Proves that transport-level failures (network layer) are classified as
+    URL-traffic errors at the build site, routing them to api.log.
+    """
+    from incorporator.io.fetch import _build_reject_entry
+
+    exc = httpx.ReadTimeout("timed out waiting for server response")
+
+    entry = _build_reject_entry("https://slow.example.com/api", exc)
+
+    assert entry.is_url_traffic_error is True
+    assert entry.error_kind == "ReadTimeout"
+
+
+def test_build_reject_entry_format_error_is_not_url_traffic_error() -> None:
+    """IncorporatorFormatError sets is_url_traffic_error=False on the built RejectEntry.
+
+    Proves that parse errors (bad JSON body, malformed response) are NOT
+    classified as URL-traffic errors — they stay in error.log rather than
+    routing to api.log.
+    """
+    from incorporator.exceptions import IncorporatorFormatError
+    from incorporator.io.fetch import _build_reject_entry
+
+    exc = IncorporatorFormatError("JSON parse error: unexpected token at position 0")
+
+    entry = _build_reject_entry("https://api.example.com/malformed", exc)
+
+    assert entry.is_url_traffic_error is False
+    assert entry.error_kind == "IncorporatorFormatError"
+
+
+def test_build_reject_entry_network_error_wrapping_httpx_is_url_traffic_error() -> None:
+    """IncorporatorNetworkError that WRAPS an httpx error is a URL-traffic error.
+
+    A non-429 5xx that exhausts retries is re-raised as
+    ``IncorporatorNetworkError(...) from e`` (fetch.py:937) and the reject is
+    built from the wrapper at the gather layer.  The httpx origin survives on
+    ``__cause__``, so the build site must still classify it as URL-traffic
+    (→ api.log) rather than a codebase error.
+    """
+    from incorporator.exceptions import IncorporatorNetworkError
+    from incorporator.io.fetch import _build_reject_entry
+
+    req = httpx.Request("GET", "https://api.example.com/data")
+    resp = httpx.Response(503, request=req)
+    http_exc = httpx.HTTPStatusError("503 Service Unavailable", request=req, response=resp)
+    try:
+        raise IncorporatorNetworkError("HTTP error 503") from http_exc
+    except IncorporatorNetworkError as wrapped:
+        entry = _build_reject_entry("https://api.example.com/data", wrapped)
+
+    assert entry.is_url_traffic_error is True
+    assert entry.error_kind == "IncorporatorNetworkError"
+
+
+def test_build_reject_entry_network_error_without_httpx_cause_is_not_url_traffic() -> None:
+    """A bare IncorporatorNetworkError (file/config/SSRF) is NOT a URL-traffic error.
+
+    ``IncorporatorNetworkError`` is overloaded — it is also raised for invalid
+    file paths, uninitialised clients, and SSRF-blocked schemes, none of which
+    wrap an httpx error.  With no httpx ``__cause__`` these stay in error.log.
+    """
+    from incorporator.exceptions import IncorporatorNetworkError
+    from incorporator.io.fetch import _build_reject_entry
+
+    exc = IncorporatorNetworkError("Security/IO Error: Path is not a valid file: data.ndjson")
+
+    entry = _build_reject_entry("data.ndjson", exc)
+
+    assert entry.is_url_traffic_error is False
+    assert entry.error_kind == "IncorporatorNetworkError"

@@ -90,6 +90,15 @@ class RejectEntry(BaseModel):
             Coexists with ``retry_after`` — ``retry_after`` is
             HTTP-specific and kept for back-compat; ``cooldown_sec`` is
             the general cross-site hint.
+        is_url_traffic_error: ``True`` when the reject originates from
+            an httpx HTTP-status (4xx/5xx) or transport
+            (:class:`httpx.RequestError`) failure — i.e. the HTTP/network
+            layer failed talking to a URL.  ``False`` for parse errors
+            (:class:`~incorporator.exceptions.IncorporatorFormatError`),
+            file-mode errors, fjord seed errors, and canal-layer skips.
+            Used by :func:`~incorporator.observability.logger._route_reject_to_log`
+            to route URL-traffic rejects to ``api.log`` and all others
+            to ``error.log``.
 
     Frozen — assigning to any field after construction raises.
 
@@ -97,9 +106,10 @@ class RejectEntry(BaseModel):
     :meth:`Incorporator.export` → :meth:`Incorporator.incorp`
     round-trip (via the derived :attr:`IncorporatorList.failed_sources`
     string view).  ``error_kind`` / ``message`` / ``retry_after`` /
-    ``wave_index`` are **in-memory only** — they're populated at the
-    HTTP / parse failure points and consumed by the caller before the
-    next ``export``.  Retry orchestrators that need durable structured
+    ``wave_index`` / ``host`` / ``status_code`` / ``cooldown_sec`` /
+    ``is_url_traffic_error`` are **in-memory only** — they're populated
+    at the HTTP / parse failure points and consumed by the caller before
+    the next ``export``.  Retry orchestrators that need durable structured
     rejects should serialise the queue themselves
     (``json.dumps([e.model_dump() for e in lst.rejects])``) before
     discarding the :class:`IncorporatorList`.
@@ -154,6 +164,15 @@ class RejectEntry(BaseModel):
         description=(
             "Logger name for the Tideweaver session that produced this reject; None for "
             "HTTP-layer and non-session rejects."
+        ),
+    )
+    is_url_traffic_error: bool = Field(
+        default=False,
+        description=(
+            "True when the reject originates from an httpx HTTP-status (4xx/5xx) or transport "
+            "(RequestError) failure — the HTTP/network layer failed talking to a URL. "
+            "False for parse errors (IncorporatorFormatError), file-mode errors, fjord seed "
+            "errors, and canal-layer skips."
         ),
     )
 

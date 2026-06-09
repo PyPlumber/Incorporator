@@ -77,6 +77,14 @@ def _build_reject_entry(
         A frozen :class:`RejectEntry` ready for ``IncorporatorList.rejects``.
     """
     retry_after = _extract_retry_after(exc)
+    # URL internet-traffic error = the HTTP/network layer failed talking to a URL:
+    # a direct httpx HTTP-status (4xx/5xx) or transport (RequestError) failure, OR an
+    # IncorporatorNetworkError that *wraps* one (non-429 5xx is re-raised as
+    # `IncorporatorNetworkError(...) from e` at the gather layer, so the httpx origin
+    # survives on __cause__).  IncorporatorNetworkErrors raised for file/path, config,
+    # or SSRF reasons have no httpx __cause__ and stay False (-> error.log).
+    _httpx_traffic = (httpx.HTTPStatusError, httpx.RequestError)
+    is_url_traffic = isinstance(exc, _httpx_traffic) or isinstance(getattr(exc, "__cause__", None), _httpx_traffic)
     return RejectEntry.model_construct(
         source=source,
         error_kind=type(exc).__name__,
@@ -88,6 +96,7 @@ def _build_reject_entry(
         cooldown_sec=retry_after,
         attempt_number=attempt_number,
         duration_sec=duration_sec,
+        is_url_traffic_error=is_url_traffic,
     )
 
 

@@ -161,6 +161,32 @@ data flow, or the result of any verb; existing pipelines run unchanged.
 - **`empty_parent_snapshot` detail strings** in `scheduler.py` module-logger
   fallback paths now use `--` (ASCII) consistently; previously used the
   em-dash `—`, which differs from the structured-path strings.
+- **URL internet-traffic errors now route to `<Class>_api.log`** —
+  `RejectEntry` gains an additive `is_url_traffic_error: bool = False` field
+  (in-memory only, default `False`).  `_build_reject_entry` in
+  `incorporator/io/fetch.py` sets it `True` when the originating exception is
+  `httpx.HTTPStatusError` (4xx/5xx) or `httpx.RequestError` (transport /
+  network layer), and `False` for `IncorporatorFormatError` (parse errors),
+  file-mode errors, fjord seed errors, and canal-layer skips.
+  `_route_reject_to_log` in `observability/logger.py` now passes
+  `is_api=reject.is_url_traffic_error` to `_emit_payload` so
+  `APIFilter` routes URL-traffic rejects to `api.log` and all other rejects
+  remain in `error.log`, unchanged.
+  `LoggedIncorporator.incorp` and `refresh` now route each `RejectEntry` from
+  the returned `IncorporatorList` through `_route_reject_to_log` after
+  `super()` returns (previously only `LoggedTideweaver` called this path; the
+  `LoggedIncorporator` verbs never wrote rejects to any log file).
+  `setup_class_logger(cls)` is now called before `super().refresh()` when
+  `enable_logging=True` (was called only after — a latent bug surfaced by the
+  reach requirement).
+  New `LoggingMixin.get_api()` classmethod reads all records from
+  `<Class>_api.log` (full file, no key filter) — returns the union of
+  hand-called `log_api()` records and URL-traffic reject records.
+  `LoggingMixin.get_rejects()` now reads both `error.log` and `api.log`
+  (filtered on `"reject"` key) and returns the combined list, so callers need
+  not know which file a particular reject landed in.
+  `get_error()` docstring now notes that URL-traffic rejects live in
+  `api.log` / `get_api()` and will not appear in `get_error()` results.
 
 ## [1.3.2] - 2026-06-07
 

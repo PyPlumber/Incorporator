@@ -20,6 +20,7 @@ def _make_reject(
     to_name: str | None = None,
     host: str | None = None,
     status_code: int | None = None,
+    is_url_traffic_error: bool = False,
 ) -> RejectEntry:
     """Build a minimal RejectEntry for routing tests."""
     return RejectEntry.model_construct(
@@ -35,6 +36,7 @@ def _make_reject(
         attempt_number=None,
         duration_sec=None,
         cooldown_sec=None,
+        is_url_traffic_error=is_url_traffic_error,
     )
 
 
@@ -165,3 +167,53 @@ def test_route_reject_no_edge_no_status() -> None:
     assert level_arg == logging.ERROR
     msg = mock_logger.log.call_args[0][1]
     assert msg == "GateBlocked: SomeClass"
+
+
+def test_route_reject_url_traffic_error_passes_is_api_true() -> None:
+    """A URL-traffic reject (is_url_traffic_error=True) routes with is_api=True.
+
+    Proves that _route_reject_to_log forwards is_url_traffic_error to
+    _emit_payload as is_api=True, so the APIFilter routes the record to
+    api.log rather than error.log.
+    """
+    reject = _make_reject(
+        source="https://api.example.com/data",
+        error_kind="ReadTimeout",
+        message="timed out",
+        host="api.example.com",
+        is_url_traffic_error=True,
+    )
+    mock_logger = MagicMock(spec=logging.Logger)
+    mock_logger.isEnabledFor.return_value = True
+
+    with patch("logging.getLogger", return_value=mock_logger):
+        _route_reject_to_log("TestLogger", reject)
+
+    mock_logger.log.assert_called_once()
+    extra = mock_logger.log.call_args[1]["extra"]
+    assert extra["is_api"] is True
+
+
+def test_route_reject_format_error_passes_is_api_false() -> None:
+    """A parse/format reject (is_url_traffic_error=False) routes with is_api=False.
+
+    Proves that IncorporatorFormatError rejects, canal-layer skips, and other
+    non-URL-traffic failures are not forwarded to api.log — they stay in
+    error.log via the default is_api=False path.
+    """
+    reject = _make_reject(
+        source="https://api.example.com/malformed",
+        error_kind="IncorporatorFormatError",
+        message="JSON parse error",
+        host="api.example.com",
+        is_url_traffic_error=False,
+    )
+    mock_logger = MagicMock(spec=logging.Logger)
+    mock_logger.isEnabledFor.return_value = True
+
+    with patch("logging.getLogger", return_value=mock_logger):
+        _route_reject_to_log("TestLogger", reject)
+
+    mock_logger.log.assert_called_once()
+    extra = mock_logger.log.call_args[1]["extra"]
+    assert extra["is_api"] is False

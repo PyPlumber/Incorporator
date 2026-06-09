@@ -239,13 +239,17 @@ def _route_scheduler_event_to_log(
 
 
 def _route_reject_to_log(cls_name: str, reject: RejectEntry) -> None:
-    """Route one RejectEntry to error log with structured edge and HTTP metadata.
+    """Route one RejectEntry to disk with structured edge and HTTP metadata.
 
     Always logs at ERROR level — every :class:`RejectEntry` represents a
     scheduler-level skip or HTTP failure that the caller's retry logic
-    should be able to observe.  The ``reject`` dict is attached as a
-    top-level JSON key so :meth:`LoggingMixin.get_error` consumers can
-    inspect the full structured record without parsing the message string.
+    should be able to observe.  Destination splits on
+    ``reject.is_url_traffic_error``: URL internet-traffic rejects (httpx
+    HTTP-status / transport failures) route to ``api.log``; all other
+    rejects (parse, file, fjord-seed, canal skip) stay in ``error.log``.
+    The ``reject`` dict is attached as a top-level JSON key so
+    :meth:`LoggingMixin.get_rejects` (which reads both files) can inspect
+    the full structured record without parsing the message string.
 
     Args:
         cls_name: Logger name — typically ``LoggedTideweaver._logger_name``.
@@ -257,7 +261,9 @@ def _route_reject_to_log(cls_name: str, reject: RejectEntry) -> None:
         f"status_code:{reject.status_code}"
     )
     msg = str(reject)
-    _emit_payload(cls_name, logging.ERROR, msg, "reject", reject.model_dump(mode="json"), meta)
+    _emit_payload(
+        cls_name, logging.ERROR, msg, "reject", reject.model_dump(mode="json"), meta, is_api=reject.is_url_traffic_error
+    )
 
 
 def _cleanup_listeners() -> None:
@@ -580,6 +586,14 @@ class LoggingMixin:
         empty list rather than raising.  Tails
         ``logs/<ClassName>_error.log`` in a worker thread via
         :func:`asyncio.to_thread` so the event loop is never blocked.
+
+        Note:
+            URL internet-traffic errors (httpx transport and HTTP-status
+            failures where ``RejectEntry.is_url_traffic_error`` is ``True``)
+            route to ``<ClassName>_api.log`` and are accessible via
+            :meth:`get_api`.  This method reads only ``error.log`` and will
+            NOT return those records.  Use :meth:`get_rejects` to retrieve
+            the union of rejects from both files.
         """
 
         def _read_disk() -> list[dict[str, Any]]:
@@ -606,11 +620,17 @@ class LoggingMixin:
 
     @classmethod
     async def get_rejects(cls) -> list[dict[str, Any]]:
-        """Pull every reject this class has logged from ``logs/<ClassName>_error.log``.
+        """Pull every reject this class has logged, from both ``error.log`` and ``api.log``.
 
         Reach for ``get_rejects()`` after an overnight pipeline to iterate
         over every HTTP failure, fjord seed error, or canal skip that was
-        serialised to the error log as a structured ``reject`` record.
+        serialised to the logs as a structured ``reject`` record.
+
+        URL internet-traffic rejects (``is_url_traffic_error=True``) land in
+        ``<ClassName>_api.log``; all other rejects (parse errors, fjord seed
+        errors, canal-layer skips) land in ``<ClassName>_error.log``.  This
+        method reads both files and returns the combined list so callers need
+        not know which file a particular reject landed in.
 
         Example::
 
@@ -620,15 +640,74 @@ class LoggingMixin:
                 print(reject["source"], reject["error_kind"])
 
         Records contain a top-level ``"reject"`` key whose value matches the
-        :class:`~incorporator.rejects.RejectEntry` model dump.  The full
-        error log is **not** returned — only records that carry a ``"reject"``
-        key (as written by :func:`_route_reject_to_log`).  Safe to call when
-        no rejects have been logged yet — returns an empty list rather than
-        raising.  Tails ``logs/<ClassName>_error.log`` in a worker thread via
+        :class:`~incorporator.rejects.RejectEntry` model dump.  Safe to call
+        when no rejects have been logged yet — returns an empty list rather than
+        raising.  Reads both log files in a worker thread via
         :func:`asyncio.to_thread` so the event loop is never blocked.
         """
-        filename = _safe_log_filename(cls.__name__, "error.log")
-        return await asyncio.to_thread(_read_filtered, filename, "reject")
+
+        def _read_both() -> list[dict[str, Any]]:
+            error_file = _safe_log_filename(cls.__name__, "error.log")
+            api_file = _safe_log_filename(cls.__name__, "api.log")
+            return _read_filtered(error_file, "reject") + _read_filtered(api_file, "reject")
+
+        return await asyncio.to_thread(_read_both)
+
+    @classmethod
+    async def get_api(cls) -> list[dict[str, Any]]:
+        """Pull all records from ``logs/<ClassName>_api.log``.
+
+        ``api.log`` accumulates two kinds of records:
+
+        - Hand-called :meth:`log_api` entries — outbound HTTP audit traces,
+          request/response metadata, and any record the user explicitly routes
+          to the API log.
+        - URL internet-traffic error rejects — :class:`~incorporator.rejects.RejectEntry`
+          records where ``is_url_traffic_error=True`` (httpx HTTP-status 4xx/5xx
+          and transport failures).  These are routed here by
+          :func:`_route_reject_to_log` so that network-level rejections are
+          separated from parse errors and canal-layer skips (which stay in
+          ``error.log``).
+
+        Use :meth:`get_rejects` to retrieve the union of all reject records
+        from both ``api.log`` and ``error.log``.
+
+        Example::
+
+            api_records = await Launch.get_api()
+            for rec in api_records:
+                if "reject" in rec:
+                    print("URL error:", rec["reject"]["source"])
+                else:
+                    print("API record:", rec.get("msg"))
+
+        Safe to call when no records have been logged yet — returns an empty
+        list rather than raising.  Tails ``logs/<ClassName>_api.log`` in a
+        worker thread via :func:`asyncio.to_thread` so the event loop is never
+        blocked.
+        """
+
+        def _read_disk() -> list[dict[str, Any]]:
+            filename = _safe_log_filename(cls.__name__, "api.log")
+            path = Path(filename).resolve()
+
+            if not path.is_file():
+                return []
+
+            records: list[dict[str, Any]] = []
+            try:
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            try:
+                                records.append(_orjson_mod.loads(line))
+                            except (json.JSONDecodeError, ValueError):
+                                pass
+            except OSError:
+                pass
+            return records
+
+        return await asyncio.to_thread(_read_disk)
 
     # --- CLASS-LEVEL LOGGING (For Factory Methods like export) ---
 
@@ -909,6 +988,9 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
         result = await super().incorp(*args, **kwargs)
 
         if enable_logging:
+            if isinstance(result, IncorporatorList) and result.rejects:
+                for reject in result.rejects:
+                    _route_reject_to_log(cls.__name__, reject)
             if isinstance(result, list) and result:
                 setup_class_logger(result[0].__class__)
             elif not isinstance(result, list):
@@ -947,9 +1029,15 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             Same as :meth:`Incorporator.refresh` — a single instance or an
             :class:`IncorporatorList`.
         """
+        if enable_logging:
+            setup_class_logger(cls)
+
         result = await super().refresh(*args, **kwargs)
 
         if enable_logging:
+            if isinstance(result, IncorporatorList) and result.rejects:
+                for reject in result.rejects:
+                    _route_reject_to_log(cls.__name__, reject)
             if isinstance(result, list):
                 if result:
                     setup_class_logger(result[0].__class__)
