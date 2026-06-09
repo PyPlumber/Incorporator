@@ -355,3 +355,80 @@ def test_analyze_error_generic_schema(capsys: pytest.CaptureFixture[str]) -> Non
     analyze_error(CustomError("something exploded"))
     captured = capsys.readouterr().out
     assert "schema or configuration error" in captured
+
+
+# ==========================================
+# 3b. analyze_error — isinstance classification (Commit C')
+# ==========================================
+
+
+def test_analyze_error_isinstance_http_status_401(capsys: pytest.CaptureFixture[str]) -> None:
+    """IncorporatorNetworkError with HTTPStatusError __cause__ routes via isinstance, not string name.
+
+    Proves that replacing type().__name__ string tests with isinstance checks produces
+    identical hint output for the HTTP 401 path.
+    """
+    req = httpx.Request("GET", "https://api.example.com")
+    resp = httpx.Response(401, request=req)
+    cause = httpx.HTTPStatusError("401 Unauthorized", request=req, response=resp)
+
+    err = IncorporatorNetworkError("HTTP 401")
+    err.__cause__ = cause
+
+    analyze_error(err)
+    out = capsys.readouterr().out
+    assert "Auth Blocked" in out
+    assert "Authorization" in out
+
+
+def test_analyze_error_isinstance_connect_error(capsys: pytest.CaptureFixture[str]) -> None:
+    """IncorporatorNetworkError with ConnectError __cause__ routes via isinstance.
+
+    ConnectError is a leaf class under httpx.TransportError; isinstance covers
+    it directly without needing to match a string name.
+    """
+    cause = httpx.ConnectError("connection refused")
+
+    err = IncorporatorNetworkError("connect failed")
+    err.__cause__ = cause
+
+    analyze_error(err)
+    out = capsys.readouterr().out
+    assert "Connection Refused" in out
+
+
+def test_analyze_error_isinstance_timeout_exception_covers_subtypes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """IncorporatorNetworkError with ReadTimeout __cause__ routes via isinstance(cause, httpx.TimeoutException).
+
+    httpx.TimeoutException is the base for ReadTimeout, ConnectTimeout, WriteTimeout,
+    and PoolTimeout. isinstance covers the whole subtree, not just the names listed
+    in the old string-comparison tuple.
+    """
+    cause = httpx.ReadTimeout("timed out reading response")
+
+    err = IncorporatorNetworkError("read timeout")
+    err.__cause__ = cause
+
+    analyze_error(err)
+    out = capsys.readouterr().out
+    assert "Connection Timed Out" in out
+
+
+def test_analyze_error_isinstance_write_timeout_also_routes_to_timeout_hint(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """WriteTimeout (not in the old string list) now routes to the timeout hint via isinstance.
+
+    WriteTimeout is a httpx.TimeoutException subtype that was silently falling through
+    to the generic 'Check your URL' branch before the isinstance fix.
+    """
+    cause = httpx.WriteTimeout("timed out writing request")
+
+    err = IncorporatorNetworkError("write timeout")
+    err.__cause__ = cause
+
+    analyze_error(err)
+    out = capsys.readouterr().out
+    assert "Connection Timed Out" in out

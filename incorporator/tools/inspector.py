@@ -569,9 +569,8 @@ def analyze_error(e: Exception) -> None:
 
     if isinstance(e, IncorporatorNetworkError):
         cause = getattr(e, "__cause__", None)
-        cause_name = type(cause).__name__ if cause else ""
 
-        if cause_name == "HTTPStatusError":
+        if isinstance(cause, httpx.HTTPStatusError):
             status = getattr(getattr(cause, "response", None), "status_code", 0)
             if status in (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN):
                 p(f"Auth Blocked (HTTP {status}): Pass `headers={{'Authorization': 'Bearer ...'}}`.")
@@ -580,14 +579,14 @@ def analyze_error(e: Exception) -> None:
             else:
                 p(f"Server returned HTTP {status}. Verify the endpoint requirements.")
 
-        elif cause_name == "ConnectError":
+        elif isinstance(cause, httpx.ConnectError):
             cause_str = str(cause).upper()
             if "SSL" in cause_str or "CERTIFICATE" in cause_str:
                 p("SSL Verification Failed: Add `ignore_ssl=True` to bypass proxies.")
             else:
                 p("Connection Refused: Verify the URL or check if a VPN is required.")
 
-        elif cause_name in ("TimeoutException", "ReadTimeout", "ConnectTimeout"):
+        elif isinstance(cause, httpx.TimeoutException):
             p("Connection Timed Out: The server is unresponsive. Add `timeout=30.0` if it's just slow.")
         else:
             p("Check your URL or network connection.")
