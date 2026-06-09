@@ -354,7 +354,7 @@ class TestRejectEntryNewFields:
             status_code=429,
             cooldown_sec=12.0,
         )
-        assert str(entry) == "HTTPStatusError: https://x.com [HTTP 429] — 429 Too Many Requests"
+        assert str(entry) == "HTTPStatusError: https://x.com [HTTP 429 Too Many Requests] — 429 Too Many Requests"
 
     def test_build_reject_entry_populates_host_and_cooldown(self) -> None:
         """fetch._build_reject_entry populates host, status_code, and cooldown_sec."""

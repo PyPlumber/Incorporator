@@ -22,6 +22,7 @@ rejects are always-on and immediate (available the moment
 
 from __future__ import annotations
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -170,7 +171,11 @@ class RejectEntry(BaseModel):
         if self.from_name is not None:
             parts.append(f" ({self.from_name}->{self.to_name})")
         if self.status_code is not None:
-            parts.append(f" [HTTP {self.status_code}]")
+            phrase = httpx.codes.get_reason_phrase(self.status_code)
+            if phrase:
+                parts.append(f" [HTTP {self.status_code} {phrase}]")
+            else:
+                parts.append(f" [HTTP {self.status_code}]")
         if self.message and self.message != self.source:
             parts.append(f" — {self.message[:120]}")
         return "".join(parts)

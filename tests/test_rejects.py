@@ -233,7 +233,7 @@ def test_cooldown_sec_coexists_with_retry_after() -> None:
 
 
 def test_str_fully_decorated_with_all_optional_fields() -> None:
-    """``str(entry)`` renders the fully decorated form: kind, source, edge, HTTP status, and message."""
+    """``str(entry)`` renders the fully decorated form: kind, source, edge, HTTP status with phrase, and message."""
     entry = RejectEntry(
         source="https://x",
         error_kind="HTTPStatusError",
@@ -244,7 +244,9 @@ def test_str_fully_decorated_with_all_optional_fields() -> None:
         to_name="DestB",
         cooldown_sec=15.0,
     )
-    assert str(entry) == "HTTPStatusError: https://x (SourceA->DestB) [HTTP 429] — 429 Too Many Requests"
+    assert (
+        str(entry) == "HTTPStatusError: https://x (SourceA->DestB) [HTTP 429 Too Many Requests] — 429 Too Many Requests"
+    )
 
 
 def test_build_reject_entry_populates_host_and_status_code() -> None:
@@ -337,10 +339,34 @@ def test_str_renderer_is_cp1252_safe() -> None:
         to_name="DestB",
     )
     rendered = str(entry)
+    # The phrase "Too Many Requests" is ASCII/cp1252-safe.
+    assert "Too Many Requests" in rendered
     try:
         rendered.encode("cp1252")
     except UnicodeEncodeError as exc:
         raise AssertionError(f"str(RejectEntry) is not cp1252-safe: {exc}\nRendered: {rendered!r}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Commit D' — reason_phrase enrichment
+# ---------------------------------------------------------------------------
+
+
+def test_str_known_phrase_included() -> None:
+    """``str(entry)`` includes the httpx reason phrase for a known status code."""
+    entry = RejectEntry(source="https://x", status_code=500)
+    rendered = str(entry)
+    assert "[HTTP 500 Internal Server Error]" in rendered
+
+
+def test_str_unknown_code_graceful_fallback() -> None:
+    """``str(entry)`` omits the phrase for an unknown code (e.g. Cloudflare 522)."""
+    entry = RejectEntry(source="https://x", status_code=522)
+    rendered = str(entry)
+    # No phrase available; render code only.
+    assert "[HTTP 522]" in rendered
+    # Must not contain an empty trailing space before the bracket.
+    assert "[HTTP 522 ]" not in rendered
 
 
 # Suppress an unused-import lint when typing checkers narrow Type.
