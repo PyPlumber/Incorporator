@@ -41,6 +41,8 @@ class TestWaveNewFields:
             processing_time_sec=0.01,
             source_url="https://api.example.com/coins",
             bytes_processed=None,
+            bytes_downloaded=None,
+            http_fetch_time_sec=None,
             http_retry_count=0,
             validation_error_count=0,
             schema_cache_hit=True,
@@ -59,6 +61,8 @@ class TestWaveNewFields:
             processing_time_sec=0.02,
             source_url=None,
             bytes_processed=8192,
+            bytes_downloaded=None,
+            http_fetch_time_sec=None,
             http_retry_count=0,
             validation_error_count=0,
             schema_cache_hit=True,
@@ -77,6 +81,8 @@ class TestWaveNewFields:
             processing_time_sec=0.5,
             source_url=None,
             bytes_processed=None,
+            bytes_downloaded=None,
+            http_fetch_time_sec=None,
             http_retry_count=3,
             validation_error_count=0,
             schema_cache_hit=True,
@@ -95,6 +101,8 @@ class TestWaveNewFields:
             processing_time_sec=0.1,
             source_url=None,
             bytes_processed=None,
+            bytes_downloaded=None,
+            http_fetch_time_sec=None,
             http_retry_count=0,
             validation_error_count=5,
             schema_cache_hit=True,
@@ -113,6 +121,8 @@ class TestWaveNewFields:
             processing_time_sec=0.05,
             source_url=None,
             bytes_processed=None,
+            bytes_downloaded=None,
+            http_fetch_time_sec=None,
             http_retry_count=0,
             validation_error_count=0,
             schema_cache_hit=False,
@@ -131,6 +141,8 @@ class TestWaveNewFields:
             processing_time_sec=0.2,
             source_url=None,
             bytes_processed=None,
+            bytes_downloaded=None,
+            http_fetch_time_sec=None,
             http_retry_count=0,
             validation_error_count=0,
             schema_cache_hit=True,
@@ -144,6 +156,8 @@ class TestWaveNewFields:
         wave = Wave(chunk_index=1, rows_processed=0, processing_time_sec=0.0)
         assert wave.source_url is None
         assert wave.bytes_processed is None
+        assert wave.bytes_downloaded is None
+        assert wave.http_fetch_time_sec is None
         assert wave.http_retry_count == 0
         assert wave.validation_error_count == 0
         assert wave.schema_cache_hit is True
@@ -159,6 +173,8 @@ class TestWaveNewFields:
             processing_time_sec=0.1,
             source_url="https://x.com",
             bytes_processed=1024,
+            bytes_downloaded=None,
+            http_fetch_time_sec=None,
             http_retry_count=1,
             validation_error_count=0,
             schema_cache_hit=False,

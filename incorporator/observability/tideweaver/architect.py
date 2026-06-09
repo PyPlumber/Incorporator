@@ -1036,19 +1036,39 @@ class TuningReport(BaseModel):
 def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
     """Analyse Wave timing records and recommend chunk_size adjustments.
 
-    Groups waves by ``source_url``, computes p50 and p99 of
-    ``processing_time_sec`` per group, and emits a hint when the
-    distribution is either far too fast (chunk too small) or too slow
-    (memory pressure).
+    Groups waves by ``source_url``, then chooses between two signal paths:
+
+    **Split-time path** (when all waves in a group carry ``http_fetch_time_sec``):
+    Computes p50/p99 of the parse-only remainder
+    (``processing_time_sec - http_fetch_time_sec``).  Thresholds are calibrated
+    for the parse-only slice: CPython ``json.loads`` throughput is ~300-500 MB/s
+    on 3.11+ (Python Performance Benchmark Suite), so a 100 KB chunk parses in
+    ~0.2 ms and a 10 MB chunk in ~25 ms.  Practically measured:
+    - ``p50_parse < 0.001`` (1 ms): chunk is almost certainly too small; parse
+      completes in the noise floor and all measurable latency is per-request
+      overhead.
+    - ``p99_parse > 0.100`` (100 ms): chunk is too large; the parse/validate
+      pass dominates each tick and memory footprint per chunk is high.
+
+    **End-to-end fallback path** (when ``http_fetch_time_sec`` is ``None`` for
+    any wave in the group): uses ``processing_time_sec`` directly with the
+    original thresholds (p50 < 10 ms / p99 > 500 ms), which were calibrated
+    for the full round-trip including HTTP latency.
 
     Args:
         waves: List of :class:`~incorporator.Wave` records from a run.
 
     Returns:
-        List of :class:`TuningHint` — one per source group that
+        List of :class:`TuningHint` -- one per source group that
         triggered a rule, including INFO hints for well-tuned or
         data-insufficient groups.
     """
+    # Thresholds for the parse-only slice (HTTP stripped):
+    # Derived from CPython json.loads ~300-500 MB/s; see docstring for basis.
+    _PARSE_TOO_FAST_P50 = 0.001  # 1 ms -- chunk effectively instant to parse
+    _PARSE_TOO_FAST_P99 = 0.005  # 5 ms -- p99 still in the noise floor
+    _PARSE_MEMORY_P99 = 0.100  # 100 ms -- parse dominates, chunk is too large
+
     # Group by source_url (may be None for file-mode or one-shot sources).
     groups: dict[str | None, list[Wave]] = {}
     for w in waves:
@@ -1073,60 +1093,137 @@ def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
             )
             continue
 
-        times = [w.processing_time_sec for w in group]
-        p50 = _percentile(times, 50)
-        p99 = _percentile(times, 99)
+        # Use split-time path only when every wave carries http_fetch_time_sec.
+        http_times = [w.http_fetch_time_sec for w in group]
+        use_split = all(t is not None for t in http_times)
 
-        if p50 < 0.010 and p99 < 0.050:
-            hints.append(
-                TuningHint.model_construct(
-                    severity="high",
-                    knob="chunk_size",
-                    scope=scope,
-                    current_value=None,
-                    recommended_value="raise from current (target ~50 ms p50)",
-                    signal=f"p50={p50 * 1000:.1f}ms, p99={p99 * 1000:.1f}ms — chunks finishing too fast",
-                    rationale=(
-                        f"p50={p50 * 1000:.1f}ms and p99={p99 * 1000:.1f}ms are both well below the 50ms target.\n"
-                        "Current chunk_size is not recoverable from Wave records alone"
-                        " — check the Stream/incorp call.\n"
-                        "Raising chunk_size reduces per-chunk overhead and improves throughput."
-                    ),
-                    sample_size=n,
+        if use_split:
+            # http_times is all non-None here (use_split guard); cast to float list.
+            http_times_f: list[float] = [t for t in http_times if t is not None]
+            parse_times = [w.processing_time_sec - h for w, h in zip(group, http_times_f, strict=True)]
+            p50 = _percentile(parse_times, 50)
+            p99 = _percentile(parse_times, 99)
+            p50_http = _percentile(http_times_f, 50)
+
+            if p50 < _PARSE_TOO_FAST_P50 and p99 < _PARSE_TOO_FAST_P99:
+                hints.append(
+                    TuningHint.model_construct(
+                        severity="high",
+                        knob="chunk_size",
+                        scope=scope,
+                        current_value=None,
+                        recommended_value="raise from current (target ~5 ms p50 parse)",
+                        signal=(
+                            f"p50_parse={p50 * 1000:.2f}ms, p99_parse={p99 * 1000:.2f}ms"
+                            f" (p50_http={p50_http * 1000:.1f}ms) — parse completes in noise floor"
+                        ),
+                        rationale=(
+                            f"Parse-only p50={p50 * 1000:.2f}ms and p99={p99 * 1000:.2f}ms"
+                            f" are both below the 1 ms / 5 ms thresholds calibrated for"
+                            f" CPython json.loads ~300–500 MB/s throughput.\n"
+                            f"HTTP round-trip p50={p50_http * 1000:.1f}ms dominates each chunk;"
+                            f" raising chunk_size amortises the per-request overhead."
+                        ),
+                        sample_size=n,
+                    )
                 )
-            )
-        elif p99 > 0.500:
-            hints.append(
-                TuningHint.model_construct(
-                    severity="med",
-                    knob="chunk_size",
-                    scope=scope,
-                    current_value=None,
-                    recommended_value="lower from current (memory pressure)",
-                    signal=f"p99={p99 * 1000:.1f}ms — chunks taking too long, possible memory pressure",
-                    rationale=(
-                        f"p99={p99 * 1000:.1f}ms exceeds 500ms, suggesting chunk_size is too large.\n"
-                        f"p50={p50 * 1000:.1f}ms. Lower chunk_size to reduce memory footprint per chunk."
-                    ),
-                    sample_size=n,
+            elif p99 > _PARSE_MEMORY_P99:
+                hints.append(
+                    TuningHint.model_construct(
+                        severity="med",
+                        knob="chunk_size",
+                        scope=scope,
+                        current_value=None,
+                        recommended_value="lower from current (parse/validate dominates)",
+                        signal=(f"p99_parse={p99 * 1000:.1f}ms — parse/validate pass is heavy"),
+                        rationale=(
+                            f"Parse-only p99={p99 * 1000:.1f}ms exceeds the 100 ms threshold"
+                            f" (HTTP stripped; HTTP p50={p50_http * 1000:.1f}ms).\n"
+                            f"chunk_size is too large: the parse/validate pass per chunk"
+                            f" exceeds what ~300–500 MB/s CPython json throughput implies"
+                            f" for a well-sized payload.  Lower chunk_size to reduce memory"
+                            f" footprint and per-chunk latency."
+                        ),
+                        sample_size=n,
+                    )
                 )
-            )
+            else:
+                hints.append(
+                    TuningHint.model_construct(
+                        severity="info",
+                        knob="chunk_size",
+                        scope=scope,
+                        current_value=None,
+                        recommended_value=None,
+                        signal=(
+                            f"well-tuned (split). p50_parse={p50 * 1000:.2f}ms,"
+                            f" p99_parse={p99 * 1000:.2f}ms, p50_http={p50_http * 1000:.1f}ms"
+                        ),
+                        rationale=(
+                            f"Parse-only p50={p50 * 1000:.2f}ms and p99={p99 * 1000:.2f}ms"
+                            f" are within the calibrated range.\n"
+                            "No chunk_size change recommended."
+                        ),
+                        sample_size=n,
+                    )
+                )
         else:
-            hints.append(
-                TuningHint.model_construct(
-                    severity="info",
-                    knob="chunk_size",
-                    scope=scope,
-                    current_value=None,
-                    recommended_value=None,
-                    signal=f"well-tuned. p50={p50 * 1000:.1f}ms, p99={p99 * 1000:.1f}ms",
-                    rationale=(
-                        f"p50={p50 * 1000:.1f}ms and p99={p99 * 1000:.1f}ms are within the target range.\n"
-                        "No chunk_size change recommended."
-                    ),
-                    sample_size=n,
+            # End-to-end fallback: original thresholds calibrated for full round-trip.
+            times = [w.processing_time_sec for w in group]
+            p50 = _percentile(times, 50)
+            p99 = _percentile(times, 99)
+
+            if p50 < 0.010 and p99 < 0.050:
+                hints.append(
+                    TuningHint.model_construct(
+                        severity="high",
+                        knob="chunk_size",
+                        scope=scope,
+                        current_value=None,
+                        recommended_value="raise from current (target ~50 ms p50)",
+                        signal=f"p50={p50 * 1000:.1f}ms, p99={p99 * 1000:.1f}ms — chunks finishing too fast",
+                        rationale=(
+                            f"p50={p50 * 1000:.1f}ms and p99={p99 * 1000:.1f}ms are both well below the"
+                            f" 50ms target.\n"
+                            "Current chunk_size is not recoverable from Wave records alone"
+                            " — check the Stream/incorp call.\n"
+                            "Raising chunk_size reduces per-chunk overhead and improves throughput."
+                        ),
+                        sample_size=n,
+                    )
                 )
-            )
+            elif p99 > 0.500:
+                hints.append(
+                    TuningHint.model_construct(
+                        severity="med",
+                        knob="chunk_size",
+                        scope=scope,
+                        current_value=None,
+                        recommended_value="lower from current (memory pressure)",
+                        signal=f"p99={p99 * 1000:.1f}ms — chunks taking too long, possible memory pressure",
+                        rationale=(
+                            f"p99={p99 * 1000:.1f}ms exceeds 500ms, suggesting chunk_size is too large.\n"
+                            f"p50={p50 * 1000:.1f}ms. Lower chunk_size to reduce memory footprint per chunk."
+                        ),
+                        sample_size=n,
+                    )
+                )
+            else:
+                hints.append(
+                    TuningHint.model_construct(
+                        severity="info",
+                        knob="chunk_size",
+                        scope=scope,
+                        current_value=None,
+                        recommended_value=None,
+                        signal=f"well-tuned. p50={p50 * 1000:.1f}ms, p99={p99 * 1000:.1f}ms",
+                        rationale=(
+                            f"p50={p50 * 1000:.1f}ms and p99={p99 * 1000:.1f}ms are within the target range.\n"
+                            "No chunk_size change recommended."
+                        ),
+                        sample_size=n,
+                    )
+                )
     return hints
 
 

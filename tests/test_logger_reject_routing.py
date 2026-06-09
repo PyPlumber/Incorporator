@@ -39,7 +39,7 @@ def _make_reject(
 
 
 def test_route_reject_http_error() -> None:
-    """HTTPStatusError with status_code=429 routes to ERROR with '[HTTP 429]' in the message."""
+    """HTTPStatusError with status_code=429 routes to ERROR with '[HTTP 429 Too Many Requests]' in the message."""
     reject = _make_reject(
         source="https://api.example.com/prices",
         error_kind="HTTPStatusError",
@@ -56,7 +56,7 @@ def test_route_reject_http_error() -> None:
     level_arg = mock_logger.log.call_args[0][0]
     assert level_arg == logging.ERROR
     msg = mock_logger.log.call_args[0][1]
-    assert "[HTTP 429]" in msg
+    assert "[HTTP 429 Too Many Requests]" in msg
     assert "HTTPStatusError" in msg
 
 

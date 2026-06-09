@@ -46,6 +46,8 @@ class _MockCls:
     inc_url: Optional[str] = "https://example.com/api"
     inc_file: Optional[str] = None
     _last_bytes_processed: Optional[int] = None
+    _last_bytes_downloaded: Optional[int] = None
+    _last_http_fetch_time_sec: Optional[float] = None
     _last_schema_cache_hit: bool = True
     _last_http_retry_count: int = 0
 

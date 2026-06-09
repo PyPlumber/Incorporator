@@ -41,7 +41,7 @@ _NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=_UTC)
 
 
 def _wave(processing_time_sec: float, source_url: str = "https://api.example.com/data") -> Wave:
-    """Build a minimal Wave with the given processing_time_sec."""
+    """Build a minimal Wave with the given processing_time_sec (no HTTP telemetry fields)."""
     return Wave.model_construct(
         chunk_index=0,
         operation="stream",
@@ -50,6 +50,32 @@ def _wave(processing_time_sec: float, source_url: str = "https://api.example.com
         processing_time_sec=processing_time_sec,
         source_url=source_url,
         bytes_processed=None,
+        bytes_downloaded=None,
+        http_fetch_time_sec=None,
+        http_retry_count=0,
+        validation_error_count=0,
+        schema_cache_hit=True,
+        conv_dict_time_sec=None,
+        timestamp=_NOW,
+    )
+
+
+def _wave_with_http(
+    processing_time_sec: float,
+    http_fetch_time_sec: float,
+    source_url: str = "https://api.example.com/data",
+) -> Wave:
+    """Build a Wave with both processing_time_sec and http_fetch_time_sec set."""
+    return Wave.model_construct(
+        chunk_index=0,
+        operation="stream",
+        rows_processed=10,
+        failed_sources=[],
+        processing_time_sec=processing_time_sec,
+        source_url=source_url,
+        bytes_processed=None,
+        bytes_downloaded=None,
+        http_fetch_time_sec=http_fetch_time_sec,
         http_retry_count=0,
         validation_error_count=0,
         schema_cache_hit=True,
@@ -194,6 +220,90 @@ def test_tune_chunk_size_well_tuned_emits_info() -> None:
     h = hints[0]
     assert h.severity == "info"
     assert "well-tuned" in h.signal
+
+
+# ---------------------------------------------------------------------------
+# _tune_chunk_size — split-time path (Commit E')
+# ---------------------------------------------------------------------------
+
+
+def test_tune_chunk_size_split_path_high_when_parse_too_fast() -> None:
+    """Split-time path fires HIGH when p50_parse < 1 ms and p99_parse < 5 ms.
+
+    30 waves with processing_time_sec=0.100 and http_fetch_time_sec=0.0995
+    give parse remainder ~0.5 ms p50 and p99 — below the 1 ms / 5 ms thresholds.
+    """
+    # total=100ms, http=99.5ms → parse=0.5ms
+    waves = [_wave_with_http(0.100, 0.0995) for _ in range(30)]
+    hints = _tune_chunk_size(waves)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "high"
+    assert "raise" in str(h.recommended_value).lower()
+    assert "parse" in h.signal.lower() or "p50_parse" in h.signal
+
+
+def test_tune_chunk_size_split_path_med_when_parse_heavy() -> None:
+    """Split-time path fires MED when p99_parse > 100 ms.
+
+    30 waves with processing_time_sec=0.300 and http_fetch_time_sec=0.050
+    give parse remainder p99 = 250 ms — above the 100 ms threshold.
+    """
+    # total=300ms, http=50ms → parse=250ms
+    waves = [_wave_with_http(0.300, 0.050) for _ in range(30)]
+    hints = _tune_chunk_size(waves)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "med"
+    assert "lower" in str(h.recommended_value).lower()
+
+
+def test_tune_chunk_size_split_path_info_when_well_tuned() -> None:
+    """Split-time path emits INFO when parse times are in the calibrated range.
+
+    30 waves with total=110ms, http=100ms → parse=10ms p50; within range.
+    """
+    # parse=10ms, well inside [1ms, 100ms]
+    waves = [_wave_with_http(0.110, 0.100) for _ in range(30)]
+    hints = _tune_chunk_size(waves)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "info"
+    assert "well-tuned" in h.signal.lower()
+
+
+def test_tune_chunk_size_fallback_when_http_fetch_time_sec_none() -> None:
+    """End-to-end fallback used when http_fetch_time_sec is None for any wave in the group.
+
+    Mixed group (some with, some without http_fetch_time_sec) falls back to
+    the end-to-end path: p50=5ms, p99<50ms → HIGH under old thresholds.
+    """
+    # Half the waves have HTTP telemetry, half don't → fallback to end-to-end.
+    waves = [_wave_with_http(0.005, 0.002) for _ in range(15)]
+    waves += [_wave(0.005) for _ in range(15)]
+    hints = _tune_chunk_size(waves)
+    assert len(hints) == 1
+    h = hints[0]
+    # End-to-end path: p50=5ms, p99<50ms → HIGH
+    assert h.severity == "high"
+    assert "raise" in str(h.recommended_value).lower()
+    # Signal uses end-to-end labels (no "parse" prefix).
+    assert "p50=" in h.signal
+
+
+def test_tune_chunk_size_all_none_http_uses_end_to_end_path() -> None:
+    """All waves with http_fetch_time_sec=None use the original end-to-end thresholds.
+
+    Regression guard: the None-fallback path must produce the same hint as
+    the original _tune_chunk_size implementation.
+    """
+    waves = [_wave(0.005) for _ in range(30)]
+    hints = _tune_chunk_size(waves)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "high"
+    # Original end-to-end signal string preserved.
+    assert "chunks finishing too fast" in h.signal
 
 
 # ---------------------------------------------------------------------------

@@ -126,14 +126,10 @@ def _is_retryable_status(exc: httpx.HTTPStatusError) -> bool:
         ``True`` for 5xx, HTTP 429, HTTP 408, and HTTP 425;
         ``False`` for all other 4xx.
     """
-    return (
-        exc.response.is_server_error
-        or exc.response.status_code
-        in (
-            httpx.codes.TOO_MANY_REQUESTS,
-            httpx.codes.REQUEST_TIMEOUT,
-            httpx.codes.TOO_EARLY,
-        )
+    return exc.response.is_server_error or exc.response.status_code in (
+        httpx.codes.TOO_MANY_REQUESTS,
+        httpx.codes.REQUEST_TIMEOUT,
+        httpx.codes.TOO_EARLY,
     )
 
 
@@ -736,6 +732,12 @@ async def _process_single_source(
         if chunk_cls is not None:
             try:
                 chunk_cls._last_bytes_processed = len(res.content)
+                chunk_cls._last_bytes_downloaded = res.num_bytes_downloaded
+                # res.elapsed raises RuntimeError when not set (e.g. mock responses).
+                try:
+                    chunk_cls._last_http_fetch_time_sec = res.elapsed.total_seconds()
+                except RuntimeError:
+                    chunk_cls._last_http_fetch_time_sec = None
             except (AttributeError, TypeError):
                 pass  # Class doesn't carry the ClassVar (non-Incorporator caller); ignore.
         payload = await resolve_source_payload(

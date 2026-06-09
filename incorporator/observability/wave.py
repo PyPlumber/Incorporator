@@ -45,9 +45,24 @@ class Wave(BaseModel):
         source_url: Origin URL or file path the chunk was fetched from.
             Populated from the class-level ``inc_url`` or ``inc_file``
             at chunk close.  ``None`` for one-shot or non-URL sources.
-        bytes_processed: Raw byte count of the HTTP response body
-            (``len(response.content)``).  Populated after a successful
-            fetch; ``None`` for file-mode and error chunks.
+        bytes_processed: Decoded byte count of the response body
+            (``len(response.content)``) — post-decompression size, not
+            the wire bytes; see ``bytes_downloaded`` for the wire count.
+            Populated after a successful fetch; ``None`` for file-mode
+            and error chunks.
+        bytes_downloaded: Wire byte count transferred over the network
+            (``response.num_bytes_downloaded``).  Smaller than
+            ``bytes_processed`` when the response was compressed
+            (gzip/br/zstd); equal when the body was uncompressed.
+            ``None`` for file-mode, paginator-driven, and error chunks.
+        http_fetch_time_sec: Wall-clock seconds from the moment the HTTP
+            request was issued until the full response body was received
+            (``response.elapsed.total_seconds()``).  Isolates the network
+            round-trip from the parse/validate remainder so
+            ``_tune_chunk_size`` can reason on parse latency separately.
+            ``None`` when no HTTP response was available (file-mode,
+            paginator-driven, error chunks, or servers that omit the
+            timing header).
         http_retry_count: Number of Tenacity retry attempts beyond the
             first for this chunk.  Zero when the request succeeded on
             the first attempt.
@@ -90,7 +105,18 @@ class Wave(BaseModel):
     failed_sources: list[str] = Field(default_factory=list, description="Failed source URIs.")
     processing_time_sec: float = Field(..., description="Chunk processing duration in seconds.")
     source_url: str | None = Field(default=None, description="Origin URL or file path for the chunk.")
-    bytes_processed: int | None = Field(default=None, description="Raw byte count of the HTTP response body.")
+    bytes_processed: int | None = Field(
+        default=None,
+        description="Decoded byte count of the response body (len(response.content)) — post-decompression.",
+    )
+    bytes_downloaded: int | None = Field(
+        default=None,
+        description="Wire byte count transferred (response.num_bytes_downloaded); None for non-HTTP chunks.",
+    )
+    http_fetch_time_sec: float | None = Field(
+        default=None,
+        description="HTTP round-trip latency in seconds (response.elapsed); None for non-HTTP chunks.",
+    )
     http_retry_count: int = Field(default=0, description="Tenacity retry attempts beyond the first.")
     validation_error_count: int = Field(default=0, description="Pydantic ValidationError rows caught.")
     schema_cache_hit: bool = Field(

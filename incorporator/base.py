@@ -241,6 +241,20 @@ class Incorporator(BaseModel):
     #: :attr:`_last_schema_cache_hit`).
     _last_bytes_processed: ClassVar[int | None] = None
 
+    #: Wire byte count from the most recent HTTP fetch, sourced from
+    #: ``response.num_bytes_downloaded``.  Smaller than
+    #: ``_last_bytes_processed`` when the response was compressed;
+    #: equal when the body was uncompressed.  ``None`` for file-mode
+    #: sources and non-chunked call sites.
+    _last_bytes_downloaded: ClassVar[int | None] = None
+
+    #: HTTP round-trip latency in seconds from the most recent HTTP fetch,
+    #: sourced from ``response.elapsed.total_seconds()``.  Isolates the
+    #: network time from the parse/validate remainder for ``_tune_chunk_size``.
+    #: ``None`` for file-mode sources, servers that omit the timing header,
+    #: and non-chunked call sites.
+    _last_http_fetch_time_sec: ClassVar[float | None] = None
+
     #: Tenacity retry attempts beyond the first for the most recent
     #: successful HTTP fetch by this class's chunked-pipeline call.
     #: Computed as ``retrying.statistics["attempt_number"] - 1`` (since

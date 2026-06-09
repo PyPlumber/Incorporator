@@ -53,6 +53,8 @@ def _wave(
         processing_time_sec=0.02,
         source_url="https://api.example.com/data",
         bytes_processed=None,
+        bytes_downloaded=None,
+        http_fetch_time_sec=None,
         http_retry_count=0,
         validation_error_count=0,
         schema_cache_hit=True,

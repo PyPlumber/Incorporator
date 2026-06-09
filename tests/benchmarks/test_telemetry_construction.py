@@ -33,6 +33,8 @@ def test_wave_construct_throughput() -> None:
             processing_time_sec=0.1,
             source_url=None,
             bytes_processed=None,
+            bytes_downloaded=None,
+            http_fetch_time_sec=None,
             http_retry_count=0,
             validation_error_count=0,
             schema_cache_hit=True,

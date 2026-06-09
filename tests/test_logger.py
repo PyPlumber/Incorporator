@@ -468,7 +468,7 @@ def test_route_wave_to_log_skips_zero_row_no_failure(
 
 
 def test_wave_model_dump_includes_new_fields() -> None:
-    """model_dump(mode='json') includes all six new Wave fields without breaking existing keys."""
+    """model_dump(mode='json') includes all Wave fields, including bytes_downloaded and http_fetch_time_sec."""
     from incorporator.observability.wave import Wave
 
     wave = Wave.model_construct(
@@ -479,6 +479,8 @@ def test_wave_model_dump_includes_new_fields() -> None:
         processing_time_sec=0.1,
         source_url="https://api.example.com/data",
         bytes_processed=4096,
+        bytes_downloaded=3800,
+        http_fetch_time_sec=0.085,
         http_retry_count=2,
         validation_error_count=1,
         schema_cache_hit=False,
@@ -491,13 +493,16 @@ def test_wave_model_dump_includes_new_fields() -> None:
     assert dumped["operation"] == "chunk"
     assert dumped["rows_processed"] == 42
     assert dumped["processing_time_sec"] == 0.1
-    # New fields present.
+    # Previously-new fields.
     assert dumped["source_url"] == "https://api.example.com/data"
     assert dumped["bytes_processed"] == 4096
     assert dumped["http_retry_count"] == 2
     assert dumped["validation_error_count"] == 1
     assert dumped["schema_cache_hit"] is False
     assert dumped["conv_dict_time_sec"] == 0.005
+    # New E' fields.
+    assert dumped["bytes_downloaded"] == 3800
+    assert dumped["http_fetch_time_sec"] == pytest.approx(0.085)
 
 
 def test_tide_model_dump_includes_new_fields() -> None:
