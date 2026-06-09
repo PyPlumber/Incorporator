@@ -57,17 +57,20 @@ async def parent_child_demo() -> None:
         inc_name="name",
         timeout=5,
     )
-    print(f"✅ Loaded {len(launches)} upcoming launches.")
 
     # Graceful degradation: if the feed is unreachable there's nothing to drill —
     # surface why (per-source RejectEntry detail) and stop, rather than fanning out
-    # into more failing requests and printing an empty table.
+    # into more failing requests and printing an empty table.  Checked BEFORE the
+    # success line so a failed feed doesn't print "✅ Loaded 0" and then immediately
+    # contradict it with the unreachable notice.
     if not launches:
         print("\n⚠️  SpaceX feed unreachable — no launches loaded.")
         for entry in launches.rejects:
             print(f"   • {entry}")
         print("   The pipeline is fine; the upstream API is down. Re-run when it recovers.\n")
         return
+
+    print(f"✅ Loaded {len(launches)} upcoming launches.")
 
     # Concurrent fan-out — dedup collapses ~36 child refs into ~5 unique IDs.
     rockets, pads = await asyncio.gather(
