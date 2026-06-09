@@ -1197,3 +1197,106 @@ async def test_execute_request_network_error_wait_is_bounded(
     )
 
     await asyncio.sleep(0)
+
+
+# ----------------------------------------------------------------------
+# Commit B — 408 / 425 are now retryable (behavior change)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_request_408_retried_up_to_inner_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """408 Request Timeout retries up to _HTTP_INNER_STOP total attempts.
+
+    Proves that _is_retryable_status now includes 408, so the stop callable
+    exhausts at exactly _HTTP_INNER_STOP (8) and raises HTTPStatusError.
+    """
+    import asyncio
+
+    from incorporator.io.fetch import execute_request
+    from incorporator.observability.tideweaver._retry_defaults import _HTTP_INNER_STOP
+
+    monkeypatch.chdir(tmp_path)
+    call_count = 0
+
+    def _408_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(408, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_408_transport)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await execute_request(url="https://slow.example.com/api", client=client)
+
+    assert call_count == _HTTP_INNER_STOP, (
+        f"408 should exhaust full inner budget {_HTTP_INNER_STOP}, got {call_count}"
+    )
+
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_execute_request_425_retried_up_to_inner_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """425 Too Early retries up to _HTTP_INNER_STOP total attempts.
+
+    Proves that _is_retryable_status now includes 425, following the same
+    capped-retry path as 5xx and 429.
+    """
+    import asyncio
+
+    from incorporator.io.fetch import execute_request
+    from incorporator.observability.tideweaver._retry_defaults import _HTTP_INNER_STOP
+
+    monkeypatch.chdir(tmp_path)
+    call_count = 0
+
+    def _425_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(425, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_425_transport)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await execute_request(url="https://early.example.com/api", client=client)
+
+    assert call_count == _HTTP_INNER_STOP, (
+        f"425 should exhaust full inner budget {_HTTP_INNER_STOP}, got {call_count}"
+    )
+
+    await asyncio.sleep(0)
+
+
+def test_is_retryable_status_retries_408() -> None:
+    """HTTP 408 (Request Timeout) is now retryable."""
+    from incorporator.io.fetch import _is_retryable_status
+
+    req = httpx.Request("GET", "https://example.com/")
+    resp = httpx.Response(408, request=req)
+    exc = httpx.HTTPStatusError("408", request=req, response=resp)
+    assert _is_retryable_status(exc) is True
+
+
+def test_is_retryable_status_retries_425() -> None:
+    """HTTP 425 (Too Early) is now retryable."""
+    from incorporator.io.fetch import _is_retryable_status
+
+    req = httpx.Request("GET", "https://example.com/")
+    resp = httpx.Response(425, request=req)
+    exc = httpx.HTTPStatusError("425", request=req, response=resp)
+    assert _is_retryable_status(exc) is True
+
+
+def test_is_retryable_status_fatal_404_unchanged() -> None:
+    """HTTP 404 is still fatal after the 408/425 addition."""
+    from incorporator.io.fetch import _is_retryable_status
+
+    req = httpx.Request("GET", "https://example.com/")
+    resp = httpx.Response(404, request=req)
+    exc = httpx.HTTPStatusError("404", request=req, response=resp)
+    assert _is_retryable_status(exc) is False

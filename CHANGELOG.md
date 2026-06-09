@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   / ReadTimeout-GET exhaust in exactly `_HTTP_NETWORK_RETRY_STOP=3` total
   attempts with total sleep ≤ `3 × 3 = 9 s`; 5xx=8 attempts, 429=8 attempts,
   404=1 attempt, POST-ReadTimeout=1 attempt are all unchanged.
+- **HTTP 408 / 425 now retry like transient server errors** (`incorporator/io/fetch.py`):
+  `_is_retryable_status` now includes `408 Request Timeout` and `425 Too Early`
+  alongside existing 5xx and 429 codes.  Both are capped at `_HTTP_INNER_STOP = 8`
+  attempts via the same stop callable used by 5xx; exhaustion raises as
+  `IncorporatorNetworkError` (same path as exhausted 5xx, no change to the
+  soft-skip vs raise policy).
 - **Empty-parent child-drill short-circuit** (`incorporator/schema/factory.py`):
   `child_incorp` now returns an empty `IncorporatorList` immediately when the
   parent dataset yields zero child IDs, without issuing any HTTP request.

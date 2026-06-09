@@ -104,17 +104,37 @@ _IDEMPOTENT_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "PUT", "DELETE",
 def _is_retryable_status(exc: httpx.HTTPStatusError) -> bool:
     """Return True when the HTTP status warrants a retry.
 
-    Retries 5xx server errors and 429 rate-limiting.  All other 4xx client
-    errors are immediately fatal — retrying them cannot succeed and burns the
-    budget.
+    Retries 5xx server errors, 429 rate-limiting, 408 Request Timeout, and
+    425 Too Early.  All other 4xx client errors are immediately fatal —
+    retrying them cannot succeed and burns the budget.
+
+    408 is included because it is the HTTP-layer equivalent of a network
+    ReadTimeout: the server acknowledges the connection but did not receive the
+    full request in time; the condition is transient and idempotent-safe.
+
+    425 is included because it signals that the server is not yet ready to
+    process the request (TLS early-data / replay-protection); a brief backoff
+    and retry resolves the condition.
+
+    Exhausted 408/425 retries raise as :class:`IncorporatorNetworkError` via
+    the same non-429 path at ``_safe_execute`` — consistent with exhausted 5xx.
 
     Args:
         exc: The :class:`httpx.HTTPStatusError` whose response status is tested.
 
     Returns:
-        ``True`` for 5xx responses and HTTP 429; ``False`` for all other 4xx.
+        ``True`` for 5xx, HTTP 429, HTTP 408, and HTTP 425;
+        ``False`` for all other 4xx.
     """
-    return exc.response.is_server_error or exc.response.status_code == httpx.codes.TOO_MANY_REQUESTS
+    return (
+        exc.response.is_server_error
+        or exc.response.status_code
+        in (
+            httpx.codes.TOO_MANY_REQUESTS,
+            httpx.codes.REQUEST_TIMEOUT,
+            httpx.codes.TOO_EARLY,
+        )
+    )
 
 
 def _is_network_class_error(exc: BaseException, method: str) -> bool:
