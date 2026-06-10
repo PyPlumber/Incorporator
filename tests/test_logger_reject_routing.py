@@ -1,4 +1,4 @@
-"""Unit tests for _route_reject_to_log and the JSONFormatter 'reject' key."""
+"""Unit tests for _route_reject_to_log, _route_to_log (RejectEntry), and the JSONFormatter 'reject' key."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from incorporator.observability.logger import JSONFormatter, _route_reject_to_log
+from incorporator.observability.logger import JSONFormatter, _route_reject_to_log, _route_to_log
 from incorporator.rejects import RejectEntry
 
 
@@ -102,6 +102,7 @@ def test_route_reject_json_dump_has_reject_key() -> None:
         exc_info=None,
     )
     record.reject = dump  # type: ignore[attr-defined]
+    record._payload_key = "reject"  # type: ignore[attr-defined]
     record.meta = 'class:"TestLogger"'  # type: ignore[attr-defined]
     record.is_api = False  # type: ignore[attr-defined]
 
@@ -217,3 +218,91 @@ def test_route_reject_format_error_passes_is_api_false() -> None:
     mock_logger.log.assert_called_once()
     extra = mock_logger.log.call_args[1]["extra"]
     assert extra["is_api"] is False
+
+
+# ---------------------------------------------------------------------------
+# _route_to_log dispatch — RejectEntry
+# ---------------------------------------------------------------------------
+
+
+def test_route_to_log_reject_url_traffic_is_api_true() -> None:
+    """_route_to_log with a URL-traffic RejectEntry produces is_api=True, matching the legacy wrapper.
+
+    Proves that the unified dispatcher forwards is_url_traffic_error → is_api
+    identically to _route_reject_to_log so the APIFilter routes the record to
+    api.log.
+    """
+    reject = _make_reject(
+        source="https://api.example.com/data",
+        error_kind="ReadTimeout",
+        message="timed out",
+        host="api.example.com",
+        is_url_traffic_error=True,
+    )
+    mock_logger = MagicMock(spec=logging.Logger)
+    mock_logger.isEnabledFor.return_value = True
+
+    with patch("logging.getLogger", return_value=mock_logger):
+        _route_to_log("TestLogger", reject)
+
+    mock_logger.log.assert_called_once()
+    extra = mock_logger.log.call_args[1]["extra"]
+    assert extra["is_api"] is True
+    assert extra["reject"]["error_kind"] == "ReadTimeout"
+
+
+def test_route_to_log_reject_format_error_is_api_false() -> None:
+    """_route_to_log with a non-URL-traffic RejectEntry produces is_api=False.
+
+    Mirrors test_route_reject_format_error_passes_is_api_false but calls the
+    unified dispatcher directly to prove behavior parity.
+    """
+    reject = _make_reject(
+        source="https://api.example.com/malformed",
+        error_kind="IncorporatorFormatError",
+        message="JSON parse error",
+        host="api.example.com",
+        is_url_traffic_error=False,
+    )
+    mock_logger = MagicMock(spec=logging.Logger)
+    mock_logger.isEnabledFor.return_value = True
+
+    with patch("logging.getLogger", return_value=mock_logger):
+        _route_to_log("TestLogger", reject)
+
+    mock_logger.log.assert_called_once()
+    extra = mock_logger.log.call_args[1]["extra"]
+    assert extra["is_api"] is False
+
+
+def test_route_to_log_reject_meta_shape() -> None:
+    """_route_to_log with a RejectEntry produces the same meta fields as the legacy wrapper.
+
+    Asserts that class/source/error_kind/from/to/host/status_code all appear
+    in the meta string emitted by the unified dispatcher.
+    """
+    reject = _make_reject(
+        source="https://api.example.com/prices",
+        error_kind="SurgeHalted",
+        from_name="prices",
+        to_name="arb",
+        host="api.example.com",
+        status_code=None,
+    )
+    mock_logger = MagicMock(spec=logging.Logger)
+    mock_logger.isEnabledFor.return_value = True
+
+    with patch("logging.getLogger", return_value=mock_logger):
+        _route_to_log("MyClass", reject)
+
+    mock_logger.log.assert_called_once()
+    extra = mock_logger.log.call_args[1]["extra"]
+    meta = extra["meta"]
+
+    assert 'class:"MyClass"' in meta
+    assert 'source:"https://api.example.com/prices"' in meta
+    assert 'error_kind:"SurgeHalted"' in meta
+    assert 'from:"prices"' in meta
+    assert 'to:"arb"' in meta
+    assert 'host:"api.example.com"' in meta
+    assert "status_code:None" in meta

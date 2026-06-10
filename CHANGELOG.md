@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.3] - 2026-06-08
 
+### Changed
+
+- **DRY logging refactor — commit 2: single `_route_to_log` router + generalized `JSONFormatter`**
+  (`incorporator/observability/logger.py`): the four per-type routing functions collapsed into a
+  single `_route_to_log(logger_name, record, *, extra_meta="")` dispatcher that handles
+  `Wave`, `Tide`, and `RejectEntry` with identical level thresholds, message strings, redaction,
+  and `is_api`/`is_tide` flags as the legacy functions. `_route_wave_to_log`,
+  `_route_tide_to_log`, and `_route_reject_to_log` are retained as 1-line wrappers so all
+  existing call sites remain syntactically unchanged. `_emit_payload` now stores the payload key
+  name in `record._payload_key`; `JSONFormatter.format` emits the structured payload generically
+  via that attribute — the four hardcoded `hasattr` branches are replaced with a single lookup,
+  so new payload types (e.g. `watershed_event` introduced in commit 4) require no formatter edit.
+  `_route_scheduler_event_to_log` is preserved as a standalone function (its distinct multi-arg
+  signature makes it a poor dispatch target). Behavior-preserving; no data-flow change.
+
 ### Fixed
 
 - **Phase-aware retry classifier — real async-path fix** (`incorporator/io/fetch.py`,

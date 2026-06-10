@@ -1,4 +1,4 @@
-"""Unit tests for _route_tide_to_log, TideFilter, and the JSONFormatter 'tide' key."""
+"""Unit tests for _route_tide_to_log, _route_to_log (Tide), TideFilter, and the JSONFormatter 'tide' key."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from incorporator.observability.logger import JSONFormatter, TideFilter, _route_tide_to_log
+from incorporator.observability.logger import JSONFormatter, TideFilter, _route_tide_to_log, _route_to_log
 from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
 from incorporator.observability.tideweaver.reasons import SkipReason, WakeReason
 from incorporator.observability.tideweaver.tide import Tide
@@ -130,6 +130,7 @@ def test_route_tide_json_dump_has_tide_key() -> None:
         exc_info=None,
     )
     record.tide = dump  # type: ignore[attr-defined]
+    record._payload_key = "tide"  # type: ignore[attr-defined]
     record.meta = tide.log_meta()  # type: ignore[attr-defined]
     record.is_api = False  # type: ignore[attr-defined]
 
@@ -224,3 +225,59 @@ def test_tide_filter_rejects_is_tide_false() -> None:
     )
     record.is_tide = False  # type: ignore[attr-defined]
     assert filt.filter(record) is False
+
+
+# ---------------------------------------------------------------------------
+# _route_to_log dispatch — Tide
+# ---------------------------------------------------------------------------
+
+
+def test_route_to_log_tide_debug() -> None:
+    """_route_to_log with a no-op Tide produces DEBUG level, matching the legacy wrapper.
+
+    Proves that the unified dispatcher derives the same level threshold as
+    _route_tide_to_log for the empty-fired / zero-rejects branch.
+    """
+    tide = _make_tide(fired=[], skipped=[], canal_rejects_added=0)
+    mock_logger = MagicMock(spec=logging.Logger)
+    mock_logger.isEnabledFor.return_value = True
+
+    with patch("logging.getLogger", return_value=mock_logger):
+        _route_to_log("TestLogger", tide)
+
+    mock_logger.log.assert_called_once()
+    assert mock_logger.log.call_args[0][0] == logging.DEBUG
+
+
+def test_route_to_log_tide_info() -> None:
+    """_route_to_log with a fired Tide produces INFO level, matching the legacy wrapper."""
+    tide = _make_tide(fired=["prices"], skipped=[], canal_rejects_added=0)
+    mock_logger = MagicMock(spec=logging.Logger)
+    mock_logger.isEnabledFor.return_value = True
+
+    with patch("logging.getLogger", return_value=mock_logger):
+        _route_to_log("TestLogger", tide)
+
+    mock_logger.log.assert_called_once()
+    assert mock_logger.log.call_args[0][0] == logging.INFO
+
+
+def test_route_to_log_tide_error() -> None:
+    """_route_to_log with a canal-reject Tide produces ERROR level and sets is_tide=True.
+
+    Mirrors test_route_tide_canal_rejects_error and test_route_tide_sets_is_tide_in_extra
+    combined — both the level and the is_tide flag must match the legacy wrapper.
+    """
+    tide = _make_tide(fired=[], skipped=[], canal_rejects_added=3)
+    mock_logger = MagicMock(spec=logging.Logger)
+    mock_logger.isEnabledFor.return_value = True
+
+    with patch("logging.getLogger", return_value=mock_logger):
+        _route_to_log("TestLogger", tide)
+
+    mock_logger.log.assert_called_once()
+    level_arg = mock_logger.log.call_args[0][0]
+    extra = mock_logger.log.call_args[1]["extra"]
+    assert level_arg == logging.ERROR
+    assert extra.get("is_tide") is True
+    assert extra["tide"]["canal_rejects_added"] == 3

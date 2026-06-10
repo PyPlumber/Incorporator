@@ -505,6 +505,103 @@ def test_wave_model_dump_includes_new_fields() -> None:
     assert dumped["http_fetch_time_sec"] == pytest.approx(0.085)
 
 
+# ---------------------------------------------------------------------------
+# JSONFormatter generic _payload_key dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_json_formatter_generic_key() -> None:
+    """JSONFormatter emits a payload under an arbitrary key set via _payload_key.
+
+    Proves that a new payload type (e.g. 'watershed_event') requires no formatter
+    edit — the generic _payload_key lookup handles it automatically.
+    """
+    import json
+
+    record = logging.LogRecord(
+        name="TestLogger",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="watershed run started",
+        args=(),
+        exc_info=None,
+    )
+    record.watershed_event = {"foo": "bar", "count": 3}  # type: ignore[attr-defined]
+    record._payload_key = "watershed_event"  # type: ignore[attr-defined]
+    record.meta = 'session:"test"'  # type: ignore[attr-defined]
+    record.is_api = False  # type: ignore[attr-defined]
+
+    formatter = JSONFormatter()
+    parsed = json.loads(formatter.format(record))
+
+    assert "watershed_event" in parsed
+    assert parsed["watershed_event"] == {"foo": "bar", "count": 3}
+
+
+def test_json_formatter_wave_key_via_payload_key() -> None:
+    """JSONFormatter emits the 'wave' payload via _payload_key (not hardcoded hasattr branch).
+
+    Verifies the generic path handles the existing 'wave' key correctly after
+    the hasattr branches were replaced with the _payload_key lookup.
+    """
+    import json
+
+    from incorporator.observability.wave import Wave
+
+    wave = Wave(chunk_index=2, operation="chunk", rows_processed=10, processing_time_sec=0.1)
+    dump = wave.model_dump(mode="json")
+
+    record = logging.LogRecord(
+        name="TestLogger",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="chunk complete",
+        args=(),
+        exc_info=None,
+    )
+    record.wave = dump  # type: ignore[attr-defined]
+    record._payload_key = "wave"  # type: ignore[attr-defined]
+    record.meta = wave.log_meta()  # type: ignore[attr-defined]
+    record.is_api = False  # type: ignore[attr-defined]
+
+    formatter = JSONFormatter()
+    parsed = json.loads(formatter.format(record))
+
+    assert "wave" in parsed
+    assert parsed["wave"]["chunk_index"] == 2
+    assert parsed["wave"]["rows_processed"] == 10
+
+
+# ---------------------------------------------------------------------------
+# _route_to_log extra_meta append
+# ---------------------------------------------------------------------------
+
+
+def test_route_to_log_wave_extra_meta_appended() -> None:
+    """_route_to_log appends extra_meta to the base meta with a comma separator.
+
+    Proves that the scheduler can inject per-current context (e.g.
+    'current:"prices"') into the meta field without modifying the Wave.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from incorporator.observability.logger import Wave, _route_to_log
+
+    wave = Wave(chunk_index=1, operation="chunk", rows_processed=5, processing_time_sec=0.1)
+    mock_logger = MagicMock(spec=logging.Logger)
+    mock_logger.isEnabledFor.return_value = True
+
+    with patch("logging.getLogger", return_value=mock_logger):
+        _route_to_log("X", wave, extra_meta='current:"prices"')
+
+    mock_logger.log.assert_called_once()
+    extra = mock_logger.log.call_args[1]["extra"]
+    meta = extra["meta"]
+    assert meta.endswith(', current:"prices"')
+
+
 def test_tide_model_dump_includes_new_fields() -> None:
     """model_dump(mode='json') includes all new Tide scalar fields without breaking existing keys."""
     from datetime import datetime, timezone

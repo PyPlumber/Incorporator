@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from .._deps import orjson as _orjson_mod
 from ..base import _UNSET, Incorporator
 from ..list import IncorporatorList
+from ..rejects import RejectEntry
 from .wave import Wave  # re-exported — ``from .logger import Wave`` keeps working
 
 if TYPE_CHECKING:
-    from ..rejects import RejectEntry
     from .tideweaver.tide import Tide
 
 TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
@@ -92,7 +92,7 @@ def _emit_payload(
         is_tide: When ``True``, adds ``is_tide=True`` so :class:`TideFilter`
             routes the record to ``tide.log``.
     """
-    extra: dict[str, Any] = {"meta": meta, payload_key: payload, "is_api": is_api}
+    extra: dict[str, Any] = {"meta": meta, payload_key: payload, "_payload_key": payload_key, "is_api": is_api}
     if is_tide:
         extra["is_tide"] = True
     logger = logging.getLogger(logger_name)
@@ -100,79 +100,139 @@ def _emit_payload(
         logger.log(level, msg, extra=extra)
 
 
+def _route_to_log(logger_name: str, record: Wave | Tide | RejectEntry, *, extra_meta: str = "") -> None:
+    """Single dispatcher — derive level/msg/payload/flags from *record* and emit.
+
+    Dispatches on the concrete type of *record* to reproduce exactly the same
+    routing decisions as the four legacy ``_route_*`` functions.  Callers that
+    already have the typed object should prefer this entry point; the named
+    wrappers below delegate here and exist only for backward compatibility.
+
+    Dispatch rules:
+
+    - :class:`Wave`: failure waves → ``ERROR``, success waves → ``INFO``,
+      zero-row / zero-failure waves are silently skipped.
+    - :class:`Tide`: canal-reject / error-skip → ``ERROR``, fired → ``INFO``,
+      no-op → ``DEBUG``; ``is_tide=True`` always set.
+    - :class:`RejectEntry`: always ``ERROR``; ``is_api`` mirrors
+      ``reject.is_url_traffic_error``.
+
+    The optional *extra_meta* string is appended to the derived base meta with
+    a ``", "`` separator when both are non-empty; if only one is present that
+    value is used directly.
+
+    Args:
+        logger_name: Name passed to :func:`logging.getLogger` — typically
+            ``cls.__name__`` for :class:`LoggedIncorporator` call sites or
+            ``_logger_name`` for :class:`~incorporator.observability.tideweaver.logged.LoggedTideweaver`.
+        record: One of :class:`Wave`, :class:`Tide`, or :class:`RejectEntry`.
+        extra_meta: Optional additional ``key:"value"`` context to append to
+            the base meta string — e.g. ``'current:"prices"'`` when the
+            scheduler routes a current's wave into the session log.
+
+    Raises:
+        TypeError: When *record* is not one of the three supported types.
+    """
+    # Deferred import breaks the logger → tideweaver/__init__ → logged → logger cycle.
+    # tide.py itself has no logger dependency; the cycle runs through __init__.py.
+    from .tideweaver.tide import Tide as _Tide  # noqa: PLC0415
+
+    level: int
+    msg: str
+    payload_key: str
+    payload: dict[str, Any]
+    base_meta: str
+    is_api: bool = False
+    is_tide: bool = False
+
+    if isinstance(record, Wave):
+        dump = record.model_dump(mode="json")
+        dump["failed_sources"] = [_redact(s) for s in dump.get("failed_sources", [])]
+        base_meta = record.log_meta()
+        payload_key = "wave"
+        payload = dump
+        if record.failed_sources:
+            msg = f"{record.operation} chunk {record.chunk_index} encountered failures: {dump['failed_sources']}"
+            level = logging.ERROR
+        elif record.rows_processed > 0:
+            msg = (
+                f"{record.operation} chunk {record.chunk_index} complete: "
+                f"{record.rows_processed} rows in {record.processing_time_sec:.3f}s."
+            )
+            level = logging.INFO
+        else:
+            # Zero-row / zero-failure — no-op, nothing to emit.
+            return
+    elif isinstance(record, _Tide):
+        dump = record.model_dump(mode="json")
+        base_meta = record.log_meta()
+        payload_key = "tide"
+        payload = dump
+        is_tide = True
+        has_error_skips = any(reason in ("surge_halted", "skip_ahead") for _, reason in record.skipped)
+        if record.canal_rejects_added > 0 or has_error_skips:
+            error_reasons = [reason for _, reason in record.skipped if reason in ("surge_halted", "skip_ahead")]
+            msg = (
+                f"tide {record.tide_number}: {record.canal_rejects_added} canal reject(s), "
+                f"skipped reasons {error_reasons}"
+            )
+            level = logging.ERROR
+        elif len(record.fired) > 0:
+            msg = (
+                f"tide {record.tide_number}: fired {len(record.fired)}, skipped {len(record.skipped)}, "
+                f"rejects {record.canal_rejects_added}, duration {record.duration_sec:.3f}s"
+            )
+            level = logging.INFO
+        else:
+            msg = f"tide {record.tide_number}: no-op pass (nothing fired), duration {record.duration_sec:.3f}s"
+            level = logging.DEBUG
+    elif isinstance(record, RejectEntry):
+        base_meta = (
+            f'class:"{logger_name}", source:"{record.source}", error_kind:"{record.error_kind}", '
+            f'from:"{record.from_name}", to:"{record.to_name}", host:"{record.host}", '
+            f"status_code:{record.status_code}"
+        )
+        payload_key = "reject"
+        payload = record.model_dump(mode="json")
+        msg = str(record)
+        level = logging.ERROR
+        is_api = record.is_url_traffic_error
+    else:
+        raise TypeError(
+            f"_route_to_log: unsupported record type {type(record).__name__!r}. "
+            "Expected Wave, Tide, or RejectEntry. "
+            "For scheduler events use _route_scheduler_event_to_log directly."
+        )
+
+    meta = f"{base_meta}, {extra_meta}" if (base_meta and extra_meta) else (base_meta or extra_meta)
+    _emit_payload(logger_name, level, msg, payload_key, payload, meta, is_api=is_api, is_tide=is_tide)
+
+
 def _route_wave_to_log(cls_name: str, wave: Wave) -> None:
     """Route a single Wave to the appropriate log level based on its outcome.
 
     Shared adapter used by :meth:`LoggedIncorporator.stream` and ``fjord``. The
-    routing rules:
-
-    - Waves with ``failed_sources`` → ``error.log``.
-    - Successful waves with ``rows_processed > 0`` → ``info``.
-    - Zero-row, zero-failure waves are skipped (noise).
-
-    Attaches the structured ``wave`` dump as a record extra so
-    :class:`JSONFormatter` writes it as a top-level JSON key alongside ``meta``;
-    :meth:`LoggingMixin.get_error` callers can read ``record["wave"]`` directly.
-    Applies :func:`_redact` to the human-readable message *and* the
-    ``failed_sources`` list inside the dumped wave. The ``Wave`` yielded back to
-    the caller is untouched.
+    routing rules mirror :func:`_route_to_log` for Wave records. Delegates to
+    :func:`_route_to_log`.
 
     Args:
         cls_name: Logger name — ``cls.__name__`` from the calling verb wrapper.
         wave: The :class:`Wave` record yielded by the pipeline.
     """
-    dump = wave.model_dump(mode="json")
-    dump["failed_sources"] = [_redact(s) for s in dump.get("failed_sources", [])]
-
-    if wave.failed_sources:
-        msg = f"{wave.operation} chunk {wave.chunk_index} encountered failures: {dump['failed_sources']}"
-        _emit_payload(cls_name, logging.ERROR, msg, "wave", dump, wave.log_meta())
-    elif wave.rows_processed > 0:
-        msg = (
-            f"{wave.operation} chunk {wave.chunk_index} complete: "
-            f"{wave.rows_processed} rows in {wave.processing_time_sec:.3f}s."
-        )
-        _emit_payload(cls_name, logging.INFO, msg, "wave", dump, wave.log_meta())
+    _route_to_log(cls_name, wave)
 
 
 def _route_tide_to_log(cls_name: str, tide: Tide) -> None:
     """Route one Tide record to info/error/debug based on its outcomes.
 
-    Mirrors the routing shape of :func:`_route_wave_to_log` but operates on
-    scheduler-pass records rather than chunk waves.  Routing rules:
-
-    - Passes with ``canal_rejects_added > 0`` or error-class skip reasons
-      (``"surge_halted"``, ``"skip_ahead"``) → ``error``.
-    - Passes where at least one current fired → ``info``.
-    - No-op passes (nothing fired, no errors) → ``debug``.
-
-    All tide records also carry ``is_tide=True`` so :class:`TideFilter` routes
-    them to ``tide.log`` for single-file readback by :meth:`LoggedTideweaver.get_tides`.
-    Tide records continue to flow into ``debug.log`` and (when fired/errored)
-    ``error.log`` — ``debug.log`` remains the superset.
+    Routing rules mirror :func:`_route_to_log` for Tide records. Delegates to
+    :func:`_route_to_log`.
 
     Args:
         cls_name: Logger name — typically ``LoggedTideweaver._logger_name``.
         tide: The :class:`Tide` record yielded by :meth:`Tideweaver.run`.
     """
-    dump = tide.model_dump(mode="json")
-    meta = tide.log_meta()
-
-    has_error_skips = any(reason in ("surge_halted", "skip_ahead") for _, reason in tide.skipped)
-
-    if tide.canal_rejects_added > 0 or has_error_skips:
-        error_reasons = [reason for _, reason in tide.skipped if reason in ("surge_halted", "skip_ahead")]
-        msg = f"tide {tide.tide_number}: {tide.canal_rejects_added} canal reject(s), skipped reasons {error_reasons}"
-        _emit_payload(cls_name, logging.ERROR, msg, "tide", dump, meta, is_tide=True)
-    elif len(tide.fired) > 0:
-        msg = (
-            f"tide {tide.tide_number}: fired {len(tide.fired)}, skipped {len(tide.skipped)}, "
-            f"rejects {tide.canal_rejects_added}, duration {tide.duration_sec:.3f}s"
-        )
-        _emit_payload(cls_name, logging.INFO, msg, "tide", dump, meta, is_tide=True)
-    else:
-        msg = f"tide {tide.tide_number}: no-op pass (nothing fired), duration {tide.duration_sec:.3f}s"
-        _emit_payload(cls_name, logging.DEBUG, msg, "tide", dump, meta, is_tide=True)
+    _route_to_log(cls_name, tide)
 
 
 _SCHEDULER_ERROR_EVENTS: frozenset[str] = frozenset({"tick_parked", "fjord_flush_failure"})
@@ -241,29 +301,16 @@ def _route_scheduler_event_to_log(
 def _route_reject_to_log(cls_name: str, reject: RejectEntry) -> None:
     """Route one RejectEntry to disk with structured edge and HTTP metadata.
 
-    Always logs at ERROR level — every :class:`RejectEntry` represents a
-    scheduler-level skip or HTTP failure that the caller's retry logic
-    should be able to observe.  Destination splits on
-    ``reject.is_url_traffic_error``: URL internet-traffic rejects (httpx
-    HTTP-status / transport failures) route to ``api.log``; all other
-    rejects (parse, file, fjord-seed, canal skip) stay in ``error.log``.
-    The ``reject`` dict is attached as a top-level JSON key so
-    :meth:`LoggingMixin.get_rejects` (which reads both files) can inspect
-    the full structured record without parsing the message string.
+    Always logs at ERROR level. Destination splits on
+    ``reject.is_url_traffic_error``: URL internet-traffic rejects route to
+    ``api.log``; all other rejects stay in ``error.log``. Delegates to
+    :func:`_route_to_log`.
 
     Args:
         cls_name: Logger name — typically ``LoggedTideweaver._logger_name``.
         reject: The :class:`RejectEntry` to route.
     """
-    meta = (
-        f'class:"{cls_name}", source:"{reject.source}", error_kind:"{reject.error_kind}", '
-        f'from:"{reject.from_name}", to:"{reject.to_name}", host:"{reject.host}", '
-        f"status_code:{reject.status_code}"
-    )
-    msg = str(reject)
-    _emit_payload(
-        cls_name, logging.ERROR, msg, "reject", reject.model_dump(mode="json"), meta, is_api=reject.is_url_traffic_error
-    )
+    _route_to_log(cls_name, reject)
 
 
 def _cleanup_listeners() -> None:
@@ -439,16 +486,12 @@ class JSONFormatter(logging.Formatter):
         }
         if hasattr(record, "meta"):
             log_obj["meta"] = record.meta
-        # Structured wave payload attached by _route_wave_to_log — surfaces as
-        # a top-level JSON key so get_error() consumers can read record["wave"].
-        if hasattr(record, "wave"):
-            log_obj["wave"] = record.wave
-        if hasattr(record, "tide"):
-            log_obj["tide"] = record.tide
-        if hasattr(record, "reject"):
-            log_obj["reject"] = record.reject
-        if hasattr(record, "scheduler_event"):
-            log_obj["scheduler_event"] = record.scheduler_event
+        # Emit the structured payload under its own key generically.
+        # _emit_payload stores the key name in record._payload_key so any new
+        # payload type (e.g. "watershed_event") works without a formatter edit.
+        pk = getattr(record, "_payload_key", None)
+        if pk is not None and hasattr(record, pk):
+            log_obj[pk] = getattr(record, pk)
         if record.exc_info:
             log_obj["exc_info"] = self.formatException(record.exc_info)
         return _orjson_mod.dumps_str(log_obj)
