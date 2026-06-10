@@ -81,6 +81,13 @@ class LoggedTideweaver(Tideweaver):
             the same resolved name share one log-file set, mirroring the
             existing per-class-name behaviour for
             :class:`~incorporator.observability.logger.LoggedIncorporator`.
+        log_currents: When ``True`` (default), each stream current's yielded
+            :class:`~incorporator.observability.wave.Wave` records and their
+            per-wave :class:`~incorporator.rejects.RejectEntry` items are routed
+            to the session logs tagged with per-current meta (``code:"<name>"``).
+            URL-traffic rejects land in ``api.log``; all others in
+            ``error.log``/``debug.log``.  Set to ``False`` for high-frequency
+            watersheds where per-wave log volume would be excessive.
 
     Example::
 
@@ -101,6 +108,7 @@ class LoggedTideweaver(Tideweaver):
         backlog_backoff_factor: float = 1.0,
         enable_logging: bool = False,
         logger_name: str | None = None,
+        log_currents: bool = True,
     ) -> None:
         resolved_name = logger_name or watershed.name or "Tideweaver"
         self._enable_logging = enable_logging
@@ -113,6 +121,7 @@ class LoggedTideweaver(Tideweaver):
             pass_interval=pass_interval,
             backlog_backoff_factor=backlog_backoff_factor,
             logger_name=resolved_name if enable_logging else None,
+            log_currents=log_currents,
         )
 
     async def run(self) -> AsyncIterator[Tide]:
@@ -139,8 +148,11 @@ class LoggedTideweaver(Tideweaver):
                 yield tide
         finally:
             if self._enable_logging:
+                # Skip rejects already routed at their tick site with per-current
+                # meta (e.g. SourceLoadFailure) so they are not emitted twice.
                 for reject in self.rejects:
-                    _route_reject_to_log(self._logger_name, reject)
+                    if id(reject) not in self._routed_reject_ids:
+                        _route_reject_to_log(self._logger_name, reject)
 
     @classmethod
     async def get_tides(cls, logger_name: str) -> list[dict[str, Any]]:

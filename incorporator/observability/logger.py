@@ -298,6 +298,26 @@ def _route_scheduler_event_to_log(
     _emit_payload(logger_name, level, detail, "scheduler_event", payload, meta)
 
 
+def current_meta(current: Any) -> str:
+    """Return a compact ``key:"value"`` meta string identifying a Tideweaver current.
+
+    Stable across passes — ``current.name`` is unique within a Watershed
+    (enforced by topological sort) and is the retrieval key for
+    :meth:`~incorporator.observability.tideweaver.logged.LoggedTideweaver.get_current`.
+
+    Args:
+        current: A :class:`~incorporator.observability.tideweaver.current.Current`
+            instance (typed ``Any`` to avoid a new module-graph edge from
+            ``logger.py`` into ``tideweaver/current.py``).
+
+    Returns:
+        A string of the form
+        ``'current:"<name>", class:"<ClassName>", code:"<name>"'``
+        suitable for appending to ``_route_to_log``'s ``extra_meta`` parameter.
+    """
+    return f'current:"{current.name}", class:"{current.cls.__name__}", code:"{current.name}"'
+
+
 def _route_reject_to_log(cls_name: str, reject: RejectEntry) -> None:
     """Route one RejectEntry to disk with structured edge and HTTP metadata.
 

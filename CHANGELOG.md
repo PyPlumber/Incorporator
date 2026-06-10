@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **DRY logging refactor — commit 3: per-current session-log routing via meta code**
+  (`incorporator/observability/tideweaver/scheduler.py`, `incorporator/observability/logger.py`):
+  during a `LoggedTideweaver` run each Stream current's yielded `Wave` records and their
+  `wave.rejects` (`RejectEntry`) are routed to the session logs tagged with `current_meta`
+  (`current:"<name>", class:"<ClassName>", code:"<name>"`). URL-traffic rejects land in `api.log`;
+  all other rejects and wave summaries in `error.log`/`debug.log`. Per-current records are
+  retrievable via `LoggedTideweaver.get_current(session, code)`. The parent-child incorp path
+  similarly routes its result's rejects. No per-class `<ClassName>_*.log` files are spawned for
+  currents; standalone `LoggedIncorporator` logging is unchanged. `LoggedTideweaver` gains a
+  `log_currents: bool = True` opt-out for high-frequency watersheds. `current_meta(current) -> str`
+  helper added to `logger.py`. No execution or data-flow change.
+
 - **DRY logging refactor — commit 2: single `_route_to_log` router + generalized `JSONFormatter`**
   (`incorporator/observability/logger.py`): the four per-type routing functions collapsed into a
   single `_route_to_log(logger_name, record, *, extra_meta="")` dispatcher that handles

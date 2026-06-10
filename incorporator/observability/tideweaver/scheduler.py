@@ -54,7 +54,7 @@ from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_
 from ...io.fetch import HTTPClientBuilder
 from ...io.penstock import FlowState
 from ...rejects import RejectEntry
-from ..logger import _route_scheduler_event_to_log
+from ..logger import _route_scheduler_event_to_log, _route_to_log, current_meta
 from ..pipeline._outflow import flush
 from ._retry_defaults import (
     _CANAL_OUTER_STOP,
@@ -233,10 +233,12 @@ class Tideweaver:
         pass_interval: float | None = None,
         backlog_backoff_factor: float = 1.0,
         logger_name: str | None = None,
+        log_currents: bool = True,
     ) -> None:
         self.watershed = watershed
         self.tick_factory = tick_factory
         self.logger_name = logger_name
+        self.log_currents = log_currents
         self.pass_interval = pass_interval or max(
             0.05,
             min(1.0, min(c.interval for c in watershed.currents) / 2.0),
@@ -256,6 +258,10 @@ class Tideweaver:
         # at the verb layer — gives callers a structured DLQ view of every
         # canal skip that never reached a tick body.
         self._canal_rejects: list[RejectEntry] = []
+        # ids of rejects already routed to the session log at their tick site
+        # (with per-current meta).  The LoggedTideweaver.run finally-sweep skips
+        # these so a tick-routed reject is not emitted a second time.
+        self._routed_reject_ids: set[int] = set()
         self._currents_by_name: dict[str, Current] = {c.name: c for c in watershed.currents}
         self._topo: list[str] = watershed.toposort()
         self._upstream: dict[str, list[tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
@@ -1056,7 +1062,11 @@ class Tideweaver:
                     )
                 return
             incorp_call_params = {**params_with_client, "inc_parent": cast(Any, list(pre_snap))}
-            await current.cls.incorp(**incorp_call_params)
+            _pc_result = await current.cls.incorp(**incorp_call_params)
+            if isinstance(self.logger_name, str) and self.log_currents:
+                _pc_rejects = getattr(_pc_result, "rejects", None) or []
+                for _reject in _pc_rejects:
+                    _route_to_log(self.logger_name, _reject, extra_meta=current_meta(current))
             cast(Any, current.cls)._tideweaver_snapshot = list(current.cls.inc_dict.values())
             return
 
@@ -1075,6 +1085,10 @@ class Tideweaver:
         accumulated: dict[Any, Any] = {}
         async for _wave in current.cls.stream(**kwargs):
             accumulated.update(current.cls.inc_dict)
+            if isinstance(self.logger_name, str) and self.log_currents:
+                _route_to_log(self.logger_name, _wave, extra_meta=current_meta(current))
+                for _reject in _wave.rejects:
+                    _route_to_log(self.logger_name, _reject, extra_meta=current_meta(current))
         # A stream that produces zero rows while its configured inc_file is absent
         # is a source-load failure, not legitimately empty data: record a
         # SourceLoadFailure reject so the run can surface it (incorp() logs the
@@ -1100,6 +1114,13 @@ class Tideweaver:
                     session=self.logger_name,
                 )
             )
+            # Route immediately with current_meta so the session log carries the
+            # per-current code tag, and record its id so the LoggedTideweaver.run
+            # finally-sweep skips it (single emission, not doubled).
+            if isinstance(self.logger_name, str) and self.log_currents:
+                _slf_reject = self._canal_rejects[-1]
+                _route_to_log(self.logger_name, _slf_reject, extra_meta=current_meta(current))
+                self._routed_reject_ids.add(id(_slf_reject))
         # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
         # Runtime-only escape-hatch attribute (no field on Incorporator itself).
         # ``_outflow.py:flush`` parks the same attribute on Fjord output
