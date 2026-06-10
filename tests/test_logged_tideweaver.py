@@ -245,23 +245,26 @@ async def test_get_scheduler_events_returns_records_for_failing_tick(
     assert len(records) >= 1, f"expected >= 1 scheduler_event records; got {records}"
     for rec in records:
         assert "scheduler_event" in rec, f"each record must have 'scheduler_event' key; got {rec}"
-    evt = records[0]["scheduler_event"]
-    assert evt.get("event_type") == "isolated_tick_failure", f"event_type mismatch: {evt}"
+
+    failure_evts = [r["scheduler_event"] for r in records if r["scheduler_event"].get("event_type") == "isolated_tick_failure"]
+    assert failure_evts, f"expected at least one isolated_tick_failure record; got {records}"
+    evt = failure_evts[0]
     assert evt.get("current_name") == "failing_current", f"current_name mismatch: {evt}"
     assert "session" in evt, f"'session' key missing from payload: {evt}"
     assert evt["session"] == logger_name, f"session mismatch: expected {logger_name!r}, got {evt['session']!r}"
 
 
 @pytest.mark.asyncio
-async def test_get_scheduler_events_returns_empty_list_when_no_events(
+async def test_get_scheduler_events_clean_run_has_only_watershed_events(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     reset_active_listeners: None,
 ) -> None:
-    """get_scheduler_events returns an empty list when a clean run produces no scheduler events.
+    """get_scheduler_events returns only watershed lifecycle events for a clean run with no tick failures.
 
-    Proves that a successful LoggedTideweaver run with no tick failures yields
-    [] from get_scheduler_events(logger_name) — no false positives.
+    Proves that a successful LoggedTideweaver run yields exactly
+    watershed_started and watershed_completed from get_scheduler_events(logger_name)
+    — no per-current scheduler events are emitted.
     """
     monkeypatch.chdir(tmp_path)
 
@@ -281,4 +284,85 @@ async def test_get_scheduler_events_returns_empty_list_when_no_events(
     _wait_flush()
 
     records = await LoggedTideweaver.get_scheduler_events(logger_name)
-    assert records == [], f"expected empty list for clean run; got {records}"
+    event_types = {r["scheduler_event"]["event_type"] for r in records}
+    assert event_types <= {"watershed_started", "watershed_completed"}, (
+        f"expected only watershed lifecycle events for a clean run; got {event_types}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_scheduler_events_returns_watershed_lifecycle_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """LoggedTideweaver(enable_logging=True) emits watershed_started and watershed_completed.
+
+    Proves that get_scheduler_events returns at least one watershed_started and one
+    watershed_completed record, that current_name is None for both, and that the
+    detail string contains the watershed name and window ISO timestamps.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    ws_name = "LifecycleWatershed"
+    logger_name = "TestWatershedLifecycle"
+    now = datetime.now(timezone.utc)
+    ws = Watershed.parallel(
+        window=(now, now + timedelta(milliseconds=250)),
+        currents=[Stream(name="src", cls=_Src, interval=0.05, incorp_params={})],
+        name=ws_name,
+    )
+
+    tw = LoggedTideweaver(
+        ws, tick_factory=_noop_tick, pass_interval=0.05, enable_logging=True, logger_name=logger_name
+    )
+    async for _ in tw.run():
+        pass
+
+    _wait_flush()
+
+    records = await LoggedTideweaver.get_scheduler_events(logger_name)
+    event_types = [r["scheduler_event"]["event_type"] for r in records]
+
+    assert "watershed_started" in event_types, f"watershed_started missing; got {event_types}"
+    assert "watershed_completed" in event_types, f"watershed_completed missing; got {event_types}"
+
+    for rec in records:
+        evt = rec["scheduler_event"]
+        if evt["event_type"] in ("watershed_started", "watershed_completed"):
+            assert evt["current_name"] is None, f"current_name should be None for watershed events; got {evt}"
+            assert ws_name in evt["detail"], f"detail should contain watershed name; got {evt['detail']!r}"
+            assert evt["session"] == logger_name, f"session mismatch: {evt['session']!r}"
+
+
+@pytest.mark.asyncio
+async def test_watershed_events_not_emitted_when_logging_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """LoggedTideweaver(enable_logging=False) emits no watershed lifecycle events.
+
+    Proves that a bare run with logging disabled produces no log files and
+    therefore get_scheduler_events returns [] (no watershed events, no false positives).
+    """
+    monkeypatch.chdir(tmp_path)
+
+    logger_name = "TestWatershedNoLog"
+    now = datetime.now(timezone.utc)
+    ws = Watershed.parallel(
+        window=(now, now + timedelta(milliseconds=200)),
+        currents=[Stream(name="src", cls=_Src, interval=0.05, incorp_params={})],
+        name="ShouldNotAppear",
+    )
+
+    tw = LoggedTideweaver(
+        ws, tick_factory=_noop_tick, pass_interval=0.05, enable_logging=False, logger_name=logger_name
+    )
+    async for _ in tw.run():
+        pass
+
+    _wait_flush()
+
+    records = await LoggedTideweaver.get_scheduler_events(logger_name)
+    assert records == [], f"expected [] when logging disabled; got {records}"

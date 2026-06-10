@@ -39,7 +39,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ..logger import _route_reject_to_log, _route_tide_to_log, read_log, setup_class_logger
+from ..logger import (
+    _route_reject_to_log,
+    _route_scheduler_event_to_log,
+    _route_tide_to_log,
+    read_log,
+    setup_class_logger,
+)
 from .scheduler import TickFactory, Tideweaver
 from .tide import Tide
 from .watershed import Watershed
@@ -131,6 +137,11 @@ class LoggedTideweaver(Tideweaver):
         semantics, same drain-on-exit behaviour — with the addition that when
         ``enable_logging=True``:
 
+        - ``watershed_started`` and ``watershed_completed`` lifecycle events are
+          emitted to the session log via
+          :func:`~incorporator.observability.logger._route_scheduler_event_to_log`
+          bracketing the run.  Both are retrievable via
+          :meth:`get_scheduler_events`.
         - Each yielded :class:`Tide` is routed to INFO / ERROR / DEBUG via
           :func:`~incorporator.observability.logger._route_tide_to_log`.
         - All accumulated :class:`~incorporator.RejectEntry` records are swept
@@ -141,6 +152,18 @@ class LoggedTideweaver(Tideweaver):
         Yields:
             :class:`Tide` — same shape as :meth:`Tideweaver.run`.
         """
+        ws_detail: str = ""
+        if self._enable_logging:
+            ws = self.watershed
+            ws_name = ws.name or "unnamed"
+            ws_win_start, ws_win_end = ws.window
+            ws_detail = f"watershed={ws_name!r}, window=({ws_win_start.isoformat()}, {ws_win_end.isoformat()})"
+            _route_scheduler_event_to_log(
+                self._logger_name,
+                "watershed_started",
+                None,
+                f"Watershed run started: {ws_detail}",
+            )
         try:
             async for tide in super().run():
                 if self._enable_logging:
@@ -148,6 +171,12 @@ class LoggedTideweaver(Tideweaver):
                 yield tide
         finally:
             if self._enable_logging:
+                _route_scheduler_event_to_log(
+                    self._logger_name,
+                    "watershed_completed",
+                    None,
+                    f"Watershed run completed: {ws_detail}",
+                )
                 # Skip rejects already routed at their tick site with per-current
                 # meta (e.g. SourceLoadFailure) so they are not emitted twice.
                 for reject in self.rejects:
@@ -232,9 +261,10 @@ class LoggedTideweaver(Tideweaver):
         the ``"scheduler_event"`` key is therefore the correct and complete
         source of truth for structured scheduler diagnostics.
 
-        The five event types that produce records here are:
+        The event types that produce records here are:
         ``isolated_tick_failure``, ``tick_parked``, ``empty_output``,
-        ``empty_parent_snapshot``, and ``fjord_flush_failure``.
+        ``empty_parent_snapshot``, ``fjord_flush_failure``,
+        ``watershed_started``, and ``watershed_completed``.
 
         Records are sorted ascending by ``tide_number`` (``None`` → ``0``),
         then by ``event_type``, then by ``current_name`` for deterministic

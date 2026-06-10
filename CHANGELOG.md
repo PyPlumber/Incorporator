@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **DRY logging refactor — commit 4 (final): watershed top-level lifecycle events via the
+  scheduler-event channel** (`incorporator/observability/logger.py`,
+  `incorporator/observability/tideweaver/logged.py`): `LoggedTideweaver.run()` now emits
+  `watershed_started` and `watershed_completed` scheduler events bracketing the run when
+  `enable_logging=True`. Both events carry the watershed name and window ISO timestamps in
+  their `detail` field and have `current_name=None` (watershed-scoped, not current-scoped).
+  `_route_scheduler_event_to_log` accepts `current_name: str | None`; when `None` the meta
+  renders `scope:"watershed"` instead of `current:"<name>"`. Retrieved via the existing
+  `LoggedTideweaver.get_scheduler_events(logger_name)` — no new reader needed. Completes
+  the DRY-logging series (commits 1–4).
+
 - **DRY logging refactor — commit 3: per-current session-log routing via meta code**
   (`incorporator/observability/tideweaver/scheduler.py`, `incorporator/observability/logger.py`):
   during a `LoggedTideweaver` run each Stream current's yielded `Wave` records and their

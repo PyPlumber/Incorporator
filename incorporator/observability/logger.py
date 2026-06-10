@@ -241,7 +241,7 @@ _SCHEDULER_ERROR_EVENTS: frozenset[str] = frozenset({"tick_parked", "fjord_flush
 def _route_scheduler_event_to_log(
     logger_name: str,
     event_type: str,
-    current_name: str,
+    current_name: str | None,
     detail: str,
     *,
     cls_name: str | None = None,
@@ -267,13 +267,18 @@ def _route_scheduler_event_to_log(
     - ``"isolated_tick_failure"`` / ``"empty_output"`` / ``"empty_parent_snapshot"``
       → ``WARNING``
     - ``"tick_parked"`` / ``"fjord_flush_failure"`` → ``ERROR``
+    - ``"watershed_started"`` / ``"watershed_completed"`` → ``WARNING``
+
+    When *current_name* is ``None`` the event is watershed-scoped; the meta
+    string renders ``scope:"watershed"`` in place of ``current:"<name>"``.
 
     Args:
         logger_name: Named logger to emit to (the session's
             :func:`setup_class_logger`-registered name).
         event_type: Canonical event label (e.g. ``"isolated_tick_failure"``).
         current_name: :class:`~incorporator.observability.tideweaver.current.Current`
-            name where the event originated.
+            name where the event originated, or ``None`` for watershed-scoped
+            lifecycle events (``"watershed_started"`` / ``"watershed_completed"``).
         detail: Human-readable description of the event.
         cls_name: ``current.cls.__name__`` when available.
         edge: ``(from_name, to_name)`` tuple for edge-scoped events.
@@ -289,8 +294,12 @@ def _route_scheduler_event_to_log(
         "session": logger_name,
         "detail": detail,
     }
+    if current_name is None:
+        scope_fragment = 'scope:"watershed"'
+    else:
+        scope_fragment = f'current:"{current_name}"'
     meta = (
-        f'logger:"{logger_name}", event_type:"{event_type}", current:"{current_name}"'
+        f'logger:"{logger_name}", event_type:"{event_type}", {scope_fragment}'
         + (f', cls:"{cls_name}"' if cls_name else "")
         + (f', edge:"{edge[0]}->{edge[1]}"' if edge else "")
         + (f", tide:{tide_number}" if tide_number is not None else "")
