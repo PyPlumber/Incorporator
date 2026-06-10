@@ -21,6 +21,16 @@ from ..exceptions import IncorporatorFormatError, IncorporatorNetworkError
 from ..rejects import RejectEntry
 from ..schema.path import DataPath
 from . import handlers as format_parsers
+from ._retry_defaults import (
+    _HTTP_INNER_STOP,
+    _HTTP_INNER_WAIT_MAX,
+    _HTTP_INNER_WAIT_MIN,
+    _HTTP_INNER_WAIT_MULTIPLIER,
+    _HTTP_NETWORK_RETRY_STOP,
+    _HTTP_NETWORK_WAIT_MAX,
+    _HTTP_NETWORK_WAIT_MIN,
+    _HTTP_NETWORK_WAIT_MULTIPLIER,
+)
 from .compression import decompress_data, infer_compression
 from .formats import FormatType, infer_format
 from .pagination.base import AsyncPaginator
@@ -197,8 +207,9 @@ def _make_http_stop(method: str) -> Callable[[RetryCallState], bool]:
     fires.
 
     Network-class errors (connect-phase + idempotent post-send) stop after
-    :data:`_HTTP_NETWORK_RETRY_STOP` total attempts; server-responded errors
-    (5xx / 429) stop after :data:`_HTTP_INNER_STOP` total attempts.
+    :data:`io._retry_defaults._HTTP_NETWORK_RETRY_STOP` total attempts;
+    server-responded errors (5xx / 429) stop after
+    :data:`io._retry_defaults._HTTP_INNER_STOP` total attempts.
 
     Args:
         method: HTTP verb string.  Case-insensitive.  Forwarded to
@@ -208,7 +219,6 @@ def _make_http_stop(method: str) -> Callable[[RetryCallState], bool]:
         A callable ``(retry_state: RetryCallState) -> bool`` suitable for
         ``AsyncRetrying(stop=...)``.
     """
-    from ..observability.tideweaver._retry_defaults import _HTTP_INNER_STOP, _HTTP_NETWORK_RETRY_STOP
 
     def _stop(retry_state: RetryCallState) -> bool:
         exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
@@ -228,9 +238,10 @@ def _make_http_wait(method: str) -> Callable[[RetryCallState], float]:
     """Return a tenacity wait callable that dispatches per-class backoff bounds.
 
     Network-class errors use a short bounded backoff
-    (:data:`_HTTP_NETWORK_WAIT_MIN` .. :data:`_HTTP_NETWORK_WAIT_MAX`) so a
-    dead host fails quickly.  Server-responded errors (5xx / 429) keep the
-    existing slower exponential to respect back-pressure signals.
+    (:data:`io._retry_defaults._HTTP_NETWORK_WAIT_MIN` ..
+    :data:`io._retry_defaults._HTTP_NETWORK_WAIT_MAX`) so a dead host fails
+    quickly.  Server-responded errors (5xx / 429) keep the existing slower
+    exponential to respect back-pressure signals.
 
     Args:
         method: HTTP verb string.  Case-insensitive.  Forwarded to
@@ -240,15 +251,6 @@ def _make_http_wait(method: str) -> Callable[[RetryCallState], float]:
         A callable ``(retry_state: RetryCallState) -> float`` suitable for
         ``AsyncRetrying(wait=...)``.
     """
-    from ..observability.tideweaver._retry_defaults import (
-        _HTTP_INNER_WAIT_MAX,
-        _HTTP_INNER_WAIT_MIN,
-        _HTTP_INNER_WAIT_MULTIPLIER,
-        _HTTP_NETWORK_WAIT_MAX,
-        _HTTP_NETWORK_WAIT_MIN,
-        _HTTP_NETWORK_WAIT_MULTIPLIER,
-    )
-
     _network_wait = wait_random_exponential(
         multiplier=_HTTP_NETWORK_WAIT_MULTIPLIER, min=_HTTP_NETWORK_WAIT_MIN, max=_HTTP_NETWORK_WAIT_MAX
     )
