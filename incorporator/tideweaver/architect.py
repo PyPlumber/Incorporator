@@ -43,17 +43,13 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PydanticField
 
+from ..io._retry_defaults import _HTTP_INNER_STOP, _HTTP_INNER_WAIT_MAX
 from ..io.penstock import known_host_rates
 from ..io.source_ref import SourceRef
 from ..observability.wave import Wave
 from ..rejects import RejectEntry
 from ..tools.inspector import ResponseMeta, SourceProfile, analyze_data
-from ._retry_defaults import (
-    _CANAL_OUTER_STOP,
-    _COMPOUND_RETRY_BUDGET_SEC,
-    _HTTP_INNER_STOP,
-    _HTTP_INNER_WAIT_MAX,
-)
+from ._retry_defaults import _CANAL_OUTER_STOP, _COMPOUND_RETRY_BUDGET_SEC
 from .reasons import WakeReason
 from .tide import Tide
 
