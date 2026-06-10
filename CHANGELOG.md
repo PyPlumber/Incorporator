@@ -118,6 +118,31 @@ data flow, or the result of any verb; existing pipelines run unchanged.
 
 ### Added
 
+- **`read_log(name, suffixes, *, key, meta_contains)` module-level coroutine**
+  (`incorporator/observability/logger.py`) — single parameterised JSONL reader
+  that unions one or more ``<name>_<suffix>.log`` files, optionally filtering
+  to records that contain a top-level *key* and/or whose ``meta`` string
+  contains *meta_contains*.  Runs in a worker thread via
+  :func:`asyncio.to_thread`; silently skips missing or unreadable files.
+  All five ``get_*`` reader methods in :class:`LoggingMixin` and
+  :class:`~incorporator.observability.tideweaver.logged.LoggedTideweaver` are
+  now thin wrappers over this function — no execution or return-shape change.
+- **`LoggingMixin.get_current(code)` classmethod** — per-current view that
+  returns all records whose ``meta`` field contains *code*, unioned across
+  ``api.log``, ``error.log``, and ``debug.log``.
+- **`LoggedTideweaver.get_current(logger_name, code)` classmethod** — same
+  per-current view for Tideweaver sessions identified by *logger_name*.
+
+### Fixed
+
+- **`LoggedTideweaver.get_rejects` now unions `api.log` + `error.log`**
+  (`incorporator/observability/tideweaver/logged.py`): the previous
+  implementation read only ``error.log``, silently missing URL-traffic rejects
+  (``is_url_traffic_error=True``) that route to ``api.log``.  The method now
+  delegates to ``read_log(logger_name, ["error", "api"], key="reject")``,
+  matching the ``LoggingMixin.get_rejects`` behaviour.  Log-surface / readers
+  only; no execution change.
+
 - `_format_reject_warning(rejects, cap=5)` module-level helper in
   `incorporator/rejects.py` — count headline + up to `cap` rendered entries +
   overflow line.  Used by `base.py`'s warning emission.

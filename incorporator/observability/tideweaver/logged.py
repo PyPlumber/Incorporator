@@ -36,11 +36,10 @@ Example::
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ..logger import _read_filtered, _route_reject_to_log, _route_tide_to_log, _safe_log_filename, setup_class_logger
+from ..logger import _route_reject_to_log, _route_tide_to_log, read_log, setup_class_logger
 from .scheduler import TickFactory, Tideweaver
 from .tide import Tide
 from .watershed import Watershed
@@ -172,29 +171,33 @@ class LoggedTideweaver(Tideweaver):
                 t = rec["tide"]
                 print(t["tide_number"], t["fired"], t["duration_sec"])
         """
-        filename = _safe_log_filename(logger_name, "tide.log")
-        records = await asyncio.to_thread(_read_filtered, filename, "tide")
+        records = await read_log(logger_name, ["tide"], key="tide")
         return sorted(records, key=lambda r: r.get("tide", {}).get("tide_number", 0))
 
     @classmethod
     async def get_rejects(cls, logger_name: str) -> list[dict[str, Any]]:
-        """Return all reject records from ``error.log`` for ``logger_name``.
+        """Return all reject records from ``error.log`` and ``api.log`` for ``logger_name``.
 
         Overrides :meth:`~incorporator.observability.logger.LoggingMixin.get_rejects`
         solely for name resolution: :class:`LoggedTideweaver` uses an
         instance-level ``logger_name`` rather than ``cls.__name__``, so the
-        correct log file cannot be determined from the class alone.  The
-        underlying read is identical — ``_read_filtered(<name>_error.log, "reject")``.
+        correct log file cannot be determined from the class alone.
+
+        URL internet-traffic rejects (``is_url_traffic_error=True``) land in
+        ``<logger_name>_api.log``; all other rejects (parse errors, canal-layer
+        skips, fjord seed errors) land in ``<logger_name>_error.log``.  This
+        method unions both files so callers receive all rejects regardless of
+        routing.
 
         Args:
             logger_name: The name used when the :class:`LoggedTideweaver` was
                 constructed (e.g. ``"PriceSession"``).
 
         Returns:
-            List of reject-record dicts from
-            ``logs/<logger_name>_error.log``.  Each dict contains a
-            top-level ``"reject"`` key.  Returns an empty list when no
-            log file exists yet.
+            List of reject-record dicts from both
+            ``logs/<logger_name>_error.log`` and ``logs/<logger_name>_api.log``.
+            Each dict contains a top-level ``"reject"`` key.  Returns an empty
+            list when no log files exist yet.
 
         Example::
 
@@ -202,8 +205,7 @@ class LoggedTideweaver(Tideweaver):
             for rec in rejects:
                 print(rec["reject"]["source"], rec["reject"]["error_kind"])
         """
-        filename = _safe_log_filename(logger_name, "error.log")
-        return await asyncio.to_thread(_read_filtered, filename, "reject")
+        return await read_log(logger_name, ["error", "api"], key="reject")
 
     @classmethod
     async def get_scheduler_events(cls, logger_name: str) -> list[dict[str, Any]]:
@@ -245,8 +247,7 @@ class LoggedTideweaver(Tideweaver):
                 evt = rec["scheduler_event"]
                 print(evt["event_type"], evt["current_name"], evt["tide_number"])
         """
-        filename = _safe_log_filename(logger_name, "error.log")
-        records = await asyncio.to_thread(_read_filtered, filename, "scheduler_event")
+        records = await read_log(logger_name, ["error"], key="scheduler_event")
         return sorted(
             records,
             key=lambda r: (
@@ -255,3 +256,30 @@ class LoggedTideweaver(Tideweaver):
                 r.get("scheduler_event", {}).get("current_name") or "",
             ),
         )
+
+    @classmethod
+    async def get_current(cls, logger_name: str, code: str) -> list[dict[str, Any]]:
+        """Return all records tagged with *code* in their ``meta`` field for a named session.
+
+        Per-current view that unions ``api.log``, ``error.log``, and
+        ``debug.log`` for the session identified by *logger_name*, returning
+        only records whose ``meta`` string contains *code*.  Records with no
+        ``meta`` field are excluded.
+
+        Args:
+            logger_name: The name used when the :class:`LoggedTideweaver` was
+                constructed (e.g. ``"PriceSession"``).
+            code: Substring to search for inside each record's ``meta`` field.
+
+        Returns:
+            List of record dicts whose ``meta`` contains *code*, from
+            ``api.log``, ``error.log``, and ``debug.log`` in that order.
+            Returns ``[]`` when no matching records exist.
+
+        Example::
+
+            records = await LoggedTideweaver.get_current("PriceSession", "abc123")
+            for rec in records:
+                print(rec["level"], rec["msg"])
+        """
+        return await read_log(logger_name, ["api", "error", "debug"], meta_contains=code)

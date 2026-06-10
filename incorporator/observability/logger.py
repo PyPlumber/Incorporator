@@ -344,6 +344,82 @@ def _read_filtered(filename: str, key: str) -> list[dict[str, Any]]:
     return records
 
 
+async def read_log(
+    name: str,
+    suffixes: list[str] | str,
+    *,
+    key: str | None = None,
+    meta_contains: str | None = None,
+) -> list[dict[str, Any]]:
+    """Read and union JSONL records across one or more log-file suffixes for a named logger session.
+
+    The single parameterised reader that all ``get_*`` methods delegate to.
+    Replaces the duplicated ``_read_disk`` / ``_read_both`` closures that
+    previously lived inside each method.
+
+    For each suffix in *suffixes*, resolves the path
+    ``logs/<name>_<suffix>.log`` via :func:`_safe_log_filename`, reads every
+    non-empty JSONL line (orjson fast-path where available, tolerant of
+    malformed lines), applies optional filters, and accumulates the matching
+    records into a single unified list.  Files that do not exist or cannot be
+    read (``OSError``) are silently skipped.
+
+    Args:
+        name: Logger-session name — typically ``cls.__name__`` for
+            :class:`LoggingMixin` subclasses or the instance-level
+            ``logger_name`` for :class:`~incorporator.observability.tideweaver.logged.LoggedTideweaver`.
+        suffixes: One or more log-file suffixes (without the ``.log``
+            extension) to read and union.  A bare string is normalised to a
+            single-element list.  Suffixes are processed in order; record
+            order within each file is preserved.
+        key: When given, only records that contain this string as a top-level
+            JSON key are included.  When ``None`` (default), all records from
+            the file are returned — no key-presence check is applied.
+        meta_contains: When given, only records whose ``meta`` string value
+            contains this substring are included.  Records that have no
+            ``meta`` field (``rec.get("meta", "")`` returns ``""``) are
+            excluded when this filter is active, which is the correct
+            behaviour for per-current ``get_current`` queries.
+
+    Returns:
+        List of parsed record dicts, in the order they appear across the
+        requested suffix files.  Returns ``[]`` when no matching records exist
+        or when all log files are absent.
+
+    Example::
+
+        records = await read_log("PriceSession", ["error", "api"], key="reject")
+        url_errors = await read_log("Launch", "api", meta_contains="abc123")
+    """
+    if isinstance(suffixes, str):
+        suffixes = [suffixes]
+
+    def _do_read() -> list[dict[str, Any]]:
+        accumulated: list[dict[str, Any]] = []
+        for suffix in suffixes:
+            filename = _safe_log_filename(name, f"{suffix}.log")
+            path = Path(filename).resolve()
+            try:
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            rec: dict[str, Any] = _orjson_mod.loads(line)
+                        except (json.JSONDecodeError, ValueError):
+                            continue
+                        if key is not None and key not in rec:
+                            continue
+                        if meta_contains is not None and meta_contains not in rec.get("meta", ""):
+                            continue
+                        accumulated.append(rec)
+            except OSError:
+                pass
+        return accumulated
+
+    return await asyncio.to_thread(_do_read)
+
+
 class JSONFormatter(logging.Formatter):
     """Emit one JSON-line record per log call for grep, aggregators, and structured retrieval via :meth:`get_rejects`.
 
@@ -595,28 +671,7 @@ class LoggingMixin:
             NOT return those records.  Use :meth:`get_rejects` to retrieve
             the union of rejects from both files.
         """
-
-        def _read_disk() -> list[dict[str, Any]]:
-            filename = _safe_log_filename(cls.__name__, "error.log")
-            path = Path(filename).resolve()
-
-            if not path.is_file():
-                return []
-
-            errors: list[dict[str, Any]] = []
-            try:
-                with open(path, encoding="utf-8") as f:
-                    for line in f:
-                        if line.strip():
-                            try:
-                                errors.append(_orjson_mod.loads(line))
-                            except (json.JSONDecodeError, ValueError):
-                                pass
-            except OSError:
-                pass  # Treat disk read failures as "no errors yet"
-            return errors
-
-        return await asyncio.to_thread(_read_disk)
+        return await read_log(cls.__name__, ["error"])
 
     @classmethod
     async def get_rejects(cls) -> list[dict[str, Any]]:
@@ -645,13 +700,7 @@ class LoggingMixin:
         raising.  Reads both log files in a worker thread via
         :func:`asyncio.to_thread` so the event loop is never blocked.
         """
-
-        def _read_both() -> list[dict[str, Any]]:
-            error_file = _safe_log_filename(cls.__name__, "error.log")
-            api_file = _safe_log_filename(cls.__name__, "api.log")
-            return _read_filtered(error_file, "reject") + _read_filtered(api_file, "reject")
-
-        return await asyncio.to_thread(_read_both)
+        return await read_log(cls.__name__, ["error", "api"], key="reject")
 
     @classmethod
     async def get_api(cls) -> list[dict[str, Any]]:
@@ -686,28 +735,37 @@ class LoggingMixin:
         worker thread via :func:`asyncio.to_thread` so the event loop is never
         blocked.
         """
+        return await read_log(cls.__name__, ["api"])
 
-        def _read_disk() -> list[dict[str, Any]]:
-            filename = _safe_log_filename(cls.__name__, "api.log")
-            path = Path(filename).resolve()
+    @classmethod
+    async def get_current(cls, code: str) -> list[dict[str, Any]]:
+        """Pull all records tagged with *code* in their ``meta`` field, across all log files.
 
-            if not path.is_file():
-                return []
+        Use this for a per-current view of all structured log records that carry
+        the given current code in their ``meta`` string (e.g.
+        ``'code:"abc123"'``).  Unions ``api.log``, ``error.log``, and
+        ``debug.log`` so every record emitted during a specific current's
+        lifetime is captured regardless of which file it landed in.
 
-            records: list[dict[str, Any]] = []
-            try:
-                with open(path, encoding="utf-8") as f:
-                    for line in f:
-                        if line.strip():
-                            try:
-                                records.append(_orjson_mod.loads(line))
-                            except (json.JSONDecodeError, ValueError):
-                                pass
-            except OSError:
-                pass
-            return records
+        Args:
+            code: Substring to search for inside each record's ``meta`` field.
+                Typically the ``code`` value embedded by
+                :func:`~incorporator.observability.logger._emit_payload` as
+                ``code:"<value>"``.  Records with no ``meta`` field are
+                excluded.
 
-        return await asyncio.to_thread(_read_disk)
+        Returns:
+            List of record dicts whose ``meta`` string contains *code*, drawn
+            from ``api.log``, ``error.log``, and ``debug.log`` in that order.
+            Returns ``[]`` when no matching records exist.
+
+        Example::
+
+            records = await Launch.get_current("abc123")
+            for rec in records:
+                print(rec["level"], rec["msg"])
+        """
+        return await read_log(cls.__name__, ["api", "error", "debug"], meta_contains=code)
 
     # --- CLASS-LEVEL LOGGING (For Factory Methods like export) ---
 
@@ -730,11 +788,12 @@ class LoggingMixin:
             async def my_factory(cls):
                 cls.log_cls_info("Factory run starting")
 
-        The record lands in ``logs/<ClassName>_api.log`` carrying a
-        ``class:"<Name>"`` meta field.  Silently noops when the class's
-        logger isn't configured for INFO — safe to sprinkle through
-        code paths that might run before ``enable_logging=True`` ever
-        fires.
+        The record lands in ``logs/<ClassName>_error.log`` (and the debug
+        superset) carrying a ``class:"<Name>"`` meta field, because
+        ``is_api=False`` routes it through :class:`StandardFilter`.
+        Silently noops when the class's logger isn't configured for INFO —
+        safe to sprinkle through code paths that might run before
+        ``enable_logging=True`` ever fires.
         """
         logger = cls._get_cls_logger()
         if logger.isEnabledFor(logging.INFO):
@@ -843,9 +902,10 @@ class LoggingMixin:
 
             self.log_info(f"Fetched {len(rows)} rows for {self.inc_code}")
 
-        The record lands in ``logs/<ClassName>_api.log`` with
-        :meth:`log_meta` attached.  Silently noops when INFO isn't
-        enabled.
+        The record lands in ``logs/<ClassName>_error.log`` (and the debug
+        superset) with :meth:`log_meta` attached, because ``is_api=False``
+        routes it through :class:`StandardFilter`.  Silently noops when INFO
+        isn't enabled.
         """
         logger = self._get_logger()
         if logger.isEnabledFor(logging.INFO):

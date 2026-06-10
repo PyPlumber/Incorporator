@@ -762,3 +762,468 @@ def test_wave_model_construct_with_rejects_populated() -> None:
     assert len(wave.rejects) == 1
     assert wave.rejects[0].is_url_traffic_error is True
     assert wave.rejects[0].error_kind == "ReadTimeout"
+
+
+# ---------------------------------------------------------------------------
+# D — read_log unit tests
+# ---------------------------------------------------------------------------
+
+
+from incorporator.observability.logger import read_log  # noqa: E402 — after stdlib imports above
+
+
+class _ReadLogSource(LoggedIncorporator):
+    """Stand-in for read_log unit tests."""
+
+
+@pytest.mark.asyncio
+async def test_read_log_unions_multiple_suffixes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """read_log unions records from multiple suffix files in order.
+
+    Writes error.log with one record and api.log with two records.
+    read_log with suffixes=['error','api'] must return all three, error records first.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "_ReadLogSource_error.log",
+        [{"level": "ERROR", "msg": "e1", "reject": {"source": "s1", "error_kind": "KeyError"}}],
+    )
+    _write_jsonl(
+        tmp_path / "logs" / "_ReadLogSource_api.log",
+        [
+            {"level": "ERROR", "msg": "e2", "reject": {"source": "s2", "error_kind": "ReadTimeout"}},
+            {"level": "INFO", "msg": "lifecycle", "meta": "class:\"_ReadLogSource\""},
+        ],
+    )
+
+    result = await read_log("_ReadLogSource", ["error", "api"])
+
+    assert len(result) == 3
+    assert result[0]["msg"] == "e1"
+    assert result[1]["msg"] == "e2"
+    assert result[2]["msg"] == "lifecycle"
+
+
+@pytest.mark.asyncio
+async def test_read_log_key_filter_excludes_records_without_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """read_log with key= only returns records that have that top-level key.
+
+    Mixed file containing reject records and wave records; only records with
+    the 'reject' key must be returned.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "_ReadLogSource_error.log",
+        [
+            {"level": "ERROR", "msg": "wave fail", "wave": {"chunk_index": 1}},
+            {"level": "ERROR", "msg": "reject r", "reject": {"source": "x", "error_kind": "Timeout"}},
+        ],
+    )
+
+    result = await read_log("_ReadLogSource", ["error"], key="reject")
+
+    assert len(result) == 1
+    assert result[0]["reject"]["source"] == "x"
+
+
+@pytest.mark.asyncio
+async def test_read_log_key_none_returns_all_records(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """read_log with key=None returns all records regardless of payload key.
+
+    Confirms the key=None code path applies no key-presence filter — critical
+    for get_error() and get_api() which must return every line.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "_ReadLogSource_error.log",
+        [
+            {"level": "ERROR", "msg": "wave fail", "wave": {"chunk_index": 1}},
+            {"level": "ERROR", "msg": "reject r", "reject": {"source": "x", "error_kind": "Timeout"}},
+            {"level": "INFO", "msg": "info line"},
+        ],
+    )
+
+    result = await read_log("_ReadLogSource", ["error"])
+
+    assert len(result) == 3
+
+
+@pytest.mark.asyncio
+async def test_read_log_meta_contains_filter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """read_log meta_contains= only returns records whose meta field contains the substring.
+
+    Three records: two with meta containing the code, one without meta at all.
+    Only the two with matching meta must be returned.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "_ReadLogSource_api.log",
+        [
+            {"level": "INFO", "msg": "m1", "meta": "class:\"X\", code:\"abc123\""},
+            {"level": "INFO", "msg": "m2", "meta": "class:\"X\", code:\"abc123\", current:\"prices\""},
+            {"level": "INFO", "msg": "m3"},
+        ],
+    )
+
+    result = await read_log("_ReadLogSource", ["api"], meta_contains="abc123")
+
+    assert len(result) == 2
+    assert {r["msg"] for r in result} == {"m1", "m2"}
+
+
+@pytest.mark.asyncio
+async def test_read_log_missing_file_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """read_log returns [] when none of the requested log files exist."""
+    monkeypatch.chdir(tmp_path)
+
+    result = await read_log("_ReadLogSource", ["error", "api", "debug"])
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_read_log_bare_string_suffix_normalised(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """read_log accepts a bare string suffix and treats it as a single-element list."""
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "_ReadLogSource_error.log",
+        [{"level": "ERROR", "msg": "e1"}],
+    )
+
+    result = await read_log("_ReadLogSource", "error")
+
+    assert len(result) == 1
+    assert result[0]["msg"] == "e1"
+
+
+# ---------------------------------------------------------------------------
+# E — regression: LoggedTideweaver.get_rejects now returns api.log records
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_logged_tideweaver_get_rejects_returns_api_log_url_traffic_reject(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """LoggedTideweaver.get_rejects unions api.log so URL-traffic rejects are returned.
+
+    Regression test for the bug where get_rejects only read error.log and
+    silently missed URL-traffic rejects routed to api.log.
+    Writes a URL-traffic reject to api.log only (no error.log).
+    get_rejects must return it.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "SessionReg_api.log",
+        [
+            {
+                "level": "ERROR",
+                "msg": "ReadTimeout: https://api.example.com/data",
+                "reject": {
+                    "source": "https://api.example.com/data",
+                    "error_kind": "ReadTimeout",
+                    "is_url_traffic_error": True,
+                },
+            }
+        ],
+    )
+
+    result = await LoggedTideweaver.get_rejects("SessionReg")
+
+    assert len(result) == 1
+    assert result[0]["reject"]["is_url_traffic_error"] is True
+    assert result[0]["reject"]["error_kind"] == "ReadTimeout"
+
+
+@pytest.mark.asyncio
+async def test_logged_tideweaver_get_rejects_unions_both_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """LoggedTideweaver.get_rejects returns rejects from both error.log and api.log.
+
+    Writes one canal reject to error.log and one URL-traffic reject to api.log.
+    get_rejects must return both.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "SessionUnion_error.log",
+        [{"level": "ERROR", "msg": "canal", "reject": {"source": "canal_src", "error_kind": "PenstockLimited"}}],
+    )
+    _write_jsonl(
+        tmp_path / "logs" / "SessionUnion_api.log",
+        [
+            {
+                "level": "ERROR",
+                "msg": "url",
+                "reject": {"source": "https://api.example.com/", "error_kind": "ReadTimeout"},
+            }
+        ],
+    )
+
+    result = await LoggedTideweaver.get_rejects("SessionUnion")
+
+    assert len(result) == 2
+    sources = {r["reject"]["source"] for r in result}
+    assert sources == {"canal_src", "https://api.example.com/"}
+
+
+# ---------------------------------------------------------------------------
+# F — get_current tests
+# ---------------------------------------------------------------------------
+
+
+class _CurrentSource(LoggedIncorporator):
+    """Stand-in for get_current tests."""
+
+
+@pytest.mark.asyncio
+async def test_logging_mixin_get_current_filters_by_meta_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """LoggingMixin.get_current returns only records whose meta contains the code.
+
+    Writes records to api.log and error.log with mixed codes.
+    get_current("abc123") must return only the two records whose meta matches.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "_CurrentSource_api.log",
+        [
+            {"level": "INFO", "msg": "api match", "meta": "class:\"_CurrentSource\", code:\"abc123\""},
+            {"level": "INFO", "msg": "api other", "meta": "class:\"_CurrentSource\", code:\"xyz999\""},
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "logs" / "_CurrentSource_error.log",
+        [
+            {"level": "ERROR", "msg": "err match", "meta": "class:\"_CurrentSource\", code:\"abc123\""},
+            {"level": "ERROR", "msg": "no meta"},
+        ],
+    )
+
+    result = await _CurrentSource.get_current("abc123")
+
+    assert len(result) == 2
+    msgs = {r["msg"] for r in result}
+    assert msgs == {"api match", "err match"}
+
+
+@pytest.mark.asyncio
+async def test_logging_mixin_get_current_returns_empty_when_no_match(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """LoggingMixin.get_current returns [] when no records match the code."""
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "_CurrentSource_api.log",
+        [{"level": "INFO", "msg": "api other", "meta": "class:\"_CurrentSource\", code:\"xyz999\""}],
+    )
+
+    result = await _CurrentSource.get_current("abc123")
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_logged_tideweaver_get_current_filters_by_meta_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """LoggedTideweaver.get_current returns records whose meta contains the code for the named session.
+
+    Writes records to api.log and error.log for a named session.
+    get_current must union both files and filter by the code substring.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "CurrSession_api.log",
+        [
+            {"level": "INFO", "msg": "api match", "meta": "logger:\"CurrSession\", code:\"mycode\""},
+            {"level": "INFO", "msg": "api other", "meta": "logger:\"CurrSession\", code:\"other\""},
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "logs" / "CurrSession_error.log",
+        [{"level": "ERROR", "msg": "err match", "meta": "logger:\"CurrSession\", code:\"mycode\""}],
+    )
+
+    result = await LoggedTideweaver.get_current("CurrSession", "mycode")
+
+    assert len(result) == 2
+    msgs = {r["msg"] for r in result}
+    assert msgs == {"api match", "err match"}
+
+
+# ---------------------------------------------------------------------------
+# G — behaviour-preservation: wrappers return same results
+# ---------------------------------------------------------------------------
+
+
+class _WrapperCheckSource(LoggedIncorporator):
+    """Stand-in for wrapper behaviour-preservation tests."""
+
+
+@pytest.mark.asyncio
+async def test_get_error_wrapper_returns_all_error_log_records(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """get_error() via read_log wrapper returns every record from error.log.
+
+    Confirms the key=None path preserves original all-records behaviour.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "_WrapperCheckSource_error.log",
+        [
+            {"level": "ERROR", "msg": "wave fail", "wave": {"chunk_index": 1}},
+            {"level": "ERROR", "msg": "reject r", "reject": {"source": "x"}},
+            {"level": "INFO", "msg": "info line"},
+        ],
+    )
+
+    result = await _WrapperCheckSource.get_error()
+
+    assert len(result) == 3
+    msgs = {r["msg"] for r in result}
+    assert msgs == {"wave fail", "reject r", "info line"}
+
+
+@pytest.mark.asyncio
+async def test_get_api_wrapper_returns_all_api_log_records(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """get_api() via read_log wrapper returns every record from api.log.
+
+    Confirms the key=None path preserves original all-records behaviour,
+    including lifecycle records with no structured payload key.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "_WrapperCheckSource_api.log",
+        [
+            {"level": "ERROR", "msg": "url reject", "reject": {"source": "https://x"}},
+            {"level": "INFO", "msg": "Initiating export process with kwargs={}"},
+        ],
+    )
+
+    result = await _WrapperCheckSource.get_api()
+
+    assert len(result) == 2
+    assert result[1]["msg"] == "Initiating export process with kwargs={}"
+
+
+@pytest.mark.asyncio
+async def test_get_tides_wrapper_sort_order_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """LoggedTideweaver.get_tides via read_log wrapper preserves sort-by-tide_number.
+
+    Writes tides out of order; wrapper must return them sorted ascending.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "SortSession_tide.log",
+        [
+            {"level": "INFO", "msg": "tide 5", "tide": {"tide_number": 5}},
+            {"level": "DEBUG", "msg": "tide 1", "tide": {"tide_number": 1}},
+            {"level": "ERROR", "msg": "tide 3", "tide": {"tide_number": 3}},
+        ],
+    )
+
+    result = await LoggedTideweaver.get_tides("SortSession")
+
+    assert [r["tide"]["tide_number"] for r in result] == [1, 3, 5]
+
+
+@pytest.mark.asyncio
+async def test_get_scheduler_events_wrapper_sort_order_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """LoggedTideweaver.get_scheduler_events via read_log wrapper preserves triple-key sort.
+
+    Writes scheduler_event records out of order; wrapper must return them
+    sorted by (tide_number, event_type, current_name).
+    """
+    monkeypatch.chdir(tmp_path)
+
+    _write_jsonl(
+        tmp_path / "logs" / "SchedSession_error.log",
+        [
+            {
+                "level": "WARNING",
+                "msg": "e3",
+                "scheduler_event": {"tide_number": 2, "event_type": "empty_output", "current_name": "z_src"},
+            },
+            {
+                "level": "WARNING",
+                "msg": "e1",
+                "scheduler_event": {"tide_number": 1, "event_type": "isolated_tick_failure", "current_name": "a_src"},
+            },
+            {
+                "level": "WARNING",
+                "msg": "e2",
+                "scheduler_event": {"tide_number": 2, "event_type": "empty_output", "current_name": "a_src"},
+            },
+        ],
+    )
+
+    result = await LoggedTideweaver.get_scheduler_events("SchedSession")
+
+    assert len(result) == 3
+    assert result[0]["scheduler_event"]["tide_number"] == 1
+    assert result[1]["scheduler_event"]["current_name"] == "a_src"
+    assert result[2]["scheduler_event"]["current_name"] == "z_src"
