@@ -1019,21 +1019,17 @@ async def test_logging_mixin_get_current_filters_by_meta_code(
 ) -> None:
     """LoggingMixin.get_current returns only records whose meta contains the code.
 
-    Writes records to api.log and error.log with mixed codes.
+    Writes records to debug.log (the superset file get_current reads) with mixed codes.
     get_current("abc123") must return only the two records whose meta matches.
+    Records without meta are excluded regardless of which log file they occupy.
     """
     monkeypatch.chdir(tmp_path)
 
     _write_jsonl(
-        tmp_path / "logs" / "_CurrentSource_api.log",
+        tmp_path / "logs" / "_CurrentSource_debug.log",
         [
             {"level": "INFO", "msg": "api match", "meta": "class:\"_CurrentSource\", code:\"abc123\""},
             {"level": "INFO", "msg": "api other", "meta": "class:\"_CurrentSource\", code:\"xyz999\""},
-        ],
-    )
-    _write_jsonl(
-        tmp_path / "logs" / "_CurrentSource_error.log",
-        [
             {"level": "ERROR", "msg": "err match", "meta": "class:\"_CurrentSource\", code:\"abc123\""},
             {"level": "ERROR", "msg": "no meta"},
         ],
@@ -1073,21 +1069,18 @@ async def test_logged_tideweaver_get_current_filters_by_meta_code(
 ) -> None:
     """LoggedTideweaver.get_current returns records whose meta contains the code for the named session.
 
-    Writes records to api.log and error.log for a named session.
-    get_current must union both files and filter by the code substring.
+    Writes records to debug.log (the superset file get_current reads) for a named session.
+    get_current must read from debug.log and filter by the code substring only.
     """
     monkeypatch.chdir(tmp_path)
 
     _write_jsonl(
-        tmp_path / "logs" / "CurrSession_api.log",
+        tmp_path / "logs" / "CurrSession_debug.log",
         [
             {"level": "INFO", "msg": "api match", "meta": "logger:\"CurrSession\", code:\"mycode\""},
             {"level": "INFO", "msg": "api other", "meta": "logger:\"CurrSession\", code:\"other\""},
+            {"level": "ERROR", "msg": "err match", "meta": "logger:\"CurrSession\", code:\"mycode\""},
         ],
-    )
-    _write_jsonl(
-        tmp_path / "logs" / "CurrSession_error.log",
-        [{"level": "ERROR", "msg": "err match", "meta": "logger:\"CurrSession\", code:\"mycode\""}],
     )
 
     result = await LoggedTideweaver.get_current("CurrSession", "mycode")
@@ -1095,6 +1088,77 @@ async def test_logged_tideweaver_get_current_filters_by_meta_code(
     assert len(result) == 2
     msgs = {r["msg"] for r in result}
     assert msgs == {"api match", "err match"}
+
+
+@pytest.mark.asyncio
+async def test_get_current_no_double_count(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """get_current returns each record once even when it appears in both debug.log and error.log.
+
+    Simulates the real logger behaviour: every standard record lands in both
+    debug.log (superset, no filter) and error.log (StandardFilter + INFO floor).
+    The old implementation reading ['api', 'error', 'debug'] would return 2;
+    the fix reading only ['debug'] must return 1.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    shared_record = {"level": "INFO", "msg": "shared record", "meta": "class:\"_CurrentSource\", code:\"abc123\""}
+    _write_jsonl(tmp_path / "logs" / "_CurrentSource_debug.log", [shared_record])
+    _write_jsonl(tmp_path / "logs" / "_CurrentSource_error.log", [shared_record])
+
+    result = await _CurrentSource.get_current("abc123")
+
+    assert len(result) == 1, (
+        f"get_current must return 1 record (debug-only), not {len(result)} "
+        "(the old ['api','error','debug'] union would return 2)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_current_debug_only_matches_deduped_view(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """get_current returns the debug count, not the inflated union count.
+
+    Writes N=3 records to debug.log and a subset (2) of those to error.log,
+    then proves:
+    - get_current returns N (debug count), not N + subset_count,
+    - get_current equals read_log(['debug'], meta_contains=code),
+    - read_log(['api','error','debug'], meta_contains=code) > get_current.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    code = "dedup_code"
+    debug_records = [
+        {"level": "INFO", "msg": f"rec{i}", "meta": f'class:"_CurrentSource", code:"{code}"'}
+        for i in range(3)
+    ]
+    error_subset = debug_records[:2]
+
+    _write_jsonl(tmp_path / "logs" / "_CurrentSource_debug.log", debug_records)
+    _write_jsonl(tmp_path / "logs" / "_CurrentSource_error.log", error_subset)
+
+    from incorporator.observability.logger import read_log
+
+    current_result = await _CurrentSource.get_current(code)
+    debug_only = await read_log("_CurrentSource", ["debug"], meta_contains=code)
+    all_files = await read_log("_CurrentSource", ["api", "error", "debug"], meta_contains=code)
+
+    assert len(current_result) == 3, (
+        f"get_current must return N=3 (debug count); got {len(current_result)}"
+    )
+    assert len(current_result) == len(debug_only), (
+        f"get_current must equal read_log(['debug']); {len(current_result)} != {len(debug_only)}"
+    )
+    assert len(all_files) > len(current_result), (
+        f"read_log(['api','error','debug']) must exceed get_current when error.log has overlap; "
+        f"all_files={len(all_files)} vs current={len(current_result)}"
+    )
 
 
 # ---------------------------------------------------------------------------

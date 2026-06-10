@@ -303,10 +303,19 @@ class LoggedTideweaver(Tideweaver):
     async def get_current(cls, logger_name: str, code: str) -> list[dict[str, Any]]:
         """Return all records tagged with *code* in their ``meta`` field for a named session.
 
-        Per-current view that unions ``api.log``, ``error.log``, and
-        ``debug.log`` for the session identified by *logger_name*, returning
-        only records whose ``meta`` string contains *code*.  Records with no
-        ``meta`` field are excluded.
+        Per-current view that reads only ``<logger_name>_debug.log`` for the
+        session identified by *logger_name*, returning only records whose
+        ``meta`` string contains *code*.  The ``debug_fh`` handler in
+        :func:`~incorporator.observability.logger.setup_class_logger` carries
+        **no filter** and a ``DEBUG`` floor — every record that lands in
+        ``api.log`` (via :class:`~incorporator.observability.logger.APIFilter`)
+        or ``error.log`` (via
+        :class:`~incorporator.observability.logger.StandardFilter`) also lands
+        in ``debug.log``.  Reading the debug superset exclusively avoids the
+        double-counting that would occur when unioning all three files, since
+        each api-routed or error-routed record would appear twice (once from
+        its level file, once from ``debug.log``).  Records with no ``meta``
+        field are excluded.
 
         Args:
             logger_name: The name used when the :class:`LoggedTideweaver` was
@@ -314,8 +323,8 @@ class LoggedTideweaver(Tideweaver):
             code: Substring to search for inside each record's ``meta`` field.
 
         Returns:
-            List of record dicts whose ``meta`` contains *code*, from
-            ``api.log``, ``error.log``, and ``debug.log`` in that order.
+            List of record dicts whose ``meta`` contains *code*, drawn from
+            ``debug.log`` only (the complete, de-duplicated per-current view).
             Returns ``[]`` when no matching records exist.
 
         Example::
@@ -324,4 +333,4 @@ class LoggedTideweaver(Tideweaver):
             for rec in records:
                 print(rec["level"], rec["msg"])
         """
-        return await read_log(logger_name, ["api", "error", "debug"], meta_contains=code)
+        return await read_log(logger_name, ["debug"], meta_contains=code)

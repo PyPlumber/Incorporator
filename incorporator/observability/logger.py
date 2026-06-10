@@ -811,13 +811,18 @@ class LoggingMixin:
 
     @classmethod
     async def get_current(cls, code: str) -> list[dict[str, Any]]:
-        """Pull all records tagged with *code* in their ``meta`` field, across all log files.
+        """Pull all records tagged with *code* in their ``meta`` field, from the debug-log superset.
 
         Use this for a per-current view of all structured log records that carry
         the given current code in their ``meta`` string (e.g.
-        ``'code:"abc123"'``).  Unions ``api.log``, ``error.log``, and
-        ``debug.log`` so every record emitted during a specific current's
-        lifetime is captured regardless of which file it landed in.
+        ``'code:"abc123"'``).  Reads only ``<ClassName>_debug.log`` because
+        ``debug_fh`` in :func:`setup_class_logger` carries **no filter** and a
+        ``DEBUG`` floor — every record that lands in ``api.log`` (via
+        :class:`APIFilter`) or ``error.log`` (via :class:`StandardFilter`) also
+        lands in ``debug.log``.  Reading the debug superset exclusively avoids
+        the double-counting that would occur when unioning all three files,
+        since each api-routed or error-routed record would then appear twice
+        (once from its level file, once from ``debug.log``).
 
         Args:
             code: Substring to search for inside each record's ``meta`` field.
@@ -828,8 +833,8 @@ class LoggingMixin:
 
         Returns:
             List of record dicts whose ``meta`` string contains *code*, drawn
-            from ``api.log``, ``error.log``, and ``debug.log`` in that order.
-            Returns ``[]`` when no matching records exist.
+            from ``debug.log`` only (the complete, de-duplicated per-current
+            view).  Returns ``[]`` when no matching records exist.
 
         Example::
 
@@ -837,7 +842,7 @@ class LoggingMixin:
             for rec in records:
                 print(rec["level"], rec["msg"])
         """
-        return await read_log(cls.__name__, ["api", "error", "debug"], meta_contains=code)
+        return await read_log(cls.__name__, ["debug"], meta_contains=code)
 
     # --- CLASS-LEVEL LOGGING (For Factory Methods like export) ---
 

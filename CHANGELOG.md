@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`get_current` double-count fix** (`incorporator/observability/logger.py`,
+  `incorporator/observability/tideweaver/logged.py`): `LoggingMixin.get_current` and
+  `LoggedTideweaver.get_current` previously read `['api', 'error', 'debug']` and unioned
+  them, returning each record twice — once from its level file and once from `debug.log`.
+  Root cause: `debug_fh` in `setup_class_logger` has no filter and a `DEBUG` floor, so
+  `debug.log` is already the complete superset of `api.log` union `error.log`.  Both methods
+  now read only `['debug']`, which is the de-duplicated per-current view.  No change to any
+  write path, filter, handler, or other reader (`get_rejects`, `get_error`, `get_api`,
+  `get_tides`, `get_scheduler_events` are all unaffected).
+
 - **Phase-aware retry classifier — real async-path fix** (`incorporator/io/fetch.py`,
   `incorporator/observability/tideweaver/_retry_defaults.py`): the network-retry
   cap introduced in the prior commit was broken in the real async path.  A
