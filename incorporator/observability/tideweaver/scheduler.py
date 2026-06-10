@@ -15,7 +15,7 @@ Per-tick bodies live in this module too:
 
 * :class:`Stream` → ``cls.stream(..., stateful_polling=False)`` chunking drain.
 * :class:`Fjord` → "fjord flush": snapshot upstream registries, then delegate to
-  :func:`incorporator.observability.pipeline._outflow.flush`, the shared
+  :func:`incorporator.observability.pipeline.outflow.flush`, the shared
   per-class build-and-export primitive that the legacy ``_outflow_daemon``
   also uses.  Shape semantics (single-output list / multi-output dict,
   user-pre-declared classes vs. ``infer_dynamic_schema``) match
@@ -55,7 +55,7 @@ from ...io.fetch import HTTPClientBuilder
 from ...io.penstock import FlowState
 from ...rejects import RejectEntry
 from ..logger import _route_scheduler_event_to_log, _route_to_log, current_meta
-from ..pipeline._outflow import flush
+from ..pipeline.outflow import flush
 from ._retry_defaults import (
     _CANAL_OUTER_STOP,
     _CANAL_OUTER_WAIT_MAX,
@@ -874,7 +874,7 @@ class Tideweaver:
             # reservoir.  Reads the strong-ref ``_tideweaver_snapshot`` the
             # tick body parks on its output class (Stream parks one in
             # ``_tick_stream``; Fjord parks one per derived class in
-            # ``_outflow.flush``).  Falls back to ``cls.inc_dict.values()``
+            # ``outflow.flush``).  Falls back to ``cls.inc_dict.values()``
             # when no snapshot is parked — preserves the legacy behavior of
             # custom tick factories that mutate ``inc_dict`` directly
             # (e.g. test doubles).  Empty waves are skipped to avoid
@@ -1123,7 +1123,7 @@ class Tideweaver:
                 self._routed_reject_ids.add(id(_slf_reject))
         # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
         # Runtime-only escape-hatch attribute (no field on Incorporator itself).
-        # ``_outflow.py:flush`` parks the same attribute on Fjord output
+        # ``outflow.flush`` parks the same attribute on Fjord output
         # classes, so downstream readers walk Stream and Fjord upstreams
         # uniformly via ``getattr(dep.cls, "_tideweaver_snapshot", None)``.
         cls_any = cast(Any, current.cls)
@@ -1133,7 +1133,7 @@ class Tideweaver:
         """One fjord flush: snapshot upstream → outflow(state) → build → export.
 
         Delegates the outflow → normalize → per-class build/export to the
-        shared :func:`incorporator.observability.pipeline._outflow.flush`
+        shared :func:`incorporator.observability.pipeline.outflow.flush`
         generator (also used by the legacy ``_outflow_daemon``).  The
         scheduler's job is just snapshotting the upstream state and logging
         per-class failures; the outflow primitive owns the rest.

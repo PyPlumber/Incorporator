@@ -128,7 +128,7 @@ def _make_routing_tick(tw: Tideweaver, strong_refs_by_cls: Dict[type, List[Any]]
             current.cls._tideweaver_snapshot = list(strong_refs_by_cls.get(current.cls, []))  # type: ignore[attr-defined]
         elif isinstance(current, Fjord):
             await tw._tick_fjord(current)
-            # No file-reread workaround needed: ``_outflow.flush`` now parks
+            # No file-reread workaround needed: ``outflow.flush`` now parks
             # ``_tideweaver_snapshot`` on the Fjord's output class directly.
             # We still stash a strong-ref copy so the snapshot survives the
             # WeakValueDict between this test's manual ticks.

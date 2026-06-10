@@ -22,7 +22,7 @@ from types import ModuleType
 from typing import Any, cast
 
 from ...list import IncorporatorList
-from ..logger import Wave  # re-export for callers
+from ..wave import Wave
 from ._shared import _daemon_tick, _interruptible_sleep, _resolve_if_exists_for_export
 
 __all__ = ["Wave", "_outflow_daemon", "flush"]
@@ -343,58 +343,22 @@ async def _outflow_daemon(
 ) -> None:
     """Periodic outflow-and-export daemon for the fjord engine.
 
-    On every tick (two-phase, multi-output aware):
+    Each tick:
 
-    Each tick runs in two stages:
+    1. Snapshots ``source_refs[i][0]`` under ``lock`` (O(N) pointer copies —
+       lock released fast), then delegates the outflow → normalise →
+       per-class build/export to :func:`flush`, which owns those semantics.
+    2. Exceptions from ``outflow_fn`` itself propagate out of the ``async for``
+       and land in the outer ``except``, which enqueues one composite failure
+       :class:`Wave` keyed by ``output_class_name``.  Per-class build/export
+       errors surface as the third element of the yielded tuple and are re-raised
+       inside a :func:`~._shared._daemon_tick` context so each class gets its own
+       properly-shaped failure wave.
+    3. Loops on ``e_interval``; ``None`` means run-once (exits after the first
+       flush).
 
-    **Stage 1 — snapshot + invoke user outflow_fn.**
-      1. Snapshot each ``source_refs[i][0]`` under ``lock`` into a state
-         dict keyed by ``source_classes[i].__name__`` (O(N) pointer
-         copies, not deep copies — release the lock fast).
-      2. Outside the lock, invoke ``outflow_fn(state)`` via
-         ``asyncio.to_thread`` so CPU-heavy joins don't block sibling
-         daemons.  An exception here enqueues one composite
-         ``outflow:<output_class_name>`` failure wave; per-class waves
-         are skipped (we can't attribute rows to classes that never
-         ran).
-      3. ``_normalise_outflow_return`` coerces the result to
-         ``{class_name: rows}``:
-           * ``list[dict]``  → single-output (one class)
-           * ``dict[str, list[dict]]`` → multi-output (one class per key,
-             one file per key)
-           * ``{}``          → no-op tick (zero waves)
-
-    **Stage 2 — per-derived-class build + export.**  For every
-    ``(derived_name, rows)`` pair the engine:
-      1. Wraps the block in its own ``_daemon_tick`` so a failure in
-         one derived class doesn't block the others — each gets its own
-         success-or-failure ``Wave`` tagged ``outflow:<derived_name>``.
-      2. Prefers a user-pre-declared ``Incorporator`` subclass on
-         ``outflow_module`` when one exists with the matching name (gives
-         DX full type control); otherwise builds the class via
-         ``infer_dynamic_schema(derived_name, rows, base_class)``.  The
-         schema registry is keyed by
-         ``(name, frozenset(field_keys), id(base))`` so successive
-         same-shape ticks reuse the cached class object.
-      3. Clears the class's ``inc_dict``, materialises one instance
-         per row (Pydantic ``model_post_init`` auto-registers), stashes
-         a strong-ref ``_tideweaver_snapshot`` to defeat the
-         WeakValueDictionary GC, and exports via the matching
-         per-class ``export_params`` slice.
-
-    Per-class export config lookup:
-      * Top-level ``file_path`` in ``export_params``  →  single-output
-        (every derived class writes to the same file; warning logged
-        on multi-output mismatch).
-      * ``export_params[derived_name]``  →  multi-output (recommended
-        shape: ``{"JediArchive": {"file_path": "..."}, ...}``).
-      * Missing key  →  warn-and-skip the export; the build count is
-        still recorded on the Wave.
-
-    Configured-but-unproduced classes are logged once per tick.
-
-    Failures in any phase enqueue a Wave with ``failed_sources``
-    populated but never crash the daemon.
+    Failures in any phase enqueue a Wave with ``failed_sources`` populated but
+    never crash the daemon.
     """
     loop_idx = 0
     # Pre-compute state dict keys once — avoids re-allocating the key list on

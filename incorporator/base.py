@@ -194,7 +194,7 @@ class Incorporator(BaseModel):
     #: parks ``list(cls.inc_dict.values())`` here at the end of a
     #: :class:`~incorporator.observability.tideweaver.current.Stream` tick
     #: (and at the end of a :class:`~incorporator.observability.tideweaver.current.Fjord`
-    #: flush, via ``_outflow.flush``) so that downstream currents can read
+    #: flush, via ``outflow.flush``) so that downstream currents can read
     #: a stable upstream view between ticks without the
     #: :class:`weakref.WeakValueDictionary` reclaiming entries mid-flight.
     #: Downstream code reads it uniformly via
@@ -207,7 +207,7 @@ class Incorporator(BaseModel):
     _tideweaver_snapshot: ClassVar[list[Any] | None] = None
 
     #: Bulk-insert gate set by :func:`~incorporator.schema.factory.build_instances`
-    #: and :func:`~incorporator.observability.pipeline._outflow.flush` around their
+    #: and :func:`~incorporator.observability.pipeline.outflow.flush` around their
     #: batch-validate calls so ``model_post_init`` skips per-instance ``inc_dict``
     #: writes during the loop; the caller does a single ``inc_dict.update()`` after
     #: the loop completes.  Class-level so subclass inheritance is intentional --
@@ -1402,7 +1402,7 @@ class Incorporator(BaseModel):
         if stateful_polling:
             # Delegates to the fjord engine with a synthesised identity outflow;
             # object identity in ``cls.inc_dict`` is preserved across waves via
-            # the IncorporatorList pass-through fast path in ``_outflow.flush()``.
+            # the IncorporatorList pass-through fast path in ``outflow.flush()``.
             from .observability.pipeline._stateful_shim import stream_stateful_via_fjord
 
             async for wave in stream_stateful_via_fjord(

@@ -3315,7 +3315,7 @@ async def test_fjord_flush_parks_tideweaver_snapshot_on_output_class(
 ) -> None:
     """Fjord flush parks ``_tideweaver_snapshot`` on its output class.
 
-    Regression for the Middle-Fjord routing gap: ``_outflow.py:flush`` used to
+    Regression for the Middle-Fjord routing gap: ``outflow.flush`` used to
     park its strong-ref under ``_fjord_snapshot``, but downstream tick bodies
     (``_tick_fjord``, ``_tick_export``) only read ``_tideweaver_snapshot`` —
     so a Fjord whose output fed another current saw an empty ``inc_dict`` and
@@ -3352,7 +3352,7 @@ async def test_fjord_flush_parks_tideweaver_snapshot_on_output_class(
     monkeypatch.setattr(fetch, "execute_request", _mock)
 
     # The Fjord's output class must be defined IN the outflow module so
-    # ``_outflow.py:flush`` picks it up via ``getattr(outflow_module,
+    # ``outflow.flush`` picks it up via ``getattr(outflow_module,
     # derived_name, None)`` — otherwise flush would build a dynamic
     # subclass and park the snapshot there instead, defeating the
     # cross-module assertion.  Load via ``load_outflow_module`` so the
@@ -3399,7 +3399,7 @@ async def test_fjord_flush_parks_tideweaver_snapshot_on_output_class(
 
     # The headline assertion: the Fjord's output class carries a non-empty
     # ``_tideweaver_snapshot``.  Pre-fix this was None / AttributeError because
-    # ``_outflow.py:flush`` parked the strong ref under ``_fjord_snapshot``.
+    # ``outflow.flush`` parked the strong ref under ``_fjord_snapshot``.
     snapshot: List[Any] = list(getattr(DerivedState, "_tideweaver_snapshot", []))
     assert snapshot, (
         "Fjord output class must carry a non-empty _tideweaver_snapshot — "

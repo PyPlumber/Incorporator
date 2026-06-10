@@ -21,8 +21,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from incorporator import Incorporator
-from incorporator.observability.pipeline import _outflow as outflow_module_ref
-from incorporator.observability.pipeline._outflow import _BARE_CLASS_WARNED, flush
+from incorporator.observability.pipeline import outflow as outflow_module_ref
+from incorporator.observability.pipeline.outflow import _BARE_CLASS_WARNED, flush
 from incorporator.observability.tideweaver import Fjord, Stream, Watershed
 from incorporator.observability.tideweaver.current import Fjord as FjordCls
 
@@ -92,7 +92,7 @@ async def test_flush_bare_class_extra_keys_uses_inference(
         return rows
 
     instances_collected: list[Any] = []
-    with caplog.at_level("WARNING", logger="incorporator.observability.pipeline._outflow"):
+    with caplog.at_level("WARNING", logger="incorporator.observability.pipeline.outflow"):
         async for derived_name, count, err in flush(
             outflow_fn,
             state={},

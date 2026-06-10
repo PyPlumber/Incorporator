@@ -10,7 +10,7 @@ identity outflow.
 Two properties of this shim are load-bearing:
 
 1. **Identity preservation across waves.**  The ``IncorporatorList`` pass-through
-   fast path in :func:`._outflow.flush` detects ``outflow(state) →
+   fast path in :func:`.outflow.flush` detects ``outflow(state) →
    {ClassName: state[ClassName]}`` and skips the usual ``inc_dict.clear()`` +
    re-materialise dance.  Python-object identity in ``cls.inc_dict`` therefore
    survives the export tick — that's what callers holding cross-wave refs into

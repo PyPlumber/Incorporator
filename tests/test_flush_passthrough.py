@@ -13,7 +13,7 @@ import pytest
 
 from incorporator import Incorporator
 from incorporator.list import IncorporatorList
-from incorporator.observability.pipeline._outflow import flush
+from incorporator.observability.pipeline.outflow import flush
 
 
 class _PassthroughTarget(Incorporator):
@@ -119,7 +119,7 @@ def test_normalise_single_key_dict_matching_default_is_single_output() -> None:
     The fix in ``_normalise_outflow_return`` returns ``is_multi=False`` for
     this degenerate shape so the warning fires only for genuine multi-output.
     """
-    from incorporator.observability.pipeline._outflow import _normalise_outflow_return
+    from incorporator.observability.pipeline.outflow import _normalise_outflow_return
 
     grouped, is_multi = _normalise_outflow_return(
         {"BinancePair": [{"id": 1}, {"id": 2}]},
@@ -131,7 +131,7 @@ def test_normalise_single_key_dict_matching_default_is_single_output() -> None:
 
 def test_normalise_multi_key_dict_is_multi_output() -> None:
     """Genuine multi-output (two class keys) still flags is_multi=True."""
-    from incorporator.observability.pipeline._outflow import _normalise_outflow_return
+    from incorporator.observability.pipeline.outflow import _normalise_outflow_return
 
     _, is_multi = _normalise_outflow_return(
         {"FantasyTeam": [{"id": 1}], "Manufacturer": [{"id": 2}]},
@@ -144,7 +144,7 @@ def test_normalise_single_key_dict_not_matching_default_is_multi_output() -> Non
     """Single-key dict whose key DOESN'T match the default class name is still
     a multi-output config (the user picked an unexpected name).  Don't suppress
     the warning in that case — it correctly flags the mismatch."""
-    from incorporator.observability.pipeline._outflow import _normalise_outflow_return
+    from incorporator.observability.pipeline.outflow import _normalise_outflow_return
 
     _, is_multi = _normalise_outflow_return(
         {"UnexpectedClass": [{"id": 1}]},
@@ -169,7 +169,7 @@ def test_bare_user_class_warns_on_dropped_fields(caplog: pytest.LogCaptureFixtur
     """
     import logging
 
-    from incorporator.observability.pipeline._outflow import (
+    from incorporator.observability.pipeline.outflow import (
         _BARE_CLASS_WARNED,
         _warn_on_bare_user_class,
     )
@@ -180,7 +180,7 @@ def test_bare_user_class_warns_on_dropped_fields(caplog: pytest.LogCaptureFixtur
     # Belt-and-suspenders: clear the dedup set in case another test ran first.
     _BARE_CLASS_WARNED.discard(id(BareRace))
 
-    caplog.set_level(logging.WARNING, logger="incorporator.observability.pipeline._outflow")
+    caplog.set_level(logging.WARNING, logger="incorporator.observability.pipeline.outflow")
     _warn_on_bare_user_class(BareRace, Incorporator, {"id": 1, "name": "Alice", "speed": 200})
 
     matching = [r for r in caplog.records if "BareRace" in r.getMessage()]
@@ -200,12 +200,12 @@ def test_user_class_with_fields_does_not_warn(caplog: pytest.LogCaptureFixture) 
     """A user class that declares fields beyond the base does NOT trigger the warning."""
     import logging
 
-    from incorporator.observability.pipeline._outflow import _warn_on_bare_user_class
+    from incorporator.observability.pipeline.outflow import _warn_on_bare_user_class
 
     class TypedRace(Incorporator):
         name: str = ""  # one explicit field — user opted in to inference suppression
 
-    caplog.set_level(logging.WARNING, logger="incorporator.observability.pipeline._outflow")
+    caplog.set_level(logging.WARNING, logger="incorporator.observability.pipeline.outflow")
     _warn_on_bare_user_class(TypedRace, Incorporator, {"name": "Alice", "speed": 200})
 
     matching = [r for r in caplog.records if "TypedRace" in r.getMessage()]
@@ -218,12 +218,12 @@ def test_bare_class_with_extra_allow_does_not_warn(caplog: pytest.LogCaptureFixt
 
     from pydantic import ConfigDict
 
-    from incorporator.observability.pipeline._outflow import _warn_on_bare_user_class
+    from incorporator.observability.pipeline.outflow import _warn_on_bare_user_class
 
     class ExtraAllowRace(Incorporator):
         model_config = ConfigDict(extra="allow")
 
-    caplog.set_level(logging.WARNING, logger="incorporator.observability.pipeline._outflow")
+    caplog.set_level(logging.WARNING, logger="incorporator.observability.pipeline.outflow")
     _warn_on_bare_user_class(ExtraAllowRace, Incorporator, {"id": 1, "name": "Alice", "speed": 200})
 
     matching = [r for r in caplog.records if "ExtraAllowRace" in r.getMessage()]

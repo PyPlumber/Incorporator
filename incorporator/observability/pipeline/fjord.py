@@ -16,8 +16,8 @@ import httpx
 from ...rejects import RejectEntry
 from ..logger import Wave
 from ._daemons import _export_daemon, _refresh_daemon
-from ._outflow import _outflow_daemon
 from ._shared import _row_count
+from .outflow import _outflow_daemon
 
 logger = logging.getLogger(__name__)
 

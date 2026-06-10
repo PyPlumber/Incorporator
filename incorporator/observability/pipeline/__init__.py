@@ -25,10 +25,10 @@ from typing import Any
 from ..logger import Wave
 from ._daemons import _export_daemon, _refresh_daemon
 from ._dispatch import assert_engine_supported
-from ._outflow import _outflow_daemon
 from ._shared import _enrich_and_load, _interruptible_sleep, _row_count
 from .chunked import _run_chunking_engine
 from .fjord import _run_fjord_engine
+from .outflow import _outflow_daemon
 
 __all__ = [
     "run_pipeline",
@@ -74,7 +74,7 @@ async def run_pipeline(
     ``outflow(state)`` so the fjord engine can run a single-source
     stateful pipeline transparently — Python-object identity in
     ``cls.inc_dict`` survives across waves thanks to the IncorporatorList
-    pass-through fast path in :func:`._outflow.flush`.
+    pass-through fast path in :func:`.outflow.flush`.
 
     Args:
         cls: The Incorporator subclass to fetch data for.
