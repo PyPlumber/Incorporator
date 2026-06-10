@@ -37,8 +37,8 @@ from typing import Any
 
 import httpx
 
-from ...rejects import RejectEntry
-from ..logger import Wave
+from ..observability.logger import Wave
+from ..rejects import RejectEntry
 from . import DEFAULT_EXPORT_INTERVAL_SEC, DEFAULT_REFRESH_INTERVAL_SEC
 from ._shared import _row_count
 from .fjord import _run_fjord_engine

@@ -13,8 +13,8 @@ from typing import Any, cast
 
 import httpx
 
-from ...rejects import RejectEntry
-from ..logger import Wave
+from ..observability.logger import Wave
+from ..rejects import RejectEntry
 from ._daemons import _export_daemon, _refresh_daemon
 from ._shared import _row_count
 from .outflow import _outflow_daemon
@@ -223,7 +223,7 @@ def _resolve_per_source_interval(
          JSON-compatible) or class object (Python-ergonomic).
       3. Top-level scalar — used as the default for every source.
       4. ``None`` — when nothing matches.  The pipeline-level cascade in
-         ``observability/pipeline/__init__.py`` then applies the
+         ``pipeline/__init__.py`` then applies the
          framework default (60 s for refresh, 300 s for export).
     """
     if key in entry:

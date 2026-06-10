@@ -711,7 +711,7 @@ the implicit surge barrier on `"hard"`.
 **Python API parity — `GateMode` enum.** The shape constructors and `Edge(gate_mode=...)` accept both string form and the `GateMode` enum:
 
 ```python
-from incorporator.observability.tideweaver import GateMode, Watershed
+from incorporator.tideweaver import GateMode, Watershed
 
 Watershed.chain(window=(start, end), currents=[...], gate_mode=GateMode.HARD)
 Watershed.chain(window=(start, end), currents=[...], gate_mode="hard")     # same Watershed

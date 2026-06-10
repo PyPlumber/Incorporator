@@ -31,7 +31,7 @@ from pydantic import ConfigDict
 from incorporator import Incorporator
 from incorporator.io import fetch
 from incorporator.io.pagination import NextUrlPaginator
-from incorporator.observability.tideweaver import Fjord, Stream, Tideweaver, Watershed
+from incorporator.tideweaver import Fjord, Stream, Tideweaver, Watershed
 from incorporator.schema.converters import calc, inc
 
 

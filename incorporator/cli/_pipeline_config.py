@@ -125,7 +125,7 @@ def parse_pipeline_config(
         kind: The pipeline verb the runner is about to execute.
             Tideweaver configs are NOT covered here; they have their
             own loader in
-            :mod:`incorporator.observability.tideweaver.config`.
+            :mod:`incorporator.tideweaver.config`.
 
     Returns:
         A validated, frozen :class:`StreamConfig` or :class:`FjordConfig`.

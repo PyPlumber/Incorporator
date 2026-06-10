@@ -7,13 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Namespace re-homing — pipeline and tideweaver lifted out of observability/**: the deep
+  import paths `incorporator.observability.pipeline` and `incorporator.observability.tideweaver`
+  have moved to `incorporator.pipeline` and `incorporator.tideweaver` respectively.
+  The `incorporator.observability` sub-package now contains only telemetry primitives
+  (`logger.py`, `wave.py`). The top-level `from incorporator import ...` public API is
+  **unchanged**. No backward-compat shims are provided at the old paths (breaking change
+  for any code importing from the deep `observability.pipeline` / `observability.tideweaver`
+  paths directly).
+
 ## [1.3.3] - 2026-06-10
 
 ### Changed
 
 - **DRY logging refactor — commit 4 (final): watershed top-level lifecycle events via the
   scheduler-event channel** (`incorporator/observability/logger.py`,
-  `incorporator/observability/tideweaver/logged.py`): `LoggedTideweaver.run()` now emits
+  `incorporator/tideweaver/logged.py`): `LoggedTideweaver.run()` now emits
   `watershed_started` and `watershed_completed` scheduler events bracketing the run when
   `enable_logging=True`. Both events carry the watershed name and window ISO timestamps in
   their `detail` field and have `current_name=None` (watershed-scoped, not current-scoped).
@@ -23,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the DRY-logging series (commits 1–4).
 
 - **DRY logging refactor — commit 3: per-current session-log routing via meta code**
-  (`incorporator/observability/tideweaver/scheduler.py`, `incorporator/observability/logger.py`):
+  (`incorporator/tideweaver/scheduler.py`, `incorporator/observability/logger.py`):
   during a `LoggedTideweaver` run each Stream current's yielded `Wave` records and their
   `wave.rejects` (`RejectEntry`) are routed to the session logs tagged with `current_meta`
   (`current:"<name>", class:"<ClassName>", code:"<name>"`). URL-traffic rejects land in `api.log`;
@@ -50,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`get_current` double-count fix** (`incorporator/observability/logger.py`,
-  `incorporator/observability/tideweaver/logged.py`): `LoggingMixin.get_current` and
+  `incorporator/tideweaver/logged.py`): `LoggingMixin.get_current` and
   `LoggedTideweaver.get_current` previously read `['api', 'error', 'debug']` and unioned
   them, returning each record twice — once from its level file and once from `debug.log`.
   Root cause: `debug_fh` in `setup_class_logger` has no filter and a `DEBUG` floor, so
@@ -60,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_tides`, `get_scheduler_events` are all unaffected).
 
 - **Phase-aware retry classifier — real async-path fix** (`incorporator/io/fetch.py`,
-  `incorporator/observability/tideweaver/_retry_defaults.py`): the network-retry
+  `incorporator/tideweaver/_retry_defaults.py`): the network-retry
   cap introduced in the prior commit was broken in the real async path.  A
   dead host ran all 8 attempts (~74 s measured) because `retry_if_exception`
   passes only the exception to its predicate — any attempt-count closure over
@@ -92,12 +103,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_last_bytes_downloaded`, `_last_http_fetch_time_sec`, and
   `_last_bytes_processed` to `None`, preventing stale HTTP telemetry from
   bleeding into subsequent non-HTTP chunks on the same class.
-- **AIMD parse-only steering** (`incorporator/observability/pipeline/chunked.py`): online AIMD ring now uses the parse-only remainder (`processing_time_sec - http_fetch_time_sec`) for HTTP sources, matching the offline `_tune_chunk_size` signal; file/SQLite sources fall back to end-to-end correctly; target window re-derived from `_PARSE_TOO_FAST_P50=0.001s` / `_PARSE_MEMORY_P99=0.100s`.
-- **`_tune_chunk_size` edge hardening** (`incorporator/observability/tideweaver/architect.py`): negative parse-time remainders are clamped to `max(0.0, ...)` before percentile computation (mirrors the online AIMD clamp in `chunked.py`); mixed HTTP/file source groups where HTTP waves are the majority (> `_HTTP_MAJORITY_FRACTION=0.5`) now steer on the parse-only signal instead of falling back to coarse end-to-end thresholds.
+- **AIMD parse-only steering** (`incorporator/pipeline/chunked.py`): online AIMD ring now uses the parse-only remainder (`processing_time_sec - http_fetch_time_sec`) for HTTP sources, matching the offline `_tune_chunk_size` signal; file/SQLite sources fall back to end-to-end correctly; target window re-derived from `_PARSE_TOO_FAST_P50=0.001s` / `_PARSE_MEMORY_P99=0.100s`.
+- **`_tune_chunk_size` edge hardening** (`incorporator/tideweaver/architect.py`): negative parse-time remainders are clamped to `max(0.0, ...)` before percentile computation (mirrors the online AIMD clamp in `chunked.py`); mixed HTTP/file source groups where HTTP waves are the majority (> `_HTTP_MAJORITY_FRACTION=0.5`) now steer on the parse-only signal instead of falling back to coarse end-to-end thresholds.
 
 ### Added
 
-- **Architect wire-bytes / HTTP-latency telemetry** (`incorporator/observability/tideweaver/architect.py`,
+- **Architect wire-bytes / HTTP-latency telemetry** (`incorporator/tideweaver/architect.py`,
   `incorporator/tools/inspector.py`): three enhancements that close the feedback loop between the
   E′ per-Wave telemetry and the offline architect tuner.
 
@@ -173,7 +184,7 @@ data flow, or the result of any verb; existing pipelines run unchanged.
   contains *meta_contains*.  Runs in a worker thread via
   :func:`asyncio.to_thread`; silently skips missing or unreadable files.
   All five ``get_*`` reader methods in :class:`LoggingMixin` and
-  :class:`~incorporator.observability.tideweaver.logged.LoggedTideweaver` are
+  :class:`~incorporator.tideweaver.logged.LoggedTideweaver` are
   now thin wrappers over this function — no execution or return-shape change.
 - **`LoggingMixin.get_current(code)` classmethod** — per-current view that
   returns all records whose ``meta`` field contains *code*, unioned across
@@ -184,7 +195,7 @@ data flow, or the result of any verb; existing pipelines run unchanged.
 ### Fixed
 
 - **`LoggedTideweaver.get_rejects` now unions `api.log` + `error.log`**
-  (`incorporator/observability/tideweaver/logged.py`): the previous
+  (`incorporator/tideweaver/logged.py`): the previous
   implementation read only ``error.log``, silently missing URL-traffic rejects
   (``is_url_traffic_error=True``) that route to ``api.log``.  The method now
   delegates to ``read_log(logger_name, ["error", "api"], key="reject")``,
@@ -195,7 +206,7 @@ data flow, or the result of any verb; existing pipelines run unchanged.
   `incorporator/rejects.py` — count headline + up to `cap` rendered entries +
   overflow line.  Used by `base.py`'s warning emission.
 - `_build_canal_reject(...)` module-level helper in
-  `incorporator/observability/tideweaver/scheduler.py` — single
+  `incorporator/tideweaver/scheduler.py` — single
   `model_construct` site for all five canal skip kinds.
 - `_route_scheduler_event_to_log(logger_name, event_type, current_name, detail, ...)` in
   `incorporator/observability/logger.py` — routes Tideweaver scheduler
@@ -589,17 +600,17 @@ keeps working.
 
 #### Added
 
-- **`SkipReason`, `WakeReason` enums** (`incorporator.observability.tideweaver`).
+- **`SkipReason`, `WakeReason` enums** (`incorporator.tideweaver`).
   `str`-subclass enums so `SkipReason.SURGE_HALTED == "surge_halted"`
   stays `True` — existing code that compares `tide.skipped` entries
   against plain string literals keeps working, and IDEs / mypy now
   narrow on the typed surface.  Pydantic v2 serialises the value
-  (not the name).  Source: `observability/tideweaver/reasons.py`.
-- **`GateMode` enum** (`incorporator.observability.tideweaver`).
+  (not the name).  Source: `tideweaver/reasons.py`.
+- **`GateMode` enum** (`incorporator.tideweaver`).
   `str`-subclass; members `HARD` / `SOFT` / `WEIR`.  Shape constructors
   (`Watershed.chain` / `diamond` / `fanout`) and `Edge(gate_mode=...)`
   accept either form — `gate_mode="hard"` and `gate_mode=GateMode.HARD`
-  produce identical `FlowControl`.  Source: `observability/tideweaver/flow.py`.
+  produce identical `FlowControl`.  Source: `tideweaver/flow.py`.
 - **Per-class `tide.log` file** for `LoggedTideweaver`.  Every yielded
   `Tide` now lands in a dedicated `logs/<logger_name>_tide.log` in
   addition to the existing `_api` / `_error` / `_debug` files.
@@ -616,13 +627,13 @@ keeps working.
   the tick if the tick body didn't manually assign one (identity check
   on the pre-tick value).  Subclasses opt out with
   `auto_park_snapshot = False`.  Source:
-  `observability/tideweaver/current.py:318`.
+  `tideweaver/current.py:318`.
 - **Scheduler empty-output WARNING** — CustomCurrent ticks that
   succeed but produce empty output despite non-empty upstream
   snapshot(s) emit a one-line WARNING per pass naming the current and
   its upstreams.  Helps catch silent predicate / conv_dict
   mismatches in user tick bodies.  Source:
-  `observability/tideweaver/scheduler.py:818`.
+  `tideweaver/scheduler.py:818`.
 
 #### Changed (internal)
 
@@ -1057,7 +1068,7 @@ TypeAdapter refactor and the outcome-record telemetry buildout.
 
 ### Internal
 
-- **`incorporator/observability/tideweaver/architect.py`** routes
+- **`incorporator/tideweaver/architect.py`** routes
   Penstock tier-1 (host-aware) recommendations through the live
   `known_host_rates()` view rather than the import-time
   `_KNOWN_API_RATE_LIMITS` shim.  Behavior unchanged for users who
@@ -1112,7 +1123,7 @@ into `watershed.json` via discriminated unions.
   `SignalPenstock.rate_fn` and `ExportToArchive.archive_cls` via
   `module:attr` syntax.
 - **14 new public names** exported from
-  `incorporator.observability.tideweaver`: `FlowControl`, `Gate`,
+  `incorporator.tideweaver`: `FlowControl`, `Gate`,
   `HardLock`, `SoftPass`, `Weir`, `SurgeBarrier`, `Penstock`,
   `SustainedPenstock`, `BurstPenstock`, `WindowPenstock`,
   `BackpressurePenstock`, `SignalPenstock`, `Reservoir`, `Spillway`,
@@ -1235,7 +1246,7 @@ into `watershed.json` via discriminated unions.
 - **`cli/validate.py`** auto-detects watershed configs (top-level `window`
   + `shape` keys); `tideweaver` added to `ConfigType` and `--type`. No
   change to `stream` / `fjord` validation.
-- **`observability/pipeline/_outflow.py`** factors a shared async `flush()`
+- **`pipeline/_outflow.py`** factors a shared async `flush()`
   generator yielding `(derived_name, row_count, error)` per output class.
   Used by both `_outflow_daemon` and `Tideweaver._tick_fjord`; removes ~50
   lines of duplication. Legacy wave-emission shape preserved.
@@ -1243,14 +1254,14 @@ into `watershed.json` via discriminated unions.
   `tideweaver` sub-app for consistency across all three pipeline types.
 - **Docs pass** — `docs/cli_and_configuration.md` gains §9 for `tideweaver`
   and a "When to Reach For" table row; `docs/library_reference.md` adds an
-  `incorporator.observability.tideweaver` bullet; README adds a Tideweaver
+  `incorporator.tideweaver` bullet; README adds a Tideweaver
   subsection under "The Verbs"; `docs/installation.md` and
   `docs/deployment.md` mention the new sub-command.
 - **Tick → wave prose drift** from the earlier rename cleaned up in
   `examples/07-stateful-refresh/README.md` and
   `examples/08-streaming-daemon/README.md`.
 - **`stream(stateful_polling=True)` collapsed into a thin shim** over
-  `fjord()` (`observability/pipeline/_stateful_shim.py`). Two engines
+  `fjord()` (`pipeline/_stateful_shim.py`). Two engines
   (chunking + stateful) become one (chunking) plus a single-source-fjord
   shim. Wave-contract preserved: same `operation` strings, same
   `chunk_index` cadence, same instance identity across refreshes.
@@ -1301,7 +1312,7 @@ into `watershed.json` via discriminated unions.
   Previously a bare `KeyError('Track')` stringified to just `'Track'`
   in the failure message, leaving the user no signal about which
   source raised or what stage failed.  Helper:
-  `incorporator.observability.pipeline.fjord._format_seed_error`.
+  `incorporator.pipeline.fjord._format_seed_error`.
 - **Bare-class data-loss warning at outflow flush.** `flush()` prefers
   a user-pre-declared subclass when the outflow module exposes one
   with the matching `__name__`.  A "bare" declaration like
@@ -1311,7 +1322,7 @@ into `watershed.json` via discriminated unions.
   A one-time WARNING per class identity now surfaces the issue with
   a fix suggestion (declare the fields explicitly or delete the
   class so `infer_dynamic_schema` takes over).  Helper:
-  `incorporator.observability.pipeline._outflow._warn_on_bare_user_class`.
+  `incorporator.pipeline._outflow._warn_on_bare_user_class`.
 - **`analyze_error()` inspector survives cp1252 stdout.** The error
   inspector's emoji prefixes (`🚨` / `💡` / `👉`) used to crash mid-
   diagnosis on Windows cp1252 console with `UnicodeEncodeError`,

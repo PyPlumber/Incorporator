@@ -9,7 +9,7 @@ Parallels :class:`~incorporator.observability.logger.LoggedIncorporator` at
 Example::
 
     from datetime import datetime, timedelta, timezone
-    from incorporator.observability.tideweaver import (
+    from incorporator.tideweaver import (
         LoggedTideweaver,
         Stream,
         Watershed,
@@ -39,7 +39,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ..logger import (
+from ..observability.logger import (
     _route_reject_to_log,
     _route_scheduler_event_to_log,
     _route_tide_to_log,
@@ -202,7 +202,7 @@ class LoggedTideweaver(Tideweaver):
         Returns:
             List of tide-record dicts sorted ascending by ``tide_number``.
             Each dict contains a top-level ``"tide"`` key whose value matches
-            the :class:`~incorporator.observability.tideweaver.tide.Tide`
+            the :class:`~incorporator.tideweaver.tide.Tide`
             model dump.  Returns an empty list when no log files exist yet.
 
         Example::

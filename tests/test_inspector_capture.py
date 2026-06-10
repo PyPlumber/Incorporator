@@ -7,7 +7,7 @@ Print-output preservation is covered indirectly by the existing test
 suite (the 712 tests that already exercise ``cls.test()`` continue to
 pass after the refactor).  This file pins the structured signal bundle
 that the cross-source orchestration analyzer in
-``incorporator.observability.tideweaver.architect`` consumes.
+``incorporator.tideweaver.architect`` consumes.
 """
 
 from __future__ import annotations

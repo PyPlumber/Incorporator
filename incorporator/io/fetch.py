@@ -43,7 +43,7 @@ from .source_ref import SourceRef
 # Scoped to the chunked-pipeline call so the fetch path can attribute
 # response.content size back to the originating Incorporator subclass
 # without threading a class reference through every helper signature.
-# Set by ``observability/pipeline/chunked.py`` before ``cls.incorp(...)``
+# Set by ``pipeline/chunked.py`` before ``cls.incorp(...)``
 # and reset by the same try/finally afterward.  Default ``None`` covers
 # all non-chunked call sites (incorp(), refresh(), inspector probes).
 _CURRENT_CHUNK_CLASS: ContextVar[type[Any] | None] = ContextVar("_CURRENT_CHUNK_CLASS", default=None)

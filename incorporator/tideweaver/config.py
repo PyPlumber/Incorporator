@@ -21,9 +21,9 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
-from ...base import Incorporator
-from ...io.config_paths import resolve_config_paths
-from ...usercode import load_user_module
+from ..base import Incorporator
+from ..io.config_paths import resolve_config_paths
+from ..usercode import load_user_module
 from .current import Current, Export, Fjord, Stream
 from .flow import FlowControl, GateMode, flow_from_mode
 from .watershed import Edge, Watershed
@@ -48,8 +48,8 @@ def load_watershed(path: Path) -> Watershed:
     # Lazy imports so loading this module never triggers cli/__init__.py,
     # which would create a circular import (cli registers a tideweaver sub-app
     # that imports back into this module).
-    from ...cli.envexpand import expand_env
-    from ...cli.tokens import resolve_tokens
+    from ..cli.envexpand import expand_env
+    from ..cli.tokens import resolve_tokens
 
     if not path.is_file():
         raise FileNotFoundError(f"watershed config not found: {path}")
@@ -218,7 +218,7 @@ def _build_current(
         raise ValueError(
             f"Current {entry.get('name', '?')!r}: 'skip_threshold' moved to per-edge "
             "SurgeBarrier(threshold_multiple=..., action=...) on FlowControl. "
-            "See incorporator.observability.tideweaver.flow.SurgeBarrier."
+            "See incorporator.tideweaver.flow.SurgeBarrier."
         )
 
     if verb == "stream":

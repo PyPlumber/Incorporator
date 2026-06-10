@@ -184,7 +184,7 @@ async for tide in Tideweaver(watershed).run():
 **Per-edge flow control.** Each edge composes six orthogonal primitives — `Gate` (HardLock / SoftPass / Weir), `SurgeBarrier`, `Penstock` (Sustained / Burst / Window / Backpressure / Signal), `Reservoir`, `Spillway` (DropOldest / RaiseOverflow / ExportToArchive), and a declarative `FlowObserver` (Null / Logging / Signal) for telemetry. The shape constructors accept a top-level `flow=` or `gate_mode=` shorthand; explicit `Edge(...)` carries its own:
 
 ```python
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     FlowControl, Weir, BurstPenstock, Reservoir, LoggingObserver,
 )
 
@@ -290,11 +290,11 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
 
   See `incorporator.io.SourceRef` for the opt-in typed source value (URL / file / parent / payload / kwargs) when you need explicit source dispatch.
 * **Atomic writes + spreadsheet-injection guard** — Parquet / Feather / ORC / JSON / XML / XLSX build via tempfile + `os.replace()` (no half-written files); CSV / XLSX cells starting with `=` / `@` / `+` / `-` are quoted on export (OWASP).
-* **Non-blocking observability with a routing split** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. URL/internet-traffic errors (HTTP 4xx/5xx, network failures) route to `_api.log`; parse and codebase errors route to `_error.log`; `_debug.log` is the superset of both. The file location tells you whether the fault is the API's or your code's. `get_rejects()` unions both files so every reject is covered regardless of routing. For orchestration runs, `LoggedTideweaver` (from `incorporator.observability.tideweaver`) is the parallel drop-in for `Tideweaver` — routes every yielded `Tide` and every accumulated `RejectEntry` to disk via the same `QueueHandler` pipeline; replay with `get_tides()` / `get_rejects()` / `get_scheduler_events()`.
+* **Non-blocking observability with a routing split** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. URL/internet-traffic errors (HTTP 4xx/5xx, network failures) route to `_api.log`; parse and codebase errors route to `_error.log`; `_debug.log` is the superset of both. The file location tells you whether the fault is the API's or your code's. `get_rejects()` unions both files so every reject is covered regardless of routing. For orchestration runs, `LoggedTideweaver` (from `incorporator.tideweaver`) is the parallel drop-in for `Tideweaver` — routes every yielded `Tide` and every accumulated `RejectEntry` to disk via the same `QueueHandler` pipeline; replay with `get_tides()` / `get_rejects()` / `get_scheduler_events()`.
 * **The pipeline tells you what to tune.** `architect.tune()` reads accumulated rejects, tides, and pass interval and returns a `TuningReport` of severity-sorted hints — per-edge `Penstock` rates, byte-rate-aware penstock recommendations, evidence-based timeout hints via `tune(timeout=...)`, surge thresholds. `tw.summary(tides=tides)` returns the same report from an existing instance.
 
   ```python
-  from incorporator.observability.tideweaver import LoggedTideweaver, tune
+  from incorporator.tideweaver import LoggedTideweaver, tune
   tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="PriceSession")
   tides = [tide async for tide in tw.run()]
   report = tune(rejects=tw.rejects, tides=tides, pass_interval=tw.pass_interval)

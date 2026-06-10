@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from incorporator.observability.tideweaver.architect import (
+from incorporator.tideweaver.architect import (
     _tune_parent_child,
     tune,
 )
-from incorporator.observability.tideweaver.tide import Tide
+from incorporator.tideweaver.tide import Tide
 from incorporator.observability.wave import Wave
 
 _UTC = timezone.utc

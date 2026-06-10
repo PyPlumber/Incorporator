@@ -606,9 +606,9 @@ def test_tide_model_dump_includes_new_fields() -> None:
     """model_dump(mode='json') includes all new Tide scalar fields without breaking existing keys."""
     from datetime import datetime, timezone
 
-    from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
-    from incorporator.observability.tideweaver.reasons import WakeReason
-    from incorporator.observability.tideweaver.tide import Tide
+    from incorporator.tideweaver.current_outcome import CurrentOutcome
+    from incorporator.tideweaver.reasons import WakeReason
+    from incorporator.tideweaver.tide import Tide
 
     outcomes = [CurrentOutcome(name="coin", status="fired")]
     tide = Tide.model_construct(

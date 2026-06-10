@@ -13,14 +13,14 @@ warns about.
 
 from __future__ import annotations
 
-from ...io._retry_defaults import _HTTP_INNER_STOP as _HTTP_INNER_STOP
-from ...io._retry_defaults import _HTTP_INNER_WAIT_MAX as _HTTP_INNER_WAIT_MAX
-from ...io._retry_defaults import _HTTP_INNER_WAIT_MIN as _HTTP_INNER_WAIT_MIN
-from ...io._retry_defaults import _HTTP_INNER_WAIT_MULTIPLIER as _HTTP_INNER_WAIT_MULTIPLIER
-from ...io._retry_defaults import _HTTP_NETWORK_RETRY_STOP as _HTTP_NETWORK_RETRY_STOP
-from ...io._retry_defaults import _HTTP_NETWORK_WAIT_MAX as _HTTP_NETWORK_WAIT_MAX
-from ...io._retry_defaults import _HTTP_NETWORK_WAIT_MIN as _HTTP_NETWORK_WAIT_MIN
-from ...io._retry_defaults import _HTTP_NETWORK_WAIT_MULTIPLIER as _HTTP_NETWORK_WAIT_MULTIPLIER
+from ..io._retry_defaults import _HTTP_INNER_STOP as _HTTP_INNER_STOP
+from ..io._retry_defaults import _HTTP_INNER_WAIT_MAX as _HTTP_INNER_WAIT_MAX
+from ..io._retry_defaults import _HTTP_INNER_WAIT_MIN as _HTTP_INNER_WAIT_MIN
+from ..io._retry_defaults import _HTTP_INNER_WAIT_MULTIPLIER as _HTTP_INNER_WAIT_MULTIPLIER
+from ..io._retry_defaults import _HTTP_NETWORK_RETRY_STOP as _HTTP_NETWORK_RETRY_STOP
+from ..io._retry_defaults import _HTTP_NETWORK_WAIT_MAX as _HTTP_NETWORK_WAIT_MAX
+from ..io._retry_defaults import _HTTP_NETWORK_WAIT_MIN as _HTTP_NETWORK_WAIT_MIN
+from ..io._retry_defaults import _HTTP_NETWORK_WAIT_MULTIPLIER as _HTTP_NETWORK_WAIT_MULTIPLIER
 
 _CANAL_OUTER_STOP: int = 5
 _CANAL_OUTER_WAIT_MAX: float = 8.0

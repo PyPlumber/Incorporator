@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from ..logger import Wave  # re-exported for callers that still import it from here
+from ..observability.logger import Wave  # re-exported for callers that still import it from here
 from ._shared import _daemon_tick, _interruptible_sleep, _resolve_if_exists_for_export, _row_count
 
 __all__ = ["Wave", "_refresh_daemon", "_export_daemon"]

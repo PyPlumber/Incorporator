@@ -32,7 +32,7 @@ from typing import Deque, List, Tuple
 
 import pytest
 
-from incorporator.observability.tideweaver.flow import DropOldest, RaiseOverflow
+from incorporator.tideweaver.flow import DropOldest, RaiseOverflow
 
 PUSH_COUNT = 100_000
 RESERVOIR_DEPTH = 10
@@ -125,7 +125,7 @@ def test_reservoir_raise_overflow_throughput() -> None:
     spillway = RaiseOverflow()
     edge = ("up", "down")
 
-    flow_logger = logging.getLogger("incorporator.observability.tideweaver.flow")
+    flow_logger = logging.getLogger("incorporator.tideweaver.flow")
     prev_level = flow_logger.level
     flow_logger.setLevel(logging.CRITICAL)
     try:

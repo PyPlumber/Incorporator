@@ -20,8 +20,8 @@ import pytest
 
 from incorporator import Incorporator
 from incorporator.cli.tideweaver import _run_tideweaver
-from incorporator.observability.tideweaver import LoggedTideweaver, Tideweaver, Watershed
-from incorporator.observability.tideweaver.current import Stream
+from incorporator.tideweaver import LoggedTideweaver, Tideweaver, Watershed
+from incorporator.tideweaver.current import Stream
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ async def test_run_tideweaver_logs_true_builds_logged_tideweaver(tmp_path: Path)
         yield
 
     cfg = _write_minimal_ws(tmp_path)
-    with patch("incorporator.observability.tideweaver.logged.LoggedTideweaver.run", _capture_run):
+    with patch("incorporator.tideweaver.logged.LoggedTideweaver.run", _capture_run):
         await _run_tideweaver(cfg, json_output=False, heartbeat_file=None, logs=True)
 
     assert captured, "LoggedTideweaver.run must have been called"
@@ -208,7 +208,7 @@ async def test_run_tideweaver_logs_true_does_not_call_basicconfig(tmp_path: Path
         yield
 
     with (
-        patch("incorporator.observability.tideweaver.logged.LoggedTideweaver.run", _noop_run),
+        patch("incorporator.tideweaver.logged.LoggedTideweaver.run", _noop_run),
         patch("logging.basicConfig") as mock_basic,
     ):
         await _run_tideweaver(cfg, json_output=False, heartbeat_file=None, logs=True)

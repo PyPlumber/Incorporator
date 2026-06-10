@@ -15,9 +15,9 @@ from typing import List
 import pytest
 from pydantic import ValidationError
 
-from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
-from incorporator.observability.tideweaver.reasons import SkipReason, WakeReason
-from incorporator.observability.tideweaver.tide import Tide
+from incorporator.tideweaver.current_outcome import CurrentOutcome
+from incorporator.tideweaver.reasons import SkipReason, WakeReason
+from incorporator.tideweaver.tide import Tide
 from incorporator.observability.wave import Wave
 
 

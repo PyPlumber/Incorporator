@@ -9,7 +9,7 @@ paste-ready scaffold in one of three formats:
 * ``"python"`` — self-contained Python snippet (class defs + ``Watershed.<shape>(...)``
   + ``Tideweaver(...).run()``).
 * ``"json"`` — complete ``watershed.json`` body, round-trippable through
-  :func:`incorporator.observability.tideweaver.config.build_watershed`.
+  :func:`incorporator.tideweaver.config.build_watershed`.
 
 Detection is shared with :func:`incorporator.Incorporator.test` via the
 inspector module's :func:`incorporator.tools.inspector.capture_signals`
@@ -43,11 +43,11 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PydanticField
 
-from ...io.penstock import known_host_rates
-from ...io.source_ref import SourceRef
-from ...rejects import RejectEntry
-from ...tools.inspector import ResponseMeta, SourceProfile, analyze_data
-from ..wave import Wave
+from ..io.penstock import known_host_rates
+from ..io.source_ref import SourceRef
+from ..observability.wave import Wave
+from ..rejects import RejectEntry
+from ..tools.inspector import ResponseMeta, SourceProfile, analyze_data
 from ._retry_defaults import (
     _CANAL_OUTER_STOP,
     _COMPOUND_RETRY_BUDGET_SEC,
@@ -131,7 +131,7 @@ class OrchestrationPlan:
 
     Renderers dispatch on :attr:`shape` to pick the right scaffold; the
     :meth:`to_watershed` method materialises an in-memory
-    :class:`~incorporator.observability.tideweaver.Watershed` so callers
+    :class:`~incorporator.tideweaver.Watershed` so callers
     can probe → tune → run in one expression instead of round-tripping
     through disk.
     """
@@ -170,7 +170,7 @@ class OrchestrationPlan:
                   time with the subclass-skeleton hint.
 
         Returns:
-            A validated :class:`~incorporator.observability.tideweaver.Watershed`
+            A validated :class:`~incorporator.tideweaver.Watershed`
             that can be handed straight to ``Tideweaver(watershed).run()``.
 
         Raises:
@@ -182,7 +182,7 @@ class OrchestrationPlan:
         """
         from datetime import datetime, timedelta, timezone
 
-        from ...base import Incorporator
+        from ..base import Incorporator
         from .current import Current, Export, Fjord, Stream
         from .flow import SustainedPenstock, flow_from_mode
         from .watershed import Edge, Watershed
@@ -741,7 +741,7 @@ def render_python(named_profiles: list[tuple[str, SourceProfile]], plan: Orchest
         "# Inspect, tune intervals, fill in the TODOs, then run.\n"
         "from datetime import datetime, timedelta, timezone\n\n"
         "from incorporator import Incorporator\n"
-        "from incorporator.observability.tideweaver import (\n"
+        "from incorporator.tideweaver import (\n"
         "    Tideweaver, Watershed, Stream, Fjord, Export"
         f"{penstock_imports}\n"
         ")\n"
@@ -797,7 +797,7 @@ def _json_current_entry(spec: CurrentSpec) -> dict[str, Any]:
 def render_json(named_profiles: list[tuple[str, SourceProfile]], plan: OrchestrationPlan) -> str:
     """Return a complete ``watershed.json`` body as a JSON string.
 
-    Loadable via :func:`incorporator.observability.tideweaver.config.load_watershed`
+    Loadable via :func:`incorporator.tideweaver.config.load_watershed`
     once the user fills in window timestamps, ``outflow.py`` path, and any
     ``_TODO_`` placeholders.
     """
@@ -1407,12 +1407,12 @@ def _tune_surge_threshold(rejects: list[RejectEntry], tides: list[Tide]) -> list
 
     Filters to ``SkipAhead`` / ``SurgeHalted`` canal rejects, groups by
     ``(from_name, to_name)`` edge, then gathers ``in_flight_sec`` from
-    matching :class:`~incorporator.observability.tideweaver.tide.Tide`
+    matching :class:`~incorporator.tideweaver.tide.Tide`
     outcomes to derive a recommended ``threshold_multiple``.
 
     Args:
         rejects: List of :class:`~incorporator.RejectEntry` records.
-        tides: List of :class:`~incorporator.observability.tideweaver.tide.Tide`
+        tides: List of :class:`~incorporator.tideweaver.tide.Tide`
             records from the same run.
 
     Returns:
@@ -1487,7 +1487,7 @@ def _tune_pass_interval(tides: list[Tide], current_pass_interval: float) -> list
     fallback fraction exceeds 30%.
 
     Args:
-        tides: List of :class:`~incorporator.observability.tideweaver.tide.Tide`
+        tides: List of :class:`~incorporator.tideweaver.tide.Tide`
             records from a run.
         current_pass_interval: The ``pass_interval`` the scheduler was
             configured with, in seconds.

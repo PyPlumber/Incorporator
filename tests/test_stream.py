@@ -247,7 +247,7 @@ async def test_stream_stateful_shim_op_remap_anchored_to_yielded(tmp_path: Path)
     survives intact.
     """
     from incorporator.observability.logger import Wave as _Wave
-    from incorporator.observability.pipeline._stateful_shim import (
+    from incorporator.pipeline._stateful_shim import (
         stream_stateful_via_fjord as _shim,
     )
 

@@ -32,7 +32,7 @@ from typing import List, Tuple
 import pytest
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Current,
     Stream,
     Tideweaver,

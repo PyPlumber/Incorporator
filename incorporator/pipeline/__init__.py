@@ -20,9 +20,9 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 # Re-export every previously top-level symbol so existing imports
-# (`from incorporator.observability.pipeline import _refresh_daemon`,
-#  `from .observability.pipeline import run_pipeline`, etc.) keep working.
-from ..logger import Wave
+# (`from incorporator.pipeline import _refresh_daemon`,
+#  `from .pipeline import run_pipeline`, etc.) keep working.
+from ..observability.logger import Wave
 from ._daemons import _export_daemon, _refresh_daemon
 from ._dispatch import assert_engine_supported
 from ._shared import _enrich_and_load, _interruptible_sleep, _row_count

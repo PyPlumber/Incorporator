@@ -23,7 +23,7 @@ import httpx
 import pytest
 
 from incorporator.io import fetch
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Current,
     Export,
     Fjord,

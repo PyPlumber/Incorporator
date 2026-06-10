@@ -28,7 +28,7 @@ from pydantic import ConfigDict
 
 from incorporator import Incorporator
 from incorporator.io import fetch
-from incorporator.observability.tideweaver import Stream, Tideweaver, Watershed
+from incorporator.tideweaver import Stream, Tideweaver, Watershed
 from incorporator.schema.converters import calc, inc
 
 

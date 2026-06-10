@@ -7,7 +7,7 @@ pagination signals, and heavy asset fields.  Two entry points:
   :meth:`Incorporator.test`.
 * :func:`capture_signals` — same detection, returns a structured
   :class:`SourceProfile`.  Used by
-  :mod:`incorporator.observability.tideweaver.architect` for cross-source
+  :mod:`incorporator.tideweaver.architect` for cross-source
   orchestration analysis.
 
 Both routes share one detection codebase: ``analyze_data`` calls
@@ -51,7 +51,7 @@ _PAGE_META_KEYS = ("has_more", "total", "total_pages", "page_count")
 # ---------------------------------------------------------------------------
 # Structured signal bundle — produced by capture_signals(), consumed by both
 # the print path (analyze_data) and the cross-source orchestration analyzer
-# in observability/tideweaver/architect.py.
+# in tideweaver/architect.py.
 # ---------------------------------------------------------------------------
 
 
@@ -64,7 +64,7 @@ class ResponseMeta:
     (host rate registry hit / 429 observed during probe / Retry-After parsing).
 
     ``wire_bytes`` and ``http_latency_sec`` are populated by
-    :func:`~incorporator.observability.tideweaver.architect._probe_one` after
+    :func:`~incorporator.tideweaver.architect._probe_one` after
     :meth:`~incorporator.Incorporator.test` returns, by reading the probe
     class's ``_last_bytes_downloaded`` and ``_last_http_fetch_time_sec``
     ClassVars.  Both remain ``None`` for file-mode probes (the fetch layer
@@ -175,7 +175,7 @@ def capture_signals(
     Pure function — no prints, no side effects beyond constructing the
     return value.  ``analyze_data`` calls this internally; the
     cross-source orchestration analyzer in
-    :mod:`incorporator.observability.tideweaver.architect` also calls it
+    :mod:`incorporator.tideweaver.architect` also calls it
     directly via the architect's per-source probe path.
 
     Args:
@@ -459,7 +459,7 @@ def analyze_data(parsed_data: list[Any], provided_kwargs: dict[str, Any]) -> Non
 
     Routes detection through :func:`capture_signals` for parity with
     the cross-source orchestration analyzer in
-    :mod:`incorporator.observability.tideweaver.architect`.
+    :mod:`incorporator.tideweaver.architect`.
     """
     if not parsed_data:
         print("\nINCORPORATOR INSPECTOR: No data returned to inspect.\n")

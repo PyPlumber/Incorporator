@@ -15,7 +15,7 @@ Per-tick bodies live in this module too:
 
 * :class:`Stream` → ``cls.stream(..., stateful_polling=False)`` chunking drain.
 * :class:`Fjord` → "fjord flush": snapshot upstream registries, then delegate to
-  :func:`incorporator.observability.pipeline.outflow.flush`, the shared
+  :func:`incorporator.pipeline.outflow.flush`, the shared
   per-class build-and-export primitive that the legacy ``_outflow_daemon``
   also uses.  Shape semantics (single-output list / multi-output dict,
   user-pre-declared classes vs. ``infer_dynamic_schema``) match
@@ -44,18 +44,18 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from ..wave import Wave
+    from ..observability.wave import Wave
     from .architect import TuningReport
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_exponential
 
-from ...io.fetch import HTTPClientBuilder
-from ...io.penstock import FlowState
-from ...rejects import RejectEntry
-from ..logger import _route_scheduler_event_to_log, _route_to_log, current_meta
+from ..io.fetch import HTTPClientBuilder
+from ..io.penstock import FlowState
+from ..observability.logger import _route_scheduler_event_to_log, _route_to_log, current_meta
 from ..pipeline.outflow import flush
+from ..rejects import RejectEntry
 from ._retry_defaults import (
     _CANAL_OUTER_STOP,
     _CANAL_OUTER_WAIT_MAX,
@@ -321,7 +321,7 @@ class Tideweaver:
         """End-of-run convenience: feed accumulated rejects, tides, and waves to :func:`architect.tune`.
 
         Collects :attr:`rejects` from the scheduler and passes them to
-        :func:`~incorporator.observability.tideweaver.architect.tune`
+        :func:`~incorporator.tideweaver.architect.tune`
         alongside any tides and waves supplied by the caller.  The
         scheduler's ``pass_interval`` is forwarded automatically.
 
@@ -335,7 +335,7 @@ class Tideweaver:
                 empty list.
 
         Returns:
-            A :class:`~incorporator.observability.tideweaver.architect.TuningReport`
+            A :class:`~incorporator.tideweaver.architect.TuningReport`
             with structured tuning hints for this run.
         """
         from .architect import tune  # lazy — avoids module cycle
@@ -1133,12 +1133,12 @@ class Tideweaver:
         """One fjord flush: snapshot upstream → outflow(state) → build → export.
 
         Delegates the outflow → normalize → per-class build/export to the
-        shared :func:`incorporator.observability.pipeline.outflow.flush`
+        shared :func:`incorporator.pipeline.outflow.flush`
         generator (also used by the legacy ``_outflow_daemon``).  The
         scheduler's job is just snapshotting the upstream state and logging
         per-class failures; the outflow primitive owns the rest.
         """
-        from ...usercode import load_outflow_module
+        from ..usercode import load_outflow_module
 
         outflow_path = current.outflow or self.watershed.outflow
         if outflow_path is None:

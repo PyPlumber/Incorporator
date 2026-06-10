@@ -14,7 +14,7 @@ from typing import Any, Tuple
 import pytest
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Current,
     Stream,
     Tideweaver,
@@ -86,7 +86,7 @@ async def test_restart_exhausted_attempt_number_on_exception(monkeypatch: pytest
     tw._client_pool = {}
     tw._run_started_at = None
 
-    import incorporator.observability.tideweaver.scheduler as sched_mod
+    import incorporator.tideweaver.scheduler as sched_mod
 
     original_error = sched_mod.logger.error
 

@@ -12,7 +12,7 @@ from typing import List
 import pytest
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver.architect import (
+from incorporator.tideweaver.architect import (
     TuningHint,
     TuningReport,
     _DEFAULT_TIMEOUT_PROXY_SEC,
@@ -26,11 +26,11 @@ from incorporator.observability.tideweaver.architect import (
     _tune_surge_threshold,
     tune,
 )
-from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
-from incorporator.observability.tideweaver.scheduler import Tideweaver
-from incorporator.observability.tideweaver.reasons import WakeReason
-from incorporator.observability.tideweaver.tide import Tide
-from incorporator.observability.tideweaver.watershed import Watershed
+from incorporator.tideweaver.current_outcome import CurrentOutcome
+from incorporator.tideweaver.scheduler import Tideweaver
+from incorporator.tideweaver.reasons import WakeReason
+from incorporator.tideweaver.tide import Tide
+from incorporator.tideweaver.watershed import Watershed
 from incorporator.observability.wave import Wave
 from incorporator.rejects import RejectEntry
 
@@ -711,7 +711,7 @@ def test_tideweaver_summary_uses_self_rejects(
     class _Src(Incorporator):
         pass
 
-    from incorporator.observability.tideweaver import Stream
+    from incorporator.tideweaver import Stream
 
     stream = Stream(name="src", cls=_Src, interval=10)
     watershed = Watershed(window=(start, end), currents=[stream], edges=[])

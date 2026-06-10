@@ -50,16 +50,8 @@ from .io.penstock import (
     register_host_penstock,
 )
 from .list import IncorporatorList
-from .observability.logger import LoggedIncorporator, LoggingMixin, Wave, setup_class_logger
-from .observability.tideweaver import (
-    Current,
-    Export,
-    Fjord,
-    Stream,
-    Tide,
-    Tideweaver,
-    Watershed,
-)
+from .observability.logger import LoggedIncorporator, LoggingMixin, setup_class_logger
+from .observability.wave import Wave
 from .rejects import RejectEntry
 from .schema.converters import (
     calc,
@@ -76,6 +68,15 @@ from .schema.extractors import (
     pluck,
     split_and_get,
     sum_attributes,
+)
+from .tideweaver import (
+    Current,
+    Export,
+    Fjord,
+    Stream,
+    Tide,
+    Tideweaver,
+    Watershed,
 )
 
 __all__ = [

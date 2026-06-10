@@ -21,9 +21,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
-from incorporator.observability.tideweaver.reasons import WakeReason
-from incorporator.observability.tideweaver.tide import Tide
+from incorporator.tideweaver.current_outcome import CurrentOutcome
+from incorporator.tideweaver.reasons import WakeReason
+from incorporator.tideweaver.tide import Tide
 from incorporator.observability.wave import Wave
 from incorporator.rejects import RejectEntry
 

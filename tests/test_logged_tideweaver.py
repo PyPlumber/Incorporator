@@ -10,7 +10,7 @@ from typing import Any, ClassVar, List, Tuple
 import pytest
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Current,
     CustomCurrent,
     LoggedTideweaver,
@@ -19,7 +19,7 @@ from incorporator.observability.tideweaver import (
     Tideweaver,
     Watershed,
 )
-from incorporator.observability.tideweaver.logged import LoggedTideweaver as LoggedTideweaverDirect
+from incorporator.tideweaver.logged import LoggedTideweaver as LoggedTideweaverDirect
 
 
 class _Src(Incorporator):
@@ -37,7 +37,7 @@ async def _noop_tick(current: Current) -> None:
 
 
 def test_logged_tideweaver_exported_from_package() -> None:
-    """``from incorporator.observability.tideweaver import LoggedTideweaver`` works."""
+    """``from incorporator.tideweaver import LoggedTideweaver`` works."""
     assert LoggedTideweaver is LoggedTideweaverDirect
 
 

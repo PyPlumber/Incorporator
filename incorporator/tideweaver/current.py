@@ -21,7 +21,7 @@ from typing import Any, ClassVar, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ...base import Incorporator
+from ..base import Incorporator
 
 OnErrorPolicy = Literal["restart", "isolate", "fail_watershed"]
 

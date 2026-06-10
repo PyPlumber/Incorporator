@@ -19,7 +19,7 @@ from typing import Any, ClassVar
 import pytest
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver import CustomCurrent
+from incorporator.tideweaver import CustomCurrent
 
 # ---------------------------------------------------------------------------
 # Shared helpers

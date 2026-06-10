@@ -21,7 +21,7 @@ from ..rejects import RejectEntry
 from .wave import Wave  # re-exported — ``from .logger import Wave`` keeps working
 
 if TYPE_CHECKING:
-    from .tideweaver.tide import Tide
+    from ..tideweaver.tide import Tide
 
 TLoggedIncorporator = TypeVar("TLoggedIncorporator", bound="LoggedIncorporator")
 
@@ -124,7 +124,7 @@ def _route_to_log(logger_name: str, record: Wave | Tide | RejectEntry, *, extra_
     Args:
         logger_name: Name passed to :func:`logging.getLogger` — typically
             ``cls.__name__`` for :class:`LoggedIncorporator` call sites or
-            ``_logger_name`` for :class:`~incorporator.observability.tideweaver.logged.LoggedTideweaver`.
+            ``_logger_name`` for :class:`~incorporator.tideweaver.logged.LoggedTideweaver`.
         record: One of :class:`Wave`, :class:`Tide`, or :class:`RejectEntry`.
         extra_meta: Optional additional ``key:"value"`` context to append to
             the base meta string — e.g. ``'current:"prices"'`` when the
@@ -135,7 +135,7 @@ def _route_to_log(logger_name: str, record: Wave | Tide | RejectEntry, *, extra_
     """
     # Deferred import breaks the logger → tideweaver/__init__ → logged → logger cycle.
     # tide.py itself has no logger dependency; the cycle runs through __init__.py.
-    from .tideweaver.tide import Tide as _Tide  # noqa: PLC0415
+    from ..tideweaver.tide import Tide as _Tide  # noqa: PLC0415
 
     level: int
     msg: str
@@ -276,7 +276,7 @@ def _route_scheduler_event_to_log(
         logger_name: Named logger to emit to (the session's
             :func:`setup_class_logger`-registered name).
         event_type: Canonical event label (e.g. ``"isolated_tick_failure"``).
-        current_name: :class:`~incorporator.observability.tideweaver.current.Current`
+        current_name: :class:`~incorporator.tideweaver.current.Current`
             name where the event originated, or ``None`` for watershed-scoped
             lifecycle events (``"watershed_started"`` / ``"watershed_completed"``).
         detail: Human-readable description of the event.
@@ -312,10 +312,10 @@ def current_meta(current: Any) -> str:
 
     Stable across passes — ``current.name`` is unique within a Watershed
     (enforced by topological sort) and is the retrieval key for
-    :meth:`~incorporator.observability.tideweaver.logged.LoggedTideweaver.get_current`.
+    :meth:`~incorporator.tideweaver.logged.LoggedTideweaver.get_current`.
 
     Args:
-        current: A :class:`~incorporator.observability.tideweaver.current.Current`
+        current: A :class:`~incorporator.tideweaver.current.Current`
             instance (typed ``Any`` to avoid a new module-graph edge from
             ``logger.py`` into ``tideweaver/current.py``).
 
@@ -443,7 +443,7 @@ async def read_log(
     Args:
         name: Logger-session name — typically ``cls.__name__`` for
             :class:`LoggingMixin` subclasses or the instance-level
-            ``logger_name`` for :class:`~incorporator.observability.tideweaver.logged.LoggedTideweaver`.
+            ``logger_name`` for :class:`~incorporator.tideweaver.logged.LoggedTideweaver`.
         suffixes: One or more log-file suffixes (without the ``.log``
             extension) to read and union.  A bare string is normalised to a
             single-element list.  Suffixes are processed in order; record
@@ -577,7 +577,7 @@ def setup_class_logger(cls: str | type[Any]) -> None:
     Args:
         cls: Either a class whose ``__name__`` is used as the logger key, or a
             plain string to use directly.  The string path is used by
-            :class:`~incorporator.observability.tideweaver.LoggedTideweaver`.
+            :class:`~incorporator.tideweaver.LoggedTideweaver`.
     """
     if isinstance(cls, str):
         cls_name = cls

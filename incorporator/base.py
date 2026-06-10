@@ -190,10 +190,10 @@ class Incorporator(BaseModel):
     _incorp_kwargs: ClassVar[dict[str, Any]] = {}
 
     #: Cross-engine strong-ref snapshot used by the Tideweaver scheduler.
-    #: A :class:`~incorporator.observability.tideweaver.scheduler.Scheduler`
+    #: A :class:`~incorporator.tideweaver.scheduler.Scheduler`
     #: parks ``list(cls.inc_dict.values())`` here at the end of a
-    #: :class:`~incorporator.observability.tideweaver.current.Stream` tick
-    #: (and at the end of a :class:`~incorporator.observability.tideweaver.current.Fjord`
+    #: :class:`~incorporator.tideweaver.current.Stream` tick
+    #: (and at the end of a :class:`~incorporator.tideweaver.current.Fjord`
     #: flush, via ``outflow.flush``) so that downstream currents can read
     #: a stable upstream view between ticks without the
     #: :class:`weakref.WeakValueDictionary` reclaiming entries mid-flight.
@@ -207,7 +207,7 @@ class Incorporator(BaseModel):
     _tideweaver_snapshot: ClassVar[list[Any] | None] = None
 
     #: Bulk-insert gate set by :func:`~incorporator.schema.factory.build_instances`
-    #: and :func:`~incorporator.observability.pipeline.outflow.flush` around their
+    #: and :func:`~incorporator.pipeline.outflow.flush` around their
     #: batch-validate calls so ``model_post_init`` skips per-instance ``inc_dict``
     #: writes during the loop; the caller does a single ``inc_dict.update()`` after
     #: the loop completes.  Class-level so subclass inheritance is intentional --
@@ -224,15 +224,15 @@ class Incorporator(BaseModel):
     #:
     #: Yield-point-safe, not thread-safe: written inside ``build_instances``
     #: (no ``await`` between write and read), read at the chunk boundary in
-    #: ``observability/pipeline/chunked.py`` after ``build_instances`` returns.
+    #: ``pipeline/chunked.py`` after ``build_instances`` returns.
     _last_schema_cache_hit: ClassVar[bool] = True
 
     #: Byte count of the most recent HTTP response body processed by this
     #: class's fetch path.  Written by ``io/fetch.py::_process_single_source``
     #: at the network-mode branch via a ``contextvars.ContextVar`` set by
-    #: ``observability/pipeline/chunked.py`` before each ``cls.incorp(...)``
+    #: ``pipeline/chunked.py`` before each ``cls.incorp(...)``
     #: call.  Read at the chunk boundary in
-    #: ``observability/pipeline/chunked.py`` into the Wave's ``bytes_processed``
+    #: ``pipeline/chunked.py`` into the Wave's ``bytes_processed``
     #: field.  ``None`` for file-mode sources (they don't go through the
     #: network fetch path) and for non-chunked ``incorp()`` / ``refresh()``
     #: call sites where the contextvar is unset.
@@ -262,7 +262,7 @@ class Incorporator(BaseModel):
     #:
     #: Written by ``execute_request`` after a successful response, gated
     #: on the ``_CURRENT_CHUNK_CLASS`` ContextVar.  Read at the chunk
-    #: boundary in ``observability/pipeline/chunked.py``.  Stays at the
+    #: boundary in ``pipeline/chunked.py``.  Stays at the
     #: previous chunk's value for chunks that don't make an HTTP call
     #: (file-mode sources) — an edge case for the HTTP-driven paginator
     #: engine.
@@ -1323,7 +1323,7 @@ class Incorporator(BaseModel):
                 ):
                     handle(wave)
         """
-        from .observability.pipeline._dispatch import assert_engine_supported
+        from .pipeline._dispatch import assert_engine_supported
 
         # Front-door format check — reject impossible combos at call-site
         # time.  The only failure here is chunking + paginator + monolithic
@@ -1403,7 +1403,7 @@ class Incorporator(BaseModel):
             # Delegates to the fjord engine with a synthesised identity outflow;
             # object identity in ``cls.inc_dict`` is preserved across waves via
             # the IncorporatorList pass-through fast path in ``outflow.flush()``.
-            from .observability.pipeline._stateful_shim import stream_stateful_via_fjord
+            from .pipeline._stateful_shim import stream_stateful_via_fjord
 
             async for wave in stream_stateful_via_fjord(
                 receiver_cls=receiver_cls,
@@ -1421,7 +1421,7 @@ class Incorporator(BaseModel):
             return
 
         # Stateless chunking — straight delegation, no engine branch.
-        from .observability.pipeline import run_pipeline
+        from .pipeline import run_pipeline
 
         async for wave in run_pipeline(
             cls=receiver_cls,
@@ -1614,7 +1614,7 @@ class Incorporator(BaseModel):
                 ):
                     print(f"{wave.operation}: {wave.rows_processed} rows")
         """
-        from .observability.pipeline import _run_fjord_engine
+        from .pipeline import _run_fjord_engine
 
         # When inflow= defines a top-level ``inflow(state)`` callable, fjord
         # switches to sequential seed and calls it before each source's
@@ -1769,9 +1769,9 @@ class Incorporator(BaseModel):
         The multi-source counterpart of :meth:`test`.  Where ``test()`` profiles
         one unknown endpoint and prints the recommended ``incorp()`` kwargs,
         ``architect()`` profiles many and emits a full Tideweaver scaffold:
-        which :class:`~incorporator.observability.tideweaver.Watershed` shape
+        which :class:`~incorporator.tideweaver.Watershed` shape
         to pick, per-source verb (Stream / Fjord / Export), and per-edge
-        :class:`~incorporator.observability.tideweaver.FlowControl` with a
+        :class:`~incorporator.tideweaver.FlowControl` with a
         host-aware Penstock when the rate registry recognises the source.
 
         Example::
@@ -1813,10 +1813,10 @@ class Incorporator(BaseModel):
             with ``OrchestrationPlan.to_watershed(window, classes)`` for the
             in-memory probe → tune → run handoff.
 
-        See :mod:`incorporator.observability.tideweaver.architect` for the
+        See :mod:`incorporator.tideweaver.architect` for the
         full implementation — this classmethod is a thin shim that delegates
         to ``architect.run()``.
         """
-        from .observability.tideweaver.architect import run
+        from .tideweaver.architect import run
 
         return await run(cls, sources, output=output, shared_kwargs=shared_kwargs)

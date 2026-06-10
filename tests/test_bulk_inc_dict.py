@@ -170,7 +170,7 @@ async def test_flush_bulk_insert_before_tideweaver_snapshot(tmp_path: Any, monke
     """
     monkeypatch.chdir(tmp_path)
 
-    from incorporator.observability.pipeline.outflow import flush
+    from incorporator.pipeline.outflow import flush
 
     class _FlushTarget(Incorporator):
         fk: Optional[str] = None

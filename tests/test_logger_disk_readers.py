@@ -15,7 +15,7 @@ from incorporator.observability.logger import (
     _route_reject_to_log,
     _safe_log_filename,
 )
-from incorporator.observability.tideweaver.logged import LoggedTideweaver
+from incorporator.tideweaver.logged import LoggedTideweaver
 
 
 # ---------------------------------------------------------------------------

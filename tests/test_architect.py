@@ -1,4 +1,4 @@
-"""Tests for ``incorporator.observability.tideweaver.architect``.
+"""Tests for ``incorporator.tideweaver.architect``.
 
 Layered to match the module boundaries:
 
@@ -7,7 +7,7 @@ Layered to match the module boundaries:
 * ``_analyze_topology`` — synthetic ``SourceProfile`` fixtures → ``OrchestrationPlan``.
 * ``render_report`` / ``render_python`` / ``render_json`` — deterministic
   input → expected output, including the JSON round-trip through
-  :func:`incorporator.observability.tideweaver.config.load_watershed`.
+  :func:`incorporator.tideweaver.config.load_watershed`.
 * End-to-end probe of local file fixtures via ``run()`` (no network).
 
 Detection-level tests live in ``tests/test_inspector_capture.py``; this
@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Set, Tuple
 import pytest
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver.architect import (
+from incorporator.tideweaver.architect import (
     CurrentSpec,
     EdgeSpec,
     OrchestrationPlan,
@@ -190,7 +190,7 @@ def test_penstock_for_unregistered_host_no_tier_1(monkeypatch: pytest.MonkeyPatc
 
     # Ensure registry is clean for these three historical hosts.
     monkeypatch.setattr(
-        "incorporator.observability.tideweaver.architect.known_host_rates",
+        "incorporator.tideweaver.architect.known_host_rates",
         lambda: {},
     )
     profile = _profile({"id"}, pk="id", host="api.coingecko.com")
@@ -389,7 +389,7 @@ def test_render_json_diamond_emits_tail_todo() -> None:
 
 def test_render_json_round_trips_through_load_watershed(tmp_path: Path) -> None:
     """Strongest contract test: emitted JSON loads via the official config.py path."""
-    from incorporator.observability.tideweaver.config import build_watershed
+    from incorporator.tideweaver.config import build_watershed
 
     profiles = [
         (
@@ -533,7 +533,7 @@ def test_plan_to_watershed_produces_valid_watershed() -> None:
     """``Plan.to_watershed()`` materialises a runnable :class:`Watershed`."""
     from datetime import datetime, timedelta, timezone
 
-    from incorporator.observability.tideweaver import Watershed
+    from incorporator.tideweaver import Watershed
 
     # Synthesise a small parallel plan (the simplest shape — no edges).
     profiles: List[Tuple[str, SourceProfile]] = [
@@ -648,8 +648,8 @@ def test_plan_to_watershed_supports_custom_current_via_classes() -> None:
     :class:`CustomCurrent`-based plans from materialising via
     :meth:`OrchestrationPlan.to_watershed`.
     """
-    from incorporator.observability.tideweaver import CustomCurrent
-    from incorporator.observability.tideweaver.architect import CurrentSpec, OrchestrationPlan
+    from incorporator.tideweaver import CustomCurrent
+    from incorporator.tideweaver.architect import CurrentSpec, OrchestrationPlan
 
     class HealthcheckPing(CustomCurrent):
         async def tick(self, scheduler: Any) -> None:
@@ -690,7 +690,7 @@ def test_plan_to_watershed_custom_verb_without_subclass_raises_actionable() -> N
     passing the subclass via ``classes={name: YourSubclass}`` — not a
     cryptic KeyError.
     """
-    from incorporator.observability.tideweaver.architect import CurrentSpec, OrchestrationPlan
+    from incorporator.tideweaver.architect import CurrentSpec, OrchestrationPlan
 
     plan = OrchestrationPlan(
         shape="parallel",
@@ -744,7 +744,7 @@ def test_probe_seeding_http_populates_response_meta_size_latency(
     """
     import asyncio
 
-    from incorporator.observability.tideweaver import architect as _arch
+    from incorporator.tideweaver import architect as _arch
 
     async def _stub_test(cls: Any, **kwargs: Any) -> None:
         # Mirror what fetch.py's _process_single_source sets on the class after an
@@ -784,7 +784,7 @@ def test_probe_seeding_file_mode_leaves_size_latency_none(tmp_path: Path) -> Non
     """
     import asyncio
 
-    from incorporator.observability.tideweaver import architect as _arch
+    from incorporator.tideweaver import architect as _arch
 
     data_file = tmp_path / "records.json"
     data_file.write_text(

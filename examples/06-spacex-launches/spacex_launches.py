@@ -163,7 +163,7 @@ if __name__ == "__main__":
 #
 #   from datetime import datetime, timedelta, timezone
 #   from incorporator import Tideweaver, Watershed, Stream, Export
-#   from incorporator.observability.tideweaver import (
+#   from incorporator.tideweaver import (
 #       Edge, FlowControl, Weir, BurstPenstock, LoggingObserver,
 #   )
 #

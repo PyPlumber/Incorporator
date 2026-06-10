@@ -16,9 +16,9 @@ from typing import List
 
 import pytest
 
-from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
-from incorporator.observability.tideweaver.reasons import SkipReason, WakeReason
-from incorporator.observability.tideweaver.tide import Tide
+from incorporator.tideweaver.current_outcome import CurrentOutcome
+from incorporator.tideweaver.reasons import SkipReason, WakeReason
+from incorporator.tideweaver.tide import Tide
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ def test_tide_dataclass_asdict_round_trip() -> None:
 
 def test_tide_wake_reason_literal_accepts_valid_values() -> None:
     """Tide.model_construct accepts each of the five WakeReason literal strings without error."""
-    from incorporator.observability.tideweaver.tide import WakeReason
+    from incorporator.tideweaver.tide import WakeReason
 
     valid: List[WakeReason] = ["startup", "timer", "wake_event", "pass_interval", "shutdown"]
     for reason in valid:

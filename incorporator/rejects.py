@@ -31,10 +31,10 @@ class RejectEntry(BaseModel):
 
     Constructed at the framework's failure points (HTTP errors in
     :mod:`incorporator.io.fetch`, fjord seed errors in
-    :mod:`incorporator.observability.pipeline.fjord`, and canal-layer
-    skips in :mod:`incorporator.observability.tideweaver.scheduler`)
+    :mod:`incorporator.pipeline.fjord`, and canal-layer
+    skips in :mod:`incorporator.tideweaver.scheduler`)
     and accumulated on :attr:`IncorporatorList.rejects` or
-    :attr:`incorporator.observability.tideweaver.Tideweaver.rejects`
+    :attr:`incorporator.tideweaver.Tideweaver.rejects`
     depending on the surface — verb-layer failures land on the former,
     scheduler-level skips that never reach a tick body land on the
     latter.

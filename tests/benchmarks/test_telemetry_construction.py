@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from incorporator.observability.tideweaver.tide import Tide
+from incorporator.tideweaver.tide import Tide
 from incorporator.observability.wave import Wave
 from incorporator.rejects import RejectEntry
 

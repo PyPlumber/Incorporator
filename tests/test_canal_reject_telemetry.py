@@ -14,7 +14,7 @@ from typing import Any, Tuple
 import pytest
 
 from incorporator import Incorporator, SustainedPenstock
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Current,
     Edge,
     FlowControl,

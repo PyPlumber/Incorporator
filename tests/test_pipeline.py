@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from incorporator.observability.logger import Wave
-from incorporator.observability.pipeline import (
+from incorporator.pipeline import (
     _enrich_and_load,
     _export_daemon,
     _interruptible_sleep,
@@ -451,6 +451,6 @@ async def test_run_pipeline_no_intervals_uses_module_default() -> None:
     poll_interval=None → daemon broke after one tick.  Post-fix:
     DEFAULT_REFRESH_INTERVAL_SEC (60 s) keeps it alive at a sane cadence.
     """
-    from incorporator.observability.pipeline import DEFAULT_REFRESH_INTERVAL_SEC
+    from incorporator.pipeline import DEFAULT_REFRESH_INTERVAL_SEC
 
     assert DEFAULT_REFRESH_INTERVAL_SEC == 60.0

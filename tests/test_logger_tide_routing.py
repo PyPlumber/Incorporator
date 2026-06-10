@@ -11,9 +11,9 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from incorporator.observability.logger import JSONFormatter, TideFilter, _route_tide_to_log, _route_to_log
-from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
-from incorporator.observability.tideweaver.reasons import SkipReason, WakeReason
-from incorporator.observability.tideweaver.tide import Tide
+from incorporator.tideweaver.current_outcome import CurrentOutcome
+from incorporator.tideweaver.reasons import SkipReason, WakeReason
+from incorporator.tideweaver.tide import Tide
 
 
 def _make_tide(

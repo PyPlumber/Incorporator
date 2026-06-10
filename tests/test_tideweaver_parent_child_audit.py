@@ -24,12 +24,12 @@ import pytest
 from pydantic import ConfigDict
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver import Fjord, Stream
-from incorporator.observability.tideweaver.current import Fjord as FjordCls
-from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
+from incorporator.tideweaver import Fjord, Stream
+from incorporator.tideweaver.current import Fjord as FjordCls
+from incorporator.tideweaver.current_outcome import CurrentOutcome
 from incorporator.observability.wave import Wave
 
-_AUDIT_LOGGER = "incorporator.observability.tideweaver.scheduler"
+_AUDIT_LOGGER = "incorporator.tideweaver.scheduler"
 
 
 class UpstreamCls(Incorporator):
@@ -94,7 +94,7 @@ def _install_fjord_flush_capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
     def stub_loader(_path: Any) -> tuple[Any, Any]:
         return (lambda state: [], None)
 
-    monkeypatch.setattr("incorporator.observability.tideweaver.scheduler.flush", capturing_flush)
+    monkeypatch.setattr("incorporator.tideweaver.scheduler.flush", capturing_flush)
     monkeypatch.setattr("incorporator.usercode.load_outflow_module", stub_loader)
     return captured
 
@@ -120,7 +120,7 @@ async def test_stream_empty_upstream_emits_warning(
     )
 
     scheduler = _make_stream_scheduler([upstream, child])
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
+    from incorporator.tideweaver.scheduler import Tideweaver
 
     with caplog.at_level(logging.WARNING, logger=_AUDIT_LOGGER):
         await Tideweaver._tick_stream(scheduler, child)
@@ -150,7 +150,7 @@ async def test_fjord_empty_upstream_emits_warning(
 
     _install_fjord_flush_capture(monkeypatch)
     scheduler = _make_fjord_scheduler([upstream], fjord)
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
+    from incorporator.tideweaver.scheduler import Tideweaver
 
     with caplog.at_level(logging.WARNING, logger=_AUDIT_LOGGER):
         await Tideweaver._tick_fjord(scheduler, fjord)

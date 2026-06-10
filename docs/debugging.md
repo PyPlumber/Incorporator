@@ -331,7 +331,7 @@ emits a `TuningReport` of severity-sorted hints.  Both names live in
 the orchestration subpackage, not at the top level:
 
 ```python
-from incorporator.observability.tideweaver import LoggedTideweaver, tune
+from incorporator.tideweaver import LoggedTideweaver, tune
 
 tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="ArbSession")
 tides = [tide async for tide in tw.run()]

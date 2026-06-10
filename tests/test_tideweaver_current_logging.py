@@ -26,9 +26,9 @@ from pydantic import ConfigDict
 
 from incorporator import Incorporator
 from incorporator.observability.logger import current_meta, setup_class_logger
-from incorporator.observability.tideweaver import LoggedTideweaver, Stream, Tideweaver, Watershed
-from incorporator.observability.tideweaver.current import Stream as StreamCurrent
-from incorporator.observability.tideweaver.scheduler import Tideweaver as TideweaverBase
+from incorporator.tideweaver import LoggedTideweaver, Stream, Tideweaver, Watershed
+from incorporator.tideweaver.current import Stream as StreamCurrent
+from incorporator.tideweaver.scheduler import Tideweaver as TideweaverBase
 from incorporator.observability.wave import Wave
 from incorporator.rejects import RejectEntry
 

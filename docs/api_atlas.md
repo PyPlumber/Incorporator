@@ -612,7 +612,7 @@ The windowed orchestration verb — when one source's `stream()` isn't enough, w
 - `currents=[...]` — list of `Stream` / `Fjord` / `Export` (or bare `Current` for tests).
 - `edges=[...]` — explicit edges; each `Edge(from_name=..., to_name=..., gate_mode="hard"/"soft"/"weir")` shorthand or `flow=FlowControl(...)` full-dict form.
 - `inflow=` / `outflow=` — graph-level sidecar defaults; per-current values win.
-- `gate_mode` (shape constructors) — `"hard"` (default), `"soft"`, or `"weir"`.  Accepts both plain strings and the `GateMode` enum (`from incorporator.observability.tideweaver import GateMode; GateMode.HARD`); both forms produce identical `FlowControl` because `GateMode` is a `str`-subclass.  Mutually exclusive with `flow=`.
+- `gate_mode` (shape constructors) — `"hard"` (default), `"soft"`, or `"weir"`.  Accepts both plain strings and the `GateMode` enum (`from incorporator.tideweaver import GateMode; GateMode.HARD`); both forms produce identical `FlowControl` because `GateMode` is a `str`-subclass.  Mutually exclusive with `flow=`.
 - `flow` (shape constructors) — full `FlowControl(...)` shared across every edge produced by the shape. Mutually exclusive with `gate_mode=`.
 - `drain_timeout` — seconds the scheduler waits for in-flight ticks at window close.
 - `pass_interval` (`Tideweaver`) — override the auto-derived scheduler tick.
@@ -672,7 +672,7 @@ All call paths are **keyword-only**.  All inputs default to `None` — pass what
 
 **Import path** *(load-bearing — not top-level)*
 ```python
-from incorporator.observability.tideweaver import tune, TuningReport, TuningHint
+from incorporator.tideweaver import tune, TuningReport, TuningHint
 ```
 
 **What it does (pseudocode)**
@@ -712,7 +712,7 @@ The post-window feedback loop.  After a Tideweaver run, feed the accumulated `tw
 
 **Import**
 ```python
-from incorporator.observability.tideweaver import SkipReason, WakeReason, GateMode
+from incorporator.tideweaver import SkipReason, WakeReason, GateMode
 ```
 
 All three are `str`-subclass enums — equality against plain string literals keeps working, and Pydantic v2 serialises the value (not the name), so wire format is unchanged.
@@ -723,7 +723,7 @@ All three are `str`-subclass enums — equality against plain string literals ke
 | `WakeReason` | `STARTUP`, `TIMER`, `WAKE_EVENT`, `PASS_INTERVAL`, `SHUTDOWN` | `tide.wake_reason` |
 | `GateMode` | `HARD`, `SOFT`, `WEIR` | Shape constructors (`Watershed.chain` / `diamond` / `fanout`) and `Edge(gate_mode=...)`; accepts either the enum or a plain string |
 
-The source-of-truth module is `incorporator/observability/tideweaver/reasons.py` (`SkipReason`, `WakeReason`) and `flow.py` (`GateMode`).
+The source-of-truth module is `incorporator/tideweaver/reasons.py` (`SkipReason`, `WakeReason`) and `flow.py` (`GateMode`).
 
 **Gate hierarchy note**: `HardLock`, `SoftPass`, and `Weir` are thin shells over `Gate` — they inherit a single `gate_reason(ctx)` body and override three ClassVar check flags (`_check_in_flight`, `_check_freshness`, `_check_consumed`).  Authors of custom `Gate` subclasses can do the same, or override `gate_reason()` directly.
 
@@ -797,12 +797,12 @@ class SignalObserver(FlowObserver):                     # forward to user callab
 
 **Worked example**
 ```python
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Edge, FlowControl, Watershed,
     HardLock, SurgeBarrier, BurstPenstock, Reservoir, ExportToArchive,
 )
 
-from incorporator.observability.tideweaver import LoggingObserver
+from incorporator.tideweaver import LoggingObserver
 
 flow = FlowControl(
     gate=HardLock(),
@@ -859,7 +859,7 @@ Pass `flow=FlowControl(...)` explicitly to control the SurgeBarrier independentl
 
 **Import path** *(load-bearing — not top-level)*
 ```python
-from incorporator.observability.tideweaver import CustomCurrent
+from incorporator.tideweaver import CustomCurrent
 ```
 
 **Signature**
@@ -884,7 +884,7 @@ class CustomCurrent(Current):
 Set `auto_park_snapshot: ClassVar[bool] = False` on the subclass to disable the automatic snapshot park.  Only correct for ticks that are pure side-effects (health-check pings, external metric pushes) that should never gate downstream currents.  When `False`, downstream `HardLock` edges will stay permanently unblocked unless the tick body manually assigns `cls._tideweaver_snapshot`.
 
 ```python
-from incorporator.observability.tideweaver import CustomCurrent
+from incorporator.tideweaver import CustomCurrent
 
 class HealthcheckPing(CustomCurrent):
     auto_park_snapshot: ClassVar[bool] = False   # pure side-effect — don't gate downstream
@@ -1372,7 +1372,7 @@ tw = LoggedTideweaver(ws, enable_logging=True)
 
 **Import path** *(load-bearing — not top-level)*
 ```python
-from incorporator.observability.tideweaver import LoggedTideweaver
+from incorporator.tideweaver import LoggedTideweaver
 ```
 
 **What it does (pseudocode)**
@@ -1695,7 +1695,7 @@ canonical destination slot for it.  Continue to use `code_attr` /
 | `Wave.rejects` | `Wave` (frozen Pydantic) | v1.3.3 telemetry field | `list[RejectEntry]` from the chunk's incorp/seed call. Per-chunk — not accumulated across the stream session. Empty on exception-path waves where no `IncorporatorList` was available. |
 | `Tide.{tide_number, fired, skipped, duration_sec, timestamp}` | `Tide` (frozen Pydantic) | core model fields | one record per `Tideweaver` scheduler pass. Yielded by `Tideweaver.run()`. |
 | `Tide.{current_outcomes, wake_reason, heap_depth, in_flight_count_at_start, canal_rejects_added, next_due_in_sec}` | `Tide` (frozen Pydantic) | v1.2.1 outcome-record fields | per-pass scheduler telemetry: list of per-current outcomes, wake reason (Literal), heap depth, in-flight tick count at start, new canal rejects this pass, seconds until next due tick. |
-| `CurrentOutcome` (`incorporator.observability.tideweaver.current_outcome`) | `@dataclass(frozen=True, slots=True)` | per-current outcome record | Fields: `name: str`, `status: str` (`"fired"` / `"skipped"` / `"still_running"`), `reason: str | None`, `bypassed_edges: tuple[str, ...]`, `in_flight_sec: float | None`, `last_wave_at: datetime | None`, `parent_snapshot_size: int | None` (upstream snapshot row count consumed by a parent-child tick; `None` for non-parent-child currents — used by `tune()` to detect empty-upstream misconfiguration). Surfaced via `tide.current_outcomes`. |
+| `CurrentOutcome` (`incorporator.tideweaver.current_outcome`) | `@dataclass(frozen=True, slots=True)` | per-current outcome record | Fields: `name: str`, `status: str` (`"fired"` / `"skipped"` / `"still_running"`), `reason: str | None`, `bypassed_edges: tuple[str, ...]`, `in_flight_sec: float | None`, `last_wave_at: datetime | None`, `parent_snapshot_size: int | None` (upstream snapshot row count consumed by a parent-child tick; `None` for non-parent-child currents — used by `tune()` to detect empty-upstream misconfiguration). Surfaced via `tide.current_outcomes`. |
 | `IncorporatorList.inc_dict` | property on the list | shared view of class registry | what `incorp()`'s return value exposes; mutations write through to `cls.inc_dict`. |
 | `IncorporatorList.rejects` | property on the list | `list[RejectEntry]` | structured reject list — entry fields: `source`, `error_kind`, `message`, `retry_after`, `wave_index`.  Read by retry orchestrators that want the exception type or `Retry-After` hint without parsing strings. |
 | `Tideweaver.rejects` | attribute on the instance | `list[RejectEntry]` | structured canal-layer reject list — same `RejectEntry` type, but `error_kind` can be one of four canal-layer literals (`"PenstockLimited"` / `"SurgeHalted"` / `"SkipAhead"` / `"GateBlocked"`) for scheduler-level skips that never reached a tick body.  `from_name` / `to_name` / `cooldown_sec` populated for per-edge attribution. |
@@ -1703,7 +1703,7 @@ canonical destination slot for it.  Continue to use `code_attr` /
 | `SourceRef` (`incorporator.io.SourceRef`) | frozen dataclass | source value type | Five factories (`from_url` / `from_file` / `from_parent` / `from_payload` / `from_kwargs`) plus an auto-detect `parse()` classmethod.  Internal scaffolding for `incorp()` / `architect()` source dispatch; opt-in public API for callers wanting explicit source typing. |
 | `Stream.parent_current` | `Stream` field | declarative parent-child dependency | `parent_current: str` names an upstream `Stream` current in the same watershed. The framework auto-derives a `HardLock` Watershed edge from the parent, drives the snapshot read on every dependent tick, and injects the parent's `_tideweaver_snapshot` as `inc_parent` into the child's `cls.incorp(...)` call. **The parent declares its row scope at the URL / SQL / outflow level — the framework does not post-filter at the child.** See [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive) for how to scope the parent. |
 | `Fjord.parent_currents` | `Fjord` field | declarative multi-parent dependency | `parent_currents: list[str]` names one or more upstream `Stream` (or `Fjord`) currents. Same semantics as `Stream.parent_current` — auto-derived `HardLock` edges, snapshot reads on every tick — broadcast across all named parents into the fjord's `state` dict before `outflow(state)` runs. Each parent declares its own row scope at the URL / SQL / outflow level. See [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive). |
-| `CustomCurrent` (`incorporator.observability.tideweaver.CustomCurrent`) | abstract `Current` subclass | escape hatch | Subclass and override `async tick(self, scheduler: Tideweaver) -> None` for non-verb tick logic (cron-style cleanups, custom side-effects, externally-driven publishers). The scheduler auto-parks `list(cls.inc_dict.values())` as `cls._tideweaver_snapshot` after every tick when the body didn't assign one (v1.2.3+) — downstream `HardLock` edges see fresh upstream waves without manual snapshot wiring. Set `auto_park_snapshot: ClassVar[bool] = False` to opt out (rare — only when the tick is a pure side-effect that shouldn't gate downstream). Also v1.2.3+: the scheduler emits a one-line WARNING per pass when a CustomCurrent tick succeeds but produces an empty `_tideweaver_snapshot` while upstream snapshots are non-empty — surfaces silent predicate / conv_dict mismatches without needing a debugger. |
+| `CustomCurrent` (`incorporator.tideweaver.CustomCurrent`) | abstract `Current` subclass | escape hatch | Subclass and override `async tick(self, scheduler: Tideweaver) -> None` for non-verb tick logic (cron-style cleanups, custom side-effects, externally-driven publishers). The scheduler auto-parks `list(cls.inc_dict.values())` as `cls._tideweaver_snapshot` after every tick when the body didn't assign one (v1.2.3+) — downstream `HardLock` edges see fresh upstream waves without manual snapshot wiring. Set `auto_park_snapshot: ClassVar[bool] = False` to opt out (rare — only when the tick is a pure side-effect that shouldn't gate downstream). Also v1.2.3+: the scheduler emits a one-line WARNING per pass when a CustomCurrent tick succeeds but produces an empty `_tideweaver_snapshot` while upstream snapshots are non-empty — surfaces silent predicate / conv_dict mismatches without needing a debugger. |
 | `GateContext` / `SurgeContext` / `FlowState` | frozen dataclasses | narrow value types | What custom `Gate.gate_reason(ctx)` / `SurgeBarrier.is_tripped(ctx)` / `Penstock.consume_reason(state, flow, now)` overrides read.  Authoring a custom strategy?  Subclass against these — never the scheduler. |
 
 ---

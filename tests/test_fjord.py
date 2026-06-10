@@ -476,7 +476,7 @@ def test_pascal_case_from_stem_rejects_invalid() -> None:
 
 def test_resolve_per_source_interval_per_entry_override_wins() -> None:
     """Per-entry refresh_interval beats the top-level dict and top-level scalar."""
-    from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
+    from incorporator.pipeline.fjord import _resolve_per_source_interval
 
     entry = {"cls": Coin, "refresh_interval": 5.0}
     assert _resolve_per_source_interval(60.0, entry, "refresh_interval") == 5.0
@@ -485,7 +485,7 @@ def test_resolve_per_source_interval_per_entry_override_wins() -> None:
 
 def test_resolve_per_source_interval_top_level_dict_by_name() -> None:
     """Top-level dict keyed by class name resolves per-source."""
-    from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
+    from incorporator.pipeline.fjord import _resolve_per_source_interval
 
     entry = {"cls": Coin}
     top = {"Coin": 30.0, "BinanceFutures": 5.0}
@@ -494,7 +494,7 @@ def test_resolve_per_source_interval_top_level_dict_by_name() -> None:
 
 def test_resolve_per_source_interval_top_level_dict_by_class_object() -> None:
     """Top-level dict keyed by class object (Python ergonomics) also resolves."""
-    from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
+    from incorporator.pipeline.fjord import _resolve_per_source_interval
 
     entry = {"cls": Coin}
     top = {Coin: 30.0}
@@ -503,7 +503,7 @@ def test_resolve_per_source_interval_top_level_dict_by_class_object() -> None:
 
 def test_resolve_per_source_interval_top_level_scalar() -> None:
     """Scalar top-level applies to every entry."""
-    from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
+    from incorporator.pipeline.fjord import _resolve_per_source_interval
 
     entry = {"cls": Coin}
     assert _resolve_per_source_interval(60.0, entry, "refresh_interval") == 60.0
@@ -511,7 +511,7 @@ def test_resolve_per_source_interval_top_level_scalar() -> None:
 
 def test_resolve_per_source_interval_dict_miss_returns_none() -> None:
     """Top-level dict missing the class name returns None (cascade falls to default)."""
-    from incorporator.observability.pipeline.fjord import _resolve_per_source_interval
+    from incorporator.pipeline.fjord import _resolve_per_source_interval
 
     entry = {"cls": Coin}
     top = {"BinanceFutures": 5.0}  # no entry for Coin
@@ -536,14 +536,14 @@ class Comet(Incorporator):
 
 
 def test_has_any_depends_on_negative() -> None:
-    from incorporator.observability.pipeline.fjord import _has_any_depends_on
+    from incorporator.pipeline.fjord import _has_any_depends_on
 
     entries = [{"cls": Planet}, {"cls": Moon}]
     assert _has_any_depends_on(entries) is False
 
 
 def test_has_any_depends_on_positive() -> None:
-    from incorporator.observability.pipeline.fjord import _has_any_depends_on
+    from incorporator.pipeline.fjord import _has_any_depends_on
 
     entries = [{"cls": Planet}, {"cls": Moon, "depends_on": ["Planet"]}]
     assert _has_any_depends_on(entries) is True
@@ -551,7 +551,7 @@ def test_has_any_depends_on_positive() -> None:
 
 def test_validate_depends_on_typo_raises() -> None:
     """Unknown peer name in depends_on must fail fast with a clear message."""
-    from incorporator.observability.pipeline.fjord import _validate_depends_on
+    from incorporator.pipeline.fjord import _validate_depends_on
 
     entries = [
         {"cls": Planet},
@@ -563,7 +563,7 @@ def test_validate_depends_on_typo_raises() -> None:
 
 def test_validate_depends_on_clean_passes() -> None:
     """Well-formed graph: validator silently passes."""
-    from incorporator.observability.pipeline.fjord import _validate_depends_on
+    from incorporator.pipeline.fjord import _validate_depends_on
 
     entries = [
         {"cls": Planet},
@@ -575,7 +575,7 @@ def test_validate_depends_on_clean_passes() -> None:
 
 def test_tiered_seed_order_basic_chain() -> None:
     """Planet → Moon → Comet: three tiers, one entry each."""
-    from incorporator.observability.pipeline.fjord import _tiered_seed_order
+    from incorporator.pipeline.fjord import _tiered_seed_order
 
     entries = [
         {"cls": Planet},
@@ -591,7 +591,7 @@ def test_tiered_seed_order_basic_chain() -> None:
 
 def test_tiered_seed_order_mixed_tier() -> None:
     """Two independents + one dependent: tier 0 has both, tier 1 has the dependent."""
-    from incorporator.observability.pipeline.fjord import _tiered_seed_order
+    from incorporator.pipeline.fjord import _tiered_seed_order
 
     entries = [
         {"cls": Planet},
@@ -607,7 +607,7 @@ def test_tiered_seed_order_mixed_tier() -> None:
 
 def test_tiered_seed_order_cycle_raises() -> None:
     """Cycle: A depends on B depends on A → ValueError listing the unresolved set."""
-    from incorporator.observability.pipeline.fjord import _tiered_seed_order
+    from incorporator.pipeline.fjord import _tiered_seed_order
 
     entries = [
         {"cls": Planet, "depends_on": ["Moon"]},
@@ -631,7 +631,7 @@ def test_format_seed_error_keyerror_under_inflow_is_actionable() -> None:
     the source class, identifies inflow(state) as the stage, names the missing
     peer, and suggests both the state.get() guard and the depends_on edge.
     """
-    from incorporator.observability.pipeline.fjord import _format_seed_error
+    from incorporator.pipeline.fjord import _format_seed_error
 
     msg = _format_seed_error("Race", KeyError("Track"), inflow_active=True)
     assert "inflow(state) for source 'Race'" in msg
@@ -642,7 +642,7 @@ def test_format_seed_error_keyerror_under_inflow_is_actionable() -> None:
 
 def test_format_seed_error_generic_exc_falls_back_to_typed_message() -> None:
     """Non-KeyError exceptions get a typed-message fallback that still names the source."""
-    from incorporator.observability.pipeline.fjord import _format_seed_error
+    from incorporator.pipeline.fjord import _format_seed_error
 
     msg = _format_seed_error("Race", RuntimeError("boom"), inflow_active=True)
     assert msg == "Seed Error in source 'Race': RuntimeError: boom"
@@ -655,7 +655,7 @@ def test_format_seed_error_keyerror_without_inflow_uses_fallback() -> None:
     a KeyError from somewhere inside cls.incorp() would get a misleading
     "guard inflow(state)" suggestion.
     """
-    from incorporator.observability.pipeline.fjord import _format_seed_error
+    from incorporator.pipeline.fjord import _format_seed_error
 
     msg = _format_seed_error("Race", KeyError("Track"), inflow_active=False)
     assert "inflow(state)" not in msg

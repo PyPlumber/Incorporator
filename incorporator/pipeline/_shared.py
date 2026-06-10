@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from ..logger import Wave
+from ..observability.logger import Wave
 
 
 @asynccontextmanager
@@ -126,8 +126,8 @@ def _resolve_if_exists_for_export(
     if not force_append:
         return None  # first tick / single-shot
     # Subsequent tick: prefer append on supported formats, else replace.
-    from ...io.formats import infer_format
-    from ...io.handlers._base import supports_append
+    from ..io.formats import infer_format
+    from ..io.handlers._base import supports_append
 
     if file_path is None:
         return "append"  # no path to inspect; legacy default

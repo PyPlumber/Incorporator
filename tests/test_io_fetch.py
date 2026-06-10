@@ -1229,7 +1229,7 @@ async def test_execute_request_connect_error_retried_up_to_network_budget(
     import asyncio
 
     from incorporator.io.fetch import execute_request
-    from incorporator.observability.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
+    from incorporator.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
 
     monkeypatch.chdir(tmp_path)
     call_count = 0
@@ -1265,7 +1265,7 @@ async def test_execute_request_read_timeout_get_retried_up_to_network_budget(
     import asyncio
 
     from incorporator.io.fetch import execute_request
-    from incorporator.observability.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
+    from incorporator.tideweaver._retry_defaults import _HTTP_NETWORK_RETRY_STOP
 
     monkeypatch.chdir(tmp_path)
     call_count = 0
@@ -1322,7 +1322,7 @@ async def test_execute_request_503_retried_up_to_inner_stop(
     import asyncio
 
     from incorporator.io.fetch import execute_request
-    from incorporator.observability.tideweaver._retry_defaults import _HTTP_INNER_STOP
+    from incorporator.tideweaver._retry_defaults import _HTTP_INNER_STOP
 
     monkeypatch.chdir(tmp_path)
     call_count = 0
@@ -1350,7 +1350,7 @@ async def test_execute_request_429_retried_up_to_inner_stop(
     import asyncio
 
     from incorporator.io.fetch import execute_request
-    from incorporator.observability.tideweaver._retry_defaults import _HTTP_INNER_STOP
+    from incorporator.tideweaver._retry_defaults import _HTTP_INNER_STOP
 
     monkeypatch.chdir(tmp_path)
     call_count = 0
@@ -1415,7 +1415,7 @@ async def test_execute_request_network_error_wait_is_bounded(
     import asyncio
 
     from incorporator.io.fetch import execute_request
-    from incorporator.observability.tideweaver._retry_defaults import (
+    from incorporator.tideweaver._retry_defaults import (
         _HTTP_NETWORK_RETRY_STOP,
         _HTTP_NETWORK_WAIT_MAX,
     )
@@ -1477,7 +1477,7 @@ async def test_execute_request_408_retried_up_to_inner_stop(
     import asyncio
 
     from incorporator.io.fetch import execute_request
-    from incorporator.observability.tideweaver._retry_defaults import _HTTP_INNER_STOP
+    from incorporator.tideweaver._retry_defaults import _HTTP_INNER_STOP
 
     monkeypatch.chdir(tmp_path)
     call_count = 0
@@ -1511,7 +1511,7 @@ async def test_execute_request_425_retried_up_to_inner_stop(
     import asyncio
 
     from incorporator.io.fetch import execute_request
-    from incorporator.observability.tideweaver._retry_defaults import _HTTP_INNER_STOP
+    from incorporator.tideweaver._retry_defaults import _HTTP_INNER_STOP
 
     monkeypatch.chdir(tmp_path)
     call_count = 0

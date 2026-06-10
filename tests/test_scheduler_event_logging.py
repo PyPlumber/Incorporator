@@ -27,8 +27,8 @@ import pytest
 
 from incorporator import Incorporator, Tideweaver, Watershed
 from incorporator.observability.logger import _safe_log_filename
-from incorporator.observability.tideweaver import CustomCurrent
-from incorporator.observability.tideweaver.logged import LoggedTideweaver
+from incorporator.tideweaver import CustomCurrent
+from incorporator.tideweaver.logged import LoggedTideweaver
 
 # ---------------------------------------------------------------------------
 # Module-level classes so the scheduler builds them once per session.
@@ -132,7 +132,7 @@ async def test_logged_tideweaver_isolated_failure_produces_scheduler_event_recor
         on_error="isolate",
     )
 
-    from incorporator.observability.tideweaver import Edge
+    from incorporator.tideweaver import Edge
 
     ws = Watershed(
         window=_short_window(400),
@@ -232,7 +232,7 @@ async def test_bare_tideweaver_isolated_failure_emits_via_module_logger(
 
     Proves that when logger_name is None on the Tideweaver instance, the
     fallback branch emits the 'isolated tick failure' WARNING through the
-    module logger (incorporator.observability.tideweaver.scheduler), matching
+    module logger (incorporator.tideweaver.scheduler), matching
     the pre-Phase-2 behavior exactly so no existing caplog-based tests break.
     """
     monkeypatch.chdir(tmp_path)
@@ -253,7 +253,7 @@ async def test_bare_tideweaver_isolated_failure_emits_via_module_logger(
         async def tick(self, scheduler: Any) -> None:
             raise RuntimeError("bare tideweaver deliberate failure")
 
-    from incorporator.observability.tideweaver import Edge
+    from incorporator.tideweaver import Edge
 
     up_current = _StableUpC(name="up_c", cls=_StableSource, interval=10.0)
     dn_current = _RaisingDownC(
@@ -273,7 +273,7 @@ async def test_bare_tideweaver_isolated_failure_emits_via_module_logger(
     tw = Tideweaver(ws, pass_interval=0.03)
     assert tw.logger_name is None, "bare Tideweaver must have logger_name=None"
 
-    with caplog.at_level(logging.WARNING, logger="incorporator.observability.tideweaver.scheduler"):
+    with caplog.at_level(logging.WARNING, logger="incorporator.tideweaver.scheduler"):
         async for _ in tw.run():
             pass
 
@@ -377,11 +377,11 @@ async def test_canal_reject_entry_carries_session(
     monkeypatch.chdir(tmp_path)
 
     from incorporator import Incorporator
-    from incorporator.observability.tideweaver import Edge, FlowControl, HardLock
-    from incorporator.observability.tideweaver import SurgeBarrier
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
-    from incorporator.observability.tideweaver.watershed import Watershed
-    from incorporator.observability.tideweaver.current import Stream
+    from incorporator.tideweaver import Edge, FlowControl, HardLock
+    from incorporator.tideweaver import SurgeBarrier
+    from incorporator.tideweaver.scheduler import Tideweaver
+    from incorporator.tideweaver.watershed import Watershed
+    from incorporator.tideweaver.current import Stream
 
     class _UpSrc(Incorporator):
         pass
@@ -439,9 +439,9 @@ async def test_tide_carries_session_from_scheduler(
     monkeypatch.chdir(tmp_path)
 
     from incorporator import Incorporator
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
-    from incorporator.observability.tideweaver.watershed import Watershed
-    from incorporator.observability.tideweaver.current import Stream
+    from incorporator.tideweaver.scheduler import Tideweaver
+    from incorporator.tideweaver.watershed import Watershed
+    from incorporator.tideweaver.current import Stream
 
     class _SimpleSrc(Incorporator):
         pass
@@ -477,9 +477,9 @@ async def test_tide_session_is_none_without_logger_name(
     monkeypatch.chdir(tmp_path)
 
     from incorporator import Incorporator
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
-    from incorporator.observability.tideweaver.watershed import Watershed
-    from incorporator.observability.tideweaver.current import Stream
+    from incorporator.tideweaver.scheduler import Tideweaver
+    from incorporator.tideweaver.watershed import Watershed
+    from incorporator.tideweaver.current import Stream
 
     class _AnonSrc(Incorporator):
         pass

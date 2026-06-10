@@ -21,10 +21,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from incorporator import Incorporator
-from incorporator.observability.pipeline import outflow as outflow_module_ref
-from incorporator.observability.pipeline.outflow import _BARE_CLASS_WARNED, flush
-from incorporator.observability.tideweaver import Fjord, Stream, Watershed
-from incorporator.observability.tideweaver.current import Fjord as FjordCls
+from incorporator.pipeline import outflow as outflow_module_ref
+from incorporator.pipeline.outflow import _BARE_CLASS_WARNED, flush
+from incorporator.tideweaver import Fjord, Stream, Watershed
+from incorporator.tideweaver.current import Fjord as FjordCls
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ async def test_flush_bare_class_extra_keys_uses_inference(
         return rows
 
     instances_collected: list[Any] = []
-    with caplog.at_level("WARNING", logger="incorporator.observability.pipeline.outflow"):
+    with caplog.at_level("WARNING", logger="incorporator.pipeline.outflow"):
         async for derived_name, count, err in flush(
             outflow_fn,
             state={},
@@ -227,7 +227,7 @@ async def test_tick_fjord_bare_class_extra_keys_retains_all_fields(
     )
 
     scheduler = _make_stub_scheduler_b(upstream_current, fjord_current)
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
+    from incorporator.tideweaver.scheduler import Tideweaver
 
     await Tideweaver._tick_fjord(scheduler, fjord_current)
 

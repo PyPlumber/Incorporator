@@ -16,9 +16,9 @@ from typing import Any, Optional
 
 import pytest
 
-from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
-from incorporator.observability.tideweaver.reasons import SkipReason, WakeReason
-from incorporator.observability.tideweaver.tide import Tide
+from incorporator.tideweaver.current_outcome import CurrentOutcome
+from incorporator.tideweaver.reasons import SkipReason, WakeReason
+from incorporator.tideweaver.tide import Tide
 from incorporator.observability.wave import Wave
 from incorporator.rejects import RejectEntry
 
@@ -585,7 +585,7 @@ async def test_wave_validation_error_count_zero_for_non_validation_errors(
     engine's except handler rather than being swallowed by _safe_execute.
     """
     from incorporator import Incorporator
-    from incorporator.observability.pipeline import chunked
+    from incorporator.pipeline import chunked
 
     monkeypatch.chdir(tmp_path)
 

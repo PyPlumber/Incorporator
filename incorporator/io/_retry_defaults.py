@@ -1,7 +1,7 @@
 """HTTP-layer retry defaults consumed by ``fetch.py``.
 
 The canal-outer and compound-budget constants live in
-``observability/tideweaver/_retry_defaults.py``, which re-exports
+``tideweaver/_retry_defaults.py``, which re-exports
 the eight ``_HTTP_*`` names below for backward compatibility of the
 compound-budget formula and existing import paths.
 """

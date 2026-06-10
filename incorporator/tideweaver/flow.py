@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
-from ...io.penstock import (
+from ..io.penstock import (
     BurstPenstock,
     NullPenstock,
     Penstock,

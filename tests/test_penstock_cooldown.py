@@ -22,7 +22,7 @@ from incorporator.io.penstock import (
     SustainedPenstock,
     WindowPenstock,
 )
-from incorporator.observability.tideweaver.flow import BackpressurePenstock, FlowControl, Reservoir
+from incorporator.tideweaver.flow import BackpressurePenstock, FlowControl, Reservoir
 
 
 # ---------------------------------------------------------------------------

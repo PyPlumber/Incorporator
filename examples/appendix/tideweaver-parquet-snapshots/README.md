@@ -73,7 +73,7 @@ lands on disk via a non-blocking `QueueHandler`: every `Tide` in
 `logs/LapsSnapshot_tide.log` (the single file `get_tides()` reads) and
 every canal-layer `RejectEntry` in `logs/LapsSnapshot_error.log`.
 Import path:
-`from incorporator.observability.tideweaver import LoggedTideweaver`.
+`from incorporator.tideweaver import LoggedTideweaver`.
 
 ---
 
@@ -120,7 +120,7 @@ records back in and get severity-sorted hints across `chunk_size`,
 penstock rate, surge threshold, `pass_interval`, and retry policy:
 
 ```python
-from incorporator.observability.tideweaver import tune
+from incorporator.tideweaver import tune
 
 report = tune(rejects=tw.rejects, tides=tides,
               pass_interval=tw.pass_interval)

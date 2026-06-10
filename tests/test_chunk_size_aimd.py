@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from incorporator.observability.pipeline.chunked import _run_chunking_engine
-from incorporator.observability.tideweaver.architect import _tune_chunk_size
+from incorporator.pipeline.chunked import _run_chunking_engine
+from incorporator.tideweaver.architect import _tune_chunk_size
 from incorporator.observability.wave import Wave
 
 
@@ -120,14 +120,14 @@ async def _collect_waves(
         return original()
 
     ctx = (
-        patch("incorporator.observability.pipeline.chunked.time.perf_counter", side_effect=_fake_perf)
+        patch("incorporator.pipeline.chunked.time.perf_counter", side_effect=_fake_perf)
         if processing_time_override is not None
         else __import__("contextlib").nullcontext()
     )
 
     with ctx:
         with patch(
-            "incorporator.observability.pipeline.chunked._enrich_and_load", new=AsyncMock(side_effect=_noop_enrich)
+            "incorporator.pipeline.chunked._enrich_and_load", new=AsyncMock(side_effect=_noop_enrich)
         ):
             gen: AsyncGenerator[Wave, None] = _run_chunking_engine(
                 cls=cls_under_test,
@@ -252,7 +252,7 @@ async def test_aimd_paginator_without_chunk_size_no_op(monkeypatch: pytest.Monke
 
     async def _drive() -> None:
         with patch(
-            "incorporator.observability.pipeline.chunked._enrich_and_load",
+            "incorporator.pipeline.chunked._enrich_and_load",
             new=AsyncMock(side_effect=lambda *a, **kw: None),
         ):
             gen = _run_chunking_engine(

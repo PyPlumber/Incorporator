@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...exceptions import IncorporatorFormatError
-from ...io.formats import infer_format
+from ..exceptions import IncorporatorFormatError
+from ..io.formats import infer_format
 
 __all__ = ["assert_engine_supported"]
 

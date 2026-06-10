@@ -34,13 +34,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from incorporator import Incorporator, SustainedPenstock, register_host_penstock
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Fjord,
     LoggedTideweaver,
     Stream,
     Watershed,
 )
-from incorporator.observability.tideweaver.architect import tune
+from incorporator.tideweaver.architect import tune
 from incorporator.schema.converters import calc
 
 HERE = Path(__file__).resolve().parent

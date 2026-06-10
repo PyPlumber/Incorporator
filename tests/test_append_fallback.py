@@ -27,7 +27,7 @@ import pytest
 from incorporator.exceptions import IncorporatorFormatError
 from incorporator.io.handlers._base import APPEND_FRIENDLY_FORMATS, supports_append
 from incorporator.io.formats import FormatType
-from incorporator.observability.pipeline._shared import (
+from incorporator.pipeline._shared import (
     _enrich_and_load,
     _resolve_if_exists_for_export,
 )
@@ -175,7 +175,7 @@ async def test_chunked_engine_rejects_paginated_monolithic_target() -> None:
 async def test_chunked_engine_allows_singleshot_monolithic_target() -> None:
     """Single-shot chunked (no paginator) + Parquet target = OK.  Only one
     chunk fires, so monolithic targets are safe."""
-    from incorporator.observability.pipeline.chunked import _run_chunking_engine
+    from incorporator.pipeline.chunked import _run_chunking_engine
 
     cls = MagicMock()
     cls.incorp = AsyncMock(return_value=[{"id": 1}])

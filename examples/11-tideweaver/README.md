@@ -187,7 +187,7 @@ watershed = Watershed.chain(
 ```
 
 `gate_mode=` also accepts the `GateMode` enum (`from
-incorporator.observability.tideweaver import GateMode`;
+incorporator.tideweaver import GateMode`;
 `GateMode.HARD` / `GateMode.SOFT` / `GateMode.WEIR`) — both forms
 produce identical `FlowControl` because `GateMode` is a `str`-subclass.
 The JSON form below always uses the lowercase string.
@@ -508,7 +508,7 @@ disk via the `QueueHandler` pipeline; `tune()` reads those records and returns
 a `TuningReport` of severity-sorted hints:
 
 ```python
-from incorporator.observability.tideweaver import LoggedTideweaver, tune
+from incorporator.tideweaver import LoggedTideweaver, tune
 
 tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="ArbSession")
 tides = [tide async for tide in tw.run()]
@@ -546,7 +546,7 @@ read the `QueueHandler` log files produced during a previous run — useful when
 you want to analyse a completed overnight window without rerunning it:
 
 ```python
-from incorporator.observability.tideweaver import LoggedTideweaver, tune
+from incorporator.tideweaver import LoggedTideweaver, tune
 
 # Read records written during a previous run.
 tides   = await LoggedTideweaver.get_tides("ArbSession")

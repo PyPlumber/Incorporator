@@ -15,7 +15,7 @@ on for Docker/CLI deployments:
 
 These helpers are called ONLY by CLI/JSON loaders
 (:func:`incorporator.cli.runners._load_pipeline_config` and
-:func:`incorporator.observability.tideweaver.config.build_watershed`).
+:func:`incorporator.tideweaver.config.build_watershed`).
 The in-process Python API (``Incorporator.incorp`` / ``export`` /
 ``refresh``) stays CWD-relative and does NOT call these functions.
 """

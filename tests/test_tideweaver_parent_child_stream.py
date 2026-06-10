@@ -22,8 +22,8 @@ import pytest
 from pydantic import ConfigDict
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver import Stream, Watershed
-from incorporator.observability.tideweaver.current import Stream as StreamCls
+from incorporator.tideweaver import Stream, Watershed
+from incorporator.tideweaver.current import Stream as StreamCls
 
 # ---------------------------------------------------------------------------
 # Module-level Incorporator subclasses
@@ -106,7 +106,7 @@ async def test_none_or_empty_upstream_snapshot_silently_skips(tmp_path: Any, mon
     )
 
     scheduler = _make_stub_scheduler([upstream, child])
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
+    from incorporator.tideweaver.scheduler import Tideweaver
 
     # Case A: _tideweaver_snapshot absent (getattr returns None)
     await Tideweaver._tick_stream(scheduler, child)

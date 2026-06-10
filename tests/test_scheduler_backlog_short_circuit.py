@@ -11,7 +11,7 @@ from typing import List, Tuple
 import pytest
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Stream,
     Tide,
     Tideweaver,
@@ -187,7 +187,7 @@ def test_backoff_disabled_skips_ring_buffer_append() -> None:
 
     # Simulate a Tide being constructed inside _run_pass by directly calling
     # the append guard logic inline (without spinning up the full async loop).
-    from incorporator.observability.tideweaver.tide import Tide
+    from incorporator.tideweaver.tide import Tide
 
     mock_tide = Tide.model_construct(
         tide_number=1,

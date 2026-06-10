@@ -22,13 +22,13 @@ class CurrentOutcome:
     ``Tide.model_construct(...)``.
 
     Attributes:
-        name: Current name from :attr:`~incorporator.observability.tideweaver.current.Current.name`.
+        name: Current name from :attr:`~incorporator.tideweaver.current.Current.name`.
         status: Outcome category — one of ``"fired"``, ``"skipped"``,
             or ``"still_running"``.
         reason: Human-readable skip or gate reason (e.g. ``"not_due"``,
             ``"still_running"``, ``"awaiting_upstream"``).  ``None`` for
             fired currents.
-        bypassed_edges: Upstream names whose :class:`~incorporator.observability.tideweaver.flow.SurgeBarrier`
+        bypassed_edges: Upstream names whose :class:`~incorporator.tideweaver.flow.SurgeBarrier`
             tripped with ``action="bypass"`` this pass.  Empty tuple when
             none were bypassed.
         in_flight_sec: Seconds the current has been in-flight at pass

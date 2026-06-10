@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Tuple
 import pytest
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Current,
     Edge,
     Export,
@@ -578,7 +578,7 @@ async def test_bypass_does_not_charge_burst_penstock() -> None:
     AND penstock. The finally block previously debited every upstream edge
     unconditionally — bypassed ticks paid the bucket.
     """
-    from incorporator.observability.tideweaver import BurstPenstock
+    from incorporator.tideweaver import BurstPenstock
 
     async def slow_a(current: Current) -> None:
         if current.name == "a":
@@ -609,7 +609,7 @@ async def test_bypass_does_not_charge_burst_penstock() -> None:
 @pytest.mark.asyncio
 async def test_bypass_does_not_log_window_penstock() -> None:
     """SurgeBarrier(action='bypass') must not append to WindowPenstock.window_log."""
-    from incorporator.observability.tideweaver import WindowPenstock
+    from incorporator.tideweaver import WindowPenstock
 
     async def slow_a(current: Current) -> None:
         if current.name == "a":
@@ -674,7 +674,7 @@ async def test_penstock_limited_populates_rejects() -> None:
     on B's 0.05s interval gets ``penstock_limited``.  Each limited
     attempt populates Tideweaver.rejects with a structured RejectEntry.
     """
-    from incorporator.observability.tideweaver import SustainedPenstock
+    from incorporator.tideweaver import SustainedPenstock
 
     async def fast_tick(current: Current) -> None:
         """Zero-work tick — lets the scheduler iterate freely."""
@@ -817,7 +817,7 @@ def test_flowcontrol_round_trip_through_json_dict() -> None:
     custom dispatch layer needed — Pydantic picks the strategy
     subclass off the ``type`` Literal on each child dict.
     """
-    from incorporator.observability.tideweaver import (
+    from incorporator.tideweaver import (
         BackpressurePenstock,
         BurstPenstock,
         ExportToArchive,
@@ -864,7 +864,7 @@ def test_flowcontrol_round_trip_through_json_dict() -> None:
 
 def test_edge_gate_mode_shorthand_matches_flow_from_mode() -> None:
     """``Edge(..., gate_mode="weir")`` produces the same flow as ``Edge(..., flow=flow_from_mode("weir"))``."""
-    from incorporator.observability.tideweaver import Edge, flow_from_mode
+    from incorporator.tideweaver import Edge, flow_from_mode
 
     a = Edge(from_name="x", to_name="y", gate_mode="weir")
     b = Edge(from_name="x", to_name="y", flow=flow_from_mode("weir"))
@@ -877,7 +877,7 @@ def test_edge_gate_mode_shorthand_matches_flow_from_mode() -> None:
 
 def test_edge_rejects_both_gate_mode_and_flow() -> None:
     """``Edge(gate_mode=..., flow=...)`` raises — shorthand and full are mutually exclusive."""
-    from incorporator.observability.tideweaver import Edge, FlowControl, Weir
+    from incorporator.tideweaver import Edge, FlowControl, Weir
 
     with pytest.raises(ValueError, match="not both"):
         Edge(from_name="x", to_name="y", gate_mode="weir", flow=FlowControl(gate=Weir()))
@@ -885,7 +885,7 @@ def test_edge_rejects_both_gate_mode_and_flow() -> None:
 
 def test_edge_json_aliases_from_to() -> None:
     """``Edge.model_validate({"from": "a", "to": "b"})`` works — JSON-style aliases."""
-    from incorporator.observability.tideweaver import Edge
+    from incorporator.tideweaver import Edge
 
     e = Edge.model_validate({"from": "a", "to": "b", "gate_mode": "soft"})
     assert e.from_name == "a"
@@ -905,7 +905,7 @@ def test_edge_json_aliases_from_to() -> None:
 @pytest.mark.asyncio
 async def test_reservoir_default_depth_one_holds_one_wave() -> None:
     """Default ``Reservoir(depth=1)`` keeps only the most recent wave per edge."""
-    from incorporator.observability.tideweaver import Reservoir
+    from incorporator.tideweaver import Reservoir
 
     waves_seen: List[List[Any]] = []
     strong: List[_A] = []
@@ -930,7 +930,7 @@ async def test_reservoir_default_depth_one_holds_one_wave() -> None:
 @pytest.mark.asyncio
 async def test_reservoir_depth_3_holds_last_three_waves() -> None:
     """A reservoir with depth=3 holds the last 3 waves; older are displaced."""
-    from incorporator.observability.tideweaver import HardLock, Reservoir
+    from incorporator.tideweaver import HardLock, Reservoir
 
     tick_count = {"a": 0}
     strong_refs: List[_A] = []
@@ -970,7 +970,7 @@ async def test_reservoir_depth_3_holds_last_three_waves() -> None:
 @pytest.mark.asyncio
 async def test_reservoir_per_edge_isolation() -> None:
     """Two outgoing edges from the same upstream have independent reservoirs."""
-    from incorporator.observability.tideweaver import HardLock, Reservoir
+    from incorporator.tideweaver import HardLock, Reservoir
 
     strong_refs: List[_A] = []
 
@@ -1019,7 +1019,7 @@ async def test_sustained_penstock_limits_consumption_rate() -> None:
     Min gap = 1/5 = 0.2s.  With dependent.interval=0.05s, most passes hit
     the penstock between consumptions and surface ``"penstock_limited"``.
     """
-    from incorporator.observability.tideweaver import HardLock, SustainedPenstock
+    from incorporator.tideweaver import HardLock, SustainedPenstock
 
     strong_refs: List[_A] = []
 
@@ -1073,7 +1073,7 @@ async def test_penstock_none_means_unlimited() -> None:
 @pytest.mark.asyncio
 async def test_sustained_penstock_per_edge_independent() -> None:
     """Two edges from the same upstream with different SustainedPenstocks operate independently."""
-    from incorporator.observability.tideweaver import HardLock, SustainedPenstock
+    from incorporator.tideweaver import HardLock, SustainedPenstock
 
     strong_refs: List[_A] = []
 
@@ -1116,7 +1116,7 @@ async def test_sustained_penstock_per_edge_independent() -> None:
 @pytest.mark.asyncio
 async def test_burst_penstock_allows_initial_burst_then_throttles() -> None:
     """``BurstPenstock(rate_per_sec=2.0, burst=5)`` lets first 5 ticks pass fast, then throttles."""
-    from incorporator.observability.tideweaver import BurstPenstock, HardLock
+    from incorporator.tideweaver import BurstPenstock, HardLock
 
     strong_refs: List[_A] = []
 
@@ -1154,7 +1154,7 @@ async def test_burst_penstock_refills_capped_at_burst() -> None:
 
     Manually advance the bucket state to verify the cap.
     """
-    from incorporator.observability.tideweaver import BurstPenstock
+    from incorporator.tideweaver import BurstPenstock
 
     pen = BurstPenstock(rate_per_sec=2.0, burst=3)
 
@@ -1177,7 +1177,7 @@ async def test_burst_penstock_refills_capped_at_burst() -> None:
 @pytest.mark.asyncio
 async def test_window_penstock_caps_at_window_size() -> None:
     """``WindowPenstock(window_sec=0.4, cap=3)`` allows 3 ticks within window, hard-walls 4th."""
-    from incorporator.observability.tideweaver import HardLock, WindowPenstock
+    from incorporator.tideweaver import HardLock, WindowPenstock
 
     strong_refs: List[_A] = []
 
@@ -1218,7 +1218,7 @@ async def test_window_penstock_eviction_across_multiple_passes() -> None:
     downstream fires more than ``cap`` times total, which is only possible
     once early consumptions slide out of the window.
     """
-    from incorporator.observability.tideweaver import HardLock, WindowPenstock
+    from incorporator.tideweaver import HardLock, WindowPenstock
 
     strong_refs: List[_A] = []
 
@@ -1256,7 +1256,7 @@ async def test_backpressure_penstock_slows_under_full_reservoir() -> None:
     Unit-test the rate calculation directly — interpolation between
     min_rate and max_rate based on fullness ratio.
     """
-    from incorporator.observability.tideweaver import BackpressurePenstock, Reservoir
+    from incorporator.tideweaver import BackpressurePenstock, Reservoir
 
     pen = BackpressurePenstock(min_rate=1.0, max_rate=10.0)
 
@@ -1296,7 +1296,7 @@ def test_backpressure_penstock_rejects_inverted_rates() -> None:
     silently invert the curve (full reservoir gets a *higher* rate than
     empty).  The model_validator catches this at instantiation time.
     """
-    from incorporator.observability.tideweaver import BackpressurePenstock
+    from incorporator.tideweaver import BackpressurePenstock
 
     # Inverted — should raise.
     with pytest.raises(ValueError, match="min_rate < max_rate"):
@@ -1316,7 +1316,7 @@ async def test_signal_penstock_callable_drives_rate() -> None:
 
     Returning 0 always blocks; returning a high rate allows steady firing.
     """
-    from incorporator.observability.tideweaver import SignalPenstock
+    from incorporator.tideweaver import SignalPenstock
 
     invocations: List[float] = []
 
@@ -1352,7 +1352,7 @@ async def test_signal_penstock_callable_drives_rate() -> None:
 @pytest.mark.asyncio
 async def test_spillway_drop_oldest_is_silent_default() -> None:
     """``DropOldest`` (the default) silently discards displaced waves — no logs, no archive."""
-    from incorporator.observability.tideweaver import DropOldest, HardLock, Reservoir
+    from incorporator.tideweaver import DropOldest, HardLock, Reservoir
 
     strong_refs: List[_A] = []
 
@@ -1386,7 +1386,7 @@ async def test_spillway_raise_overflow_logs_each_overflow(caplog: pytest.LogCapt
     """``RaiseOverflow`` emits a WARNING log line per displaced wave."""
     import logging
 
-    from incorporator.observability.tideweaver import HardLock, RaiseOverflow, Reservoir
+    from incorporator.tideweaver import HardLock, RaiseOverflow, Reservoir
 
     strong_refs: List[_A] = []
 
@@ -1405,7 +1405,7 @@ async def test_spillway_raise_overflow_logs_each_overflow(caplog: pytest.LogCapt
         edges=[Edge(from_name="a", to_name="b", flow=flow)],
     )
     tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
-    with caplog.at_level(logging.WARNING, logger="incorporator.observability.tideweaver.flow"):
+    with caplog.at_level(logging.WARNING, logger="incorporator.tideweaver.flow"):
         await _collect_tides(tw)
     overflow_logs = [r for r in caplog.records if "spillway overflow" in r.message]
     assert overflow_logs, "RaiseOverflow must emit warning logs on overflow"
@@ -1420,7 +1420,7 @@ async def test_spillway_raise_overflow_logs_each_overflow(caplog: pytest.LogCapt
 @pytest.mark.asyncio
 async def test_spillway_export_to_archive_routes_displaced_waves() -> None:
     """``ExportToArchive`` appends each displaced wave's instances to ``archive_cls._spillway_backlog``."""
-    from incorporator.observability.tideweaver import ExportToArchive, HardLock, Reservoir
+    from incorporator.tideweaver import ExportToArchive, HardLock, Reservoir
 
     class _Archive(Incorporator):
         """Backlog destination for displaced waves."""
@@ -1476,7 +1476,7 @@ async def test_export_to_archive_backlog_is_strong_ref() -> None:
     """
     import gc
 
-    from incorporator.observability.tideweaver import ExportToArchive, HardLock, Reservoir
+    from incorporator.tideweaver import ExportToArchive, HardLock, Reservoir
 
     class _Archive(Incorporator):
         """Backlog destination for displaced waves."""
@@ -1542,7 +1542,7 @@ async def test_spillway_fires_when_penstock_and_reservoir_both_active() -> None:
     This is the only test exercising all three primitives in a single graph;
     individual tests cover each in isolation but composition was a gap.
     """
-    from incorporator.observability.tideweaver import (
+    from incorporator.tideweaver import (
         DropOldest,
         HardLock,
         Reservoir,
@@ -1599,7 +1599,7 @@ async def test_spillway_fires_when_penstock_and_reservoir_both_active() -> None:
 
 def test_null_observer_is_the_flow_default() -> None:
     """``FlowControl()`` defaults to a NullObserver — no-op telemetry."""
-    from incorporator.observability.tideweaver import FlowControl, NullObserver
+    from incorporator.tideweaver import FlowControl, NullObserver
 
     fc = FlowControl()
     assert isinstance(fc.observer, NullObserver)
@@ -1615,7 +1615,7 @@ def test_flow_control_dump_omits_default_observer() -> None:
     field when it's the default :class:`NullObserver`; round-trip is
     lossless because :meth:`model_validate` rebuilds the default.
     """
-    from incorporator.observability.tideweaver import FlowControl, LoggingObserver, NullObserver
+    from incorporator.tideweaver import FlowControl, LoggingObserver, NullObserver
 
     # Default-NullObserver path → observer key absent.
     dumped = FlowControl().model_dump()
@@ -1633,7 +1633,7 @@ def test_flow_control_dump_omits_default_observer() -> None:
 
 def test_logging_observer_round_trips_via_json() -> None:
     """``observer: {type: logging, ...}`` deserialises via the discriminated union."""
-    from incorporator.observability.tideweaver import FlowControl, LoggingObserver
+    from incorporator.tideweaver import FlowControl, LoggingObserver
 
     fc = FlowControl.model_validate(
         {
@@ -1653,7 +1653,7 @@ def test_logging_observer_round_trips_via_json() -> None:
 @pytest.mark.asyncio
 async def test_signal_observer_callback_receives_fire_events() -> None:
     """SignalObserver routes ``on_fire`` through the user callable with payload."""
-    from incorporator.observability.tideweaver import HardLock, SignalObserver
+    from incorporator.tideweaver import HardLock, SignalObserver
 
     events: List[Tuple[str, Tuple[str, str], Dict[str, Any]]] = []
 
@@ -1696,7 +1696,7 @@ async def test_observer_on_skip_fires_with_skip_reason() -> None:
     Uses a HardLock chain so the dependent's first pass surfaces
     ``"awaiting_upstream"`` until A produces a wave.
     """
-    from incorporator.observability.tideweaver import HardLock, SignalObserver
+    from incorporator.tideweaver import HardLock, SignalObserver
 
     events: List[Tuple[str, Tuple[str, str], Dict[str, Any]]] = []
 
@@ -1729,7 +1729,7 @@ async def test_observer_on_skip_fires_with_skip_reason() -> None:
 @pytest.mark.asyncio
 async def test_observer_on_spillway_fires_per_displacement() -> None:
     """One ``on_spillway`` call per displaced wave; carries the overflow_count."""
-    from incorporator.observability.tideweaver import (
+    from incorporator.tideweaver import (
         DropOldest,
         HardLock,
         Reservoir,
@@ -1779,7 +1779,7 @@ async def test_observer_on_spillway_fires_per_displacement() -> None:
 @pytest.mark.asyncio
 async def test_observer_on_reservoir_level_fires_per_append() -> None:
     """``on_reservoir_level`` fires after every reservoir append with used/capacity."""
-    from incorporator.observability.tideweaver import (
+    from incorporator.tideweaver import (
         HardLock,
         Reservoir,
         SignalObserver,
@@ -1832,7 +1832,7 @@ async def test_observer_does_not_fire_on_fire_for_bypassed_edges() -> None:
     so on_fire on this edge would imply a per-edge contribution that didn't
     happen.  Bypassed edges produce no observer event for that pass.
     """
-    from incorporator.observability.tideweaver import (
+    from incorporator.tideweaver import (
         HardLock,
         SignalObserver,
         SurgeBarrier,
@@ -1987,7 +1987,7 @@ async def test_custom_current_dispatches_to_user_tick() -> None:
     Replaces the ``tick_factory=...`` pattern as the documented public
     path; ``tick_factory`` stays as the test-only override.
     """
-    from incorporator.observability.tideweaver import CustomCurrent
+    from incorporator.tideweaver import CustomCurrent
 
     fires: List[str] = []
 
@@ -2006,7 +2006,7 @@ async def test_custom_current_dispatches_to_user_tick() -> None:
 @pytest.mark.asyncio
 async def test_base_custom_current_raises_when_tick_not_overridden() -> None:
     """The base ``CustomCurrent.tick`` raises NotImplementedError with a guiding message."""
-    from incorporator.observability.tideweaver import CustomCurrent
+    from incorporator.tideweaver import CustomCurrent
 
     bare = CustomCurrent(name="bare", cls=_A, interval=0.05)
     with pytest.raises(NotImplementedError, match="must override async tick"):
@@ -2254,7 +2254,7 @@ def _watershed_json_body(shape: str, *, with_mode: bool = True) -> Dict[str, Any
 
 def test_json_chain_shape(tmp_path: Path) -> None:
     """``shape: 'chain'`` parses into a Watershed with the expected chain edges."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("chain")
@@ -2270,7 +2270,7 @@ def test_json_chain_shape(tmp_path: Path) -> None:
 
 def test_json_diamond_shape(tmp_path: Path) -> None:
     """``shape: 'diamond'`` parses head/middle/tail into the right 4-edge set."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("diamond")
@@ -2295,7 +2295,7 @@ def test_json_diamond_shape(tmp_path: Path) -> None:
 
 def test_json_fanout_shape(tmp_path: Path) -> None:
     """``shape: 'fanout'`` parses source/sinks into the expected fan-out edges."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("fanout")
@@ -2312,7 +2312,7 @@ def test_json_fanout_shape(tmp_path: Path) -> None:
 
 def test_json_parallel_shape(tmp_path: Path) -> None:
     """``shape: 'parallel'`` parses currents=[...] with no edges."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("parallel", with_mode=False)
@@ -2328,7 +2328,7 @@ def test_json_parallel_shape(tmp_path: Path) -> None:
 
 def test_json_custom_shape(tmp_path: Path) -> None:
     """``shape: 'custom'`` honors an explicit edges list with per-edge modes."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("custom", with_mode=False)
@@ -2356,14 +2356,14 @@ def test_json_custom_shape(tmp_path: Path) -> None:
 
 def test_json_custom_edge_full_flowcontrol(tmp_path: Path) -> None:
     """A per-edge ``flow: {...}`` round-trips through the loader, inflating every primitive."""
-    from incorporator.observability.tideweaver import (
+    from incorporator.tideweaver import (
         BurstPenstock,
         RaiseOverflow,
         Reservoir,
         SurgeBarrier,
         Weir,
     )
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("custom", with_mode=False)
@@ -2401,7 +2401,7 @@ def test_json_custom_edge_full_flowcontrol(tmp_path: Path) -> None:
 
 def test_json_custom_edge_rejects_both_flow_and_mode(tmp_path: Path) -> None:
     """Per-edge ``flow`` + ``gate_mode`` raises a clear ValueError."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("custom", with_mode=False)
@@ -2420,8 +2420,8 @@ def test_json_custom_edge_rejects_both_flow_and_mode(tmp_path: Path) -> None:
 
 def test_json_chain_top_level_flow(tmp_path: Path) -> None:
     """``{"shape": "chain", "flow": {...}}`` builds a chain where every edge shares the parsed FlowControl."""
-    from incorporator.observability.tideweaver import Weir
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver import Weir
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("chain", with_mode=False)
@@ -2446,7 +2446,7 @@ def test_json_dependency_mode_alias_raises_after_v1_3_0(tmp_path: Path) -> None:
     ``gate_mode`` so users see the break immediately rather than
     silently dropping their intended config.
     """
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("chain", with_mode=False)
@@ -2463,7 +2463,7 @@ def test_json_dependency_mode_alias_raises_after_v1_3_0(tmp_path: Path) -> None:
 
 def test_json_edge_mode_alias_raises_after_v1_3_0(tmp_path: Path) -> None:
     """Per-edge legacy ``"mode"`` key raises ValueError with migration guidance."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("custom", with_mode=False)
@@ -2480,7 +2480,7 @@ def test_json_edge_mode_alias_raises_after_v1_3_0(tmp_path: Path) -> None:
 
 def test_json_top_level_rejects_both_flow_and_gate_mode(tmp_path: Path) -> None:
     """Top-level ``flow`` + ``gate_mode`` on a shape constructor raises."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("chain")  # already sets gate_mode="hard"
@@ -2497,8 +2497,8 @@ def test_json_top_level_rejects_both_flow_and_gate_mode(tmp_path: Path) -> None:
 
 def test_json_signal_penstock_resolves_sidecar_callable(tmp_path: Path) -> None:
     """``SignalPenstock.rate_fn`` resolves a bare name on the outflow sidecar."""
-    from incorporator.observability.tideweaver import SignalPenstock
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver import SignalPenstock
+    from incorporator.tideweaver.config import load_watershed
 
     # Outflow.py defines peak_rate alongside the required outflow() function.
     _write_sidecar(
@@ -2535,8 +2535,8 @@ def test_json_signal_penstock_resolves_sidecar_callable(tmp_path: Path) -> None:
 
 def test_json_signal_penstock_resolves_module_path(tmp_path: Path) -> None:
     """``rate_fn: "module:fn"`` resolves via importlib (stdlib reference to avoid sidecar coupling)."""
-    from incorporator.observability.tideweaver import SignalPenstock
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver import SignalPenstock
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("custom", with_mode=False)
@@ -2566,7 +2566,7 @@ def test_json_signal_penstock_resolves_module_path(tmp_path: Path) -> None:
 
 def test_json_signal_penstock_missing_callable_raises(tmp_path: Path) -> None:
     """An unknown ``rate_fn`` name surfaces a clear ValueError."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("custom", with_mode=False)
@@ -2591,8 +2591,8 @@ def test_json_signal_penstock_missing_callable_raises(tmp_path: Path) -> None:
 
 def test_json_export_to_archive_resolves_archive_cls(tmp_path: Path) -> None:
     """``ExportToArchive.archive_cls`` resolves a class name on the outflow sidecar."""
-    from incorporator.observability.tideweaver import ExportToArchive
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver import ExportToArchive
+    from incorporator.tideweaver.config import load_watershed
 
     # Outflow.py defines ArchivedTrades next to the required outflow().
     _write_sidecar(
@@ -2627,7 +2627,7 @@ def test_json_export_to_archive_resolves_archive_cls(tmp_path: Path) -> None:
 
 def test_json_export_to_archive_missing_class_raises(tmp_path: Path) -> None:
     """An unknown ``archive_cls`` name surfaces a clear ValueError."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("custom", with_mode=False)
@@ -2652,8 +2652,8 @@ def test_json_export_to_archive_missing_class_raises(tmp_path: Path) -> None:
 
 def test_json_reservoir_and_surge_barrier_native(tmp_path: Path) -> None:
     """``reservoir`` and ``surge_barrier`` need no resolution — pass through Pydantic natively."""
-    from incorporator.observability.tideweaver import Reservoir, SurgeBarrier
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver import Reservoir, SurgeBarrier
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("custom", with_mode=False)
@@ -2684,7 +2684,7 @@ def test_json_reservoir_and_surge_barrier_native(tmp_path: Path) -> None:
 
 def test_json_env_interpolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``${VAR}`` references in the JSON resolve from os.environ at load time."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     monkeypatch.setenv("TW_START", "2026-05-16T00:00:00+00:00")
@@ -2705,7 +2705,7 @@ def test_json_env_interpolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 def test_json_bad_shape_raises(tmp_path: Path) -> None:
     """An unknown ``shape`` key raises a clear ``ValueError``."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("noodle", with_mode=False)
@@ -2720,7 +2720,7 @@ def test_json_bad_shape_raises(tmp_path: Path) -> None:
 
 def test_json_unknown_class_raises(tmp_path: Path) -> None:
     """A ``class`` string that doesn't resolve raises a clear ``ValueError``."""
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = _watershed_json_body("parallel", with_mode=False)
@@ -2743,7 +2743,7 @@ def test_json_relative_inc_file_resolves_to_config_dir(
     not under the process CWD.  Guards the guarantee stated in the watershed.json
     comments.
     """
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()
@@ -3052,7 +3052,7 @@ def test_build_current_custom_verb_raises_actionable_error(tmp_path: Path) -> No
     limitation, and direct the user to the Python API.  It must NOT produce
     the generic 'Unknown verb' fallback.
     """
-    from incorporator.observability.tideweaver.config import load_watershed
+    from incorporator.tideweaver.config import load_watershed
 
     _write_outflow_with_classes(tmp_path)
     body = {
@@ -3417,7 +3417,7 @@ async def test_fjord_flush_parks_tideweaver_snapshot_on_output_class(
 
 def test_tide_fired_and_skipped_still_populated() -> None:
     """Tide.fired and Tide.skipped remain populated alongside current_outcomes — back-compat."""
-    from incorporator.observability.tideweaver.current_outcome import CurrentOutcome
+    from incorporator.tideweaver.current_outcome import CurrentOutcome
 
     tide = Tide(
         tide_number=1,

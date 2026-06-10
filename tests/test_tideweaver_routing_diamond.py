@@ -29,7 +29,7 @@ from pydantic import ConfigDict
 
 from incorporator import Incorporator
 from incorporator.io import fetch
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Current,
     Export,
     Fjord,

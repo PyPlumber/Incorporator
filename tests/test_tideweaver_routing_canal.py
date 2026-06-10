@@ -52,7 +52,7 @@ from pydantic import ConfigDict
 
 from incorporator import Incorporator, SustainedPenstock
 from incorporator.io import fetch
-from incorporator.observability.tideweaver import (
+from incorporator.tideweaver import (
     Current,
     Edge,
     FlowControl,
@@ -270,7 +270,7 @@ async def test_diamond_logging_observer_emits_per_event(
     )
     tw = Tideweaver(ws, pass_interval=0.05)
 
-    with caplog.at_level(logging.INFO, logger="incorporator.observability.tideweaver.flow"):
+    with caplog.at_level(logging.INFO, logger="incorporator.tideweaver.flow"):
         tides = [tide async for tide in tw.run()]
 
     # Confirm the watershed actually ran — at least head + one middle fired.

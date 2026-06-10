@@ -18,7 +18,7 @@ pytest.importorskip("typer")
 from typer.testing import CliRunner
 
 from incorporator.cli import app
-from incorporator.observability.tideweaver import Tide
+from incorporator.tideweaver import Tide
 
 runner = CliRunner()
 

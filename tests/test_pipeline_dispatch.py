@@ -12,7 +12,7 @@ import pytest
 from incorporator import Incorporator
 from incorporator.exceptions import IncorporatorFormatError
 from incorporator.io.pagination.base import AsyncPaginator
-from incorporator.observability.pipeline import assert_engine_supported
+from incorporator.pipeline import assert_engine_supported
 
 
 class _DummyPaginator(AsyncPaginator):

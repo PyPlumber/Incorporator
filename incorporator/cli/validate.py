@@ -20,7 +20,7 @@ the developer can override with ``--type stream|fjord|tideweaver``.
 
 Shape/schema rules delegate to the Pydantic models in
 :mod:`incorporator.cli._pipeline_config` (stream / fjord) and to
-:func:`incorporator.observability.tideweaver.config.build_watershed`
+:func:`incorporator.tideweaver.config.build_watershed`
 (tideweaver).  This module covers the runtime concerns the schemas don't:
 sidecar-file existence, sidecar-module import, and ``outflow(state)`` arity /
 ``cls_name`` symbol resolution.
@@ -248,7 +248,7 @@ def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[
     """Structural validation for an ``incorporator tideweaver`` watershed.json.
 
     Delegates to
-    :func:`incorporator.observability.tideweaver.config.build_watershed` —
+    :func:`incorporator.tideweaver.config.build_watershed` —
     constructing the in-memory Watershed exercises every schema rule
     (window timestamps, shape discriminator, gate_mode/flow mutual
     exclusion, sidecar import, class resolution, FlowControl Pydantic
@@ -264,8 +264,8 @@ def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[
     errors: list[str] = []
 
     # Delegate the whole shape contract to build_watershed (which imports any inflow/outflow sidecars).
-    from ..observability.tideweaver import Fjord
-    from ..observability.tideweaver.config import build_watershed
+    from ..tideweaver import Fjord
+    from ..tideweaver.config import build_watershed
 
     try:
         watershed = build_watershed(config, config_dir)

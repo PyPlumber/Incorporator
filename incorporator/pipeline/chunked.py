@@ -14,8 +14,8 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from ...io.fetch import _CURRENT_CHUNK_CLASS, HTTPClientBuilder
-from ..logger import Wave
+from ..io.fetch import _CURRENT_CHUNK_CLASS, HTTPClientBuilder
+from ..observability.logger import Wave
 from ._shared import _enrich_and_load, _row_count
 
 logger = logging.getLogger(__name__)

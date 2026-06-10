@@ -46,7 +46,7 @@ from incorporator.io.penstock import (
     SustainedPenstock,
     WindowPenstock,
 )
-from incorporator.observability.tideweaver.flow import (
+from incorporator.tideweaver.flow import (
     BackpressurePenstock,
     FlowControl,
     Reservoir,

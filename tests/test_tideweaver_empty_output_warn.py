@@ -18,7 +18,7 @@ from typing import Any, ClassVar
 import pytest
 
 from incorporator import Incorporator, Tideweaver, Watershed
-from incorporator.observability.tideweaver import CustomCurrent, Edge
+from incorporator.tideweaver import CustomCurrent, Edge
 
 # ---------------------------------------------------------------------------
 # Module-level Incorporator subclasses
@@ -102,7 +102,7 @@ async def test_empty_tick_with_nonempty_upstream_emits_warning(
     )
     tw = Tideweaver(ws, pass_interval=0.02)
 
-    with caplog.at_level("WARNING", logger="incorporator.observability.tideweaver.scheduler"):
+    with caplog.at_level("WARNING", logger="incorporator.tideweaver.scheduler"):
         async for _ in tw.run():
             pass
 
@@ -158,7 +158,7 @@ async def test_empty_tick_with_empty_upstream_no_warning(
     )
     tw = Tideweaver(ws, pass_interval=0.02)
 
-    with caplog.at_level("WARNING", logger="incorporator.observability.tideweaver.scheduler"):
+    with caplog.at_level("WARNING", logger="incorporator.tideweaver.scheduler"):
         async for _ in tw.run():
             pass
 
@@ -216,7 +216,7 @@ async def test_tick_with_data_no_warning(
     )
     tw = Tideweaver(ws, pass_interval=0.02)
 
-    with caplog.at_level("WARNING", logger="incorporator.observability.tideweaver.scheduler"):
+    with caplog.at_level("WARNING", logger="incorporator.tideweaver.scheduler"):
         async for _ in tw.run():
             pass
 
@@ -269,7 +269,7 @@ async def test_raising_tick_suppresses_empty_output_warning(
     )
     tw = Tideweaver(ws, pass_interval=0.02)
 
-    with caplog.at_level("WARNING", logger="incorporator.observability.tideweaver.scheduler"):
+    with caplog.at_level("WARNING", logger="incorporator.tideweaver.scheduler"):
         async for _ in tw.run():
             pass
 

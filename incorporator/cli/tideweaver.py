@@ -3,7 +3,7 @@
 Loads a ``watershed.json``, runs the same structural validator the top-level
 ``incorporator validate`` command uses (`validate_watershed_config`), and either
 prints a clean diagnostic (`validate`) or builds + runs a
-:class:`~incorporator.observability.tideweaver.Tideweaver` (`run`).  One ``Tide``
+:class:`~incorporator.tideweaver.Tideweaver` (`run`).  One ``Tide``
 log record is emitted per scheduler pass.
 """
 
@@ -20,8 +20,8 @@ from typing import Any
 from incorporator._deps.typer import TYPER as _typer
 
 from ..io.config_paths import resolve_output_path
-from ..observability.tideweaver import LoggedTideweaver, Tide, Tideweaver
-from ..observability.tideweaver.config import build_watershed
+from ..tideweaver import LoggedTideweaver, Tide, Tideweaver
+from ..tideweaver.config import build_watershed
 
 logger = logging.getLogger(__name__)
 
@@ -68,17 +68,17 @@ async def _run_tideweaver(
 
     Args:
         config_path: Path to the watershed.json configuration file.
-        json_output: When ``True``, emit one NDJSON :class:`~incorporator.observability.tideweaver.Tide`
+        json_output: When ``True``, emit one NDJSON :class:`~incorporator.tideweaver.Tide`
             per line on stdout instead of the human-readable coloured summary.
         heartbeat_file: When set, touch this path after every Tide so a Docker
             ``HEALTHCHECK`` can monitor liveness.
         drain_timeout_override: Override the watershed.json ``drain_timeout`` field.
             ``None`` leaves the value set by the JSON (or its Pydantic default of 30s).
         logs: When ``True``, wrap the scheduler in
-            :class:`~incorporator.observability.tideweaver.LoggedTideweaver` so every
+            :class:`~incorporator.tideweaver.LoggedTideweaver` so every
             :class:`Tide` and :class:`~incorporator.RejectEntry` is routed to disk via
             the :class:`~logging.handlers.QueueHandler`-backed background thread.
-            When ``False`` (default), a bare :class:`~incorporator.observability.tideweaver.Tideweaver`
+            When ``False`` (default), a bare :class:`~incorporator.tideweaver.Tideweaver`
             is used with no disk I/O.
     """
     # Lazy imports to avoid cli/__init__.py circular load when this module is

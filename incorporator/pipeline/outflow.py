@@ -7,7 +7,7 @@ single-output path.
 
 The :func:`flush` async generator factors the per-tick "outflow → build →
 export" core out of :func:`_outflow_daemon` so other callers (notably
-:class:`incorporator.observability.tideweaver.Tideweaver`'s ``_tick_fjord``)
+:class:`incorporator.tideweaver.Tideweaver`'s ``_tick_fjord``)
 can share the same primitive without re-implementing the dynamic-class
 build + per-class export semantics.
 """
@@ -21,8 +21,8 @@ from datetime import datetime, timezone
 from types import ModuleType
 from typing import Any, cast
 
-from ...list import IncorporatorList
-from ..wave import Wave
+from ..list import IncorporatorList
+from ..observability.wave import Wave
 from ._shared import _daemon_tick, _interruptible_sleep, _resolve_if_exists_for_export
 
 __all__ = ["Wave", "_outflow_daemon", "flush"]
@@ -210,12 +210,12 @@ async def flush(
     its own composite failure response.
 
     Reused by both :func:`_outflow_daemon` (long-running fjord engine) and
-    :class:`incorporator.observability.tideweaver.Tideweaver`'s
+    :class:`incorporator.tideweaver.Tideweaver`'s
     ``_tick_fjord`` (per-interval fjord-flush in a Watershed).
     """
     # Local import keeps the observability layer free of a hard schema dep
     # at module-import time.
-    from ...schema.builder import infer_dynamic_schema
+    from ..schema.builder import infer_dynamic_schema
 
     result = await asyncio.to_thread(outflow_fn, state)
     grouped, is_multi = _normalise_outflow_return(result, default_output_class_name)
@@ -292,7 +292,7 @@ async def flush(
                     instances = [derived_cls.model_validate(row) for row in rows]
                 finally:
                     derived_cls._BATCH_INSERT_MODE = False
-                from ...base import Incorporator as _Incorporator
+                from ..base import Incorporator as _Incorporator
 
                 derived_cls.inc_dict.update({inst.inc_code: inst for inst in instances})
                 if derived_cls.__bases__ and derived_cls.__bases__[0] is not _Incorporator:

@@ -25,7 +25,7 @@ satisfies the same structural shape and is passed in directly — no
 copy needed.
 
 Backpressure — the one penstock subclass that reads reservoir context
-— lives in :mod:`incorporator.observability.tideweaver.flow` because
+— lives in :mod:`incorporator.tideweaver.flow` because
 it has no meaningful HTTP-layer interpretation.
 """
 
@@ -591,7 +591,7 @@ def known_host_rates() -> dict[str, float]:
     """Return ``host → rate_per_sec`` for every host in the penstock registry.
 
     Intended for diagnostics, logging, and the
-    :func:`incorporator.observability.tideweaver.architect` probe that
+    :func:`incorporator.tideweaver.architect` probe that
     wants to suggest the user's already-registered rate without
     instantiating the penstock.  Only penstocks exposing a
     ``rate_per_sec`` field (Sustained, Burst, …) appear in the result;

@@ -261,7 +261,7 @@ never blocks the event loop. Import path matters — it is **not**
 top-level exported:
 
 ```python
-from incorporator.observability.tideweaver import LoggedTideweaver
+from incorporator.tideweaver import LoggedTideweaver
 
 tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="ArbSession")
 async for tide in tw.run():

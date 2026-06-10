@@ -90,7 +90,7 @@ For a paste-ready lookup map of every public callable — signature, 3-7 step ps
   fjord / tideweaver` Typer subcommands
 - `incorporator.observability` — `LoggedIncorporator`, `Wave`,
   `LoggingMixin`, plus the pipeline engines
-- `incorporator.observability.tideweaver` — orchestration layer over
+- `incorporator.tideweaver` — orchestration layer over
   `stream()` and fjord-flush primitives. **Core five:** `Tideweaver`,
   `Watershed`, `Current` (subclasses `Stream` / `Fjord` / `Export`),
   `Tide`, `Wave`. **Canal toolkit** (per-edge `FlowControl`):

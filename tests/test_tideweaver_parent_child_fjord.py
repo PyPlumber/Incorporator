@@ -21,8 +21,8 @@ import pytest
 from pydantic import ConfigDict
 
 from incorporator import Incorporator
-from incorporator.observability.tideweaver import Fjord, Stream, Watershed
-from incorporator.observability.tideweaver.current import Fjord as FjordCls
+from incorporator.tideweaver import Fjord, Stream, Watershed
+from incorporator.tideweaver.current import Fjord as FjordCls
 
 
 class UpstreamA(Incorporator):
@@ -85,7 +85,7 @@ def _install_flush_capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     def stub_loader(_path: Any) -> tuple[Any, Any]:
         return (lambda state: [], None)
 
-    monkeypatch.setattr("incorporator.observability.tideweaver.scheduler.flush", capturing_flush)
+    monkeypatch.setattr("incorporator.tideweaver.scheduler.flush", capturing_flush)
     monkeypatch.setattr("incorporator.usercode.load_outflow_module", stub_loader)
     return captured
 
@@ -112,7 +112,7 @@ async def test_none_upstream_snapshot_yields_empty_state_entry(tmp_path: Any, mo
 
     captured = _install_flush_capture(monkeypatch)
     scheduler = _make_stub_scheduler([upstream], fjord)
-    from incorporator.observability.tideweaver.scheduler import Tideweaver
+    from incorporator.tideweaver.scheduler import Tideweaver
 
     await Tideweaver._tick_fjord(scheduler, fjord)
 
