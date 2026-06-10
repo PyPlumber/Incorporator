@@ -43,6 +43,9 @@ The same eight verbs — `incorp / test / architect / refresh / export / stream 
 - [Observability layer (`LoggedIncorporator` + `LoggedTideweaver`)](#observability-layer-loggedincorporator--loggedtideweaver)
   - [`LoggedIncorporator` — shared `enable_logging=` note](#loggedincorporator--shared-enable_logging-note)
   - [`get_error`](#loggedincorporator-get_error)
+  - [`get_api`](#loggedincorporator-get_api)
+  - [`get_rejects`](#loggedincorporator-get_rejects)
+  - [`get_current`](#loggedincorporator-get_current)
   - [`log_debug` / `log_info` / `log_error`](#loggedincorporator-log_debug--log_info--log_error)
   - [`log_api`](#loggedincorporator-log_api)
   - [`log_meta`](#loggedincorporator-log_meta)
@@ -222,7 +225,9 @@ This is the cold-start verb — the one you call when a new endpoint hits your r
 - `concurrency_limit`, `requests_per_second`, `timeout`, `headers` — network knobs.
 
 **Yields / returns**
-Returns a single `TIncorporator` for one-record sources, otherwise an `IncorporatorList[TIncorporator]` whose `.failed_sources: list[str]` is the legacy flat reject-list view.  For structured access — exception type, `Retry-After` hints, wave index — read `.rejects: list[RejectEntry]` (fields: `source`, `error_kind`, `message`, `retry_after`, `wave_index`).  HTTP error sites populate the structured form; legacy string callers continue to flow through `failed_sources`.
+Returns a single `TIncorporator` for one-record sources, otherwise an `IncorporatorList[TIncorporator]` whose `.failed_sources: list[str]` is the legacy flat reject-list view.  For structured access — exception type, `is_url_traffic_error` flag, `Retry-After` hints, wave index — read `.rejects: list[RejectEntry]` (fields: `source`, `error_kind`, `is_url_traffic_error`, `message`, `retry_after`, `wave_index`).
+
+**Parent-child short-circuit (v1.3.3 correctness).** When `inc_parent` is supplied and the parent snapshot is empty, `incorp()` returns an empty `IncorporatorList` without making a network request. This prevents malformed ``.../{}`` requests on endpoints that interpolate parent IDs into the URL. Existing code that checks `len(result) == 0` or `result.failed_sources` is unaffected.
 
 **See also**
 [Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md) ·
@@ -572,6 +577,7 @@ class Tideweaver:
     rejects: list[RejectEntry]                       # canal-layer only (verb-layer rejects live on IncorporatorList.rejects)
 
 class Watershed(BaseModel):
+    name: str | None = None                          # v1.3.3: drives LoggedTideweaver logger_name default
     @classmethod
     def chain(cls, *, window, currents, gate_mode=None, flow=None, **kwargs) -> "Watershed": ...
     @classmethod
@@ -624,7 +630,7 @@ The windowed orchestration verb — when one source's `stream()` isn't enough, w
 
 ### Tideweaver.summary / tune / TuningReport
 
-**Signatures** *(v1.2.1+)*
+**Signatures** *(v1.2.1+, extended in v1.3.3)*
 ```python
 # Functional form — module-level callable.
 def tune(
@@ -633,6 +639,7 @@ def tune(
     tides: list[Tide] | None = None,
     waves: list[Wave] | None = None,
     pass_interval: float | None = None,
+    timeout: float | None = None,               # v1.3.3: triggers _tune_http_timeout rule
 ) -> TuningReport: ...
 
 # Instance-method convenience — same return.
@@ -670,14 +677,15 @@ from incorporator.observability.tideweaver import tune, TuningReport, TuningHint
 
 **What it does (pseudocode)**
 1. Aggregate the supplied records by current, edge, and host.
-2. Run seven rule functions across the supplied data — each targets one knob:
-   - `chunk_size` — p50 and p99 of `wave.processing_time_sec`; recommends enlarging or shrinking the paginator chunk to settle inside `[target_min_sec, target_max_sec]`.
-   - `penstock_rate` — per-edge and per-host `PenstockLimited` reject frequency; recommends rate reduction.
+2. Run rule functions across the supplied data — each targets one knob:
+   - `chunk_size` — p50 and p99 of `wave.processing_time_sec` minus `http_fetch_time_sec` (parse-only time, v1.3.3); recommends chunk resize to settle inside `[target_min_sec, target_max_sec]`.
+   - `penstock_rate` — per-edge and per-host `PenstockLimited` reject frequency; augments rationale with per-host byte/sec computed from `wave.bytes_downloaded` / `wave.http_fetch_time_sec` (v1.3.3).
    - `surge_threshold` — `SurgeHalted` / `"skip"` fraction against pass count; recommends raising `threshold_multiple` or switching action.
    - `pass_interval` — `wake_reason=="pass_interval"` saturation fraction and heap-empty fraction; recommends pass_interval adjustment.
    - `retry_policy` — `HTTPStatusError`, `PenstockLimited`, and `GateBlocked` reject shapes; recommends retry budget or cooldown changes.
    - `compound_retry_budget` — checks whether the worst-case retry budget exceeds `pass_interval` and recommends lengthening the interval.
    - `parent_child` — `parent_snapshot_size == 0` in waves or child tides firing when no parent fired; recommends investigating `parent_current` configuration.
+   - `http_timeout` (v1.3.3) — when `timeout=` is supplied, compares observed p99 `http_fetch_time_sec` against the configured timeout; recommends adjustment when the gap is too narrow (< 85% headroom) or too large (> 3× p99).
 3. Emit a `TuningHint` per recommended adjustment with severity, current value, recommended value, sample size, and rationale.
 4. Return the structured `TuningReport`; `.render()` formats severity-sorted hint blocks for console review.
 
@@ -687,8 +695,9 @@ The post-window feedback loop.  After a Tideweaver run, feed the accumulated `tw
 **Common kwargs**
 - `rejects` — the `Tideweaver.rejects` list at run end.  Drives Penstock-rate and SurgeBarrier recommendations.
 - `tides` — the list collected from `async for tide in tw.run()`.  Drives `pass_interval` and `chunk_size` recommendations.
-- `waves` — optional per-source `Wave` records (from a side-channel `Stream.run()` collect); enables row-throughput hints.
+- `waves` — optional per-source `Wave` records; enables row-throughput hints and feeds the `penstock_rate` byte-rate calculation and the `http_timeout` rule.
 - `pass_interval` — the value used at runtime; lets the analyzer compare against the recommendation.
+- `timeout` (v1.3.3) — the `httpx` timeout in seconds used at runtime; triggers the `_tune_http_timeout` rule. Supply when you want evidence-based timeout recommendations from observed p99 latency.
 
 **Yields / returns**
 `TuningReport` — frozen Pydantic model; iterate `.hints` for programmatic use, `print(report.render())` for human review.
@@ -986,8 +995,17 @@ per-class `QueueHandler`-backed logger that writes rotating JSON-line records
 to `logs/<ClassName>_{api,error,debug}.log`. Disk I/O runs on a background
 thread — the event loop never blocks on log writes. Logging is **opt-in per
 call**, so the same class can run unobserved one moment and fully-traced the
-next. Failures, fatal pipeline errors, and per-`Wave` throughput are all
-routed through `_route_wave_to_log()` and queryable later via `get_error()`.
+next.
+
+**Routing model (v1.3.3).** Records are classified at write time before reaching any file handler:
+
+| File | Receives |
+|---|---|
+| `<ClassName>_api.log` | URL/internet-traffic errors (`is_url_traffic_error=True`): HTTP 4xx/5xx, network timeouts, connection failures |
+| `<ClassName>_error.log` | All non-API-routed records at INFO and above: successful waves, parse failures, schema errors |
+| `<ClassName>_debug.log` | Superset — every record in both files above, plus DEBUG-floor lifecycle events |
+
+The routing decision is a single read of `record.is_url_traffic_error` (`logger.py:199`). Per-wave throughput and structured `RejectEntry` records are both queryable via the reader API described in the entries below.
 
 ---
 
@@ -1001,23 +1019,100 @@ async def get_error(cls) -> list[dict[str, Any]]:
 ```
 
 **What it does (pseudocode)**
-1. Resolve `logs/<ClassName>_error.log`; return `[]` if the file does not exist (safe to call before any error has been logged).
+1. Resolve `logs/<ClassName>_error.log`; return `[]` if the file does not exist.
 2. In a worker thread (`asyncio.to_thread`), walk the file line-by-line and parse each JSON line into a dict.
-3. Silently skip malformed lines; treat `OSError` as "no errors yet" — never propagate disk-read failures.
-4. Return the list of parsed records (level, msg, meta, wave dump, timestamp, optional exc_info).
+3. Silently skip malformed lines; treat `OSError` as "no errors yet".
+4. Return the list of parsed records.
 
 **When to reach for it**
-The post-run forensics verb. After an overnight stream daemon, call `await Class.get_error()` to walk every failure the pipeline saw — feed `.failed_sources` into a retry orchestrator, assert on logged failure shape in tests, or generate a Slack digest of what broke.
-
-**Common kwargs**
-- None — `get_error()` is parameter-free.
+Codebase/parse errors only — schema failures, converter errors, canal skips where `is_url_traffic_error=False`. Use `get_rejects()` when you want all failures across both routing files.
 
 **Yields / returns**
-`list[dict[str, Any]]` — each dict has `level`, `msg`, `meta`, optional `wave` (full Pydantic dump), `time`, optional `exc_info`.
+`list[dict[str, Any]]` — each dict has `level`, `msg`, `meta`, optional `wave`, `time`, optional `exc_info`.
 
 **See also**
-[Production Debugging with `get_error()`](./debugging.md) ·
+[Production Debugging](./debugging.md) ·
 [Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md)
+
+---
+
+<a id="loggedincorporator-get_api"></a>
+### LoggedIncorporator.get_api
+
+**Signature**
+```python
+@classmethod
+async def get_api(cls) -> list[dict[str, Any]]:
+```
+
+**What it does (pseudocode)**
+1. Resolve `logs/<ClassName>_api.log`; return `[]` if absent.
+2. Read line-by-line in a worker thread; parse each JSON line.
+3. Return all records — these are exclusively URL/internet-traffic records (`is_url_traffic_error=True`): HTTP 4xx/5xx responses, network timeouts, and connection failures.
+
+**When to reach for it**
+When you want to inspect only the API/network failure side — for example, to count 429s, check `Retry-After` patterns, or build a host-level failure summary without mixing in parse errors.
+
+**Yields / returns**
+`list[dict[str, Any]]` — same shape as `get_error()`.
+
+**See also**
+[Production Debugging](./debugging.md)
+
+---
+
+<a id="loggedincorporator-get_rejects"></a>
+### LoggedIncorporator.get_rejects
+
+**Signature**
+```python
+@classmethod
+async def get_rejects(cls) -> list[dict[str, Any]]:
+```
+
+**What it does (pseudocode)**
+1. Call `read_log(cls.__name__, ["error", "api"], key="reject")`.
+2. `read_log` reads both `_error.log` and `_api.log`, parses each JSON line, and keeps only records that contain a top-level `"reject"` key. `key="reject"` is a JSON-key presence check, not a log-level filter.
+3. Return the union — every `RejectEntry` the class has written, regardless of which routing file it landed in.
+
+**When to reach for it**
+The default reject reader — the one to call when you want all failures for retry orchestration, without caring whether each one was a URL/internet error or a codebase error. The `entry["reject"]["is_url_traffic_error"]` field lets you classify them after the fact if needed.
+
+**Yields / returns**
+`list[dict[str, Any]]` — each dict has a top-level `"reject"` key whose value is the `RejectEntry` model dump.
+
+**See also**
+[Production Debugging](./debugging.md) ·
+[`get_error`](#loggedincorporator-get_error) · [`get_api`](#loggedincorporator-get_api)
+
+---
+
+<a id="loggedincorporator-get_current"></a>
+### LoggedIncorporator.get_current
+
+**Signature**
+```python
+@classmethod
+async def get_current(cls, code: str) -> list[dict[str, Any]]:
+```
+
+**What it does (pseudocode)**
+1. Call `read_log(cls.__name__, ["debug"], meta_contains=code)`.
+2. Reads only `<ClassName>_debug.log` because the debug file carries no filter and a DEBUG floor — every record that lands in `_api.log` or `_error.log` also lands in `_debug.log`. Reading the debug superset exclusively avoids the double-counting that would occur when unioning all three files.
+3. Filter to records whose `meta` field contains the string `code`.
+4. Return the matching records.
+
+**When to reach for it**
+Retrieve all log records for a specific instance identity within the current session (e.g. a specific `inc_code` value). Avoids reading api + error + debug separately and deduplicating — the debug superset gives the complete picture in one read.
+
+**Common kwargs**
+- `code` — the `inc_code` value (or any `meta` substring) that identifies the target instance or current.
+
+**Yields / returns**
+`list[dict[str, Any]]`
+
+**See also**
+[Production Debugging](./debugging.md)
 
 ---
 
@@ -1239,7 +1334,7 @@ instance.log_info("pipeline started")   # now live
 
 ### LoggedTideweaver
 
-**Signatures** *(v1.2.1+)*
+**Signatures** *(v1.2.1+, extended in v1.3.3)*
 ```python
 class LoggedTideweaver(Tideweaver):
     def __init__(
@@ -1247,7 +1342,8 @@ class LoggedTideweaver(Tideweaver):
         watershed: Watershed,
         *,
         enable_logging: bool = False,
-        logger_name: str = "Tideweaver",
+        logger_name: str | None = None,  # resolves: logger_name > watershed.name > "Tideweaver"
+        log_currents: bool = True,       # v1.3.3: route per-current waves/rejects to session log
         pass_interval: float | None = None,
         backlog_backoff_factor: float = 1.0,
         # ...plus every Tideweaver kwarg.
@@ -1257,7 +1353,22 @@ class LoggedTideweaver(Tideweaver):
     async def get_tides(cls, logger_name: str) -> list[dict[str, Any]]: ...
     @classmethod
     async def get_rejects(cls, logger_name: str) -> list[dict[str, Any]]: ...
+    @classmethod
+    async def get_current(cls, logger_name: str, code: str) -> list[dict[str, Any]]: ...
+    @classmethod
+    async def get_scheduler_events(cls, logger_name: str) -> list[dict[str, Any]]: ...
 ```
+
+**`logger_name` resolution (v1.3.3).** The resolved name drives log file prefixes. Precedence: explicit `logger_name` kwarg > `watershed.name` > `"Tideweaver"`.
+
+```python
+ws = Watershed(name="NightlyPrices", window=(...), currents=[...])
+tw = LoggedTideweaver(ws, enable_logging=True)
+# logger_name resolves to "NightlyPrices"
+# → logs/NightlyPrices_tide.log, NightlyPrices_error.log, NightlyPrices_api.log, NightlyPrices_debug.log
+```
+
+**`log_currents` (v1.3.3).** When `True` (default), each `Stream` current's yielded waves and their `wave.rejects` are routed to the session log tagged with `current`, `class`, and `code` meta fields — no separate per-class `<Class>_*.log` files are created during a watershed run. Set `log_currents=False` to suppress all per-current routing.
 
 **Import path** *(load-bearing — not top-level)*
 ```python
@@ -1267,9 +1378,11 @@ from incorporator.observability.tideweaver import LoggedTideweaver
 **What it does (pseudocode)**
 1. Construct exactly like `Tideweaver(...)`; disk I/O routes through the same `QueueHandler`-backed background thread as `LoggedIncorporator` — the event loop never blocks on log writes.
 2. On every yielded `Tide`, route via `_route_tide_to_log()`: error-class passes (canal rejects added, or `surge_halted` / `skip_ahead` skip reasons) → ERROR; fired passes → INFO; pure no-op passes → DEBUG.  The handler set then sorts records by level — `debug.log` is the superset (every tide), `error.log` accepts INFO and above (fired + error-class), `tide.log` collects every record tagged `is_tide=True` for `get_tides()` readback.
-3. On every accumulated `RejectEntry` (swept in a `finally` block so records land on disk even under cancellation), emit a JSON-line to `logs/<logger_name>_error.log`.
-4. `get_tides(logger_name)` reads the dedicated `logs/<logger_name>_tide.log` file (written by the `TideFilter` log router) and returns the records sorted by `tide_number` — a single-file read replaces the earlier `_error.log` + `_debug.log` merge.
-5. `get_rejects(logger_name)` reads `_error.log` and returns records tagged with a `"reject"` key.
+3. On every accumulated `RejectEntry` (swept in a `finally` block so records land on disk even under cancellation), emit a JSON-line — routed to `_api.log` when `is_url_traffic_error=True`, otherwise to `_error.log`.
+4. `get_tides(logger_name)` reads the dedicated `logs/<logger_name>_tide.log` file and returns records sorted by `tide_number` — single-file read, no merge needed.
+5. `get_rejects(logger_name)` unions `_error.log` + `_api.log`, returning records with a `"reject"` key.
+6. `get_current(logger_name, code)` reads `_debug.log` filtered by `meta_contains=code` — the debug superset avoids double-counting.
+7. `get_scheduler_events(logger_name)` reads `_error.log` filtered to records with a `"scheduler_event"` key. Includes `watershed_started`, `watershed_completed`, and five diagnostic event types.
 
 **When to reach for it**
 The orchestration-side `LoggedIncorporator` — for Tideweaver pipelines that need disk-readable Tide + RejectEntry capture without inline `print(tide)`.  Pair with `tune()` for the post-run feedback loop; pair with `LoggedTideweaver.get_tides()` / `get_rejects()` for cross-process replay (a separate analysis worker reading the log files).
@@ -1283,16 +1396,18 @@ The orchestration-side `LoggedIncorporator` — for Tideweaver pipelines that ne
 **Yields / returns**
 Inherits `run()` from `Tideweaver` — `AsyncIterator[Tide]`.  `get_tides(logger_name)` returns `list[dict[str, Any]]` — each dict has a top-level `"tide"` key whose value is the Tide model dump.  `get_rejects(logger_name)` returns `list[dict[str, Any]]` — each dict has a top-level `"reject"` key.  Both return `[]` when no log files exist yet.
 
-**Log-file layout**
+**Log-file layout (v1.3.3)**
 
 When `enable_logging=True`, the runner writes four rotating JSONL files under `logs/<logger_name>_`:
 
 | File | Contents | Reader |
 |---|---|---|
 | `<logger_name>_tide.log` | Every yielded `Tide` (fired + no-op), single source of truth | `LoggedTideweaver.get_tides()` |
-| `<logger_name>_error.log` | Canal-layer `RejectEntry` records + ERROR-severity tides | `LoggedTideweaver.get_rejects()` |
-| `<logger_name>_api.log` | INFO-level api lifecycle records | grep / external tooling |
-| `<logger_name>_debug.log` | Debug-level superset of all passes | grep / external tooling |
+| `<logger_name>_error.log` | Non-API records at INFO+: canal-layer rejects, codebase errors, scheduler events, lifecycle events, successful tides | `LoggedTideweaver.get_rejects()` / `get_scheduler_events()` |
+| `<logger_name>_api.log` | URL/internet-traffic errors (`is_url_traffic_error=True`) from verb-layer rejects | `LoggedTideweaver.get_rejects()` (unioned) |
+| `<logger_name>_debug.log` | Superset — all records from both files above, plus DEBUG lifecycle events | `LoggedTideweaver.get_current()` |
+
+**`get_scheduler_events()` event types:** `watershed_started`, `watershed_completed`, `isolated_tick_failure`, `tick_parked`, `empty_output`, `empty_parent_snapshot`, `fjord_flush_failure`. Each record includes `event_type`, `current_name`, `cls_name`, `tide_number`, `session`, and `detail`.
 
 **See also**
 [Tutorial 11 — Post-run tuning](../examples/11-tideweaver/README.md#post-run-tuning) ·
@@ -1574,14 +1689,17 @@ canonical destination slot for it.  Continue to use `code_attr` /
 | `inc_code` / `inc_name` / `last_rcd` | instance | universal Pydantic fields | identity (auto-counter fallback) + display label + UTC construction timestamp. |
 | `failed_sources` | `IncorporatorList` | `list[str]` | legacy flat reject-list surface — every URL/file that hit a permanent failure.  Derived view of `rejects` (`[entry.source for entry in rejects]`). |
 | `Wave.{chunk_index, operation, rows_processed, failed_sources, processing_time_sec, timestamp}` | `Wave` (frozen Pydantic) | core model fields | one record per pipeline tick. Yielded by `stream()` and `fjord()`. |
-| `Wave.{source_url, bytes_processed, http_retry_count, validation_error_count, schema_cache_hit, conv_dict_time_sec, parent_snapshot_size}` | `Wave` (frozen Pydantic) | v1.2.1 outcome-record fields | per-wave telemetry surface: source URL, byte volume, HTTP retry count, validation error count, schema-cache hit flag, per-chunk ETL wall-clock (`conv_dict_time_sec` — proxy for total per-chunk work; covers fetch + parse + validate + converter expansion together, not converter-isolated), and upstream snapshot row count for parent-child ticks (`None` when not applicable). |
+| `Wave.{source_url, bytes_processed, http_retry_count, validation_error_count, schema_cache_hit, conv_dict_time_sec, parent_snapshot_size}` | `Wave` (frozen Pydantic) | v1.2.1 outcome-record fields | per-wave telemetry surface: source URL, byte volume (`bytes_processed` = decoded/decompressed `len(response.content)`), HTTP retry count, validation error count, schema-cache hit flag, per-chunk ETL wall-clock, and upstream snapshot row count. |
+| `Wave.bytes_downloaded` | `Wave` (frozen Pydantic) | v1.3.3 telemetry field | Wire byte count transferred (`response.num_bytes_downloaded`). Distinct from `bytes_processed` (decoded size). `None` for non-HTTP chunks (file-mode, local paginator, error path). Use the ratio `bytes_processed / bytes_downloaded` as a compression-efficiency signal. |
+| `Wave.http_fetch_time_sec` | `Wave` (frozen Pydantic) | v1.3.3 telemetry field | HTTP round-trip latency in seconds (`response.elapsed.total_seconds()`). `None` for non-HTTP chunks. Feeds `_tune_http_timeout` and `_tune_penstock_rate` in `tune()`. |
+| `Wave.rejects` | `Wave` (frozen Pydantic) | v1.3.3 telemetry field | `list[RejectEntry]` from the chunk's incorp/seed call. Per-chunk — not accumulated across the stream session. Empty on exception-path waves where no `IncorporatorList` was available. |
 | `Tide.{tide_number, fired, skipped, duration_sec, timestamp}` | `Tide` (frozen Pydantic) | core model fields | one record per `Tideweaver` scheduler pass. Yielded by `Tideweaver.run()`. |
 | `Tide.{current_outcomes, wake_reason, heap_depth, in_flight_count_at_start, canal_rejects_added, next_due_in_sec}` | `Tide` (frozen Pydantic) | v1.2.1 outcome-record fields | per-pass scheduler telemetry: list of per-current outcomes, wake reason (Literal), heap depth, in-flight tick count at start, new canal rejects this pass, seconds until next due tick. |
 | `CurrentOutcome` (`incorporator.observability.tideweaver.current_outcome`) | `@dataclass(frozen=True, slots=True)` | per-current outcome record | Fields: `name: str`, `status: str` (`"fired"` / `"skipped"` / `"still_running"`), `reason: str | None`, `bypassed_edges: tuple[str, ...]`, `in_flight_sec: float | None`, `last_wave_at: datetime | None`, `parent_snapshot_size: int | None` (upstream snapshot row count consumed by a parent-child tick; `None` for non-parent-child currents — used by `tune()` to detect empty-upstream misconfiguration). Surfaced via `tide.current_outcomes`. |
 | `IncorporatorList.inc_dict` | property on the list | shared view of class registry | what `incorp()`'s return value exposes; mutations write through to `cls.inc_dict`. |
 | `IncorporatorList.rejects` | property on the list | `list[RejectEntry]` | structured reject list — entry fields: `source`, `error_kind`, `message`, `retry_after`, `wave_index`.  Read by retry orchestrators that want the exception type or `Retry-After` hint without parsing strings. |
 | `Tideweaver.rejects` | attribute on the instance | `list[RejectEntry]` | structured canal-layer reject list — same `RejectEntry` type, but `error_kind` can be one of four canal-layer literals (`"PenstockLimited"` / `"SurgeHalted"` / `"SkipAhead"` / `"GateBlocked"`) for scheduler-level skips that never reached a tick body.  `from_name` / `to_name` / `cooldown_sec` populated for per-edge attribution. |
-| `RejectEntry` (top-level export) | frozen Pydantic | failure record | `from incorporator import RejectEntry`.  Populated by HTTP error sites in `io/fetch.py`, fjord seed errors, and the `Tideweaver` scheduler (canal-layer skips). v1.2.1 added `from_name`, `to_name`, `host`, `status_code`, `attempt_number`, `duration_sec`, `cooldown_sec` for edge / HTTP / cooldown attribution. |
+| `RejectEntry` (top-level export) | frozen Pydantic | failure record | `from incorporator import RejectEntry`.  Populated by HTTP error sites in `io/fetch.py`, fjord seed errors, and the `Tideweaver` scheduler (canal-layer skips). v1.2.1 added `from_name`, `to_name`, `host`, `status_code`, `attempt_number`, `duration_sec`, `cooldown_sec`. v1.3.3 added `is_url_traffic_error: bool` (always present, `True` when the underlying exception is an httpx `HTTPStatusError` or `RequestError`, or an `IncorporatorNetworkError` wrapping one via `__cause__`; `False` for parse/schema/canal errors) and `session: str | None` (set from `logger_name` in Tideweaver sessions). `__str__` now includes HTTP reason phrases: `[HTTP 429 Too Many Requests]`; `[HTTP 522]` for non-standard codes (httpx `codes.get_reason_phrase()` lookup, graceful fallback for unknown codes). |
 | `SourceRef` (`incorporator.io.SourceRef`) | frozen dataclass | source value type | Five factories (`from_url` / `from_file` / `from_parent` / `from_payload` / `from_kwargs`) plus an auto-detect `parse()` classmethod.  Internal scaffolding for `incorp()` / `architect()` source dispatch; opt-in public API for callers wanting explicit source typing. |
 | `Stream.parent_current` | `Stream` field | declarative parent-child dependency | `parent_current: str` names an upstream `Stream` current in the same watershed. The framework auto-derives a `HardLock` Watershed edge from the parent, drives the snapshot read on every dependent tick, and injects the parent's `_tideweaver_snapshot` as `inc_parent` into the child's `cls.incorp(...)` call. **The parent declares its row scope at the URL / SQL / outflow level — the framework does not post-filter at the child.** See [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive) for how to scope the parent. |
 | `Fjord.parent_currents` | `Fjord` field | declarative multi-parent dependency | `parent_currents: list[str]` names one or more upstream `Stream` (or `Fjord`) currents. Same semantics as `Stream.parent_current` — auto-derived `HardLock` edges, snapshot reads on every tick — broadcast across all named parents into the fjord's `state` dict before `outflow(state)` runs. Each parent declares its own row scope at the URL / SQL / outflow level. See [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive). |
@@ -1691,7 +1809,14 @@ from incorporator import (
 
 - **`IncorporatorError`** — catch-all in a top-level error handler; use when any framework failure should funnel to the same recovery path.
 - **`IncorporatorFormatError`** — catch in export sidecars, archive-reading code, or any path that reads user-supplied file data.  The message always includes the format, the source, and (for archives) the member name.
-- **`IncorporatorNetworkError`** — catch in retry orchestrators that need to distinguish network failures from parse failures.  `IncorporatorList.rejects` carries structured `RejectEntry` records for per-source HTTP failures; `IncorporatorNetworkError` is raised only when the whole fetch leg fails (not just individual URLs).
+- **`IncorporatorNetworkError`** — catch in retry orchestrators that need to distinguish network failures from parse failures.  `IncorporatorList.rejects` carries structured `RejectEntry` records for per-source HTTP failures; `IncorporatorNetworkError` is raised only when the whole fetch leg fails (not just individual URLs).  v1.3.3: when `IncorporatorNetworkError` wraps an httpx exception via `.__cause__`, the corresponding `RejectEntry.is_url_traffic_error` is `True`.
+
+**Retry behavior (v1.3.3).** The fetch layer applies a phase-aware classifier:
+- Connect-phase errors (connection refused, DNS failure) are capped at ~3 attempts with short waits.
+- Server-responded errors (5xx, 429) use up to 8 attempts with exponential backoff; `Retry-After` is honored.
+- Non-idempotent POST is not retried after a response is received.
+- HTTP 408 (Request Timeout) and 425 (Too Early) are retryable.
+- All other 4xx responses are permanent failures (single attempt).
 - **`IncorporatorSchemaError`** — catch during development when iterating on `conv_dict` / `rec_path` kwargs; in production these should not occur unless the source schema changes unexpectedly.
 
 ---

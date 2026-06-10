@@ -161,9 +161,11 @@ passes `enable_logging=True`.  Every wave is routed through a `QueueHandler`
 background thread into rotating JSON-line log files:
 
 ```
-logs/CoinPage_api.log    # HTTP audit traces only (is_api=True records)
-logs/CoinPage_error.log  # all chunk waves — successful (INFO) and failed (ERROR) — URLs redacted
-logs/CoinPage_debug.log  # superset of error.log + api.log + lifecycle events
+logs/CoinPage_api.log    # URL/internet-traffic errors (is_url_traffic_error=True):
+                         #   HTTP 4xx/5xx, network timeouts, connection failures
+logs/CoinPage_error.log  # all non-API records at INFO+: successful waves,
+                         #   parse failures, schema errors — URLs redacted
+logs/CoinPage_debug.log  # superset of both files above + DEBUG lifecycle events
 ```
 
 Each wave record carries the full `Wave` payload as a structured `wave` JSON key,
@@ -171,7 +173,8 @@ so you can post-process with `jq` by any field:
 
 ```bash
 jq 'select(.wave.rows_processed > 0) | .wave | {chunk_index, rows_processed,
-    bytes_processed, http_retry_count, schema_cache_hit, conv_dict_time_sec}' \
+    bytes_processed, bytes_downloaded, http_fetch_time_sec,
+    http_retry_count, schema_cache_hit, conv_dict_time_sec}' \
     logs/CoinPage_error.log
 ```
 
@@ -180,13 +183,22 @@ The fields available per wave are:
 | Field | Description |
 |---|---|
 | `rows_processed` | Records ingested this chunk |
-| `bytes_processed` | Raw HTTP response size in bytes |
+| `bytes_processed` | Decoded response body size (`len(response.content)`) — post-decompression |
+| `bytes_downloaded` | Wire byte count (`response.num_bytes_downloaded`) — compressed transfer size. `None` for non-HTTP sources |
+| `http_fetch_time_sec` | HTTP round-trip latency in seconds (`response.elapsed`). `None` for non-HTTP sources |
 | `http_retry_count` | Tenacity retries beyond the first |
 | `schema_cache_hit` | `True` when schema compiled class was reused |
 | `validation_error_count` | Pydantic rows rejected this chunk |
 | `conv_dict_time_sec` | Seconds in the converter/ETL pass |
 | `processing_time_sec` | Total wall-clock seconds for the chunk |
 | `failed_sources` | Source URIs that errored (empty on success) |
+| `rejects` | `list[RejectEntry]` from this chunk's incorp call — structured failure records with `is_url_traffic_error`, `error_kind`, `retry_after` |
+
+The `bytes_downloaded` / `bytes_processed` pair is useful for diagnosing
+compression efficiency: when `bytes_downloaded << bytes_processed`, the
+server is sending compressed data and the client is expanding it.
+`get_rejects()` returns the union of `_api.log` + `_error.log` reject
+records; use `get_api()` to filter to URL-traffic errors only.
 
 Disk I/O never blocks the event loop — the `QueueHandler` flushes in a background
 thread.  Ship the log files to any aggregator or `tail -f` during a drain.

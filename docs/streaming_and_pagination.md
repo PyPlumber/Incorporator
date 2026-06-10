@@ -143,7 +143,7 @@ if __name__ == "__main__":
 
 ---
 
-## Adaptive chunk sizing (v1.2.1+)
+## Adaptive chunk sizing (v1.2.1+, steering updated in v1.3.3)
 
 When per-chunk processing time drifts outside a target window, `stream()`
 can resize `paginator.chunk_size` between chunks instead of forcing the
@@ -166,6 +166,16 @@ between chunks — growing when the observed time falls below
 `target_min_sec`, shrinking when it exceeds `target_max_sec`, clamped to
 `[chunk_size_min, chunk_size_max]`.  There is no single `target_window` kwarg — the pair
 of bounds is the window.
+
+**v1.3.3 — parse-only steering.** When `wave.http_fetch_time_sec` is
+available, the AIMD signal is `processing_time_sec - http_fetch_time_sec`
+(parse-only time) rather than end-to-end time. The default bounds
+(`target_min_sec=0.030`, `target_max_sec=0.100`) were calibrated for
+end-to-end timing. v1.3.3 re-derives these from CPython `json.loads`
+throughput (~300–500 MB/s), yielding tighter thresholds: a 1 ms floor
+and a 100 ms ceiling. The practical effect is that chunk size adapts to
+parse throughput rather than network jitter — more stable sizing on
+variable-latency connections.
 
 Useful when per-chunk cost is dominated by something the caller can't
 predict (slow upstream, variable row size, GC pressure on the host).

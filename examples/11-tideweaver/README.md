@@ -520,8 +520,14 @@ print(report.render())                       # hint blocks, sorted by severity
 `tide.current_outcomes` is a `list[CurrentOutcome]` with per-current `status`
 / `reason` / `in_flight_sec` — which currents fired, which skipped, per pass.
 
-`tune()` runs up to seven rule functions and skips rules whose required inputs
-are absent — pass only what you have:
+**`logger_name` resolution.** The `logger_name` kwarg can be omitted when the
+`Watershed` carries a `name` field — `LoggedTideweaver` resolves it in order:
+explicit `logger_name` → `watershed.name` → `"Tideweaver"`. Setting
+`watershed.name="ArbSession"` above produces the same file prefix without
+repeating the string at the constructor.
+
+`tune()` runs rule functions and skips rules whose required inputs are absent
+— pass only what you have:
 
 | Rule | Requires | What it checks |
 |---|---|---|
@@ -535,9 +541,9 @@ are absent — pass only what you have:
 
 ### Replaying a session from disk
 
-`LoggedTideweaver.get_tides()` and `get_rejects()` read the `QueueHandler`
-log files produced during a previous run — useful when you want to analyse a
-completed overnight window without rerunning it:
+`LoggedTideweaver.get_tides()`, `get_rejects()`, and `get_scheduler_events()`
+read the `QueueHandler` log files produced during a previous run — useful when
+you want to analyse a completed overnight window without rerunning it:
 
 ```python
 from incorporator.observability.tideweaver import LoggedTideweaver, tune
@@ -545,18 +551,35 @@ from incorporator.observability.tideweaver import LoggedTideweaver, tune
 # Read records written during a previous run.
 tides   = await LoggedTideweaver.get_tides("ArbSession")
 rejects = await LoggedTideweaver.get_rejects("ArbSession")
+events  = await LoggedTideweaver.get_scheduler_events("ArbSession")
 
 # Each element is a raw dict; the Tide data is under rec["tide"].
 for rec in tides:
     t = rec["tide"]
     print(t["tide_number"], t["fired"], t["duration_sec"])
+
+# Watershed lifecycle events land in get_scheduler_events():
+for rec in events:
+    evt = rec["scheduler_event"]
+    if evt["event_type"] in ("watershed_started", "watershed_completed"):
+        print(evt["event_type"], evt["detail"])
 ```
 
 `get_tides()` reads the dedicated `logs/<logger_name>_tide.log` file
-(written by the `TideFilter` log router) and returns the records sorted
-by `tide_number` — single-file read, no merge or dedup needed.
-`get_rejects()` reads `_error.log` only — each dict has a top-level
-`"reject"` key.
+and returns records sorted by `tide_number` — single-file read, no merge
+needed.
+
+`get_rejects()` unions `_error.log` + `_api.log`, returning records with
+a top-level `"reject"` key. Canal-layer rejects land in `_error.log`;
+verb-layer HTTP failures may land in `_api.log` depending on
+`is_url_traffic_error`. The union covers both:
+
+```python
+for rec in rejects:
+    entry = rec["reject"]
+    origin = "API" if entry["is_url_traffic_error"] else "codebase"
+    print(f"[{origin}] {entry['error_kind']}: {entry['source']}")
+```
 
 ### Green-wave coordination with `phase_offset_sec`
 

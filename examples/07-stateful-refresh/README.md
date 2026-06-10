@@ -262,17 +262,18 @@ Two verbs, one shared registry, one read pattern: always re-read via `Class.inc_
   an obj whose `inc_url` / `inc_file` is `None` and the framework logs
   a warning and skips it rather than crashing the batch.
 
-Transient HTTP errors are handled by the same Tenacity retry policy
+Transient HTTP errors are handled by the same phase-aware retry policy
 `incorp()` uses; permanent failures surface via
 `refreshed.failed_sources` (a flat list of URL strings) or the richer
 `refreshed.rejects` (a `list[RejectEntry]`). Each `RejectEntry` carries
-its own `error_kind` field — the list is not keyed on `error_kind`; you
-iterate it and inspect each entry:
+`error_kind`, `is_url_traffic_error` (bool — `True` for HTTP/network
+failures, `False` for parse/schema failures), and `retry_after`:
 
 ```python
 refreshed = await Pair.refresh()
 for entry in refreshed.rejects:
-    print(entry.error_kind, entry.source, entry.cooldown_sec)
+    origin = "API" if entry.is_url_traffic_error else "parse"
+    print(f"[{origin}] {entry.error_kind}: {entry.source}")
 ```
 
 See the [Production Debugging](../../docs/debugging.md) reference for

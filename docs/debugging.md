@@ -1,23 +1,30 @@
 ﻿***
 
 > 📑 **Reference** — production-debugging deep dive. Not a numbered
-> tutorial; reach for this when you need durable error logs and a
-> structured retry loop via RejectEntry for a `stream()` / `fjord()`
-> pipeline.
+> tutorial; reach for this when you need durable error logs, the
+> api/error routing split, and a structured retry loop via `RejectEntry`
+> for a `stream()` / `fjord()` pipeline.
 
 ***
 
-# 🩺 Production Debugging: `get_error()` + LoggedIncorporator
+# 🩺 Production Debugging: `LoggedIncorporator` + Reader API
 
 When a production pipeline fails at 03:00, you don't want to grep a
 multi-GB log. You want a structured list of failures you can iterate,
 filter, and feed back into a retry loop.
 
-That's what `LoggedIncorporator` + `get_error()` give you. Subclass
+That's what `LoggedIncorporator` + its reader API give you. Subclass
 `LoggedIncorporator` and pass `enable_logging=True` on each verb call,
-and every failure that class encounters lands in
-`logs/<ClassName>_error.log` as JSON lines — readable from any other
-process, retrievable in your own Python with one async call.
+and every failure that class encounters is routed to one of two JSON-line
+log files under `logs/` — readable from any other process, retrievable
+in your own Python with one async call.
+
+**The routing rule (v1.3.3):** URL/internet-traffic errors — HTTP 4xx/5xx
+responses, network timeouts, and connection failures — route to
+`logs/<ClassName>_api.log`. Codebase errors — parse failures, schema
+errors, and other non-HTTP failures — route to `logs/<ClassName>_error.log`.
+The `debug.log` is the superset of both. The file location tells you
+whether the fault was the API's or your code's.
 
 ---
 
@@ -30,16 +37,22 @@ process, retrievable in your own Python with one async call.
    │  failed_sources on Wave │ ◄─── permanent failure
    └─────────────┬───────────┘
                  │
-   ┌─────────────▼───────────┐
-   │  logs/<Class>_error.log │ ◄─── JSON line per failure
-   └─────────────┬───────────┘
-                 │
+        is_url_traffic_error?
+         ┌───────┴────────┐
+       True             False
+         ▼                 ▼
+  _api.log           _error.log
+  (URL/HTTP errors)  (codebase/parse errors)
+         └───────┬────────┘
                  ▼
-       await Class.get_error()   ───►  list[dict]  ───►  retry loop via RejectEntry
+       await Class.get_rejects()  ───►  list[dict]  ───►  retry loop via RejectEntry
+       await Class.get_error()    ───►  codebase errors only
+       await Class.get_api()      ───►  URL/HTTP errors only
 ```
 
-`failed_sources` is the **live** view (this wave); `get_error()` is
-the **durable** view (everything this class has ever logged).
+`failed_sources` is the **live** view (this wave); `get_rejects()` is
+the **durable** view — it unions `_api.log` + `_error.log` so every
+reject is covered regardless of which file it landed in.
 
 ---
 
@@ -90,55 +103,77 @@ async def main():
 asyncio.run(main())
 ```
 
-After the run, `logs/Webhook_error.log` contains one JSON line per
-permanent failure — URLs redacted of query strings, full `Wave` dump
+After the run, failures are routed to either `logs/Webhook_api.log`
+(URL/internet errors, e.g. the unreachable host above) or
+`logs/Webhook_error.log` (parse/codebase errors) — both carry one JSON
+line per failure, URLs redacted of query strings, full `Wave` dump
 attached.
 
 ---
 
-## Step 3: Query `get_error()` After the Run
+## Step 3: Query the Reader API After the Run
 
-`get_error()` tails the class's error log and returns each line as a
-parsed dict. Disk read runs in a worker thread.
+Three async readers provide structured access to the log files. All
+return `[]` when no log file exists yet.
 
 ```python
-errors = await Webhook.get_error()
+# All failures across both logs — the union of api.log + error.log,
+# filtered to records that carry a top-level "reject" key.
+rejects = await Webhook.get_rejects()
 
-for record in errors:
+# URL/internet-traffic failures only (is_url_traffic_error=True).
+api_errors = await Webhook.get_api()
+
+# Codebase/parse failures only (is_url_traffic_error=False).
+code_errors = await Webhook.get_error()
+
+# Current session log (see get_current below for per-session use).
+for record in rejects:
     print(record["time"], "—", record["msg"])
     # Each record contains:
     #   level:     "ERROR"
     #   msg:       human-readable summary
     #   meta:      flat key:"value" summary (class, identity, origin)
+    #   reject:    structured RejectEntry fields (source, error_kind,
+    #              message, is_url_traffic_error, retry_after, ...)
     #   wave:      full Wave dump (chunk index, rows, failed_sources, etc.)
     #   time: ISO-8601 string
 ```
 
-Safe to call when no errors have been logged yet — returns `[]`.
+**When to reach for each reader:**
+
+| Situation | Use |
+|---|---|
+| All failures, want to retry everything | `get_rejects()` |
+| Only API/network failures (flaky host, rate limit) | `get_api()` |
+| Only parse/schema/codebase failures | `get_error()` |
+| Live view during a current run | `wave.failed_sources` on the Wave |
 
 ---
 
 ## Step 4: Wire It Into a Rejects Retry Loop
 
-The production pattern: drain `get_error()`, extract the failed URLs
-from each record's `wave.failed_sources`, and reissue them as a
-follow-up `incorp()` call.
+The production pattern: drain `get_rejects()`, extract the failed URLs
+from each record's reject entry, and reissue them as a follow-up
+`incorp()` call. `get_rejects()` unions `_api.log` + `_error.log` so
+both URL-traffic failures and codebase failures are covered in one call.
 
 ```python
 async def retry_failed_webhooks():
-    errors = await Webhook.get_error()
+    rejects = await Webhook.get_rejects()
     reject_urls = []
-    for record in errors:
-        wave = record.get("wave") or {}
-        reject_urls.extend(wave.get("failed_sources", []))
+    for record in rejects:
+        entry = record.get("reject") or {}
+        if entry.get("source"):
+            reject_urls.append(entry["source"])
 
     if not reject_urls:
-        print("✅ No rejected sources — pipeline is clean.")
+        print("No rejected sources — pipeline is clean.")
         return
 
     # Dedup before retry — the same URL may appear across multiple waves.
     reject_urls = list(set(reject_urls))
-    print(f"♻️  Retrying {len(reject_urls)} previously-failed URLs.")
+    print(f"Retrying {len(reject_urls)} previously-failed URLs.")
     return await Webhook.incorp(inc_url=reject_urls, inc_code="id", enable_logging=True)
 ```
 
@@ -153,25 +188,42 @@ Three diagnostics fire automatically — no config required.  Two land
 on the wave's `failed_sources`; the third emits a one-time log
 warning.
 
-### 1. Structured rejects (`entry.error_kind`, `entry.retry_after`)
+### 1. Structured rejects (`entry.error_kind`, `entry.is_url_traffic_error`, `entry.retry_after`)
 
 `failed_sources: list[str]` is the legacy bare-string view; the
 structured equivalent is `result.rejects: list[RejectEntry]`. Each
 entry carries `source` + `error_kind` (the exception class name) +
-`message` + `retry_after` (parsed from any HTTP `Retry-After`
-header) + `wave_index`. Reach for it when retry orchestration
-needs to honour the server's backoff hints:
+`message` + `is_url_traffic_error` (bool, `True` for HTTP 4xx/5xx /
+network errors, `False` for parse/schema errors) + `retry_after`
+(parsed from any HTTP `Retry-After` header) + `wave_index`.
+
+`is_url_traffic_error` is the programmatic form of the `_api.log` /
+`_error.log` routing split. It is stamped on every `RejectEntry` at
+construction time from the exception type — `True` when the underlying
+exception is an httpx `HTTPStatusError` or `RequestError` (or when an
+`IncorporatorNetworkError` wraps one via `__cause__`). This flag is
+always present and never `None`.
+
+Reach for it when retry orchestration needs to distinguish network
+failures from codebase failures:
 
 ```python
 from incorporator import RejectEntry
 
 result = await Webhook.incorp(inc_url=urls, enable_logging=True)
 for entry in result.rejects:
-    if entry.error_kind == "HTTPStatusError" and entry.retry_after:
+    if entry.is_url_traffic_error and entry.retry_after:
         schedule_retry(entry.source, after=entry.retry_after)
+    elif entry.is_url_traffic_error:
+        transient_queue.put(entry.source)
     else:
+        # Parse/schema/codebase failure — investigate before retrying.
         dlq_queue.put(entry.source)
 ```
+
+`RejectEntry.__str__` now includes the HTTP reason phrase when available.
+For a 429 response you get `[HTTP 429 Too Many Requests]`; for
+non-standard codes the status code alone appears (e.g. `[HTTP 522]`).
 
 `failed_sources` stays as a derived view (`[entry.source for entry in
 result.rejects]`) — existing code keeps working unchanged.
@@ -227,14 +279,27 @@ the output class").
 
 ## What `LoggedIncorporator` Writes
 
-For each instance of `LoggedIncorporator`, three log files are
-maintained under `logs/`:
+For each instance of `LoggedIncorporator`, four log files are maintained
+under `logs/`. The routing split is enforced at the Python `logging`
+filter level — every record is classified at write time, before it
+touches any file handler.
 
-| File | Contents |
-|---|---|
-| `<ClassName>_api.log` | Successful chunks — every Wave that touched the pipeline |
-| `<ClassName>_error.log` | Permanent failures only — same shape, parsed by `get_error()` |
-| `<ClassName>_debug.log` | Internal lifecycle events (daemon start/stop, shutdown drain) |
+| File | Contents | Reader |
+|---|---|---|
+| `<ClassName>_api.log` | URL/internet-traffic errors: HTTP 4xx/5xx responses, network timeouts, and connection failures where `is_url_traffic_error=True` | `get_api()` |
+| `<ClassName>_error.log` | All non-API-routed records at INFO and above: successful waves, parse failures, schema errors, and canal skips | `get_error()` |
+| `<ClassName>_debug.log` | Superset of all records — every record that lands in `api.log` or `error.log` also lands here, plus DEBUG-floor lifecycle events | grep / external tooling |
+| `<ClassName>_tide.log` | Tideweaver sessions only: every yielded `Tide` (fired and no-op), sorted by `tide_number` | `LoggedTideweaver.get_tides()` |
+
+To get all rejects regardless of which file they landed in, use
+`get_rejects()` — it unions `_api.log` + `_error.log` and returns only
+records that carry a top-level `"reject"` key.
+
+> **Why `_error.log` receives successful waves:** the file was originally
+> named for failures, but it routes by `StandardFilter` (non-API records
+> at INFO and above). Successful wave records are INFO-level and pass that
+> filter. The distinction between success and failure within `_error.log`
+> is the presence or absence of `wave.failed_sources`.
 
 Rotation, queueing, and thread management are all internal. The cap on
 concurrent background listeners (`MAX_LOG_THREADS`) is enforced
@@ -243,14 +308,16 @@ subscribes.
 
 ---
 
-## When to reach for `get_error()`
+## When to reach for which reader
 
-| Situation | Use `get_error()`? |
+| Situation | Use |
 |---|---|
-| Post-run audit of a batch `incorp()` | ✅ Yes — one async call, get structured records |
-| Rejects retry orchestrator | ✅ Yes — feed `wave.failed_sources` back into `incorp()` |
-| Live observability during a `stream()` | ❌ No — read `wave.failed_sources` off the live wave |
-| Cross-process inspection (separate retry worker) | ✅ Yes — the log file is the contract |
+| Post-run audit — want all failures | `get_rejects()` — unions `_api.log` + `_error.log` |
+| Retry only network/API failures | `get_api()` — URL-traffic errors only |
+| Investigate parse/schema failures | `get_error()` — codebase errors only |
+| Live observability during a `stream()` | `wave.failed_sources` off the live wave |
+| Cross-process inspection (separate retry worker) | `get_rejects()` — the union is the contract |
+| Classify a failure before retrying | `entry.is_url_traffic_error` on each `RejectEntry` |
 
 ---
 
@@ -285,11 +352,24 @@ past_tides   = await LoggedTideweaver.get_tides(logger_name="ArbSession")
 past_rejects = await LoggedTideweaver.get_rejects(logger_name="ArbSession")
 ```
 
-Unlike `LoggedIncorporator`'s three files, `LoggedTideweaver` also
-writes a dedicated `logs/<logger_name>_tide.log` — every yielded `Tide`
-(fired and no-op alike) lands there, so `get_tides()` reads that one
-file sorted by `tide_number` rather than merging `_error.log` +
-`_debug.log`. Rejects still live in `logs/<logger_name>_error.log`.
+Unlike `LoggedIncorporator`'s four files, `LoggedTideweaver` uses the
+same file set but keyed by `logger_name` rather than class name. The
+`logger_name` resolves in order: explicit `logger_name` constructor
+argument, then `watershed.name`, then `"Tideweaver"`.
+
+`get_rejects()` now unions `_error.log` + `_api.log` (same as
+`LoggedIncorporator`) — it returns records with a top-level `"reject"`
+key from both files. Canal-layer reject records (`PenstockLimited`,
+`SurgeHalted`, `SkipAhead`, `GateBlocked`) route to `_error.log`;
+verb-layer rejects from HTTP failures may route to `_api.log` depending
+on `is_url_traffic_error`.
+
+`get_scheduler_events()` reads `_error.log` filtered to records with a
+top-level `"scheduler_event"` key. Watershed lifecycle events
+(`watershed_started`, `watershed_completed`) and scheduler diagnostics
+(`isolated_tick_failure`, `tick_parked`, `empty_output`,
+`empty_parent_snapshot`, `fjord_flush_failure`) all land there at WARNING
+or ERROR level.
 
 `tw.summary(tides=tides)` is the instance-method convenience for the
 same `TuningReport`.  Each `tide.current_outcomes` is a
@@ -303,6 +383,8 @@ skipped, per pass.
 | Per-edge skip audit | `tw.rejects` filtered by `error_kind` ∈ {canal-layer strings above} |
 | Post-window tuning recommendations | `tune(rejects=..., tides=..., pass_interval=...)` → `TuningReport` |
 | Cross-process replay | `LoggedTideweaver.get_tides(...)` / `get_rejects(...)` |
+| Watershed lifecycle events | `LoggedTideweaver.get_scheduler_events(logger_name)` — returns `watershed_started` / `watershed_completed` records plus scheduler diagnostics |
+| Distinguish API vs codebase failures in verb-layer rejects | `entry.is_url_traffic_error` on each `RejectEntry`; check `_api.log` for URL-traffic errors |
 
 > **Empty-output stalls fire a WARNING.** When a `CustomCurrent` tick
 > succeeds but yields no rows while its upstream snapshot was non-empty,
@@ -322,6 +404,7 @@ skipped, per pass.
 | Keep a registry live with `refresh()` and inspect `failed_sources` | [Tutorial 7 — Stateful Refresh](../examples/07-stateful-refresh/README.md) |
 | Detect orchestration-level failures across N sources | [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) |
 | See every public method that surfaces error state | [Library Reference](./library_reference.md) |
+| Full reader API signatures and routing model | [API Atlas — Observability layer](./api_atlas.md#observability-layer-loggedincorporator--loggedtideweaver) |
 | Ship `LoggedIncorporator` pipelines with structured logs | [Deployment Guide](./deployment.md) |
 
 ---

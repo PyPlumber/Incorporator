@@ -108,16 +108,22 @@ Both `rockets` and `pads` come back as `IncorporatorList` instances, each carryi
 structured `rejects` list (of `RejectEntry`) alongside the legacy bare-string
 `failed_sources` view. ETL practice calls failed-load rows *rejects* — Incorporator
 uses the same idiom. When a child drill fails (rate limit, 5xx, timeout) the entry
-records the URI, error class, parsed `Retry-After` header, and the wave index it
-belonged to:
+records the URI, error class, `is_url_traffic_error` flag, parsed `Retry-After`
+header, and the wave index it belonged to:
 
 ```python
 for entry in rockets.rejects:
     retry = f" (retry after {entry.retry_after:.1f}s)" if entry.retry_after else ""
-    print(f"{entry.source} → {entry.error_kind}{retry}")
-# https://api.spacexdata.com/v4/rockets/5e9... → HTTPStatusError (retry after 30.0s)
-# https://api.spacexdata.com/v4/rockets/5e9... → ReadTimeout
+    origin = "API" if entry.is_url_traffic_error else "parse"
+    print(f"{entry.source} [{origin}] {entry.error_kind}{retry}")
+# https://api.spacexdata.com/v4/rockets/5e9... [API] HTTPStatusError (retry after 30.0s)
+# https://api.spacexdata.com/v4/rockets/5e9... [API] ReadTimeout
 ```
+
+`entry.is_url_traffic_error` is `True` for HTTP 4xx/5xx, network timeouts, and
+connection failures — the same classification that determines whether a logged
+failure lands in `_api.log` or `_error.log`. `str(entry)` now includes the HTTP
+reason phrase when available: `[HTTP 429 Too Many Requests]`.
 
 `rockets.failed_sources` is the derived view (`[entry.source for entry in
 rockets.rejects]`) — kept for back-compat. Reach for `rejects` whenever production

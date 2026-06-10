@@ -207,9 +207,11 @@ if __name__ == "__main__":
 > surface visibly.  For structured per-source errors with HTTP retry
 > hints, reach for the returned ``IncorporatorList``'s ``.rejects``
 > attribute (a ``list[RejectEntry]``) — each entry carries
-> ``error_kind``, ``retry_after`` (parsed from the HTTP header), and
-> the parent ``wave_index``, so 429-aware backoff doesn't need to
-> re-parse the bare ``wave.failed_sources`` strings.
+> ``error_kind``, ``is_url_traffic_error`` (bool: ``True`` for
+> HTTP/network failures, ``False`` for parse failures),
+> ``retry_after`` (parsed from the HTTP header), and the parent
+> ``wave_index``.  ``str(entry)`` includes the HTTP reason phrase
+> when available, e.g. ``[HTTP 429 Too Many Requests]``.
 >
 > **`KeyError` on a missing peer?**  When `inflow(state)` raises
 > `KeyError` because a peer source hasn't seeded yet, the seed-error
@@ -260,11 +262,13 @@ if __name__ == "__main__":
 
 > **Production observability — `LoggedIncorporator` for disk-readable
 > logs.** Subclass the source classes from `LoggedIncorporator` and
-> pass `enable_logging=True` on the fjord call; every successful wave
-> and every `RejectEntry` lands in `logs/<ClassName>_{api,error,debug}.log`
-> via a non-blocking `QueueHandler`.  Replay with
-> `await ClassName.get_error()` from any other process — see
-> [docs/debugging.md](../../docs/debugging.md) for the retry loop via RejectEntry.
+> pass `enable_logging=True` on the fjord call; every wave and
+> every `RejectEntry` lands in `logs/<ClassName>_{api,error,debug}.log`
+> via a non-blocking `QueueHandler`.  URL/internet-traffic errors route
+> to `_api.log`; parse/codebase errors route to `_error.log`.  Replay
+> with `await ClassName.get_rejects()` (unions both files) from any
+> other process — see [docs/debugging.md](../../docs/debugging.md) for
+> the reader API and retry loop.
 
 ---
 

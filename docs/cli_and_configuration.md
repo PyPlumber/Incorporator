@@ -386,12 +386,12 @@ incorporator stream pipeline.json --poll 3600.0 --logs
 ```
 
 ### What happens when `--logs` is enabled?
-Terminal output is suppressed, and telemetry is routed to non-blocking background OS threads. Incorporator will automatically create a `logs/` directory and generate three rotating JSON Lines files (5MB each, 3 backups — roughly 15MB total per log type):
+Terminal output is suppressed, and telemetry is routed to non-blocking background OS threads. Incorporator will automatically create a `logs/` directory and generate four rotating JSON Lines files per pipeline (5MB each, 3 backups — roughly 20MB total per log type):
 
-1.  **`logs/{Class}_api.log`**: Tracks all successful HTTP traffic, rate limits, and chunk throughput.
-2.  **`logs/{Class}_error.log`**: Structured failure records (RejectEntry). Catches network timeouts, 400/500 status codes, and malformed data schemas.
-3.  **`logs/{Class}_debug.log`**: Deep framework execution traces for local troubleshooting.
-4.  **`logs/{LoggerName}_tide.log`** *(LoggedTideweaver only)*: Every yielded `Tide` (fired and no-op), in `tide_number` order.  Single-file source for `LoggedTideweaver.get_tides(logger_name)` — replaces the earlier "merge `_error.log` + `_debug.log` and dedupe" pattern.  The file name uses the `logger_name` constructor argument, not the class name.
+1.  **`logs/{Class}_api.log`**: URL/internet-traffic errors — HTTP 4xx/5xx responses, network timeouts, and connection failures where `RejectEntry.is_url_traffic_error=True`. Use `get_api()` to read these records.
+2.  **`logs/{Class}_error.log`**: All non-API-routed records at INFO and above — successful waves, parse failures, schema errors. Use `get_error()` for codebase failures; `get_rejects()` to union both files.
+3.  **`logs/{Class}_debug.log`**: Superset of both files above — every record that lands in `_api.log` or `_error.log` also lands here, plus DEBUG-floor lifecycle events. Used by `get_current()` to retrieve per-session records without double-counting.
+4.  **`logs/{LoggerName}_tide.log`** *(LoggedTideweaver only)*: Every yielded `Tide` (fired and no-op), in `tide_number` order.  Single-file source for `LoggedTideweaver.get_tides(logger_name)`.  The file name uses the resolved `logger_name` (explicit arg → `watershed.name` → `"Tideweaver"`).
 
 Every `Wave` yielded by the pipeline is also routed to these
 files: the structured `wave` payload appears as a top-level JSON key
@@ -829,15 +829,16 @@ in `logs/<logger_name>_error.log` alongside canal-layer reject records.
 
 **Reader methods on `LoggedTideweaver`**
 
-Three `@classmethod` async readers provide structured access to the log files
-written during a run.  All three take the `logger_name` string as their sole
-argument and return a list of dicts.
+Four `@classmethod` async readers provide structured access to the log files
+written during a run.  All take `logger_name` as their first argument and
+return a list of dicts.
 
-| Method | Source file | Top-level key | Sorted by |
+| Method | Source file | Top-level key | Notes |
 | :--- | :--- | :--- | :--- |
-| `get_tides(logger_name)` | `<name>_tide.log` | `"tide"` | `tide_number` ascending |
-| `get_rejects(logger_name)` | `<name>_error.log` | `"reject"` | file order (already sequential) |
-| `get_scheduler_events(logger_name)` | `<name>_error.log` | `"scheduler_event"` | `tide_number` ascending, then `event_type`, then `current_name` |
+| `get_tides(logger_name)` | `<name>_tide.log` | `"tide"` | Sorted by `tide_number` ascending |
+| `get_rejects(logger_name)` | `<name>_error.log` + `<name>_api.log` | `"reject"` | Union of both files — covers both URL-traffic and codebase rejects |
+| `get_scheduler_events(logger_name)` | `<name>_error.log` | `"scheduler_event"` | Sorted by `tide_number`, `event_type`, `current_name` |
+| `get_current(logger_name, code)` | `<name>_debug.log` | any | Filtered to records whose `meta` contains `code`; reads debug superset to avoid double-counting |
 
 ```python
 events = await LoggedTideweaver.get_scheduler_events("NightlyPrices")
@@ -845,14 +846,27 @@ for rec in events:
     evt = rec["scheduler_event"]
     print(evt["event_type"], evt["current_name"], evt["tide_number"])
 
-tides = await LoggedTideweaver.get_tides("NightlyPrices")
+tides   = await LoggedTideweaver.get_tides("NightlyPrices")
 rejects = await LoggedTideweaver.get_rejects("NightlyPrices")
+
+# Classify rejects after the union:
+for rec in rejects:
+    entry = rec["reject"]
+    if entry["is_url_traffic_error"]:
+        print("API failure:", entry["source"], entry.get("status_code"))
+    else:
+        print("Parse failure:", entry["source"], entry["error_kind"])
 ```
 
 Each method returns `[]` when no log file exists (run not yet started or
 `enable_logging=False`).  The `jq` expression
 `.[] | select(.scheduler_event.session == "NightlyPrices")` filters records by
 session in a mixed-session log file.
+
+**Watershed lifecycle events** (`watershed_started`, `watershed_completed`) are
+emitted to `_error.log` at the beginning and end of every `tw.run()` call.
+They appear in `get_scheduler_events()` output alongside the five diagnostic
+event types. Level is `WARNING` — they are informational, not failures.
 
 ---
 

@@ -924,7 +924,7 @@ Notable wiring:
 * **Split-file inflow + outflow.**  `inflow=` points at `inflow.py` (the incoming-data manipulation sidecar: `inflow(state)`, `_mfg_from_logo_url`, `_driver_id_or_none`, `_DATE_FIELDS`) and `outflow=` points at `outflow.py` (the output-shaping sidecar: source classes, `outflow(state)`, `OWNER_SCORED`).  The two files are split by direction of data flow.
 * **`refresh_params=None` everywhere = single-wave test mode.**  With no `export_interval` set either, the pipeline exits cleanly after one outflow wave.  Drop the `refresh_params=None` lines (refresh defaults on at 60s) and add `export_interval=60` to keep daemons alive for a production run.  Mix and match: leave `Track`'s refresh off (tracks never change) while letting standings refresh every 5 minutes.
 * **`export_params` is keyed by output class name.**  Each key matches a key returned by `outflow(state)`; fjord's multi-output detection is "is there a top-level `file_path`?  No → multi-output."
-* **Structured error surface.**  `wave.failed_sources` carries the bare-string view of any seed or refresh failures.  For structured per-source access use `LoggedIncorporator.get_error()` post-run — each record carries the source name, exception type, message, and HTTP retry metadata.  Honour any `retry_after` value and backoff on 429s without re-parsing the message string.
+* **Structured error surface.**  `wave.failed_sources` carries the bare-string view of any seed or refresh failures.  For structured per-source access use `LoggedIncorporator.get_rejects()` post-run — it unions `_api.log` + `_error.log` and returns records with a top-level `"reject"` key.  Each entry carries `source`, `error_kind`, `is_url_traffic_error` (bool — `True` for HTTP/network failures, `False` for parse failures), and `retry_after`.  Use `get_api()` for URL-traffic failures only, `get_error()` for codebase failures only.
 
 ---
 
@@ -1230,7 +1230,7 @@ incorporator validate config/pipeline.json
 incorporator fjord    config/pipeline.json --logs
 ```
 
-`--logs` routes every Wave through the `LoggedIncorporator` queue handler into per-class log files: `logs/<ClassName>_api.log` (HTTP audit traces) and `logs/<ClassName>_error.log` (chunk waves; failures redacted).  An eight-source fjord produces up to 16 log files.  Add `--heartbeat-file /tmp/inc.beat` to pair with Docker's `HEALTHCHECK`.
+`--logs` routes every Wave through the `LoggedIncorporator` queue handler into per-class log files: `logs/<ClassName>_api.log` (URL/internet-traffic errors — HTTP 4xx/5xx, timeouts), `logs/<ClassName>_error.log` (successful waves, parse failures, schema errors), and `logs/<ClassName>_debug.log` (superset).  An eight-source fjord produces up to 24 log files across the three types.  Use `get_rejects()` to read all failures across both routing files; use `entry["reject"]["is_url_traffic_error"]` to classify each one.  Add `--heartbeat-file /tmp/inc.beat` to pair with Docker's `HEALTHCHECK`.
 
 ### Docker
 

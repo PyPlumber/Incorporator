@@ -98,9 +98,16 @@ control — copy yours into `config/` per environment.
 
 By default, `LoggedIncorporator` writes rotating JSON logs to
 `./logs/<ClassName>_{api,error,debug}.log` relative to the process
-CWD. In a containerised environment the CWD is `/app` (set by the
+CWD. `LoggedTideweaver` adds a fourth file: `<logger_name>_tide.log`.
+In a containerised environment the CWD is `/app` (set by the
 Dockerfile's `WORKDIR`), so logs land at `/app/logs/...` — and
 `docker-compose.yml` bind-mounts `./logs` there for host visibility.
+
+The `_api.log` file receives URL/internet-traffic errors
+(`is_url_traffic_error=True`); `_error.log` receives all other records
+at INFO and above; `_debug.log` is the superset of both. This routing
+is enforced at the Python `logging.Filter` level — no post-processing
+needed to classify failures by origin.
 
 Override with `INCORPORATOR_LOG_DIR` when the default doesn't match
 your environment — e.g. ECS / CloudRun / Kubernetes patterns that
@@ -262,7 +269,40 @@ async for tide in tw.run():
 # Post-run, replay from disk in any other process:
 tides   = await LoggedTideweaver.get_tides(logger_name="ArbSession")
 rejects = await LoggedTideweaver.get_rejects(logger_name="ArbSession")
+events  = await LoggedTideweaver.get_scheduler_events(logger_name="ArbSession")
 ```
+
+**`logger_name` resolution.** The log file prefix resolves in order:
+explicit `logger_name` kwarg → `watershed.name` → `"Tideweaver"`. Set
+`watershed.name` on the `Watershed` to get a stable, meaningful prefix
+without repeating the name at every `LoggedTideweaver` construction site:
+
+```python
+ws = Watershed(name="ArbSession", window=(...), currents=[...])
+tw = LoggedTideweaver(ws, enable_logging=True)
+# → logs/ArbSession_tide.log, ArbSession_error.log, ArbSession_api.log, ArbSession_debug.log
+```
+
+**Per-current session routing.** When `log_currents=True` (default),
+each `Stream` current's yielded waves and their `wave.rejects` are
+written to the session log tagged with `current`, `class`, and `code`
+meta fields. No separate per-class `<Class>_*.log` files are created
+during a watershed run — all records share the session log. Set
+`log_currents=False` to suppress per-current routing entirely.
+
+**Watershed lifecycle events.** The scheduler emits `watershed_started`
+and `watershed_completed` records to `_error.log` at the beginning and
+end of every `tw.run()` call. Retrieve them via
+`get_scheduler_events()` alongside diagnostic event types
+(`isolated_tick_failure`, `tick_parked`, `empty_output`,
+`empty_parent_snapshot`, `fjord_flush_failure`). Each event record
+includes `event_type`, `current_name`, `cls_name`, `tide_number`,
+`session`, and `detail`.
+
+**Reject routing.** `get_rejects()` unions `_error.log` + `_api.log`
+so canal-layer rejects and verb-layer HTTP failures are both covered.
+`entry["reject"]["is_url_traffic_error"]` distinguishes the two classes
+within the union.
 
 In containers, prefer `LoggedTideweaver` over inline `print(tide)`
 loops so stdout stays clean for `--json-output` and the structured
