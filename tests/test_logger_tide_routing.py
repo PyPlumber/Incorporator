@@ -39,50 +39,6 @@ def _make_tide(
     )
 
 
-def test_route_tide_no_op_pass_debug() -> None:
-    """Empty fired + empty skipped + canal_rejects_added=0 routes to DEBUG via logger.log."""
-    tide = _make_tide(fired=[], skipped=[], canal_rejects_added=0)
-    mock_logger = MagicMock(spec=logging.Logger)
-    mock_logger.isEnabledFor.return_value = True
-
-    with patch("logging.getLogger", return_value=mock_logger):
-        _route_tide_to_log("TestLogger", tide)
-
-    mock_logger.log.assert_called_once()
-    level_arg = mock_logger.log.call_args[0][0]
-    assert level_arg == logging.DEBUG
-
-
-def test_route_tide_successful_pass_info() -> None:
-    """A tide with fired currents and no errors routes to INFO via logger.log."""
-    tide = _make_tide(fired=["prices"], skipped=[], canal_rejects_added=0)
-    mock_logger = MagicMock(spec=logging.Logger)
-    mock_logger.isEnabledFor.return_value = True
-
-    with patch("logging.getLogger", return_value=mock_logger):
-        _route_tide_to_log("TestLogger", tide)
-
-    mock_logger.log.assert_called_once()
-    level_arg = mock_logger.log.call_args[0][0]
-    assert level_arg == logging.INFO
-
-
-def test_route_tide_canal_rejects_error() -> None:
-    """canal_rejects_added > 0 routes to ERROR regardless of fired list."""
-    tide = _make_tide(fired=["prices"], skipped=[], canal_rejects_added=2)
-    mock_logger = MagicMock(spec=logging.Logger)
-    mock_logger.isEnabledFor.return_value = True
-
-    with patch("logging.getLogger", return_value=mock_logger):
-        _route_tide_to_log("TestLogger", tide)
-
-    mock_logger.log.assert_called_once()
-    level_arg = mock_logger.log.call_args[0][0]
-    assert level_arg == logging.ERROR
-    msg = mock_logger.log.call_args[0][1]
-    assert "2 canal reject(s)" in msg
-
-
 def test_route_tide_surge_halted_error() -> None:
     """skipped containing ('name', 'surge_halted') routes to ERROR."""
     tide = _make_tide(fired=[], skipped=[("arb", SkipReason.SURGE_HALTED)], canal_rejects_added=0)
@@ -113,34 +69,6 @@ def test_route_tide_skip_ahead_error() -> None:
     assert level_arg == logging.ERROR
     msg = mock_logger.log.call_args[0][1]
     assert "skip_ahead" in msg
-
-
-def test_route_tide_json_dump_has_tide_key() -> None:
-    """JSONFormatter.format includes a top-level 'tide' key when the record carries tide extra."""
-    tide = _make_tide(fired=["a"], canal_rejects_added=0)
-    dump = tide.model_dump(mode="json")
-
-    record = logging.LogRecord(
-        name="TestLogger",
-        level=logging.INFO,
-        pathname="",
-        lineno=0,
-        msg="tide 1: fired 1",
-        args=(),
-        exc_info=None,
-    )
-    record.tide = dump  # type: ignore[attr-defined]
-    record._payload_key = "tide"  # type: ignore[attr-defined]
-    record.meta = tide.log_meta()  # type: ignore[attr-defined]
-    record.is_api = False  # type: ignore[attr-defined]
-
-    formatter = JSONFormatter()
-    output = formatter.format(record)
-    parsed = json.loads(output)
-
-    assert "tide" in parsed
-    assert parsed["tide"]["tide_number"] == 1
-    assert parsed["tide"]["fired"] == ["a"]
 
 
 def test_route_tide_not_due_skip_is_not_error() -> None:
@@ -263,10 +191,11 @@ def test_route_to_log_tide_info() -> None:
 
 
 def test_route_to_log_tide_error() -> None:
-    """_route_to_log with a canal-reject Tide produces ERROR level and sets is_tide=True.
+    """_route_to_log with a canal-reject Tide: ERROR level, is_tide=True, and the canal-reject message.
 
-    Mirrors test_route_tide_canal_rejects_error and test_route_tide_sets_is_tide_in_extra
-    combined — both the level and the is_tide flag must match the legacy wrapper.
+    Subsumes the legacy wrapper tests test_route_tide_canal_rejects_error (level +
+    "N canal reject(s)" message) and test_route_tide_sets_is_tide_in_extra (is_tide
+    flag) for the ERROR branch.
     """
     tide = _make_tide(fired=[], skipped=[], canal_rejects_added=3)
     mock_logger = MagicMock(spec=logging.Logger)
@@ -281,3 +210,4 @@ def test_route_to_log_tide_error() -> None:
     assert level_arg == logging.ERROR
     assert extra.get("is_tide") is True
     assert extra["tide"]["canal_rejects_added"] == 3
+    assert "3 canal reject(s)" in mock_logger.log.call_args[0][1]

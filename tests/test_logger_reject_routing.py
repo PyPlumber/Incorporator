@@ -87,34 +87,6 @@ def test_route_reject_canal_with_edge() -> None:
     assert "PenstockLimited" in msg
 
 
-def test_route_reject_json_dump_has_reject_key() -> None:
-    """JSONFormatter.format includes a top-level 'reject' key when the record carries reject extra."""
-    reject = _make_reject(status_code=500, host="api.example.com")
-    dump = reject.model_dump(mode="json")
-
-    record = logging.LogRecord(
-        name="TestLogger",
-        level=logging.ERROR,
-        pathname="",
-        lineno=0,
-        msg="HTTPStatusError: https://api.example.com/prices [HTTP 500]",
-        args=(),
-        exc_info=None,
-    )
-    record.reject = dump  # type: ignore[attr-defined]
-    record._payload_key = "reject"  # type: ignore[attr-defined]
-    record.meta = 'class:"TestLogger"'  # type: ignore[attr-defined]
-    record.is_api = False  # type: ignore[attr-defined]
-
-    formatter = JSONFormatter()
-    output = formatter.format(record)
-    parsed = json.loads(output)
-
-    assert "reject" in parsed
-    assert parsed["reject"]["error_kind"] == "HTTPStatusError"
-    assert parsed["reject"]["status_code"] == 500
-
-
 def test_route_reject_meta_has_all_fields() -> None:
     """The meta string passed to the log record contains all required fields."""
     reject = _make_reject(
@@ -168,56 +140,6 @@ def test_route_reject_no_edge_no_status() -> None:
     assert level_arg == logging.ERROR
     msg = mock_logger.log.call_args[0][1]
     assert msg == "GateBlocked: SomeClass"
-
-
-def test_route_reject_url_traffic_error_passes_is_api_true() -> None:
-    """A URL-traffic reject (is_url_traffic_error=True) routes with is_api=True.
-
-    Proves that _route_reject_to_log forwards is_url_traffic_error to
-    _emit_payload as is_api=True, so the APIFilter routes the record to
-    api.log rather than error.log.
-    """
-    reject = _make_reject(
-        source="https://api.example.com/data",
-        error_kind="ReadTimeout",
-        message="timed out",
-        host="api.example.com",
-        is_url_traffic_error=True,
-    )
-    mock_logger = MagicMock(spec=logging.Logger)
-    mock_logger.isEnabledFor.return_value = True
-
-    with patch("logging.getLogger", return_value=mock_logger):
-        _route_reject_to_log("TestLogger", reject)
-
-    mock_logger.log.assert_called_once()
-    extra = mock_logger.log.call_args[1]["extra"]
-    assert extra["is_api"] is True
-
-
-def test_route_reject_format_error_passes_is_api_false() -> None:
-    """A parse/format reject (is_url_traffic_error=False) routes with is_api=False.
-
-    Proves that IncorporatorFormatError rejects, canal-layer skips, and other
-    non-URL-traffic failures are not forwarded to api.log — they stay in
-    error.log via the default is_api=False path.
-    """
-    reject = _make_reject(
-        source="https://api.example.com/malformed",
-        error_kind="IncorporatorFormatError",
-        message="JSON parse error",
-        host="api.example.com",
-        is_url_traffic_error=False,
-    )
-    mock_logger = MagicMock(spec=logging.Logger)
-    mock_logger.isEnabledFor.return_value = True
-
-    with patch("logging.getLogger", return_value=mock_logger):
-        _route_reject_to_log("TestLogger", reject)
-
-    mock_logger.log.assert_called_once()
-    extra = mock_logger.log.call_args[1]["extra"]
-    assert extra["is_api"] is False
 
 
 # ---------------------------------------------------------------------------
