@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-06-11
+
 ### Changed
 
 - **Namespace re-homing — pipeline and tideweaver lifted out of observability/**: the deep
@@ -17,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **unchanged**. No backward-compat shims are provided at the old paths (breaking change
   for any code importing from the deep `observability.pipeline` / `observability.tideweaver`
   paths directly).
+
+- **`pipeline/_outflow.py` renamed to `pipeline/outflow.py`**: the shared fjord-daemon /
+  Tideweaver `flush()` is now a public seam at `incorporator.pipeline.outflow`. No shim
+  remains at the old `_outflow` module name.
+
+- **HTTP retry constants re-homed to `incorporator/io/_retry_defaults.py`**: the `_HTTP_*`
+  retry-policy defaults moved down from the Tideweaver sub-package to the io layer (fixing
+  the io → tideweaver layering inversion); `tideweaver/_retry_defaults.py` keeps only the
+  canal-outer constants. Internal modules — no public-API change.
 
 ## [1.3.3] - 2026-06-10
 
