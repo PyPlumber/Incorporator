@@ -1271,11 +1271,13 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
 
         Args:
             enable_logging: When ``True``, mirrors every :class:`Wave`
-                to ``logs/<ClassName>_api.log`` (successful chunks) or
-                ``logs/<ClassName>_error.log`` (chunks with
-                ``failed_sources``), and routes fatal pipeline failures
-                to the error log with traceback before re-raising.
-                Off by default.
+                to ``logs/<ClassName>_error.log`` — successful chunks
+                at ``INFO``, chunks with ``failed_sources`` at ``ERROR``
+                (``debug.log`` receives the superset) — routes each
+                URL-traffic reject riding ``wave.rejects`` to
+                ``logs/<ClassName>_api.log``, and routes fatal pipeline
+                failures to the error log with traceback before
+                re-raising. Off by default.
 
         All other kwargs are forwarded unchanged to :meth:`Incorporator.stream`.
 
