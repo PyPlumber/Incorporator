@@ -366,3 +366,116 @@ async def test_watershed_events_not_emitted_when_logging_disabled(
 
     records = await LoggedTideweaver.get_scheduler_events(logger_name)
     assert records == [], f"expected [] when logging disabled; got {records}"
+
+
+# ---------------------------------------------------------------------------
+# Spillway overflow session-log routing
+# ---------------------------------------------------------------------------
+
+
+class _SpillwaySrc(Incorporator):
+    """Stand-in upstream source for spillway-overflow tests."""
+
+
+@pytest.mark.asyncio
+async def test_spillway_overflow_routes_to_session_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """A RaiseOverflow spillway overflow during a LoggedTideweaver session lands in error.log.
+
+    Builds a Reservoir(depth=1) + RaiseOverflow edge fed by a fast upstream and a
+    slow downstream so at least one wave is displaced, then asserts the overflow
+    is retrievable via LoggedTideweaver.get_scheduler_events(logger_name) with
+    event_type 'spillway_overflow' and the edge tuple recorded.
+    """
+    from incorporator.tideweaver import Edge, FlowControl, HardLock, RaiseOverflow, Reservoir
+
+    monkeypatch.chdir(tmp_path)
+
+    strong_refs: List[_SpillwaySrc] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _SpillwaySrc(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _SpillwaySrc._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = Stream(name="a", cls=_SpillwaySrc, interval=0.05, incorp_params={})
+    b = Stream(name="b", cls=_SpillwaySrc, interval=10.0, incorp_params={})
+    flow = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=1), spillway=RaiseOverflow())
+
+    logger_name = "TestSpillwaySession"
+    ws = Watershed(
+        window=_short_window(0.8),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+
+    tw = LoggedTideweaver(ws, tick_factory=fake, pass_interval=0.02, enable_logging=True, logger_name=logger_name)
+    async for _ in tw.run():
+        pass
+
+    _wait_flush()
+
+    if "_tideweaver_snapshot" in _SpillwaySrc.__dict__:
+        delattr(_SpillwaySrc, "_tideweaver_snapshot")
+
+    assert tw._edge_state[("a", "b")].overflow_count > 0, "test setup should force at least one overflow"
+
+    records = await LoggedTideweaver.get_scheduler_events(logger_name)
+    overflow_evts = [r["scheduler_event"] for r in records if r["scheduler_event"]["event_type"] == "spillway_overflow"]
+    assert overflow_evts, f"expected at least one spillway_overflow record; got {records}"
+    evt = overflow_evts[0]
+    assert evt["edge"] == ["a", "b"], f"edge mismatch: {evt}"
+    assert evt["current_name"] is None, f"spillway_overflow is edge-scoped, current_name should be None; got {evt}"
+    assert evt["session"] == logger_name, f"session mismatch: {evt['session']!r}"
+
+
+@pytest.mark.asyncio
+async def test_spillway_overflow_falls_back_to_module_logger_without_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A RaiseOverflow spillway overflow with no active session logger still warns via the module logger.
+
+    Pins the fallback path: when logger_name is None (plain Tideweaver, no
+    LoggedTideweaver session), the module-logger WARNING behavior from before
+    this change must still fire unchanged.
+    """
+    import logging
+
+    from incorporator.tideweaver import Edge, FlowControl, HardLock, RaiseOverflow, Reservoir, Tideweaver
+
+    monkeypatch.chdir(tmp_path)
+
+    strong_refs: List[_SpillwaySrc] = []
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _SpillwaySrc(inc_code=f"a-{len(strong_refs)}")
+            strong_refs.append(inst)
+            _SpillwaySrc._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+
+    a = Stream(name="a", cls=_SpillwaySrc, interval=0.05, incorp_params={})
+    b = Stream(name="b", cls=_SpillwaySrc, interval=10.0, incorp_params={})
+    flow = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=1), spillway=RaiseOverflow())
+
+    ws = Watershed(
+        window=_short_window(0.8),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=flow)],
+    )
+
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    with caplog.at_level(logging.WARNING, logger="incorporator.tideweaver.flow"):
+        async for _ in tw.run():
+            pass
+
+    if "_tideweaver_snapshot" in _SpillwaySrc.__dict__:
+        delattr(_SpillwaySrc, "_tideweaver_snapshot")
+
+    overflow_logs = [r for r in caplog.records if "spillway overflow" in r.message]
+    assert overflow_logs, "RaiseOverflow must fall back to the module logger when no session logger is active"

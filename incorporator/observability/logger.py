@@ -265,7 +265,7 @@ def _route_scheduler_event_to_log(
     Level mapping:
 
     - ``"isolated_tick_failure"`` / ``"empty_output"`` / ``"empty_parent_snapshot"``
-      → ``WARNING``
+      / ``"spillway_overflow"`` → ``WARNING``
     - ``"tick_parked"`` / ``"fjord_flush_failure"`` → ``ERROR``
     - ``"watershed_started"`` / ``"watershed_completed"`` → ``WARNING``
 

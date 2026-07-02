@@ -264,7 +264,8 @@ class LoggedTideweaver(Tideweaver):
         The event types that produce records here are:
         ``isolated_tick_failure``, ``tick_parked``, ``empty_output``,
         ``empty_parent_snapshot``, ``fjord_flush_failure``,
-        ``watershed_started``, and ``watershed_completed``.
+        ``spillway_overflow``, ``watershed_started``, and
+        ``watershed_completed``.
 
         Records are sorted ascending by ``tide_number`` (``None`` → ``0``),
         then by ``event_type``, then by ``current_name`` for deterministic

@@ -919,7 +919,12 @@ class Tideweaver:
                     while len(edge_state.waves) > edge_flow.reservoir.depth:
                         displaced = edge_state.waves.popleft()
                         edge_state.overflow_count += 1
-                        edge_flow.spillway.overflow(edge_key, displaced, edge_state.overflow_count)
+                        edge_flow.spillway.overflow(
+                            edge_key,
+                            displaced,
+                            edge_state.overflow_count,
+                            logger_name=self.logger_name if isinstance(self.logger_name, str) else None,
+                        )
                         # Observer hook — one call per displaced wave so a
                         # MetricsObserver subclass can count spillway events
                         # without monkey-patching the spillway itself.

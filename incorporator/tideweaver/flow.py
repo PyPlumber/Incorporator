@@ -259,8 +259,22 @@ class Spillway(BaseModel):
         edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
+        *,
+        logger_name: str | None = None,
     ) -> None:
-        """Handle one displaced wave.  Default subclass is a no-op."""
+        """Handle one displaced wave.  Default subclass is a no-op.
+
+        Args:
+            edge: ``(from_name, to_name)`` edge the overflow occurred on.
+            displaced_wave: The wave content pushed out of the reservoir.
+            overflow_count: Running overflow count for this edge.
+            logger_name: When a session logger name is active (a
+                :class:`~incorporator.tideweaver.logged.LoggedTideweaver`
+                run with ``enable_logging=True``), subclasses that log route
+                through the session's structured error log instead of the
+                bare module logger.  ``None`` means no session logger is
+                active.
+        """
         return None
 
 
@@ -274,12 +288,22 @@ class DropOldest(Spillway):
         edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
+        *,
+        logger_name: str | None = None,
     ) -> None:
         return None
 
 
 class RaiseOverflow(Spillway):
-    """Log every overflow at WARNING level (never raises)."""
+    """Log every overflow at WARNING level (never raises).
+
+    Routes through the session's structured error log when *logger_name*
+    is supplied (i.e. a :class:`~incorporator.tideweaver.logged.LoggedTideweaver`
+    run with ``enable_logging=True``), so the overflow is retrievable via
+    :meth:`~incorporator.tideweaver.logged.LoggedTideweaver.get_scheduler_events`.
+    Falls back to the bare module ``logger.warning`` call when no session
+    logger is active (e.g. plain :class:`~incorporator.tideweaver.scheduler.Tideweaver`).
+    """
 
     type: Literal["raise_overflow"] = "raise_overflow"
 
@@ -288,7 +312,25 @@ class RaiseOverflow(Spillway):
         edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
+        *,
+        logger_name: str | None = None,
     ) -> None:
+        detail = f"Tideweaver: spillway overflow on edge {edge[0]} → {edge[1]} (count={overflow_count})"
+        if logger_name is not None:
+            # Deferred import — mirrors the observability/logger.py -> tideweaver/tide.py
+            # precedent (see _route_to_log's own deferred import) to avoid pulling
+            # tideweaver/__init__.py's eager import chain into flow.py at module load.
+            from ..observability.logger import _route_scheduler_event_to_log  # noqa: PLC0415
+
+            _route_scheduler_event_to_log(
+                logger_name,
+                "spillway_overflow",
+                None,
+                detail,
+                edge=edge,
+                tide_number=None,
+            )
+            return None
         logger.warning(
             "Tideweaver: spillway overflow on edge %s → %s (count=%d)",
             edge[0],
@@ -312,6 +354,8 @@ class ExportToArchive(Spillway):
         edge: tuple[str, str],
         displaced_wave: object,
         overflow_count: int,
+        *,
+        logger_name: str | None = None,
     ) -> None:
         if not isinstance(displaced_wave, list):
             return None
