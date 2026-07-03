@@ -247,6 +247,26 @@ def test_declarative_post_routing() -> None:
         )
 
 
+def test_declarative_each_with_no_urls_raises_missing_target_url() -> None:
+    """D7-02: each() with source_urls=[] must raise, not silently passthrough.
+
+    Before the fix, only ``len(source_urls) == 1`` triggered URL-multiplication;
+    ``len(source_urls) == 0`` fell through with ``payload_list`` set and no
+    ``inc_url``, degrading into the ""-placeholder path downstream and producing
+    cryptic "Security Policy Violation" rejects instead of an actionable error.
+    Mirrors the bulk (non-iterative) branch's existing guard verbatim so both
+    produce one recognizable error family.
+    """
+    with pytest.raises(ValueError, match="Missing Target URL"):
+        router.resolve_declarative_routing(
+            "Test",
+            extracted_data=[101, 102],
+            source_urls=[],
+            http_method="POST",
+            json_payload={"id": each(), "static": "token"},
+        )
+
+
 # ==========================================
 # Predicate exports (used by the DX Inspector)
 # ==========================================

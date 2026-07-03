@@ -496,7 +496,18 @@ class Incorporator(BaseModel):
                 ``payload_list`` (per-request POST bodies for bulk
                 dispatch — must be ``None`` or match ``len(inc_url)``
                 exactly; a length mismatch raises ``ValueError`` rather
-                than silently truncating), ``payload_type`` (``"json"`` or ``"form"``),
+                than silently truncating), ``payload_type`` (``"json"`` or ``"form"``).
+                **Payload-only passthrough:** when ``source`` is omitted
+                entirely (no ``inc_url`` / ``inc_file``), each
+                ``payload_list`` entry IS the source data — it flows
+                straight through the normal parse / ``conv_dict`` /
+                ``build_instances`` pipeline with **no network call, no
+                HTTP client, no SSRF check, and no rate limiting**;
+                ``http_method`` / ``payload_type`` are read but inert in
+                this mode. The declarative ``each()`` router (via
+                ``inc_parent``) requires a real target URL and raises
+                ``ValueError`` if none is available — direct payload-only
+                ``incorp(payload_list=[...])`` is unaffected by that guard.
                 ``call_lim`` (cap pagination at N pages), ``sql_query``
                 (custom SELECT for SQLite sources), ``archive_target``
                 (file inside a ZIP/TAR to extract), ``concurrency_limit``

@@ -1945,3 +1945,179 @@ async def test_no_params_control_url_is_byte_identical(
         await execute_request(url=input_url, client=client, params=None)
 
     assert seen_url == [input_url]
+
+
+# ----------------------------------------------------------------------
+# D1-04 — payload-only passthrough dispatch (source=None + payload_list=[...])
+#
+# incorp(payload_list=[N dicts]) with no inc_url/inc_file is documented
+# ("the payload-driven flow doesn't need real source URLs" —
+# _normalize_source_list docstring) but was broken end-to-end: the ""
+# placeholder sources were fed into the normal HTTP path where
+# _validate_url rejected them.  The fix routes placeholder sources to a
+# payload-as-data passthrough branch in _process_single_source, entirely
+# bypassing bound_fetch / resolve_source_payload / execute_request /
+# _validate_url / rate_limiter.acquire().
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_payload_only_happy_path_zero_network_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """(a) payload-only dispatch returns N instances, conv_dict applied, zero rejects, zero network calls.
+
+    Asserts via a spy on execute_request that the network layer is never
+    invoked — the payloads flow straight through parse -> conv_dict ->
+    build_instances with no HTTP dispatch at all.
+    """
+    from incorporator import Incorporator, inc
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    network_calls = {"count": 0}
+
+    async def spy_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        network_calls["count"] += 1
+        return httpx.Response(200, content=b"{}", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch, "execute_request", spy_execute_request)
+
+    class _Widget(Incorporator):
+        widget_id: int = 0
+        price: float = 0.0
+
+    payload_list = [
+        {"widget_id": "1", "price": "9.99"},
+        {"widget_id": "2", "price": "19.99"},
+        {"widget_id": "3", "price": "29.99"},
+    ]
+
+    result = await _Widget.incorp(
+        payload_list=payload_list,
+        inc_code="widget_id",
+        conv_dict={"widget_id": inc(int), "price": inc(float)},
+    )
+
+    assert len(result) == 3
+    assert result.rejects == []
+    assert network_calls["count"] == 0
+    assert isinstance(result.inc_dict[1].widget_id, int)
+    assert isinstance(result.inc_dict[1].price, float)
+    assert result.inc_dict[2].price == pytest.approx(19.99)
+
+
+@pytest.mark.asyncio
+async def test_payload_only_malformed_payload_reject_routes_to_error_log_not_api_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """(b) A malformed payload produces a clean parse reject with is_url_traffic_error=False.
+
+    Format-parse failures under payload-only passthrough must classify as
+    NOT url-traffic (-> error.log), never api.log — matching the existing
+    IncorporatorFormatError contract at _build_reject_entry.  Simulates a
+    malformed payload by making the format handler raise
+    IncorporatorFormatError via an unsupported format_type combined with a
+    non-dict/list payload shape (a bare string), which the handler
+    dispatch cannot parse.
+    """
+    from incorporator import Incorporator
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    network_calls = {"count": 0}
+
+    async def spy_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        network_calls["count"] += 1
+        return httpx.Response(200, content=b"{}", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch, "execute_request", spy_execute_request)
+
+    class _Bad(Incorporator):
+        pass
+
+    # "not-json-and-not-a-real-format" as a raw string payload with format_type=JSON
+    # forces the JSONHandler to raise, which parse_source_data recasts as
+    # IncorporatorFormatError.
+    result = await _Bad.incorp(payload_list=["{ malformed json"])
+
+    assert network_calls["count"] == 0
+    assert len(result.rejects) == 1
+    reject = result.rejects[0]
+    assert reject.is_url_traffic_error is False
+    assert reject.error_kind == "IncorporatorFormatError"
+    # The reject must not appear disguised as URL traffic (api.log gate).
+    assert reject.source not in ("https://",)  # placeholder source stays "" or similar, never a real URL
+
+
+@pytest.mark.asyncio
+async def test_payload_only_no_penstock_or_throttle_entries_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(e) Passthrough mode never resolves a penstock nor creates a throttle_for_source[''] entry.
+
+    Regression guard for the per-host penstock-resolution loop in
+    fetch_concurrent_payloads: placeholder ("") sources must be excluded
+    from the by_host construction so resolve_penstock("") is never called
+    and no orphaned throttle_for_source[""] entry (nor an empty-host line
+    in the "Per-host penstocks applied" INFO log) is created.
+    """
+    from incorporator.io import fetch
+    from incorporator.io.fetch import _normalize_source_list
+
+    resolve_calls: list[Any] = []
+    real_resolve_penstock = fetch.resolve_penstock
+
+    def spy_resolve_penstock(*args: Any, **kwargs: Any) -> Any:
+        resolve_calls.append(args[0] if args else kwargs.get("source"))
+        return real_resolve_penstock(*args, **kwargs)
+
+    monkeypatch.setattr(fetch, "resolve_penstock", spy_resolve_penstock)
+
+    async def fake_process_single(
+        src: str, is_file_mode: bool, client: Any, rate_limiter: Any, **_kw: Any
+    ) -> list:
+        # Passthrough rows must never receive a resolved BoundPenstock.
+        assert rate_limiter is None
+        return [{"payload": _kw.get("dynamic_payload")}]
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    payload_list = [{"id": 1}, {"id": 2}, {"id": 3}]
+    source_list = _normalize_source_list(None, payload_list)
+
+    parsed, rejects = await fetch.fetch_concurrent_payloads(
+        source_list=source_list,
+        payload_list=payload_list,
+        is_file_mode=False,
+        limit=3,
+    )
+
+    assert rejects == []
+    assert len(parsed) == 3
+    # resolve_penstock must never be called with the "" placeholder.
+    assert "" not in resolve_calls
+
+
+@pytest.mark.asyncio
+async def test_real_invalid_url_validate_url_behavior_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(d) SSRF regression: a genuinely malformed real URL still raises identically.
+
+    Proves the passthrough fix routes placeholder ("") sources AROUND
+    _validate_url without touching _validate_url itself or its call site
+    for real (non-empty) source strings.  A non-http(s) scheme must still
+    raise IncorporatorNetworkError with the identical message.
+    """
+    from incorporator.exceptions import IncorporatorNetworkError
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(IncorporatorNetworkError, match="Security Policy Violation: Unsupported scheme 'ftp'"):
+            await execute_request(url="ftp://bad.example.com/resource", client=client)

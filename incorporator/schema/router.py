@@ -103,6 +103,17 @@ def resolve_declarative_routing(
 
                 if len(source_urls) == 1:
                     kwargs["inc_url"] = source_urls * len(extracted_data)
+                else:
+                    # 0 URLs (no inc_url, no parent-extracted URL) or >1 (ambiguous,
+                    # out of scope) both degrade into the ""-placeholder passthrough
+                    # path otherwise — an HTTP each() dispatch inherently needs one
+                    # real target URL per request.  Mirrors the bulk branch's guard
+                    # below verbatim so both produce one recognizable error family.
+                    raise ValueError(
+                        f"[{caller_name}] Missing Target URL. "
+                        f"You must explicitly provide `inc_url='...'` when executing a POST request "
+                        f"via `inc_parent` and declarative tokens."
+                    )
             else:
                 built_payload = {k: v(extracted_data) if callable(v) else v for k, v in target_payload.items()}
 

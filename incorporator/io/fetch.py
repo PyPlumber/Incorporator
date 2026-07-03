@@ -731,7 +731,19 @@ async def _process_single_source(
             accumulated.append(parsed_chunk)
 
     # 3. Execution Routing
-    if is_file_mode:
+    #
+    # Payload-as-data passthrough: ``dynamic_payload`` is not None and
+    # ``source_val`` is the empty-string placeholder that
+    # ``SourceRef.from_payload(...).as_str()`` emits for payload-only
+    # dispatch (source=None + payload_list=[...]).  Route the payload
+    # straight through the same parse pipeline real fetched bodies use —
+    # no network, no client, no SSRF check, no penstock acquire.
+    # ``http_method`` / ``payload_type`` were already popped above; they
+    # are read but never reach an HTTP call in this branch.
+    is_passthrough = not is_file_mode and inc_page is None and dynamic_payload is not None and not source_val
+    if is_passthrough and dynamic_payload is not None:
+        await _process_payload(dynamic_payload)
+    elif is_file_mode:
         chunk_cls = _CURRENT_CHUNK_CLASS.get()
         if chunk_cls is not None:
             try:
@@ -915,9 +927,15 @@ async def fetch_concurrent_payloads(
         for src in source_list:
             throttle_for_source[src] = shared
     else:
-        # Per-host resolution: one penstock per distinct host.
+        # Per-host resolution: one penstock per distinct host.  Empty-string
+        # placeholder sources (payload-only passthrough rows — see
+        # SourceRef.as_str()) are skipped entirely: they never reach
+        # execute_request/rate_limiter.acquire(), so resolving a penstock for
+        # them would only register a spurious empty-host entry.
         by_host: dict[str, BoundPenstock] = {}
         for src in source_list:
+            if not src:
+                continue
             host = urlparse(src).hostname or "" if isinstance(src, str) else ""
             if host not in by_host:
                 by_host[host] = resolve_penstock(src)
@@ -943,8 +961,11 @@ async def fetch_concurrent_payloads(
     async def _safe_execute(src: str, payload: Any) -> list[Any]:
         start = time.perf_counter()
         try:
+            # ``.get()`` (not ``[]``): empty-string placeholder sources (payload-only
+            # passthrough) are deliberately absent from throttle_for_source — they
+            # never reach the HTTP path that would call rate_limiter.acquire().
             return await _process_single_source(
-                src, is_file_mode, _client, throttle_for_source[src], dynamic_payload=payload, **dict(kwargs)
+                src, is_file_mode, _client, throttle_for_source.get(src), dynamic_payload=payload, **dict(kwargs)
             )
         except httpx.HTTPStatusError as e:
             duration = time.perf_counter() - start
