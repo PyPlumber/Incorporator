@@ -744,7 +744,7 @@ In addition to `tide_number`, `fired`, `skipped`, `duration_sec`, and
 | `wake_reason` | `Literal["startup", "timer", "wake_event", "pass_interval", "shutdown"]` | Why the scheduler woke for this pass |
 | `heap_depth` | `int` | Pending tick count on the heap at pass start |
 | `in_flight_count_at_start` | `int` | Tick functions still running when the pass began |
-| `current_outcomes` | `list[CurrentOutcome]` | Per-current outcome (`name`, `status`, `reason`, `bypassed_edges`, `in_flight_sec`, `last_wave_at`, `parent_snapshot_size`) |
+| `current_outcomes` | `list[CurrentOutcome]` | Per-current outcome (`name`, `status`, `reason`, `bypassed_edges`, `in_flight_sec`, `last_wave_at`, `last_failed_at`, `parent_snapshot_size`) |
 | `canal_rejects_added` | `int` | New `RejectEntry` records this pass appended to `tw.rejects` |
 | `next_due_in_sec` | `float \| None` | Seconds until the next scheduled tick (negative means the scheduler is behind) |
 
@@ -837,7 +837,7 @@ return a list of dicts.
 | :--- | :--- | :--- | :--- |
 | `get_tides(logger_name)` | `<name>_tide.log` | `"tide"` | Sorted by `tide_number` ascending |
 | `get_rejects(logger_name)` | `<name>_error.log` + `<name>_api.log` | `"reject"` | Union of both files — covers both URL-traffic and codebase rejects |
-| `get_scheduler_events(logger_name)` | `<name>_error.log` | `"scheduler_event"` | Sorted by `tide_number`, `event_type`, `current_name` |
+| `get_scheduler_events(logger_name)` | `<name>_error.log` | `"scheduler_event"` | Sorted by `tide_number`, `event_type`, `current_name`; after a failure, dependents show `awaiting_upstream` skips (DEBUG `tide` records, not scheduler events) while the failure itself stays here |
 | `get_current(logger_name, code)` | `<name>_debug.log` | any | Filtered to records whose `meta` contains `code`; reads debug superset to avoid double-counting |
 
 ```python

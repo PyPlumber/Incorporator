@@ -267,6 +267,12 @@ class LoggedTideweaver(Tideweaver):
         ``spillway_overflow``, ``watershed_started``, and
         ``watershed_completed``.
 
+        After an upstream ``isolated_tick_failure`` / ``tick_parked``, hard-
+        gated dependents show ``awaiting_upstream`` skips each pass until the
+        upstream recovers — those skips are DEBUG-level ``tide`` records, not
+        scheduler events, so they won't appear here; the failure itself is
+        what stays visible via this method (backed by ``error.log``).
+
         Records are sorted ascending by ``tide_number`` (``None`` → ``0``),
         then by ``event_type``, then by ``current_name`` for deterministic
         ordering when multiple events share a tide number.

@@ -36,6 +36,9 @@ class CurrentOutcome:
             the monotonic start timestamp is recorded.
         last_wave_at: UTC timestamp of the most recent wave emitted by
             this current.  ``None`` if the current has never fired.
+        last_failed_at: UTC timestamp of the most recent FAILED tick
+            (isolated exception, restart exhaustion, or drain
+            cancellation).  ``None`` if the current has never failed.
         parent_snapshot_size: Upstream snapshot row count consumed by
             a parent-child tick (Stream with ``parent_current`` set or
             Fjord with ``parent_currents`` populated).  ``None`` for
@@ -54,6 +57,7 @@ class CurrentOutcome:
     bypassed_edges: tuple[str, ...] = ()
     in_flight_sec: float | None = None
     last_wave_at: datetime | None = None
+    last_failed_at: datetime | None = None
     parent_snapshot_size: int | None = None
 
     def __str__(self) -> str:

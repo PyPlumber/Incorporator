@@ -158,6 +158,7 @@ def test_tide_model_dump_json_serializes_current_outcomes() -> None:
         "bypassed_edges": ["up"],
         "in_flight_sec": None,
         "last_wave_at": None,
+        "last_failed_at": None,
         "parent_snapshot_size": None,
     }
     # session field must be present with its default None when no session is active.
@@ -245,6 +246,7 @@ def test_tide_dataclass_asdict_round_trip() -> None:
         "bypassed_edges": (),
         "in_flight_sec": None,
         "last_wave_at": ts,
+        "last_failed_at": None,
         "parent_snapshot_size": None,
     }
 

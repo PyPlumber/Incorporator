@@ -2733,9 +2733,7 @@ def test_json_unknown_class_raises(tmp_path: Path) -> None:
         load_watershed(cfg)
 
 
-def test_json_relative_inc_file_resolves_to_config_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_json_relative_inc_file_resolves_to_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A relative ``inc_file`` in watershed.json is resolved against the config dir, not CWD.
 
     Proves that loading a watershed.json from a different working directory still
@@ -2754,8 +2752,7 @@ def test_json_relative_inc_file_resolves_to_config_dir(
 
     # Write a minimal outflow sidecar so class resolution succeeds.
     (config_dir / "outflow.py").write_text(
-        "from incorporator import Incorporator\n"
-        "class MySource(Incorporator):\n    pass\n",
+        "from incorporator import Incorporator\nclass MySource(Incorporator):\n    pass\n",
         encoding="utf-8",
     )
 
@@ -2786,9 +2783,7 @@ def test_json_relative_inc_file_resolves_to_config_dir(
 
     expected = str((config_dir / "fixture.json").resolve())
     assert resolved_inc_file == expected, (
-        f"inc_file should resolve to config dir, not CWD.\n"
-        f"  got:      {resolved_inc_file!r}\n"
-        f"  expected: {expected!r}"
+        f"inc_file should resolve to config dir, not CWD.\n  got:      {resolved_inc_file!r}\n  expected: {expected!r}"
     )
     # Also confirm CWD-relative would have been wrong.
     cwd_relative = str((tmp_path / "fixture.json").resolve())
@@ -3514,3 +3509,157 @@ async def test_tide_new_scalar_fields_populated() -> None:
         assert isinstance(tide.in_flight_count_at_start, int)
         assert isinstance(tide.canal_rejects_added, int)
         assert tide.canal_rejects_added >= 0
+
+
+# ---------------------------------------------------------------------------
+# D5-01: failed/cancelled ticks must not advertise a wave (finally-block gate)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_failed_isolated_tick_does_not_advertise_wave_hard_chain() -> None:
+    """A(on_error='isolate', succeeds once then always raises) -> B(HardLock): B fires exactly once.
+
+    B's edge reservoir must not grow after A starts failing (no repeated
+    stale-snapshot append), and A's BurstPenstock must not be debited for
+    failed ticks.
+    """
+    from incorporator.tideweaver import BurstPenstock, HardLock
+
+    strong_refs: List[_A] = []
+    a_ticks = {"count": 0}
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            a_ticks["count"] += 1
+            if a_ticks["count"] == 1:
+                inst = _A(inc_code="a-1")
+                strong_refs.append(inst)
+                _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+            else:
+                raise RuntimeError("a is down")
+        # "b" tick body is a no-op fire counter handled outside.
+
+    a = Stream(name="a", cls=_A, interval=0.05, incorp_params={}, on_error="isolate")
+    b = Stream(name="b", cls=_B, interval=0.05, incorp_params={})
+    edge_flow = FlowControl(gate=HardLock(), penstock=BurstPenstock(rate_per_sec=100.0, burst=5))
+    ws = Watershed(
+        window=_short_window(0.6),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=edge_flow)],
+    )
+    b_fires: List[str] = []
+
+    async def dispatch(current: Current) -> None:
+        if current.name == "b":
+            b_fires.append(current.name)
+            return
+        await fake(current)
+
+    tw = Tideweaver(ws, tick_factory=dispatch, pass_interval=0.03)
+    await _collect_tides(tw)
+
+    assert a_ticks["count"] > 1, "A must have ticked more than once (including failures)"
+    assert len(b_fires) == 1, f"B (HardLock) must fire exactly once on A's single success; got {len(b_fires)}"
+
+    edge_state = tw._edge_state[("a", "b")]
+    assert len(edge_state.waves) == 1, f"reservoir must hold exactly A's one genuine wave; got {len(edge_state.waves)}"
+    assert edge_state.overflow_count == 0, "no stale re-appends means no overflow"
+
+    # BurstPenstock must not be debited by any of A's failed ticks: only the
+    # single successful tick may consume a token (bucket starts at burst=5).
+    assert edge_state.flow_state.bucket_tokens is not None
+    assert edge_state.flow_state.bucket_tokens >= 4.0, (
+        f"failed ticks must not debit the penstock; got bucket_tokens={edge_state.flow_state.bucket_tokens}"
+    )
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_diamond_tail_consumes_only_healthy_upstream_waves() -> None:
+    """Diamond with one failing + one healthy middle: tail's edge reservoirs only ever hold fresh healthy waves."""
+    from incorporator.tideweaver import HardLock
+
+    healthy_refs: List[_B] = []
+    failing_ticks = {"count": 0}
+
+    async def dispatch(current: Current) -> None:
+        if current.name == "head":
+            return
+        if current.name == "failing":
+            failing_ticks["count"] += 1
+            if failing_ticks["count"] == 1:
+                inst = _C(inc_code="failing-1")
+                _C._tideweaver_snapshot = [inst]  # type: ignore[attr-defined]
+            else:
+                raise RuntimeError("failing is down")
+            return
+        if current.name == "healthy":
+            inst = _B(inc_code=f"healthy-{len(healthy_refs)}")
+            healthy_refs.append(inst)
+            _B._tideweaver_snapshot = list(healthy_refs)  # type: ignore[attr-defined]
+            return
+        # tail: no-op.
+
+    head = Stream(name="head", cls=_A, interval=0.05, incorp_params={})
+    failing = Stream(name="failing", cls=_C, interval=0.05, incorp_params={}, on_error="isolate")
+    healthy = Stream(name="healthy", cls=_B, interval=0.05, incorp_params={})
+    tail = Stream(name="tail", cls=_D, interval=0.05, incorp_params={})
+    ws = Watershed.diamond(
+        window=_short_window(0.6),
+        head=head,
+        middle=[failing, healthy],
+        tail=tail,
+        gate_mode="hard",
+    )
+    tw = Tideweaver(ws, tick_factory=dispatch, pass_interval=0.03)
+    await _collect_tides(tw)
+
+    assert failing_ticks["count"] > 1, "failing current must have ticked more than once"
+
+    failing_edge = tw._edge_state[("failing", "tail")]
+    healthy_edge = tw._edge_state[("healthy", "tail")]
+
+    assert len(failing_edge.waves) == 1, (
+        f"failing edge reservoir must hold only its one genuine wave; got {len(failing_edge.waves)}"
+    )
+    assert failing_edge.overflow_count == 0, "failed ticks must never displace a wave into overflow"
+    assert len(healthy_edge.waves) >= 1, "healthy edge must have delivered at least one fresh wave"
+
+    if "_tideweaver_snapshot" in _C.__dict__:
+        delattr(_C, "_tideweaver_snapshot")
+    if "_tideweaver_snapshot" in _B.__dict__:
+        delattr(_B, "_tideweaver_snapshot")
+
+
+@pytest.mark.asyncio
+async def test_drain_cancel_sets_failed_flag_and_advertises_no_wave() -> None:
+    """A tick cancelled mid-flight during drain sets the failed flag, propagates CancelledError, and advertises no wave."""
+    started = asyncio.Event()
+    cancelled = False
+
+    async def runaway(current: Current) -> None:
+        nonlocal cancelled
+        started.set()
+        try:
+            await asyncio.sleep(5.0)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+
+    a = _stream("a", interval=0.1)
+    ws = Watershed.parallel(
+        window=_short_window(0.2),
+        currents=[a],
+        drain_timeout=0.2,
+    )
+    tw = Tideweaver(ws, tick_factory=runaway, pass_interval=0.05)
+    await _collect_tides(tw)
+
+    assert started.is_set()
+    assert cancelled is True
+    state = tw._state["a"]
+    assert state.last_wave_at is None, "a cancelled tick must never set last_wave_at"
+    assert state.last_failed_at is not None, "a cancelled tick must set last_failed_at"

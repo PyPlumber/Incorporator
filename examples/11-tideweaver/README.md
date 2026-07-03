@@ -445,7 +445,10 @@ Each `Current` carries an `on_error` policy:
 
 For an arb scanner, `"isolate"` is usually right: one exchange going down shouldn't
 crash the whole orchestrator; the tail Fjord just emits a best-market record from
-whichever exchanges are still up.
+whichever exchanges are still up. A failed tick never advertises a wave — hard-
+gated dependents keep gating with `awaiting_upstream` until the isolated current
+produces a successful tick again, so a downstream never fires on stale, re-stamped
+data from before the failure began.
 
 ---
 

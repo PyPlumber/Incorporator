@@ -128,6 +128,13 @@ class _CurrentState(BaseModel):
     last_wave_at: datetime | None = None
     """UTC time the current's most recent tick finished, or None."""
 
+    last_failed_at: datetime | None = None
+    """UTC time the current's most recent FAILED tick finished, or None.
+
+    Set instead of (not alongside) ``last_wave_at`` in ``_tick_wrapper``'s
+    ``finally`` block — a failed tick advertises no wave, so the two fields
+    are mutually exclusive per tick."""
+
     started_at: float | None = None
     """Monotonic time of the CURRENTLY in-flight tick.  Cleared when the
     tick completes — distinguishes "running now" from "ran before"."""
@@ -520,6 +527,7 @@ class Tideweaver:
                         status="still_running",
                         in_flight_sec=(time.monotonic() - state.started_at) if state.started_at is not None else None,
                         last_wave_at=state.last_wave_at,
+                        last_failed_at=state.last_failed_at,
                     )
                 )
                 continue
@@ -533,6 +541,7 @@ class Tideweaver:
                         reason=reason,
                         bypassed_edges=tuple(bypassed),
                         last_wave_at=state.last_wave_at,
+                        last_failed_at=state.last_failed_at,
                     )
                 )
                 continue
@@ -544,6 +553,7 @@ class Tideweaver:
                     status="fired",
                     bypassed_edges=tuple(bypassed),
                     last_wave_at=state.last_wave_at,
+                    last_failed_at=state.last_failed_at,
                 )
             )
             # Schedule the adaptive wake for this current's next interval.
@@ -807,6 +817,16 @@ class Tideweaver:
                     _tick_raised = True
             else:  # fail_watershed
                 await self._invoke_tick(current)
+        except asyncio.CancelledError:
+            # Drain-timeout cancellation (see ``_drain``): mark the tick as
+            # failed so the ``finally`` block below skips wave advertisement,
+            # then re-raise immediately.  ``CancelledError`` subclasses
+            # ``BaseException`` (not ``Exception``), so it would already
+            # bypass the broad ``except (Exception, RetryError)`` clause
+            # below — this clause exists purely to set the flag, never to
+            # swallow the cancellation.
+            _tick_raised = True
+            raise
         except (Exception, RetryError) as e:
             attempt_number = retrying.statistics.get("attempt_number", 1) if retrying is not None else 1
             try:
@@ -828,47 +848,75 @@ class Tideweaver:
             else:
                 logger.error("Tideweaver: tick failed for %s after retries; current parked.", current.name)
         finally:
-            # Record the wave timestamp + bump consumed for hard upstreams.
-            wave_at = datetime.now(timezone.utc)
+            # This block is partitioned into an ALWAYS-run half and a
+            # success-only half gated on ``not _tick_raised``.  A failed
+            # (isolated-exception, restart-exhaustion, or drain-cancelled)
+            # tick must not advertise a wave: no stale snapshot may reach a
+            # downstream reservoir, no penstock token may be debited, and no
+            # dependent may be woken to consume data that was never
+            # refreshed.
+            #
+            # ALWAYS run, regardless of success/failure:
+            #   * ``state.started_at = None`` — clearing this is what lets
+            #     the current tick again; skipping it on failure would wedge
+            #     the current in ``STILL_RUNNING`` forever.
+            #   * ``edge_state.eligibility_start_perf = None`` — resets the
+            #     per-edge eligibility-window timer so the next firing
+            #     window (success or not) starts fresh.
+            #   * The snapshot read that feeds the (already ``not
+            #     _tick_raised``-gated) ``CustomCurrent`` empty-output
+            #     warning — reading it is harmless; the warning itself
+            #     already excludes failed ticks.
+            #
+            # Gated on ``not _tick_raised`` (success-only wave advertisement):
+            #   1. ``state.last_wave_at`` — set only on success; ``state.
+            #      last_failed_at`` is set instead on failure (mutually
+            #      exclusive per tick).
+            #   2. Both ``_last_consumed`` writes (pre-tick snapshot value
+            #      and post-tick ``latest`` overwrite).
+            #   3. ``edge_state.flow_state.last_consumed_at`` — its own
+            #      docstring specifies "on every SUCCESSFUL consumption."
+            #   4. ``Penstock.post_consume`` — a failed tick must not debit
+            #      rate-limit tokens (skipped on bypassed edges too, per the
+            #      pre-existing bypass contract).
+            #   5. ``FlowObserver.on_fire``.
+            #   6. The reservoir wave-snapshot append + spillway overflow +
+            #      ``on_spillway``/``on_reservoir_level`` observer hooks —
+            #      the core of the fix: a failed tick's stale
+            #      ``_tideweaver_snapshot`` must never reach a downstream
+            #      reservoir.
+            #   7. ``self._wake_event.set()`` — no new wave means no reason
+            #      to wake a hard-gated dependent early.
+            now_utc = datetime.now(timezone.utc)
             state = self._state[current.name]
-            state.last_wave_at = wave_at
+            if _tick_raised:
+                state.last_failed_at = now_utc
+            else:
+                state.last_wave_at = now_utc
             now_mono = time.monotonic()
 
-            # Single pass over upstream edges — does four jobs that all key
-            # on the canonical ``(from_name, to_name)`` = ``(up_name, current.name)``
-            # edge tuple (matches ``_edge_state`` initialisation at line 177
-            # and the read site in ``_gate_reason``).
-            #
-            # 1. Bump ``_last_consumed`` to the pre-tick snapshot value (so
-            #    the next gate cycle knows this edge's consumption watermark)
-            #    AND to the post-tick ``last_wave_at`` if upstream emitted
-            #    during this tick.  The post-tick read wins on overlap.
-            # 2. Update ``edge_state.flow_state.last_consumed_at`` (monotonic
-            #    watermark read by SustainedPenstock / BackpressurePenstock).
-            # 3. Fire ``Penstock.post_consume`` so BurstPenstock debits its
-            #    token and WindowPenstock appends to its log — skipped on
-            #    bypassed edges per the bypass contract.
-            # 4. Fire ``FlowObserver.on_fire`` for every non-bypassed edge
-            #    that contributed to this tick.
             for up_name, edge_flow in self._upstream[current.name]:
                 edge_key = (up_name, current.name)
-                snapshot_value = consumed_snapshot.get(up_name)
-                if snapshot_value is not None:
-                    self._last_consumed[edge_key] = snapshot_value
-                latest = self._state[up_name].last_wave_at
-                if latest is not None:
-                    self._last_consumed[edge_key] = latest
-
                 edge_state = self._edge_state.get(edge_key)
                 bypassed = up_name in bypassed_upstreams
+                if not _tick_raised:
+                    snapshot_value = consumed_snapshot.get(up_name)
+                    if snapshot_value is not None:
+                        self._last_consumed[edge_key] = snapshot_value
+                    latest = self._state[up_name].last_wave_at
+                    if latest is not None:
+                        self._last_consumed[edge_key] = latest
+
+                    if edge_state is not None:
+                        edge_state.flow_state.last_consumed_at = now_mono
+                        if edge_flow.penstock is not None and not bypassed:
+                            edge_flow.penstock.post_consume(edge_state, now_mono)
+                    if not bypassed:
+                        edge_flow.observer.on_fire(self, edge_key, self._tide_number)
                 if edge_state is not None:
-                    edge_state.flow_state.last_consumed_at = now_mono
-                    if edge_flow.penstock is not None and not bypassed:
-                        edge_flow.penstock.post_consume(edge_state, now_mono)
-                    # Reset eligibility timer so the next firing window starts fresh.
+                    # Reset eligibility timer so the next firing window starts fresh —
+                    # runs regardless of success/failure.
                     edge_state.eligibility_start_perf = None
-                if not bypassed:
-                    edge_flow.observer.on_fire(self, edge_key, self._tide_number)
             state.started_at = None
             # Push this tick's wave content into every outgoing edge's
             # reservoir.  Reads the strong-ref ``_tideweaver_snapshot`` the
@@ -911,7 +959,7 @@ class Tideweaver:
                             current.name,
                             upstream_names,
                         )
-            if wave_snapshot:
+            if wave_snapshot and not _tick_raised:
                 for downstream_name, edge_flow in self._downstream[current.name]:
                     edge_key = (current.name, downstream_name)
                     edge_state = self._edge_state[edge_key]
@@ -938,10 +986,11 @@ class Tideweaver:
                         len(edge_state.waves),
                         edge_flow.reservoir.depth,
                     )
-            # Wake the run loop so downstream hard-edge dependents see the
-            # new wave on the very next pass instead of waiting out the
-            # full ``pass_interval`` safety-net cap.
-            self._wake_event.set()
+            if not _tick_raised:
+                # Wake the run loop so downstream hard-edge dependents see the
+                # new wave on the very next pass instead of waiting out the
+                # full ``pass_interval`` safety-net cap.
+                self._wake_event.set()
 
     async def _invoke_tick(self, current: Current) -> None:
         if self.tick_factory is not None:

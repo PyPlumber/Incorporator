@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, ClassVar, List, Tuple
 
 import pytest
+from pydantic import ConfigDict
 
 from incorporator import Incorporator
+from incorporator.observability.wave import Wave
 from incorporator.tideweaver import (
     Current,
     CustomCurrent,
@@ -479,3 +482,127 @@ async def test_spillway_overflow_falls_back_to_module_logger_without_session(
 
     overflow_logs = [r for r in caplog.records if "spillway overflow" in r.message]
     assert overflow_logs, "RaiseOverflow must fall back to the module logger when no session logger is active"
+
+
+# ---------------------------------------------------------------------------
+# D5-01 logging-validation rider (Maintainer Decision 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_logged_tideweaver_healthy_sibling_tagged_correctly_while_one_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """Per-current session-log routing stays correct while a sibling current fails.
+
+    Proves rider items (a)+(b): the healthy current's waves keep landing
+    with correct current/cls/code meta via ``get_current`` while a sibling
+    fails every tick; the failing current's ``isolated_tick_failure``
+    scheduler event carries correct current/cls/session/tide meta and is
+    retrievable via both ``get_scheduler_events`` and ``get_current``; and
+    the failed tick produces no spurious ``"wave"``-shaped per-current
+    record (a failed tick never reaches the wave-routing call site).
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class _HealthySrc(Incorporator):
+        model_config = ConfigDict(extra="allow")
+
+    class _FailingSrc(Incorporator):
+        model_config = ConfigDict(extra="allow")
+
+    async def _healthy_stream(*args: Any, **kwargs: Any) -> Any:
+        yield Wave(chunk_index=0, rows_processed=1, processing_time_sec=0.01)
+
+    async def _failing_stream(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("failing sibling")
+        yield  # pragma: no cover - unreachable, makes this an async generator
+
+    monkeypatch.setattr(_HealthySrc, "stream", _healthy_stream)
+    monkeypatch.setattr(_FailingSrc, "stream", _failing_stream)
+
+    logger_name = "TestSiblingHealthFail"
+    now = datetime.now(timezone.utc)
+    healthy = Stream(name="healthy", cls=_HealthySrc, interval=0.04, incorp_params={})
+    failing = Stream(name="failing", cls=_FailingSrc, interval=0.04, incorp_params={}, on_error="isolate")
+    ws = Watershed.parallel(
+        window=(now, now + timedelta(milliseconds=400)),
+        currents=[healthy, failing],
+    )
+
+    tw = LoggedTideweaver(ws, pass_interval=0.03, enable_logging=True, logger_name=logger_name)
+    async for _ in tw.run():
+        pass
+
+    _wait_flush()
+
+    # (b) isolated_tick_failure carries correct meta and is retrievable both ways.
+    events = await LoggedTideweaver.get_scheduler_events(logger_name)
+    failure_evts = [
+        e["scheduler_event"] for e in events if e["scheduler_event"].get("event_type") == "isolated_tick_failure"
+    ]
+    assert failure_evts, f"expected isolated_tick_failure record(s); got {events}"
+    for evt in failure_evts:
+        assert evt["current_name"] == "failing"
+        assert evt["cls_name"] == "_FailingSrc"
+        assert evt["session"] == logger_name
+        assert isinstance(evt["tide_number"], int)
+
+    failing_by_current = await LoggedTideweaver.get_current(logger_name, 'current:"failing"')
+    assert failing_by_current, "isolated_tick_failure must also be retrievable via get_current"
+    for rec in failing_by_current:
+        # (a) the failed current must never produce a wave-shaped record.
+        assert "wave" not in rec, f"failed tick must not emit a wave-shaped record; got {rec}"
+
+    # (a) the healthy sibling keeps tagging its waves correctly throughout.
+    healthy_records = await LoggedTideweaver.get_current(logger_name, 'code:"healthy"')
+    assert healthy_records, "healthy current's waves must still be retrievable via get_current"
+    wave_records = [r for r in healthy_records if "wave" in r]
+    assert wave_records, f"expected at least one wave record for the healthy current; got {healthy_records}"
+    for rec in wave_records:
+        assert 'code:"healthy"' in rec.get("meta", "")
+
+
+@pytest.mark.asyncio
+async def test_logged_tideweaver_drain_cancel_emits_no_phantom_current_records(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """A drain-cancelled tick emits no phantom per-current wave record (rider item c).
+
+    Proves: when ``_drain()`` cancels a runaway tick past ``drain_timeout``,
+    no ``"wave"``-shaped record tagged with that current's code appears in
+    the session log — the cancellation is invisible to the per-current wave
+    view, matching the "no wave advertised" contract from the finally-block
+    gate.
+    """
+    monkeypatch.chdir(tmp_path)
+    started = asyncio.Event()
+
+    async def runaway(current: Current) -> None:
+        started.set()
+        await asyncio.sleep(5.0)
+
+    logger_name = "TestDrainCancelNoPhantom"
+    now = datetime.now(timezone.utc)
+    a = Stream(name="a", cls=_Src, interval=0.05, incorp_params={})
+    ws = Watershed.parallel(
+        window=(now, now + timedelta(milliseconds=200)),
+        currents=[a],
+        drain_timeout=0.2,
+    )
+
+    tw = LoggedTideweaver(ws, tick_factory=runaway, pass_interval=0.05, enable_logging=True, logger_name=logger_name)
+    async for _ in tw.run():
+        pass
+
+    _wait_flush()
+
+    assert started.is_set(), "the runaway tick must have started before cancellation"
+
+    records = await LoggedTideweaver.get_current(logger_name, 'code:"a"')
+    wave_records = [r for r in records if "wave" in r]
+    assert wave_records == [], f"a cancelled tick must not emit a wave-shaped record; got {wave_records}"
