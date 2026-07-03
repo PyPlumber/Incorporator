@@ -61,6 +61,8 @@ asyncio.run(run_massive_export())
 
 Web APIs use wildly different pagination strategies. Incorporator ships five paginators covering the most common REST pagination patterns. They have built-in infinite-loop protection and compose with the framework's concurrency engine.
 
+**`params=` and paginator follow-ups (1.3.5).** If you pass `params=` to `incorp()` alongside `inc_page=`, it merges onto every follow-up URL's existing query string rather than replacing it — cursor tokens, offsets, and page numbers written by the paginator are preserved. This applies uniformly across all five paginators below.
+
 ### Available Web Paginators:
 *   **`CursorPaginator(cursor_param="cursor")`**: Extracts the next token from the payload and appends it to the query string (e.g., Twitter/X API).
 *   **`NextUrlPaginator(*path_keys)`**: Drills into the JSON body to find the fully qualified "next" URL (e.g., PokéAPI).

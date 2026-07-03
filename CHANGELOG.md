@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`spillway_overflow` scheduler event** (`incorporator/tideweaver/flow.py`,
+  `incorporator/tideweaver/scheduler.py`, `incorporator/observability/logger.py`):
+  `RaiseOverflow.overflow()` now routes its WARNING through the active `LoggedTideweaver`
+  session's `error.log` — retrievable via `LoggedTideweaver.get_scheduler_events()` — falling
+  back to the bare module logger when no session is active, matching the routing contract
+  already documented for other scheduler events. `Spillway.overflow` gains a keyword-only
+  `logger_name: str | None = None` parameter; it is threaded automatically from
+  `LoggedTideweaver`'s own `logger_name` and is not a user-facing config kwarg on `Spillway`
+  itself. Event records carry `event_type="spillway_overflow"`, the displaced `edge` pair,
+  and a `detail` string; `current_name`, `cls_name`, and `tide_number` are `None`
+  (edge-scoped, not current- or tide-scoped).
+
+- **`CurrentOutcome.last_failed_at`** (`incorporator/tideweaver/current_outcome.py`): new
+  `datetime | None` field recording the UTC timestamp of the most recent FAILED tick
+  (isolated exception, restart exhaustion, or drain cancellation); `None` if the current has
+  never failed. Powers the wave-gating fix below; documented in
+  `docs/cli_and_configuration.md`'s `current_outcomes` field table.
+
+### Changed
+
+- **`params=` merges onto the URL query instead of replacing it**
+  (`incorporator/io/fetch.py`): request-level `params` now merges via
+  `httpx.URL.copy_merge_params()` instead of being passed straight through to
+  `client.request()`/`client.stream()`, which replaced the URL's existing query string
+  outright. On key collision, `params` wins, matching existing base/request-params
+  precedence. Affects both direct `incorp()` calls and paginator follow-up requests.
+
+- **`payload_list`/source length mismatch now raises `ValueError`** (`incorporator/base.py`,
+  `incorporator/io/fetch.py`): previously `zip(source_list, p_list)` silently truncated to
+  the shorter list, dropping requests with no warning. A mismatch now raises immediately,
+  naming both counts and the three valid idioms: pass `inc_url` as a list matching
+  `payload_list` length 1:1; use the declarative `each()` token via `inc_parent` routing to
+  auto-expand `inc_url`; or omit `inc_url` (`source=None`) for payload-only mode.
+
+- **Failed or drain-cancelled Tideweaver ticks no longer advertise a wave**
+  (`incorporator/tideweaver/scheduler.py`, `incorporator/tideweaver/current_outcome.py`,
+  `incorporator/tideweaver/logged.py`): a tick that raises (isolated exception) or is
+  cancelled mid-drain no longer writes `last_wave_at`, updates `_last_consumed` /
+  `flow_state.last_consumed_at`, fires penstock `post_consume`, notifies observers'
+  `on_fire`, appends to the reservoir, or wakes gated dependents — all of that now happens
+  only on a successful tick. Dependents gated on a failed/cancelled upstream tick see
+  `awaiting_upstream` skips instead of consuming a wave that was never actually produced.
+  This is a documented-semantics correction, not a new capability — per the v1.3.3
+  precedent, filed as **Changed**, not Breaking.
+
+### Fixed
+
+- **`params` + web-paginator page-1 refetch loop** (`incorporator/io/fetch.py`): the
+  `params=` replace-not-merge bug (see Changed, above) meant a paginator's cursor/offset/page
+  query key, once written onto the follow-up URL, was silently discarded whenever the caller
+  also passed `params=` — the next request re-fetched page 1 indefinitely, or dropped
+  whatever embedded query key the paginator relied on. Fixed by the same merge change.
+
+- **`conv_dict` expansion cache false hits from recycled `id()`** (`incorporator/schema/factory.py`):
+  the conv_dict expansion cache keyed on `id(conv_dict)`, which doesn't keep the dict alive —
+  a garbage-collected dict's address could be reused by an unrelated dict, producing a false
+  cache hit that served stale converters. The cache key now holds the dict object itself and
+  compares identity with `is` (not `==`), so a per-tick fresh `conv_dict` (e.g. the fjord
+  inflow pattern's per-tick merge) is always correctly re-expanded rather than occasionally
+  matched to a stale prior expansion.
+
+- **`RuntimeError('dictionary changed size during iteration')` under concurrent same-class
+  incorp** (`incorporator/schema/factory.py`): `_expand_conv_dict_with_schema_union` iterated
+  the live `cls._schema_union` dict directly; a sibling `asyncio.to_thread` worker inserting
+  new keys into the same class's `_schema_union` mid-iteration could raise. Fixed by snapshotting
+  `list(schema_union.items())` before iterating.
+
 ## [1.3.4] - 2026-06-11
 
 ### Changed
