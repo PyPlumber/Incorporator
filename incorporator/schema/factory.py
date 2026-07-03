@@ -90,26 +90,38 @@ def _effective_conv_cache_key(
     conv_dict: dict[str, Any] | None,
     schema_union: Mapping[str, Any],
     declared_field_names: frozenset[str],
-) -> tuple[int, int, frozenset[str]]:
+) -> tuple[dict[str, Any] | None, int, frozenset[str]]:
     """Cheap cache key for the per-class ``_cached_effective_conv`` slot.
 
     Captures the three inputs to :func:`_expand_conv_dict_with_schema_union`
     that can change between ``incorp()`` calls:
 
-    * ``id(conv_dict)`` — caller-supplied identity.  Long-running daemons
-      (chunked ``stream()``, ``fjord()``, Tideweaver) reuse the same
-      ``conv_dict`` instance per-tick — cache hits.  Callers passing a
-      fresh dict each call will see misses (cache check is O(1)).
+    * ``conv_dict`` itself (not ``id(conv_dict)``) — the key HOLDS the
+      object, so the cache entry keeps a strong reference to it for as
+      long as the entry lives.  That strong reference is load-bearing:
+      it is what makes address-recycling false hits impossible.  An
+      ``id()``-based key does NOT keep the object alive, so once the
+      caller's dict is garbage-collected, a brand-new unrelated dict can
+      be allocated at the same address and produce an equal-looking key
+      — a false cache hit that silently serves stale converters. Long-
+      running daemons (chunked ``stream()``, ``fjord()``, Tideweaver)
+      that reuse the same ``conv_dict`` instance per-tick still hit;
+      callers passing a fresh (but still-live, e.g. fjord ``inflow()``
+      per-tick merge) dict each call correctly miss, because identity
+      — not ``id()`` value — is what the hit-check at the call site
+      compares (``is``, not ``==``, on this slot).
     * ``len(schema_union)`` — captures growth.  Every new field bumps
       the union; when stable, the size doesn't change.  Stable steady
       state on a long-running daemon → cache hits.
     * ``declared_field_names`` — stable per class identity.  Included
       defensively so subclass-with-different-fields cases don't collide.
 
-    Returns a tuple to feed an ``==`` comparison against a stored key.
+    Returns a tuple whose first component must be compared with ``is``
+    (never ``==``) at the call site — see the hit-check in
+    ``build_instances``.
     """
     return (
-        id(conv_dict) if conv_dict is not None else 0,
+        conv_dict,
         len(schema_union),
         declared_field_names,
     )
@@ -309,6 +321,18 @@ def build_instances(
     # passes a different ``conv_dict`` instance.  See
     # ``_effective_conv_cache_key`` above for the key shape.
     #
+    # Identity, not equality, on the conv_dict slot: the stored key
+    # HOLDS the actual ``conv_dict`` object (not its ``id()``), and the
+    # hit-check below compares that slot with ``is``.  This keeps a
+    # strong reference alive for the cache entry's lifetime, so the
+    # object's address can never be recycled into a different dict
+    # while the entry is live — closing the false-hit window an
+    # ``id()``-keyed cache has.  A blanket ``==`` across the whole key
+    # tuple would invoke ``dict.__eq__`` on this slot and reintroduce a
+    # content-equality variant of the same bug (two distinct dicts with
+    # equal contents would compare equal), so the conv_dict slot is
+    # deliberately checked separately from the other two components.
+    #
     # Asyncio-safety invariant: the cache read (``getattr`` at the
     # ``cached =`` line) and the expansion call below execute without a
     # yield point between them — ``_effective_conv_cache_key`` snapshots
@@ -324,7 +348,7 @@ def build_instances(
     declared_field_names = frozenset(cls.model_fields.keys())
     cache_key = _effective_conv_cache_key(conv_dict, schema_union, declared_field_names)
     cached = getattr(cls, "_cached_effective_conv", None)
-    if cached is not None and cached[0] == cache_key:
+    if cached is not None and cached[0][0] is cache_key[0] and cached[0][1:] == cache_key[1:]:
         effective_conv = cached[1]
     else:
         effective_conv = _expand_conv_dict_with_schema_union(

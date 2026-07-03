@@ -3,8 +3,9 @@
 import asyncio
 import json
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 import pytest
 
@@ -357,7 +358,9 @@ async def test_effective_conv_cache_attaches_after_first_incorp(tmp_path: Path) 
     cached = getattr(CacheTestModel, "_cached_effective_conv", None)
     assert cached is not None, "expected _cached_effective_conv to be set after incorp()"
     key, effective_conv = cached
-    # Cache key is a 3-tuple of (id(conv_dict), len(schema_union), declared_field_names).
+    # Cache key is a 3-tuple of (conv_dict object itself, len(schema_union),
+    # declared_field_names). The key HOLDS conv_dict (not its id()) so the
+    # cache keeps a strong reference alive — see D3-01 in factory.py.
     assert isinstance(key, tuple) and len(key) == 3
 
 
@@ -418,4 +421,154 @@ async def test_effective_conv_cache_invalidates_on_schema_union_growth(tmp_path:
     assert cached_after_v1 is not cached_after_v2, (
         "cache must store a fresh tuple on rebuild — a stale tuple with "
         "a new key would silently drop the new schema_union expansion"
+    )
+
+
+@pytest.mark.asyncio
+async def test_effective_conv_cache_misses_on_different_conv_dict_object(tmp_path: Path) -> None:
+    """D3-01: a different conv_dict object must miss the cache, even with an equal-shaped key.
+
+    Pre-fix, the cache key embedded ``id(conv_dict)``. Once the first
+    ``conv_dict`` object is garbage-collected, a *different* dict can be
+    allocated at the recycled address, producing an equal-looking key
+    (same id, same len(schema_union), same declared_field_names) — a
+    false cache hit that would silently keep running the OLD converters
+    against NEW data. Real address recycling is CPython-allocator-state
+    dependent and not deterministic to force from a test, so this test
+    constructs the failure condition directly: it forges a stale cache
+    entry on the class whose key component is an ``int`` equal to
+    ``id(conv_dict_b)`` (exactly what an ``id()``-recycled pre-fix key
+    would look like) paired with dict A's stale converters, then calls
+    ``incorp()`` with dict B. Under the OLD ``==``-on-whole-tuple hit
+    check this forged entry would compare equal and serve dict A's
+    converters; the fix's identity check on the actual object must miss.
+    """
+    from incorporator.schema.converters import calc
+
+    json_file = tmp_path / "cache_identity.json"
+    json_file.write_text(
+        json.dumps(
+            [
+                {"id": 1, "name": "a", "value": "10"},
+                {"id": 2, "name": "b", "value": "20"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class CacheIdentityModel(Incorporator):
+        pass
+
+    conv_dict_b: dict[str, object] = {"value": calc(lambda v: int(v) * 100, "value", target_type=int)}
+
+    # Forge a stale cache entry as a pre-fix id()-keyed cache would have left
+    # it: key component 0 equal to id(conv_dict_b) (the "recycled address"),
+    # paired with a stale ×1 effective_conv that must NOT be served.
+    stale_effective_conv = {"value": calc(lambda v: int(v) * 1, "value", target_type=int)}
+    schema_union = getattr(CacheIdentityModel, "_schema_union", {})
+    declared_field_names = frozenset(CacheIdentityModel.model_fields.keys())
+    forged_key = (id(conv_dict_b), len(schema_union), declared_field_names)
+    CacheIdentityModel._cached_effective_conv = (forged_key, stale_effective_conv)  # type: ignore[attr-defined]
+
+    result_b = await CacheIdentityModel.incorp(
+        inc_file=str(json_file), inc_code="id", inc_name="name", conv_dict=conv_dict_b
+    )
+    values_b = sorted(inst.value for inst in result_b)
+
+    assert values_b == [1000, 2000], (
+        f"expected dict B's ×100 converter to apply; got {values_b} — a stale "
+        "cache hit would incorrectly reuse the forged entry's ×1 converter (== [10, 20])"
+    )
+
+
+@pytest.mark.asyncio
+async def test_effective_conv_cache_survives_fjord_inflow_fresh_dict_per_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D3-01: fjord's per-tick fresh merged conv_dict must not false-hit the cache.
+
+    Real-world trigger verified in ``pipeline/fjord.py::_seed_one_source``:
+    ``merged_conv = {**base_params.get('conv_dict', {}), **extra_conv}``
+    builds a BRAND NEW dict on every tick when an ``inflow(state)`` callable
+    is active (see ``examples/09-nascar-fantasy-fjord/inflow.py``). The
+    previous tick's dict becomes garbage immediately after ``incorp()``
+    returns, so under the old id()-keyed cache, address recycling across
+    ticks could silently keep serving a stale converter.
+
+    Real CPython address recycling is allocator-state dependent (verified
+    empirically — not reliably forced by ``del`` + ``gc.collect()`` once
+    other allocations happen in between), so this test drives tick 1 through
+    the REAL ``_seed_one_source`` fjord code path, then wraps
+    ``factory._effective_conv_cache_key`` so that on tick 2's call it
+    captures the ACTUAL merged ``conv_dict`` object ``_seed_one_source``
+    builds internally and forges the class's ``_cached_effective_conv``
+    slot to look exactly like a pre-fix ``id()``-recycled hit for that
+    real object (identity slot == ``id(that real merged dict)``, paired
+    with tick 1's now-stale ×1 converter) BEFORE the cache-key comparison
+    runs. Tick 2's own ×100 converter must still apply through
+    ``_seed_one_source`` unmodified.
+    """
+    from incorporator.pipeline.fjord import _seed_one_source
+    from incorporator.schema import factory
+    from incorporator.schema.converters import calc
+
+    json_file = tmp_path / "fjord_tick.json"
+    json_file.write_text(
+        json.dumps(
+            [
+                {"id": 1, "name": "a", "value": "5"},
+                {"id": 2, "name": "b", "value": "7"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FjordTickModel(Incorporator):
+        pass
+
+    entry = {
+        "cls": FjordTickModel,
+        "incorp_params": {"inc_file": str(json_file), "inc_code": "id", "inc_name": "name"},
+    }
+
+    def make_inflow(multiplier: int) -> Callable[[dict[str, object]], Any]:
+        def inflow(state: dict[str, object]) -> dict[str, object]:
+            # Fresh dict every call — mirrors _seed_one_source's per-tick
+            # ``{**base_params.get('conv_dict', {}), **extra_conv}`` merge.
+            return {
+                "FjordTickModel": {
+                    "conv_dict": {"value": calc(lambda v, m=multiplier: int(v) * m, "value", target_type=int)}
+                }
+            }
+
+        return inflow
+
+    result_tick1 = await _seed_one_source(entry, state={}, inflow_callable=make_inflow(1))
+    values_tick1 = sorted(inst.value for inst in result_tick1)
+    assert values_tick1 == [5, 7]
+
+    tick1_stale_conv = {"value": calc(lambda v: int(v) * 1, "value", target_type=int)}
+    real_cache_key = factory._effective_conv_cache_key
+
+    def forging_cache_key(
+        conv_dict: dict[str, Any] | None,
+        schema_union: Any,
+        declared_field_names: frozenset[str],
+    ) -> tuple[Any, int, frozenset[str]]:
+        # Fires once, on tick 2's real merged conv_dict — forge a stale
+        # cache entry keyed to THIS exact object's id(), simulating what a
+        # pre-fix id()-recycled cache hit would have looked like for it.
+        if conv_dict is not None:
+            forged_key = (id(conv_dict), len(schema_union), declared_field_names)
+            FjordTickModel._cached_effective_conv = (forged_key, tick1_stale_conv)  # type: ignore[attr-defined]
+        return real_cache_key(conv_dict, schema_union, declared_field_names)
+
+    monkeypatch.setattr(factory, "_effective_conv_cache_key", forging_cache_key)
+
+    result_tick2 = await _seed_one_source(entry, state={}, inflow_callable=make_inflow(100))
+    values_tick2 = sorted(inst.value for inst in result_tick2)
+
+    assert values_tick2 == [500, 700], (
+        f"expected tick 2's ×100 converter to apply; got {values_tick2} — a "
+        "stale cache hit would incorrectly reuse tick 1's ×1 converter (== [5, 7])"
     )
