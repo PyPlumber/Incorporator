@@ -331,6 +331,69 @@ async def test_fjord_outflow_error_yields_wave_with_failed_sources(
 
 
 @pytest.mark.asyncio
+async def test_fjord_seed_mismatched_payload_list_fails_loudly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stream_params entry with mismatched inc_url/payload_list fails LOUDLY at seed, not silently.
+
+    Regression for D1-02 in the stateful/fjord shape: before the guard,
+    ``fetch_concurrent_payloads`` would silently truncate ``payload_list`` to
+    match a single ``inc_url``, dropping requests with no diagnostic — a
+    fjord source seeded this way would just look like it produced fewer rows
+    than expected.  Now the seed phase surfaces a single failure wave whose
+    ``failed_sources`` carries the actionable ValueError message verbatim
+    (via ``_build_seed_reject``'s generic-exception fallback), and whose
+    ``rejects[0].is_url_traffic_error`` is False — this is a config-shape
+    error, not URL traffic, so it must route to error.log, never api.log.
+    """
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+    monkeypatch.chdir(tmp_path)
+
+    outflow_file = _write_outflow(tmp_path)
+    out_file = tmp_path / "wont-be-written.ndjson"
+
+    waves = await _drain(
+        Incorporator.fjord(
+            stream_params=[
+                {
+                    "cls": Coin,
+                    "incorp_params": {
+                        "inc_url": COINGECKO_URL,
+                        "inc_code": "id",
+                        "http_method": "POST",
+                        "payload_list": [{"id": 1}, {"id": 2}, {"id": 3}],
+                    },
+                    "refresh_params": None,
+                },
+                {
+                    "cls": BinanceFutures,
+                    "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                    "refresh_params": None,
+                },
+            ],
+            outflow=outflow_file,
+            export_params={"file_path": str(out_file)},
+        )
+    )
+
+    seed_failure = next(a for a in waves if a.operation == "fjord_incorp:Coin")
+    assert seed_failure.failed_sources
+    msg = seed_failure.failed_sources[0]
+    assert "payload_list has 3 entries but 1 source(s)" in msg
+    assert "each()" in msg
+    assert "inc_parent" in msg
+    assert "source=None" in msg
+
+    assert len(seed_failure.rejects) == 1
+    assert seed_failure.rejects[0].is_url_traffic_error is False, (
+        "a payload_list/inc_url length mismatch is a config-shape error, not URL traffic — "
+        "it must route to error.log, never api.log"
+    )
+
+    # Seed fails fast — no outflow wave, no export file, no dynamic class.
+    assert not any(a.operation.startswith("outflow:") for a in waves)
+    assert not out_file.exists()
+
+
+@pytest.mark.asyncio
 async def test_fjord_validates_stream_params(tmp_path: Path) -> None:
     """Missing keys / wrong types in stream_params must raise clearly."""
     outflow_file = _write_outflow(tmp_path)

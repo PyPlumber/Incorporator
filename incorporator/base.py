@@ -494,7 +494,9 @@ class Incorporator(BaseModel):
                 (``"GET"`` / ``"POST"`` / ``"PUT"`` / ``"PATCH"``),
                 ``json_payload`` or ``form_payload`` (POST body),
                 ``payload_list`` (per-request POST bodies for bulk
-                dispatch), ``payload_type`` (``"json"`` or ``"form"``),
+                dispatch — must be ``None`` or match ``len(inc_url)``
+                exactly; a length mismatch raises ``ValueError`` rather
+                than silently truncating), ``payload_type`` (``"json"`` or ``"form"``),
                 ``call_lim`` (cap pagination at N pages), ``sql_query``
                 (custom SELECT for SQLite sources), ``archive_target``
                 (file inside a ZIP/TAR to extract), ``concurrency_limit``

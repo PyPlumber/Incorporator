@@ -975,6 +975,15 @@ async def fetch_concurrent_payloads(
             return []
 
     try:
+        if payload_list is not None and len(payload_list) != len(source_list):
+            raise ValueError(
+                f"payload_list has {len(payload_list)} entries but {len(source_list)} source(s) "
+                f"were resolved from inc_url — lengths must match exactly (no auto-expansion). Fix with one of: "
+                f"(1) pass inc_url as a list of {len(payload_list)} URLs to pair 1:1 with payload_list; "
+                f"(2) use the declarative each() token via inc_parent routing, which auto-expands inc_url to "
+                f"match; or (3) omit inc_url entirely (source=None) for payload-only mode, which auto-matches "
+                f"placeholder length to payload_list."
+            )
         p_list = payload_list if payload_list else [None] * len(source_list)
         all_parsed_data: list[Any] = []
 

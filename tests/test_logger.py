@@ -320,6 +320,62 @@ async def test_logged_stream_exception_logs_and_reraises(
 
 
 @pytest.mark.asyncio
+async def test_payload_length_mismatch_routes_to_error_log_not_api_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
+) -> None:
+    """D1-02 regression: the payload_list/inc_url length-mismatch ValueError is a
+    config-shape error, not URL traffic — it must be retrievable from get_error()
+    and ABSENT from get_api().
+
+    The chunked pipeline's per-chunk try/except (incorporator/pipeline/chunked.py)
+    catches the ValueError raised inside cls.incorp() and yields a Wave with
+    failed_sources populated (rather than letting it propagate) — this is the
+    same surface a mismatched payload_list would hit on any stream/refresh
+    tick. Wave has no is_url_traffic_error field, so _route_to_log's Wave
+    branch always passes is_api=False regardless of failure cause — proving
+    the mismatch cannot land in api.log by construction.
+
+    execute_request is mocked so the guard's ValueError (raised before any
+    network call) is the only failure mode exercised — no real DNS/network
+    activity should occur regardless, since the length guard fires first.
+    """
+    from incorporator.io import fetch
+
+    async def _unexpected_execute_request(url: str, *args: object, **kwargs: object) -> None:
+        raise AssertionError("execute_request must not be called — the length guard fires first")
+
+    monkeypatch.setattr(fetch, "execute_request", _unexpected_execute_request)
+    monkeypatch.chdir(tmp_path)
+
+    class PayloadMismatchModel(LoggedIncorporator):
+        id: int = 0
+
+    waves = []
+    async for wave in PayloadMismatchModel.stream(
+        incorp_params={
+            "inc_url": "https://api.example.com/post",
+            "http_method": "POST",
+            "payload_list": [{"id": 1}, {"id": 2}, {"id": 3}],
+        },
+        refresh_params=None,
+        enable_logging=True,
+    ):
+        waves.append(wave)
+
+    assert len(waves) == 1
+    assert waves[0].failed_sources
+    assert "payload_list has 3 entries but 1 source" in waves[0].failed_sources[0]
+
+    _ACTIVE_LISTENERS["PayloadMismatchModel"].stop()
+
+    errors = await PayloadMismatchModel.get_error()
+    assert any("payload_list has 3 entries but 1 source" in rec.get("msg", "") for rec in errors)
+
+    api_records = await PayloadMismatchModel.get_api()
+    assert not any("payload_list" in rec.get("msg", "") for rec in api_records)
+
+
+@pytest.mark.asyncio
 async def test_get_error_async_reader(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reset_active_listeners: None
 ) -> None:

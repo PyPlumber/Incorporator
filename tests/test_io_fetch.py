@@ -11,7 +11,6 @@ import pytest
 from incorporator import Incorporator
 from incorporator.io.fetch import _normalize_source_list
 
-
 # ----------------------------------------------------------------------
 # _normalize_source_list — type handling
 # ----------------------------------------------------------------------
@@ -349,6 +348,113 @@ async def test_fetch_concurrent_path_a_batched_no_cancel_cascade(
 
     assert {row["src"] for row in parsed} == {"https://good-a.test/", "https://good-b.test/"}
     assert "https://bad.test/" in [entry.source for entry in failed]
+
+
+# ----------------------------------------------------------------------
+# fetch_concurrent_payloads — payload_list / source_list length guard (D1-02)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_concurrent_payload_length_mismatch_raises_and_dispatches_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single inc_url + N-entry payload_list must raise ValueError, not silently truncate.
+
+    Regression for D1-02: previously ``zip(source_list, p_list)`` truncated to the
+    shorter list, silently dropping N-1 POST bodies with no reject, warning, or
+    error. The guard now raises before any request is dispatched. Asserts the
+    error message names all three valid idioms (list of URLs, each() token,
+    payload-only mode) with the concrete N-vs-M counts, and that the mock
+    transport records zero requests.
+    """
+    from incorporator.io import fetch
+
+    request_seen = {"count": 0}
+
+    async def spy_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        request_seen["count"] += 1
+        return httpx.Response(200, content=b"{}", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(fetch, "execute_request", spy_execute_request)
+
+    with pytest.raises(ValueError) as exc_info:
+        await fetch.fetch_concurrent_payloads(
+            source_list=["https://api.example.com/post"],
+            payload_list=[{"id": 1}, {"id": 2}, {"id": 3}],
+            is_file_mode=False,
+            limit=3,
+        )
+
+    msg = str(exc_info.value)
+    assert "3" in msg  # payload_list length
+    assert "1" in msg  # source_list length
+    assert "each()" in msg
+    assert "inc_parent" in msg
+    assert "source=None" in msg
+    assert request_seen["count"] == 0, "no request should have been dispatched on a length mismatch"
+
+
+@pytest.mark.asyncio
+async def test_fetch_concurrent_payload_length_match_unaffected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1:1 length-matched payload_list (declarative each()/join_all() shape) is untouched.
+
+    Proves the new guard does not fire on the byte-identical shape produced by
+    schema/router.py's each() and join_all() branches — length-matched requests
+    still dispatch normally.
+    """
+    from incorporator.io import fetch
+
+    async def fake_process_single(src: str, is_file_mode: bool, client: Any, rate_limiter: Any, **_kw: Any) -> list:
+        return [{"src": src, "payload": _kw.get("dynamic_payload")}]
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    parsed, rejects = await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.example.com/post", "https://api.example.com/post"],
+        payload_list=[{"id": 1}, {"id": 2}],
+        is_file_mode=False,
+        limit=2,
+    )
+
+    assert rejects == []
+    assert len(parsed) == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_concurrent_payload_only_source_none_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Payload-only mode (source=None) auto-matches placeholder length — no guard change.
+
+    ``_normalize_source_list(None, payload_list)`` already builds a matching
+    placeholder ``source_list``, so the new guard's ``len`` check trivially
+    passes.  This locks that this fix does not regress D1-04-adjacent
+    payload-only dispatch.
+    """
+    from incorporator.io import fetch
+    from incorporator.io.fetch import _normalize_source_list
+
+    payload_list = [{"id": 1}, {"id": 2}, {"id": 3}]
+    source_list = _normalize_source_list(None, payload_list)
+    assert len(source_list) == len(payload_list)
+
+    async def fake_process_single(src: str, is_file_mode: bool, client: Any, rate_limiter: Any, **_kw: Any) -> list:
+        return [{"payload": _kw.get("dynamic_payload")}]
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    parsed, rejects = await fetch.fetch_concurrent_payloads(
+        source_list=source_list,
+        payload_list=payload_list,
+        is_file_mode=False,
+        limit=3,
+    )
+
+    assert rejects == []
+    assert len(parsed) == 3
 
 
 # ----------------------------------------------------------------------
