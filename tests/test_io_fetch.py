@@ -1244,9 +1244,7 @@ async def test_execute_request_connect_error_retried_up_to_network_budget(
             await execute_request(url="https://dead.example.com/", client=client)
 
     # stop fires at attempt_number >= _HTTP_NETWORK_RETRY_STOP → total calls == budget.
-    assert call_count == _HTTP_NETWORK_RETRY_STOP, (
-        f"Expected {_HTTP_NETWORK_RETRY_STOP} attempts, got {call_count}"
-    )
+    assert call_count == _HTTP_NETWORK_RETRY_STOP, f"Expected {_HTTP_NETWORK_RETRY_STOP} attempts, got {call_count}"
 
     await asyncio.sleep(0)  # allow event loop cleanup
 
@@ -1452,8 +1450,7 @@ async def test_execute_request_network_error_wait_is_bounded(
     total = sum(total_slept)
     budget = _HTTP_NETWORK_RETRY_STOP * _HTTP_NETWORK_WAIT_MAX
     assert total <= budget, (
-        f"Total faked sleep {total:.2f}s exceeded network wait budget {budget:.2f}s "
-        f"(individual sleeps: {total_slept})"
+        f"Total faked sleep {total:.2f}s exceeded network wait budget {budget:.2f}s (individual sleeps: {total_slept})"
     )
 
     await asyncio.sleep(0)
@@ -1491,9 +1488,7 @@ async def test_execute_request_408_retried_up_to_inner_stop(
         with pytest.raises(httpx.HTTPStatusError):
             await execute_request(url="https://slow.example.com/api", client=client)
 
-    assert call_count == _HTTP_INNER_STOP, (
-        f"408 should exhaust full inner budget {_HTTP_INNER_STOP}, got {call_count}"
-    )
+    assert call_count == _HTTP_INNER_STOP, f"408 should exhaust full inner budget {_HTTP_INNER_STOP}, got {call_count}"
 
     await asyncio.sleep(0)
 
@@ -1525,9 +1520,7 @@ async def test_execute_request_425_retried_up_to_inner_stop(
         with pytest.raises(httpx.HTTPStatusError):
             await execute_request(url="https://early.example.com/api", client=client)
 
-    assert call_count == _HTTP_INNER_STOP, (
-        f"425 should exhaust full inner budget {_HTTP_INNER_STOP}, got {call_count}"
-    )
+    assert call_count == _HTTP_INNER_STOP, f"425 should exhaust full inner budget {_HTTP_INNER_STOP}, got {call_count}"
 
     await asyncio.sleep(0)
 
@@ -1660,3 +1653,189 @@ def test_build_reject_entry_network_error_without_httpx_cause_is_not_url_traffic
 
     assert entry.is_url_traffic_error is False
     assert entry.error_kind == "IncorporatorNetworkError"
+
+
+# ----------------------------------------------------------------------
+# D1-01 — execute_request must MERGE params into the URL's existing query,
+# not REPLACE it.  httpx's request-level params= replaces rather than
+# merges, which used to strip the offset/cursor query embedded in a
+# paginator follow-up URL (or in a single inc_url) whenever the caller
+# also passed params=.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_params_survive_next_url_paginator_follow_up(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """params= must not wipe the query embedded in a NextUrlPaginator follow-up URL.
+
+    Regression for D1-01: before the fix, execute_request set
+    req_kwargs["params"] = params and handed it to client.request, which
+    REPLACES the URL's query string wholesale.  A paginator follow-up URL
+    (whose entire pagination state lives in its query string) then lost its
+    offset/cursor on every page after the first, re-fetching page 1 forever.
+
+    Mirrors the CONTROL/DEFECT repro: page 1 advertises a "next" URL with
+    "?offset=2"; page 2 has no "next" and terminates the paginator. With
+    params={"tag": "a"} present, the page-2 request must carry BOTH
+    "offset=2" and "tag=a", and the paginator must terminate after exactly
+    2 calls (not loop/duplicate).
+    """
+    from incorporator.io import fetch
+    from incorporator.io.pagination.web import NextUrlPaginator
+
+    monkeypatch.chdir(tmp_path)
+
+    page1 = {"next": "https://x.test/items?offset=2", "results": [{"id": 1}, {"id": 2}]}
+    page2 = {"next": None, "results": [{"id": 3}, {"id": 4}]}
+    request_log: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(str(request.url))
+        payload = page2 if "offset=2" in str(request.url) else page1
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        data = await fetch._process_single_source(
+            "https://x.test/items",
+            is_file_mode=False,
+            client=client,
+            rate_limiter=None,
+            inc_page=NextUrlPaginator(),
+            rec_path="results",
+            params={"tag": "a"},
+            call_lim=4,
+        )
+
+    assert request_log == [
+        "https://x.test/items?tag=a",
+        "https://x.test/items?offset=2&tag=a",
+    ], f"expected exactly 2 distinct requests carrying both params, got {request_log}"
+    assert data == [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
+
+
+@pytest.mark.asyncio
+async def test_params_survive_link_header_paginator_follow_up(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """params= must not wipe the query embedded in a LinkHeaderPaginator follow-up URL.
+
+    D1-01 equivalent for the RFC 5988 Link-header style: the "next" URL
+    arrives in a response header rather than the JSON body, but the same
+    replace-not-merge bug applies at the execute_request layer.
+    """
+    from incorporator.io import fetch
+    from incorporator.io.pagination.web import LinkHeaderPaginator
+
+    monkeypatch.chdir(tmp_path)
+
+    request_log: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_log.append(str(request.url))
+        if "offset=2" in str(request.url):
+            return httpx.Response(200, json=[{"id": 3}, {"id": 4}])
+        return httpx.Response(
+            200,
+            json=[{"id": 1}, {"id": 2}],
+            headers={"Link": '<https://x.test/items?offset=2>; rel="next"'},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        data = await fetch._process_single_source(
+            "https://x.test/items",
+            is_file_mode=False,
+            client=client,
+            rate_limiter=None,
+            inc_page=LinkHeaderPaginator(),
+            params={"tag": "a"},
+            call_lim=4,
+        )
+
+    assert request_log == [
+        "https://x.test/items?tag=a",
+        "https://x.test/items?offset=2&tag=a",
+    ], f"expected exactly 2 distinct requests carrying both params, got {request_log}"
+    assert data == [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
+
+
+@pytest.mark.asyncio
+async def test_params_merge_with_embedded_query_on_single_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single inc_url with an embedded query + params= sends BOTH param sets.
+
+    D1-01: 'items?active=true' + params={'page': 1} used to send '?page=1'
+    only, silently dropping 'active=true'.
+    """
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+    seen_query: dict[str, list[str]] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_query.update(dict(request.url.params))
+        return httpx.Response(200, json=[])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await execute_request(url="https://x.test/items?active=true", client=client, params={"page": 1})
+
+    assert seen_query == {"active": "true", "page": "1"}
+
+
+@pytest.mark.asyncio
+async def test_params_win_collision_with_embedded_query(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """params= wins on key collision against the URL's own embedded query.
+
+    D1-01 collision variant: 'items?page=0' + params={'page': 1} must send
+    'page=1' on the wire — matching the existing base/request_params
+    precedence semantics (request_params overrides base_params).
+    """
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+    seen_url: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_url.append(str(request.url))
+        return httpx.Response(200, json=[])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await execute_request(url="https://x.test/items?page=0", client=client, params={"page": 1})
+
+    assert seen_url == ["https://x.test/items?page=1"]
+
+
+@pytest.mark.asyncio
+async def test_no_params_control_url_is_byte_identical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Control case: no params= at all — the outgoing URL is byte-identical to the input.
+
+    Preservation requirement from D1-01: the falsy `if params:` guard must
+    keep the no-params path untouched (no httpx.URL construction at all),
+    since shipped paginator examples rely on the embedded-query idiom
+    arriving on the wire unmodified.
+    """
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+    seen_url: list[str] = []
+    input_url = "https://x.test/items?offset=2&limit=50"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_url.append(str(request.url))
+        return httpx.Response(200, json=[])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await execute_request(url=input_url, client=client, params=None)
+
+    assert seen_url == [input_url]

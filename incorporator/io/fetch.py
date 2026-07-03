@@ -452,7 +452,7 @@ async def _block_internal_redirect_hook(response: httpx.Response) -> None:
 async def _stream_to_path_request(
     client: httpx.AsyncClient,
     method: str,
-    url: str,
+    url: str | httpx.URL,
     req_kwargs: dict[str, Any],
     dest: Path,
 ) -> httpx.Response:
@@ -503,7 +503,10 @@ async def execute_request(
         url: Absolute HTTP/HTTPS URL.
         client: Shared ``httpx.AsyncClient`` managed by the caller.
         method: HTTP verb (``"GET"``, ``"POST"``, etc.).  Case-insensitive.
-        params: URL query parameters forwarded verbatim to httpx.
+        params: Query parameters merged onto ``url``'s existing query string
+            (via ``httpx.URL.copy_merge_params``), overriding any same-named
+            key already present in ``url`` — this preserves pagination state
+            embedded in follow-up URLs instead of replacing it.
         json_payload: Body serialised as JSON (``Content-Type: application/json``).
         form_payload: Body serialised as form data (``Content-Type: application/x-www-form-urlencoded``).
         rate_limiter: Optional per-host :class:`BoundPenstock`; acquired once per attempt.
@@ -536,9 +539,20 @@ async def execute_request(
                 if rate_limiter is not None:
                     await rate_limiter.acquire()
 
+                # httpx's request-level params= REPLACES the URL's existing
+                # query string rather than merging into it.  Paginator
+                # follow-up URLs (NextUrlPaginator, LinkHeaderPaginator) and
+                # single inc_url values with an embedded query rely on that
+                # query surviving — so merge params onto the URL itself via
+                # copy_merge_params() instead of passing params= to the
+                # request call.  copy_merge_params applies the given dict
+                # ON TOP OF the existing query, so params (already correctly
+                # request_params-over-base_params ordered by bound_fetch)
+                # wins any key collision with the URL's own query — matching
+                # existing base/request_params precedence semantics.
+                request_url: str | httpx.URL = httpx.URL(url).copy_merge_params(params) if params else url
+
                 req_kwargs: dict[str, Any] = {}
-                if params:
-                    req_kwargs["params"] = params
                 if json_payload:
                     req_kwargs["json"] = json_payload
                 if form_payload:
@@ -546,7 +560,7 @@ async def execute_request(
 
                 if stream_to_path is not None:
                     try:
-                        return await _stream_to_path_request(client, method, url, req_kwargs, stream_to_path)
+                        return await _stream_to_path_request(client, method, request_url, req_kwargs, stream_to_path)
                     except httpx.HTTPStatusError as exc:
                         if not _is_retryable_status(exc):
                             raise IncorporatorNetworkError(
@@ -555,7 +569,7 @@ async def execute_request(
                         raise
 
                 # method.upper() natively supports 'POST', 'PUT', etc.
-                response = await client.request(method.upper(), url, **req_kwargs)
+                response = await client.request(method.upper(), request_url, **req_kwargs)
 
                 # Intercept Post-to-Get Downgrades
                 if response.history and method.upper() in ["POST", "PUT", "PATCH"]:
