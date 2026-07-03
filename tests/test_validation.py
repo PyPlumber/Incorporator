@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
@@ -153,28 +154,62 @@ async def test_export_outflow_new_field_in_csv(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_schema_union_concurrent_gather_safety(tmp_path: Path) -> None:
-    """Two concurrent incorp() calls on the same class must produce a complete schema union."""
-    json1 = tmp_path / "f1.json"
-    json2 = tmp_path / "f2.json"
-    # 2+ items required: single-item files trigger the is_single path which skips _schema_union
-    json1.write_text(json.dumps([{"unique_field_alpha": 1}, {"unique_field_alpha": 2}]), encoding="utf-8")
-    json2.write_text(json.dumps([{"unique_field_beta": 3}, {"unique_field_beta": 4}]), encoding="utf-8")
+    """Many concurrent incorp() calls on the same class must not crash or lose schema-union fields.
 
-    class ConcurrentModel(Incorporator):
-        pass
+    ``build_instances`` runs inside ``asyncio.to_thread`` worker threads (real
+    OS threads), so a reader iterating ``cls._schema_union`` (inside
+    ``_expand_conv_dict_with_schema_union``) and a sibling writer inserting
+    new keys into that same dict can genuinely run at the same time. Each
+    round first seeds a nonempty ``_schema_union`` (sequential incorp) so the
+    reader's ``if not schema_union: return conv_dict`` guard doesn't
+    short-circuit, then fires a wide fan of concurrent ``incorp()`` calls that
+    each add many new, distinct fields to the same class — widening the
+    reader's iteration window and the writer's insertion loop enough, across
+    enough concurrent workers, that real OS-thread scheduling actually
+    interleaves them. Lowering ``sys.setswitchinterval`` makes the interpreter
+    switch threads far more often, increasing the odds that overlap is hit.
+    Empirically (worker-count/field-count calibrated against this exact
+    shape): pre-fix (live-dict iteration in
+    ``_expand_conv_dict_with_schema_union``) this reliably raises
+    ``RuntimeError('dictionary changed size during iteration')`` within the
+    10 rounds below; post-fix (snapshot via ``list(...)``) it cannot.
+    """
+    original_switch_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for round_idx in range(10):
 
-    # Force reset in case prior test left state
-    if "_schema_union" in ConcurrentModel.__dict__:
-        del ConcurrentModel._schema_union  # type: ignore[attr-defined]
+            class ConcurrentModel(Incorporator):
+                pass
 
-    await asyncio.gather(
-        ConcurrentModel.incorp(inc_file=str(json1)),
-        ConcurrentModel.incorp(inc_file=str(json2)),
-    )
+            # Seed a nonempty union (sequential, single-item-free) so the
+            # concurrent calls below hit a nonempty ``schema_union`` and the
+            # reader actually iterates instead of short-circuiting.
+            seed_file = tmp_path / f"seed_{round_idx}.json"
+            seed_file.write_text(
+                json.dumps([{f"seed_{round_idx}_{i}": i for i in range(40)}] * 2),
+                encoding="utf-8",
+            )
+            await ConcurrentModel.incorp(inc_file=str(seed_file))
 
-    # Both fields must appear in the union regardless of which call finished first
-    assert "unique_field_alpha" in ConcurrentModel._schema_union  # type: ignore[attr-defined]
-    assert "unique_field_beta" in ConcurrentModel._schema_union  # type: ignore[attr-defined]
+            n_workers = 20
+            worker_field_sets = []
+            worker_files = []
+            for w in range(n_workers):
+                fields = {f"field_{round_idx}_{w}_{i}": i for i in range(40)}
+                worker_field_sets.append(fields)
+                # 2+ items required: single-item files trigger the is_single path which skips _schema_union
+                fp = tmp_path / f"w_{round_idx}_{w}.json"
+                fp.write_text(json.dumps([fields, fields]), encoding="utf-8")
+                worker_files.append(fp)
+
+            await asyncio.gather(*[ConcurrentModel.incorp(inc_file=str(fp)) for fp in worker_files])
+
+            # Every worker's fields must appear in the union regardless of finish order
+            for fields in worker_field_sets:
+                assert all(f in ConcurrentModel._schema_union for f in fields)  # type: ignore[attr-defined]
+    finally:
+        sys.setswitchinterval(original_switch_interval)
 
 
 def test_inc_dict_sibling_class_isolation() -> None:

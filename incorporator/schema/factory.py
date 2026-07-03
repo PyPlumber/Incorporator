@@ -178,7 +178,11 @@ def _expand_conv_dict_with_schema_union(
         return conv_dict
     effective = dict(conv_dict or {})
     declared = declared_field_names or frozenset()
-    for field, schema_info in schema_union.items():
+    # Snapshot via list(...) so a sibling asyncio.to_thread worker writing new
+    # keys into cls._schema_union mid-iteration can't raise
+    # RuntimeError('dictionary changed size during iteration'). See the
+    # concurrency note in build_instances above the cache read.
+    for field, schema_info in list(schema_union.items()):
         if field in effective or field in declared or not isinstance(schema_info, dict):
             continue
         target = _target_type_from_schema_info(schema_info)
@@ -333,17 +337,27 @@ def build_instances(
     # equal contents would compare equal), so the conv_dict slot is
     # deliberately checked separately from the other two components.
     #
-    # Asyncio-safety invariant: the cache read (``getattr`` at the
-    # ``cached =`` line) and the expansion call below execute without a
-    # yield point between them — ``_effective_conv_cache_key`` snapshots
-    # ``len(schema_union)``, then ``_expand_conv_dict_with_schema_union``
-    # consumes ``schema_union`` by reference.  Under CPython's
-    # single-threaded asyncio event loop, two concurrent ``incorp()``
-    # calls dispatched via ``asyncio.gather()`` cannot interleave this
-    # pair: no ``await`` separates the snapshot from the expansion.  The
+    # Thread-safety note: ``build_instances`` runs inside ``asyncio.to_thread``
+    # worker threads dispatched from ``incorp()`` and ``refresh()`` — real OS
+    # threads, not coroutines, so two concurrent same-class calls can execute
+    # this function on separate threads at once, with no event-loop ordering
+    # guarantee between them.  A sibling worker can insert new keys into
+    # ``cls._schema_union`` (the ``cls._schema_union[k] = ...`` write below)
+    # while this thread is expanding the conv_dict against that same dict.
+    # What prevents ``RuntimeError('dictionary changed size during
+    # iteration')`` is the ``list(schema_union.items())`` snapshot taken
+    # inside ``_expand_conv_dict_with_schema_union`` — not any single-threaded
+    # assumption about the event loop. The remaining unguarded per-class
+    # ``setattr`` caches on this path (``_cached_effective_conv`` below,
+    # ``_cached_json_properties`` and ``_cached_type_adapter`` further down)
+    # are tolerated races: every write for a given cache key is idempotent/
+    # deterministic, so at worst a sibling thread's redundant recomputation
+    # overwrites an identical value — never a wrong or partial value observed
+    # by a reader. No ``threading.Lock`` is used here by design.  The
     # concurrent path is exercised by
-    # ``tests/test_validation.py::test_schema_union_concurrent_gather_safety``.
-    # (Not thread-safe in the GIL-free sense — yield-point-safe only.)
+    # ``tests/test_validation.py::test_schema_union_concurrent_gather_safety``,
+    # which forces real thread interleaving via a lowered
+    # ``sys.setswitchinterval`` across repeated rounds.
     schema_union = getattr(cls, "_schema_union", {})
     declared_field_names = frozenset(cls.model_fields.keys())
     cache_key = _effective_conv_cache_key(conv_dict, schema_union, declared_field_names)
