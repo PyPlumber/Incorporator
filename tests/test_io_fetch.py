@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
+from incorporator.exceptions import IncorporatorNetworkError
 from incorporator.io.fetch import _normalize_source_list
 
 # ----------------------------------------------------------------------
@@ -1962,9 +1963,7 @@ async def test_no_params_control_url_is_byte_identical(
 
 
 @pytest.mark.asyncio
-async def test_payload_only_happy_path_zero_network_calls(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_payload_only_happy_path_zero_network_calls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """(a) payload-only dispatch returns N instances, conv_dict applied, zero rejects, zero network calls.
 
     Asserts via a spy on execute_request that the network layer is never
@@ -2076,9 +2075,7 @@ async def test_payload_only_no_penstock_or_throttle_entries_created(
 
     monkeypatch.setattr(fetch, "resolve_penstock", spy_resolve_penstock)
 
-    async def fake_process_single(
-        src: str, is_file_mode: bool, client: Any, rate_limiter: Any, **_kw: Any
-    ) -> list:
+    async def fake_process_single(src: str, is_file_mode: bool, client: Any, rate_limiter: Any, **_kw: Any) -> list:
         # Passthrough rows must never receive a resolved BoundPenstock.
         assert rate_limiter is None
         return [{"payload": _kw.get("dynamic_payload")}]
@@ -2121,3 +2118,401 @@ async def test_real_invalid_url_validate_url_behavior_unchanged(
     async with httpx.AsyncClient() as client:
         with pytest.raises(IncorporatorNetworkError, match="Security Policy Violation: Unsupported scheme 'ftp'"):
             await execute_request(url="ftp://bad.example.com/resource", client=client)
+
+
+# ----------------------------------------------------------------------
+# D1-03 — reject metadata (status_code / attempt_number / retry_after)
+# survives the IncorporatorNetworkError re-wrap for exhausted 5xx and
+# fatal 4xx, by walking __cause__ at _build_reject_entry.
+# ----------------------------------------------------------------------
+
+
+def test_build_reject_entry_exhausted_5xx_wrapper_extracts_status_and_retry_after() -> None:
+    """A wrapped exhausted-5xx IncorporatorNetworkError recovers status_code/retry_after.
+
+    Mirrors the real re-wrap at _safe_execute's non-429 HTTPStatusError branch:
+    ``raise IncorporatorNetworkError(...) from e``.  Before the D1-03 fix,
+    status_code/retry_after were read off the wrapper directly (which has no
+    .response) and came back None.
+    """
+    from incorporator.io.fetch import _build_reject_entry
+
+    req = httpx.Request("GET", "https://api.example.com/data")
+    resp = httpx.Response(503, request=req, headers={"Retry-After": "30"})
+    http_exc = httpx.HTTPStatusError("503 Service Unavailable", request=req, response=resp)
+    try:
+        raise IncorporatorNetworkError("HTTP error 503") from http_exc
+    except IncorporatorNetworkError as wrapped:
+        entry = _build_reject_entry("https://api.example.com/data", wrapped, attempt_number=8, duration_sec=1.5)
+
+    assert entry.status_code == 503
+    assert entry.retry_after == 30.0
+    assert entry.cooldown_sec == 30.0
+    assert entry.attempt_number == 8
+    assert entry.duration_sec == 1.5
+    assert entry.is_url_traffic_error is True
+
+
+def test_build_reject_entry_fatal_4xx_wrapper_extracts_status_code() -> None:
+    """A wrapped fatal-4xx IncorporatorNetworkError recovers status_code.
+
+    Mirrors execute_request's ``raise IncorporatorNetworkError(...) from exc``
+    fatal-4xx raise site.  No Retry-After header on a 404, so retry_after
+    stays None while status_code is still populated.
+    """
+    from incorporator.io.fetch import _build_reject_entry
+
+    req = httpx.Request("GET", "https://api.example.com/missing")
+    resp = httpx.Response(404, request=req)
+    http_exc = httpx.HTTPStatusError("404 Not Found", request=req, response=resp)
+    try:
+        raise IncorporatorNetworkError("Fatal client error 404") from http_exc
+    except IncorporatorNetworkError as wrapped:
+        entry = _build_reject_entry("https://api.example.com/missing", wrapped, attempt_number=1, duration_sec=0.2)
+
+    assert entry.status_code == 404
+    assert entry.retry_after is None
+    assert entry.attempt_number == 1
+    assert entry.is_url_traffic_error is True
+
+
+@pytest.mark.asyncio
+async def test_safe_execute_exhausted_5xx_reject_enriched_and_routes_to_api_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """End-to-end: an exhausted-503 reject carries status_code/attempt_number and is_url_traffic_error.
+
+    Simulates _process_single_source raising the ORIGINAL httpx.HTTPStatusError
+    that execute_request re-raises when a non-429 5xx exhausts its retry
+    budget (execute_request's outer handler attaches
+    _incorporator_attempt_number to that same exception object before it
+    propagates). Proves _safe_execute's non-429 branch of its
+    ``except httpx.HTTPStatusError`` handler builds the reject directly (with
+    full enrichment) instead of re-raising and losing the metadata at the
+    outer per-worker handlers — this fails pre-fix because status_code was
+    None (getattr on a bare IncorporatorNetworkError wrapper, no .response)
+    and attempt_number/duration_sec were absent entirely.
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        req = httpx.Request("GET", src)
+        resp = httpx.Response(503, request=req, headers={"Retry-After": "5"})
+        http_exc = httpx.HTTPStatusError("503 Service Unavailable", request=req, response=resp)
+        http_exc._incorporator_attempt_number = 8  # type: ignore[attr-defined]
+        raise http_exc
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    _, rejects = await fetch.fetch_concurrent_payloads(
+        source_list=["https://flaky.example.com/data"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+    )
+
+    assert len(rejects) == 1
+    entry = rejects[0]
+    assert entry.status_code == 503
+    assert entry.attempt_number == 8
+    assert entry.retry_after == 5.0
+    assert entry.duration_sec is not None
+    assert entry.is_url_traffic_error is True
+
+
+@pytest.mark.asyncio
+async def test_safe_execute_fatal_4xx_reject_enriched(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A fatal-4xx reject carries status_code and routes as a URL-traffic error.
+
+    Fatal 4xx raises IncorporatorNetworkError directly inside execute_request's
+    retry loop, so _incorporator_attempt_number lands on the wrapper itself
+    (not __cause__) — proves the `getattr(e, ...) or getattr(e.__cause__, ...)`
+    fallback in _safe_execute handles both attachment sites correctly.
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        req = httpx.Request("GET", src)
+        resp = httpx.Response(404, request=req)
+        http_exc = httpx.HTTPStatusError("404 Not Found", request=req, response=resp)
+        wrapped = IncorporatorNetworkError("Fatal client error 404")
+        wrapped.__cause__ = http_exc
+        wrapped._incorporator_attempt_number = 1  # type: ignore[attr-defined]
+        raise wrapped
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    _, rejects = await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.example.com/missing"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+    )
+
+    assert len(rejects) == 1
+    entry = rejects[0]
+    assert entry.status_code == 404
+    assert entry.attempt_number == 1
+    assert entry.is_url_traffic_error is True
+
+
+@pytest.mark.asyncio
+async def test_safe_execute_429_reject_unchanged_by_d1_03(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """429 rejects are byte-identical to pre-D1-03 behavior (no regression).
+
+    The 429 branch in _safe_execute was never touched by the D1-03 fix — this
+    proves the existing HTTPStatusError(429) handling still populates
+    status_code/retry_after/attempt_number/duration_sec exactly as before.
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_process_single(src: str, *_a: Any, **_kw: Any) -> list:
+        req = httpx.Request("GET", src)
+        resp = httpx.Response(429, request=req, headers={"Retry-After": "12"})
+        exc = httpx.HTTPStatusError("429 Too Many Requests", request=req, response=resp)
+        exc._incorporator_attempt_number = 8  # type: ignore[attr-defined]
+        raise exc
+
+    monkeypatch.setattr(fetch, "_process_single_source", fake_process_single)
+
+    _, rejects = await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.example.com/data"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+    )
+
+    assert len(rejects) == 1
+    entry = rejects[0]
+    assert entry.status_code == 429
+    assert entry.retry_after == 12.0
+    assert entry.attempt_number == 8
+    assert entry.duration_sec is not None
+    assert entry.is_url_traffic_error is True
+    assert entry.error_kind == "HTTPStatusError"
+
+
+# ----------------------------------------------------------------------
+# D1-05 — stream_to_path success is recorded as success (zero rows, no
+# reject); a genuine streaming failure still rejects with D1-03 metadata.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_to_path_success_zero_rows_no_reject(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful stream_to_path fetch contributes 0 rows and 0 rejects.
+
+    Before the D1-05 fix, the empty sentinel Response (content=b"") was fed
+    into resolve_source_payload/the format parser, which failed or yielded
+    nothing, so the source was wrongly recorded as failed. This proves the
+    short-circuit: body lands on disk, parsed_data is empty, rejects is empty.
+    """
+    monkeypatch.chdir(tmp_path)
+    dest = tmp_path / "downloaded.bin"
+    body = b"some binary payload bytes"
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as client:
+        from incorporator.io.fetch import _CURRENT_CHUNK_CLASS, _process_single_source
+
+        token = _CURRENT_CHUNK_CLASS.set(None)
+        try:
+            result = await _process_single_source(
+                "https://example.com/file.bin",
+                False,
+                client,
+                None,
+                dynamic_payload=None,
+                stream_to_path=dest,
+            )
+        finally:
+            _CURRENT_CHUNK_CLASS.reset(token)
+
+    assert result == []
+    assert dest.exists()
+    assert dest.read_bytes() == body
+
+
+@pytest.mark.asyncio
+async def test_stream_to_path_success_via_fetch_concurrent_payloads_no_failed_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full orchestrator path: stream_to_path success produces no reject entry.
+
+    Exercises fetch_concurrent_payloads (not just _process_single_source) so
+    the D1-05 fix is proven at the same layer failed_sources is derived from.
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+    dest = tmp_path / "download.bin"
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"payload-bytes")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    try:
+        parsed, rejects = await fetch.fetch_concurrent_payloads(
+            source_list=["https://example.com/file.bin"],
+            payload_list=None,
+            is_file_mode=False,
+            limit=1,
+            _client=client,
+            stream_to_path=dest,
+        )
+    finally:
+        await client.aclose()
+
+    assert parsed == []
+    assert rejects == []
+    assert dest.read_bytes() == b"payload-bytes"
+
+
+@pytest.mark.asyncio
+async def test_stream_to_path_genuine_failure_still_rejects_with_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stream_to_path fetch that exhausts retries on 503 still rejects, enriched.
+
+    Proves the D1-05 short-circuit does not swallow genuine failures — the
+    exception still propagates out of bound_fetch/execute_request before
+    _process_single_source would reach the short-circuit, and the D1-03
+    enrichment applies identically to the non-streaming case.
+    """
+    from incorporator.io import fetch
+
+    monkeypatch.chdir(tmp_path)
+    dest = tmp_path / "never_written.bin"
+    call_count = 0
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(503, request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    try:
+        parsed, rejects = await fetch.fetch_concurrent_payloads(
+            source_list=["https://flaky.example.com/file.bin"],
+            payload_list=None,
+            is_file_mode=False,
+            limit=1,
+            _client=client,
+            stream_to_path=dest,
+        )
+    finally:
+        await client.aclose()
+
+    assert parsed == []
+    assert len(rejects) == 1
+    entry = rejects[0]
+    assert entry.status_code == 503
+    assert entry.is_url_traffic_error is True
+    assert entry.attempt_number is not None
+    assert call_count > 1  # retries were attempted
+
+
+# ----------------------------------------------------------------------
+# D4-04 — engine-owned "_client" must not persist into cls._incorp_kwargs,
+# so a later bare refresh()/incorp() never replays a closed client.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_incorp_kwargs_excludes_injected_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_client`` never lands in ``cls._incorp_kwargs`` after ``incorp()``.
+
+    Mirrors how chunked.py / scheduler.py inject a pooled client via the
+    ``_client`` kwarg.  Directly proves the persistence-dict exclusion,
+    independent of the closed-client behavioral regression test below.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class _Widget(Incorporator):
+        inc_code: Any = None
+        name: str = ""
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"id": 1, "name": "a"}])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    try:
+        await _Widget.incorp("https://api.example.com/widgets", inc_code="id", _client=client)
+    finally:
+        await client.aclose()
+
+    assert "_client" not in _Widget._incorp_kwargs
+
+
+@pytest.mark.asyncio
+async def test_refresh_after_closed_injected_client_builds_fresh_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """refresh() after the engine closes its injected client does not reuse it.
+
+    Regression for D4-04: before the fix, ``_client`` was persisted into
+    ``cls._incorp_kwargs`` and replayed verbatim by ``refresh()``'s
+    ``persisted_net`` merge, so a bare ``refresh()`` call after the engine
+    closed its pooled client would attempt a request on a closed
+    ``httpx.AsyncClient`` and raise ``RuntimeError: Cannot send a request,
+    as the client has been closed.`` This proves refresh() instead builds
+    (and closes) its own fresh client: ``HTTPClientBuilder.build_client`` is
+    monkeypatched to return a fresh mock-transport client on every call, so
+    if ``refresh()`` fell back to the closed injected client instead, the
+    request would raise the httpx "client has been closed" RuntimeError
+    rather than succeed.
+    """
+    from incorporator.io.fetch import HTTPClientBuilder
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Widget(Incorporator):
+        inc_code: Any = None
+        name: str = ""
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"id": 1, "name": "a"}])
+
+    def _fake_build_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+
+    monkeypatch.setattr(HTTPClientBuilder, "build_client", staticmethod(_fake_build_client))
+
+    injected_client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    await _Widget.incorp("https://api.example.com/widgets", inc_code="id", _client=injected_client)
+    await injected_client.aclose()
+
+    # A bare refresh() must not attempt the closed client — it should build
+    # its own fresh client (via the monkeypatched build_client above) since
+    # "_client" was excluded from persistence.  If the fix regressed, this
+    # would raise httpx's "client has been closed" RuntimeError instead.
+    # A single in-state instance collapses refresh()'s return to the bare
+    # instance rather than a list — the assertion below just needs the call
+    # to succeed without the closed-client error.
+    refreshed = await _Widget.refresh()
+    assert refreshed is not None
+    assert "_client" not in _Widget._incorp_kwargs

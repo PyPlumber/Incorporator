@@ -672,13 +672,17 @@ class Incorporator(BaseModel):
         # is dropped.  User-supplied ``refresh_params`` still win on key
         # conflict (handled in ``refresh()`` below).  ``__inspect`` and
         # ``__capture_into`` are one-shot inspector flags, intentionally
-        # not replayed by ``refresh()``.
+        # not replayed by ``refresh()``.  ``_client`` is engine-owned — the
+        # chunked pipeline / Tideweaver scheduler inject a pooled
+        # ``httpx.AsyncClient`` per tick and close it when the tick ends;
+        # persisting it would let a later bare ``refresh()``/``incorp()``
+        # call replay a closed client instead of building a fresh one.
         cls._incorp_kwargs = {
             "conv_dict": conv_dict,
             "excl_lst": excl_lst,
             "name_chg": name_chg,
             "normalized": _normalized,
-            **{k: v for k, v in kwargs.items() if k not in ("__inspect", "__capture_into")},
+            **{k: v for k, v in kwargs.items() if k not in ("__inspect", "__capture_into", "_client")},
         }
 
         # Extract control flags before network call so they don't pollute handlers

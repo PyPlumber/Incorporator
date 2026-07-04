@@ -49,6 +49,14 @@ from .source_ref import SourceRef
 _CURRENT_CHUNK_CLASS: ContextVar[type[Any] | None] = ContextVar("_CURRENT_CHUNK_CLASS", default=None)
 
 
+# Direct httpx HTTP-status (4xx/5xx) or transport (RequestError) failure —
+# the two exception families that carry URL-traffic metadata (status_code /
+# retry_after via .response, or transport-level detail).  Shared by the
+# is_url_traffic_error classification and the __cause__ resolution below so
+# both uses stay in lockstep instead of drifting isinstance tuples.
+_httpx_traffic: tuple[type[Exception], ...] = (httpx.HTTPStatusError, httpx.RequestError)
+
+
 def _extract_retry_after(exc: Exception) -> float | None:
     """Pull a ``Retry-After`` hint from an HTTPStatusError if the server sent one.
 
@@ -86,15 +94,21 @@ def _build_reject_entry(
     Returns:
         A frozen :class:`RejectEntry` ready for ``IncorporatorList.rejects``.
     """
-    retry_after = _extract_retry_after(exc)
     # URL internet-traffic error = the HTTP/network layer failed talking to a URL:
     # a direct httpx HTTP-status (4xx/5xx) or transport (RequestError) failure, OR an
-    # IncorporatorNetworkError that *wraps* one (non-429 5xx is re-raised as
-    # `IncorporatorNetworkError(...) from e` at the gather layer, so the httpx origin
-    # survives on __cause__).  IncorporatorNetworkErrors raised for file/path, config,
-    # or SSRF reasons have no httpx __cause__ and stay False (-> error.log).
-    _httpx_traffic = (httpx.HTTPStatusError, httpx.RequestError)
-    is_url_traffic = isinstance(exc, _httpx_traffic) or isinstance(getattr(exc, "__cause__", None), _httpx_traffic)
+    # IncorporatorNetworkError that *wraps* one (non-429 5xx / fatal 4xx is re-raised
+    # as `IncorporatorNetworkError(...) from e` at execute_request / the gather layer,
+    # so the httpx origin survives on __cause__).  IncorporatorNetworkErrors raised for
+    # file/path, config, or SSRF reasons have no httpx __cause__ and stay False (->
+    # error.log).  Resolved once here so status_code / retry_after extraction below
+    # can share the same "effective httpx exception" without duplicating the walk.
+    _cause = getattr(exc, "__cause__", None)
+    _httpx_source: Exception | None = (
+        exc if isinstance(exc, _httpx_traffic) else _cause if isinstance(_cause, _httpx_traffic) else None
+    )
+    is_url_traffic = _httpx_source is not None
+    retry_after = _extract_retry_after(_httpx_source) if _httpx_source is not None else None
+    status_code = _httpx_source.response.status_code if isinstance(_httpx_source, httpx.HTTPStatusError) else None
     return RejectEntry.model_construct(
         source=source,
         error_kind=type(exc).__name__,
@@ -102,7 +116,7 @@ def _build_reject_entry(
         retry_after=retry_after,
         wave_index=None,
         host=urlparse(source).netloc if source else None,
-        status_code=getattr(getattr(exc, "response", None), "status_code", None),
+        status_code=status_code,
         cooldown_sec=retry_after,
         attempt_number=attempt_number,
         duration_sec=duration_sec,
@@ -515,7 +529,12 @@ async def execute_request(
             ``httpx.Response`` with ``content=b""``; callers detect the streaming
             path via ``len(response.content) == 0``.  The file is opened in
             ``"wb"`` mode on each attempt so retries automatically truncate any
-            partial write from the previous attempt.
+            partial write from the previous attempt.  At the ``incorp()`` layer,
+            a successful stream-to-path fetch contributes zero parsed rows and
+            no reject to the returned :class:`~incorporator.base.IncorporatorList`
+            — the file on disk is the deliverable, not the return value. Check
+            the destination path's existence/size for success confirmation,
+            not ``len(result)``.
 
     Returns:
         The successful ``httpx.Response``.  When ``stream_to_path`` is set,
@@ -668,7 +687,14 @@ async def _process_single_source(
     dynamic_payload: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> list[Any]:
-    """Isolates stream processing, dynamic Paginator routing, and rec_path drill-down."""
+    """Isolates stream processing, dynamic Paginator routing, and rec_path drill-down.
+
+    When ``kwargs["stream_to_path"]`` is set, a successful fetch returns the
+    accumulated list UNCHANGED (empty, unless earlier sources already
+    contributed) — the response body was streamed straight to disk and never
+    parsed, so the file at ``stream_to_path`` is the deliverable, not this
+    return value.
+    """
     format_type = kwargs.pop("format_type", None)
     inc_page: AsyncPaginator | None = kwargs.pop("inc_page", None)
     call_lim = kwargs.pop("call_lim", None)
@@ -785,7 +811,12 @@ async def _process_single_source(
         if chunk_cls is not None:
             try:
                 chunk_cls._last_bytes_processed = len(res.content)
-                chunk_cls._last_bytes_downloaded = res.num_bytes_downloaded
+                # The sentinel Response returned for a streaming download is
+                # hand-constructed (see _stream_to_path_request) and carries no
+                # real transport instrumentation — num_bytes_downloaded reads 0
+                # regardless of the actual download size, so recording it would
+                # fabricate a number.  Leave it None for the streaming path.
+                chunk_cls._last_bytes_downloaded = None if stream_to_path is not None else res.num_bytes_downloaded
                 # res.elapsed raises RuntimeError when not set (e.g. mock responses).
                 try:
                     chunk_cls._last_http_fetch_time_sec = res.elapsed.total_seconds()
@@ -793,6 +824,17 @@ async def _process_single_source(
                     chunk_cls._last_http_fetch_time_sec = None
             except (AttributeError, TypeError):
                 pass  # Class doesn't carry the ClassVar (non-Incorporator caller); ignore.
+
+        # stream_to_path success: the body was already written to disk by
+        # _stream_to_path_request; res is a sentinel with content=b"".  The
+        # file on disk IS the deliverable — skip resolve_source_payload /
+        # _process_payload entirely so this source contributes zero parsed
+        # rows and no reject.  A genuinely failed streaming download raises
+        # out of bound_fetch above and is handled by _safe_execute like any
+        # other request failure; this branch only runs on success.
+        if stream_to_path is not None:
+            return accumulated
+
         payload = await resolve_source_payload(
             source_val,
             is_file_mode=False,
@@ -979,7 +1021,17 @@ async def fetch_concurrent_payloads(
                 )
                 rejects.append(reject)
                 return []
-            raise IncorporatorNetworkError(f"HTTP error {e.response.status_code}") from e
+            # Exhausted non-429 5xx (or 408/425): build the reject HERE, off the
+            # original httpx.HTTPStatusError, instead of re-raising as a bare
+            # IncorporatorNetworkError and losing the enrichment at the outer
+            # per-worker exception handlers (which have no attempt/duration
+            # context).  Symmetric with the RequestError / IncorporatorFormatError
+            # / IncorporatorNetworkError branches below — every failure kind
+            # collects its own reject inside _safe_execute rather than escaping it.
+            reject = _build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration)
+            logger.warning(str(reject))
+            rejects.append(reject)
+            return []
         except httpx.RequestError as e:
             duration = time.perf_counter() - start
             attempt = getattr(e, "_incorporator_attempt_number", None)
@@ -991,6 +1043,20 @@ async def fetch_concurrent_payloads(
             duration = time.perf_counter() - start
             # Format errors are not retried by Tenacity, so attempt_number is unavailable.
             reject = _build_reject_entry(src, e, duration_sec=duration)
+            logger.warning(str(reject))
+            rejects.append(reject)
+            return []
+        except IncorporatorNetworkError as e:
+            # Fatal 4xx: raised directly inside execute_request's retry loop, so
+            # _incorporator_attempt_number is attached to this same exception
+            # object by execute_request's outer handler.  _build_reject_entry
+            # walks __cause__ (the original httpx.HTTPStatusError) to recover
+            # status_code.  Non-network IncorporatorNetworkErrors (bad file path,
+            # uninitialised client, SSRF) also land here with no httpx __cause__
+            # and correctly classify as is_url_traffic_error=False.
+            duration = time.perf_counter() - start
+            attempt = getattr(e, "_incorporator_attempt_number", None)
+            reject = _build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration)
             logger.warning(str(reject))
             rejects.append(reject)
             return []
