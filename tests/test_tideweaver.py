@@ -3663,3 +3663,486 @@ async def test_drain_cancel_sets_failed_flag_and_advertises_no_wave() -> None:
     state = tw._state["a"]
     assert state.last_wave_at is None, "a cancelled tick must never set last_wave_at"
     assert state.last_failed_at is not None, "a cancelled tick must set last_failed_at"
+
+
+# ---------------------------------------------------------------------------
+# D5-02: snapshot-wins consumed-watermark (mid-tick upstream wave delivery)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mid_tick_wave_delivery_hard_chain() -> None:
+    """A(HardLock->B): a wave A emits while B's tick is in flight is not lost.
+
+    B's first tick starts after A's first wave.  While B is still running,
+    A emits a SECOND wave, then A is frozen (raises on every subsequent
+    tick, advertising no further waves) -- isolating the effect to
+    exactly the two waves involved.  Under the old "latest-wins"
+    watermark, B's first-tick ``finally`` block would overwrite
+    ``_last_consumed`` with A's CURRENT ``last_wave_at`` (the second
+    wave, stamped mid-tick) even though B's tick body never read it;
+    since A never emits a third wave, HardLock then blocks B forever
+    (``last_consumed >= up_last_wave_at`` holds permanently) and the
+    second wave is never delivered.  Under snapshot-wins, only the
+    pre-tick (first-wave) snapshot is written, so the gate stays open
+    for the second wave and B re-fires next pass, reading it via the
+    edge reservoir's newest entry.
+
+    MUST FAIL pre-fix: pre-fix, B fires exactly once and the second wave
+    is never delivered.
+    """
+    from incorporator.tideweaver import HardLock
+
+    a_ticks = {"count": 0}
+    b_started = asyncio.Event()
+    b_may_finish = asyncio.Event()
+    b_fires: List[int] = []
+
+    async def dispatch(current: Current) -> None:
+        if current.name == "a":
+            a_ticks["count"] += 1
+            if a_ticks["count"] <= 2:
+                inst = _A(inc_code=f"a-{a_ticks['count']}")
+                _A._tideweaver_snapshot = [inst]  # type: ignore[attr-defined]
+                return
+            # Freeze A after its second wave -- isolates the test to the
+            # exact mid-tick-second-wave scenario, no further waves ever.
+            raise RuntimeError("a stops after wave 2")
+        # b
+        b_fires.append(a_ticks["count"])
+        if len(b_fires) == 1:
+            b_started.set()
+            # Block B's first tick open long enough for A to emit a second
+            # wave WHILE B is still in flight.
+            await asyncio.wait_for(b_may_finish.wait(), timeout=2.0)
+
+    a = Stream(name="a", cls=_A, interval=0.05, incorp_params={}, on_error="isolate")
+    b = Stream(name="b", cls=_B, interval=0.05, incorp_params={})
+    edge_flow = FlowControl(gate=HardLock())
+    ws = Watershed(
+        window=_short_window(1.0),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=edge_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=dispatch, pass_interval=0.03)
+
+    async def _release_b_after_second_a_wave() -> None:
+        await b_started.wait()
+        start_count = a_ticks["count"]
+        while a_ticks["count"] <= start_count:
+            await asyncio.sleep(0.02)
+        b_may_finish.set()
+
+    releaser = asyncio.create_task(_release_b_after_second_a_wave())
+    await _collect_tides(tw)
+    releaser.cancel()
+    try:
+        await releaser
+    except asyncio.CancelledError:
+        pass
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+    assert len(b_fires) >= 2, f"B must re-fire after the mid-tick upstream wave; got fires={b_fires}"
+    # The re-fire must have seen the SECOND wave (not be stuck reading the first).
+    assert b_fires[1] > b_fires[0], f"B's re-fire must observe a newer A wave count than its first fire; got {b_fires}"
+
+
+@pytest.mark.asyncio
+async def test_no_double_fire_when_nothing_new_hard_chain() -> None:
+    """A(HardLock->B): when A emits exactly one wave for the whole window, B fires exactly once.
+
+    Regression guard for snapshot-wins: with only ONE upstream wave ever
+    emitted (A's ``interval`` exceeds the window so it never re-ticks),
+    B's gate must stay closed on an equal watermark after its first
+    consumption — it must not reopen spuriously just because the
+    snapshot-wins change deleted the post-tick ``latest`` overwrite.
+    """
+    from incorporator.tideweaver import HardLock
+
+    a_ticks = {"count": 0}
+    b_fires: List[str] = []
+
+    async def dispatch(current: Current) -> None:
+        if current.name == "a":
+            a_ticks["count"] += 1
+            inst = _A(inc_code="a-1")
+            _A._tideweaver_snapshot = [inst]  # type: ignore[attr-defined]
+            return
+        b_fires.append(current.name)
+
+    # A's interval exceeds the whole window, so it only ever fires once.
+    a = Stream(name="a", cls=_A, interval=5.0, incorp_params={})
+    b = Stream(name="b", cls=_B, interval=0.05, incorp_params={})
+    edge_flow = FlowControl(gate=HardLock())
+    ws = Watershed(
+        window=_short_window(0.5),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=edge_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=dispatch, pass_interval=0.03)
+    await _collect_tides(tw)
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+    assert a_ticks["count"] == 1, "A must tick exactly once given its long interval"
+    assert len(b_fires) == 1, f"B must fire exactly once when A emits no new wave after being consumed; got {b_fires}"
+
+
+@pytest.mark.asyncio
+async def test_d5_01_gate_tests_stay_green_with_snapshot_wins() -> None:
+    """Confirms the D5-01 failure-gate contract (not_tick_raised) is untouched by the snapshot-wins change.
+
+    Re-runs the essential shape of ``test_failed_isolated_tick_does_not_advertise_wave_hard_chain``:
+    a failing upstream must never advertise a wave regardless of which
+    ``_last_consumed`` value wins on success.
+    """
+    from incorporator.tideweaver import BurstPenstock, HardLock
+
+    strong_refs: List[_A] = []
+    a_ticks = {"count": 0}
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            a_ticks["count"] += 1
+            if a_ticks["count"] == 1:
+                inst = _A(inc_code="a-1")
+                strong_refs.append(inst)
+                _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+            else:
+                raise RuntimeError("a is down")
+
+    a = Stream(name="a", cls=_A, interval=0.05, incorp_params={}, on_error="isolate")
+    b = Stream(name="b", cls=_B, interval=0.05, incorp_params={})
+    edge_flow = FlowControl(gate=HardLock(), penstock=BurstPenstock(rate_per_sec=100.0, burst=5))
+    ws = Watershed(
+        window=_short_window(0.6),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=edge_flow)],
+    )
+    b_fires: List[str] = []
+
+    async def dispatch(current: Current) -> None:
+        if current.name == "b":
+            b_fires.append(current.name)
+            return
+        await fake(current)
+
+    tw = Tideweaver(ws, tick_factory=dispatch, pass_interval=0.03)
+    await _collect_tides(tw)
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+    assert a_ticks["count"] > 1, "A must have ticked more than once (including failures)"
+    assert len(b_fires) == 1, f"B (HardLock) must fire exactly once on A's single success; got {len(b_fires)}"
+
+
+# ---------------------------------------------------------------------------
+# D5-02 canal/L4: penstock debit cadence, watermark integrity, reservoir sanity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_canal_penstock_debited_once_per_fire_not_per_gate_check() -> None:
+    """(T-C1) BurstPenstock tokens are debited exactly once per B FIRE, never once per gate check.
+
+    Drives a mid-tick re-fire sequence (like T1) and asserts
+    ``bucket_tokens`` only ever drops by the number of times B actually
+    fired, not by the (larger) number of passes the scheduler evaluated
+    the gate.
+    """
+    from incorporator.tideweaver import BurstPenstock, HardLock
+
+    a_ticks = {"count": 0}
+    b_started = asyncio.Event()
+    b_may_finish = asyncio.Event()
+    b_fires: List[int] = []
+
+    async def dispatch(current: Current) -> None:
+        if current.name == "a":
+            a_ticks["count"] += 1
+            inst = _A(inc_code=f"a-{a_ticks['count']}")
+            _A._tideweaver_snapshot = [inst]  # type: ignore[attr-defined]
+            return
+        b_fires.append(a_ticks["count"])
+        if len(b_fires) == 1:
+            b_started.set()
+            await asyncio.wait_for(b_may_finish.wait(), timeout=2.0)
+
+    a = Stream(name="a", cls=_A, interval=0.05, incorp_params={})
+    b = Stream(name="b", cls=_B, interval=0.05, incorp_params={})
+    edge_flow = FlowControl(gate=HardLock(), penstock=BurstPenstock(rate_per_sec=1000.0, burst=10))
+    ws = Watershed(
+        window=_short_window(1.2),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=edge_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=dispatch, pass_interval=0.03)
+
+    async def _release_b_after_second_a_wave() -> None:
+        await b_started.wait()
+        start_count = a_ticks["count"]
+        while a_ticks["count"] <= start_count:
+            await asyncio.sleep(0.02)
+        b_may_finish.set()
+
+    releaser = asyncio.create_task(_release_b_after_second_a_wave())
+    await _collect_tides(tw)
+    releaser.cancel()
+    try:
+        await releaser
+    except asyncio.CancelledError:
+        pass
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+    edge_state = tw._edge_state[("a", "b")]
+    assert edge_state.flow_state.bucket_tokens is not None
+    debited = 10.0 - edge_state.flow_state.bucket_tokens
+    # Refill is near-instant at rate_per_sec=1000, so tolerate a small
+    # positive slack from refill between debits without masking an
+    # over-debit bug (over-debiting would show up as far more than
+    # len(b_fires) tokens consumed).
+    assert debited <= len(b_fires) + 0.5, (
+        f"penstock must debit at most once per B fire ({len(b_fires)} fires); "
+        f"observed debited={debited} tokens from bucket"
+    )
+
+
+@pytest.mark.asyncio
+async def test_canal_watermark_reflects_pretick_snapshot_of_latest_fire() -> None:
+    """(T-C2) After a re-fire, _last_consumed[edge] equals the PRE-TICK snapshot of that fire.
+
+    Never an in-between value picked up mid-tick from the upstream.  A is
+    frozen (via ``on_error='isolate'`` + a raise) right after producing
+    its SECOND wave, so ``a_state.last_wave_at`` at assertion time is
+    guaranteed to equal the exact wave B's re-fire snapshot must have
+    consumed -- no ambiguity from A continuing to tick after the sample.
+    """
+    from incorporator.tideweaver import HardLock
+
+    a_ticks = {"count": 0}
+    b_started = asyncio.Event()
+    b_may_finish = asyncio.Event()
+    b_fires: List[int] = []
+
+    async def dispatch(current: Current) -> None:
+        if current.name == "a":
+            a_ticks["count"] += 1
+            if a_ticks["count"] <= 2:
+                inst = _A(inc_code=f"a-{a_ticks['count']}")
+                _A._tideweaver_snapshot = [inst]  # type: ignore[attr-defined]
+                return
+            # Freeze A after its second wave so last_wave_at stops moving.
+            raise RuntimeError("a stops after wave 2")
+        b_fires.append(a_ticks["count"])
+        if len(b_fires) == 1:
+            b_started.set()
+            await asyncio.wait_for(b_may_finish.wait(), timeout=2.0)
+
+    a = Stream(name="a", cls=_A, interval=0.05, incorp_params={}, on_error="isolate")
+    b = Stream(name="b", cls=_B, interval=0.05, incorp_params={})
+    edge_flow = FlowControl(gate=HardLock())
+    ws = Watershed(
+        window=_short_window(1.2),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=edge_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=dispatch, pass_interval=0.03)
+
+    async def _release_b_after_second_a_wave() -> None:
+        await b_started.wait()
+        start_count = a_ticks["count"]
+        while a_ticks["count"] <= start_count:
+            await asyncio.sleep(0.02)
+        b_may_finish.set()
+
+    releaser = asyncio.create_task(_release_b_after_second_a_wave())
+    await _collect_tides(tw)
+    releaser.cancel()
+    try:
+        await releaser
+    except asyncio.CancelledError:
+        pass
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+    assert len(b_fires) >= 2, "test requires B to have re-fired at least once"
+    watermark = tw._last_consumed[("a", "b")]
+    a_state = tw._state["a"]
+    # The watermark must be a real recorded wave time, never None.
+    assert watermark is not None
+    # A is frozen after wave 2 (further ticks raise and never advertise a
+    # wave), so a_state.last_wave_at is pinned to wave 2's timestamp -- the
+    # exact pre-tick snapshot B's re-fire must have consumed.
+    assert watermark == a_state.last_wave_at, (
+        f"watermark must reflect the pre-tick snapshot of the latest fire; "
+        f"got watermark={watermark}, a.last_wave_at={a_state.last_wave_at}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_canal_backpressure_reservoir_sanity_no_spurious_rejects() -> None:
+    """(T-C3) Reservoir fullness only changes via wave push + displacement; re-fires reading waves[-1] never drain it.
+
+    Also asserts a plain HardLock+NullPenstock-free config produces no
+    spurious ``penstock_limited`` canal rejects from the extra re-fire
+    passes introduced by snapshot-wins.
+    """
+    from incorporator.tideweaver import HardLock, Reservoir
+
+    a_ticks = {"count": 0}
+    b_started = asyncio.Event()
+    b_may_finish = asyncio.Event()
+    b_fires: List[int] = []
+
+    async def dispatch(current: Current) -> None:
+        if current.name == "a":
+            a_ticks["count"] += 1
+            inst = _A(inc_code=f"a-{a_ticks['count']}")
+            _A._tideweaver_snapshot = [inst]  # type: ignore[attr-defined]
+            return
+        b_fires.append(a_ticks["count"])
+        if len(b_fires) == 1:
+            b_started.set()
+            await asyncio.wait_for(b_may_finish.wait(), timeout=2.0)
+
+    a = Stream(name="a", cls=_A, interval=0.05, incorp_params={})
+    b = Stream(name="b", cls=_B, interval=0.05, incorp_params={})
+    edge_flow = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=3))
+    ws = Watershed(
+        window=_short_window(1.2),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=edge_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=dispatch, pass_interval=0.03)
+
+    reservoir_lens: List[int] = []
+
+    async def _release_and_sample() -> None:
+        await b_started.wait()
+        start_count = a_ticks["count"]
+        while a_ticks["count"] <= start_count:
+            reservoir_lens.append(len(tw._edge_state[("a", "b")].waves))
+            await asyncio.sleep(0.02)
+        b_may_finish.set()
+
+    releaser = asyncio.create_task(_release_and_sample())
+    await _collect_tides(tw)
+    releaser.cancel()
+    try:
+        await releaser
+    except asyncio.CancelledError:
+        pass
+
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+    edge_state = tw._edge_state[("a", "b")]
+    # Depth=3 caps reservoir length; anything beyond that is displaced into
+    # overflow, never drained by a re-fire's waves[-1] read.
+    assert len(edge_state.waves) == min(a_ticks["count"], 3), (
+        f"reservoir length must equal min(pushes, depth) (no drain-on-read); "
+        f"got waves={len(edge_state.waves)}, a_ticks={a_ticks['count']}"
+    )
+    assert edge_state.overflow_count == max(0, a_ticks["count"] - 3), (
+        "reservoir depth=3 overflow must only reflect pushes beyond depth, not re-fire reads"
+    )
+    penstock_rejects = [r for r in tw.rejects if r.error_kind == "PenstockLimited"]
+    assert penstock_rejects == [], (
+        f"a HardLock+NullPenstock-free config must never produce PenstockLimited rejects; got {penstock_rejects}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D5-03: Tideweaver instance is truly reusable across sequential run() calls
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sequential_runs_reset_full_scheduler_state() -> None:
+    """(T4) Two sequential run() calls on the same Tideweaver: run 2 is a fresh session.
+
+    Asserts: tide numbering restarts at 1, phase_offset_sec is honored
+    again (first tick of run 2 is gated by PHASE_OFFSET, not fired
+    immediately), reservoirs/consumption-watermarks start empty (no
+    stale run-1 waves delivered to run 2's first tick), and canal
+    rejects/dedup-ids/due-heap do not leak across runs.
+
+    MUST FAIL pre-fix: pre-fix, only ``_client_pool``/``_run_started_at``
+    reset, so ``_tide_number`` keeps counting up, ``_last_consumed`` and
+    ``_edge_state`` reservoirs from run 1 leak into run 2, and
+    ``phase_offset_sec`` is silently ignored on run 2 (stale
+    ``last_tick_started``).
+    """
+    from incorporator.tideweaver import HardLock
+
+    fires: List[str] = []
+
+    async def dispatch(current: Current) -> None:
+        fires.append(current.name)
+        if current.name == "a":
+            inst = _A(inc_code=f"a-{len(fires)}")
+            _A._tideweaver_snapshot = [inst]  # type: ignore[attr-defined]
+
+    a = Stream(name="a", cls=_A, interval=0.05, phase_offset_sec=0.15)
+    b = Stream(name="b", cls=_B, interval=0.05)
+    edge_flow = FlowControl(gate=HardLock())
+    ws = Watershed(
+        window=_short_window(0.6),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=edge_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=dispatch, pass_interval=0.03)
+
+    tides_1 = [t async for t in tw.run()]
+    assert tides_1[0].tide_number == 1
+    assert tw._tide_number == len(tides_1)
+    assert tw._last_consumed.get(("a", "b")) is not None, "run 1 must have produced a consumption watermark"
+    assert len(tw._edge_state[("a", "b")].waves) >= 1, "run 1 must have pushed at least one wave"
+
+    # Simulate a run-1 reject that was already routed to the session log
+    # (the dedup set that ``_reset_run_state`` must clear so run 2's
+    # equivalent reject isn't silently suppressed).
+    tw._routed_reject_ids.add(id(object()))
+    assert tw._routed_reject_ids, "precondition: dedup set must be non-empty before reset"
+
+    fires.clear()
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+    # Real callers reusing a Tideweaver instance supply a fresh window per
+    # run; the fixed absolute window from construction would otherwise
+    # already be closed by the time run 2 starts.
+    tw.watershed.window = _short_window(0.6)
+
+    tides_2 = [t async for t in tw.run()]
+
+    assert tw._routed_reject_ids == set(), "run 2 must clear the run-1 routed-reject dedup set"
+
+    # Tide numbering restarts.
+    assert tides_2[0].tide_number == 1, f"run 2 must restart tide numbering at 1; got {tides_2[0].tide_number}"
+
+    # phase_offset_sec is honored again: 'a' must not appear in fires until
+    # after the phase offset has elapsed, i.e. some early tides show it
+    # skipped for PHASE_OFFSET before it first fires.
+    first_a_tide_index = next(i for i, t in enumerate(tides_2) if "a" in t.fired)
+    assert first_a_tide_index > 0, "run 2 must re-honor phase_offset_sec (a shouldn't fire on the very first pass)"
+    phase_skips = [
+        reason
+        for t in tides_2[:first_a_tide_index]
+        for name, reason in t.skipped
+        if name == "a" and reason.value == "phase_offset"
+    ]
+    assert phase_skips, "run 2 must re-apply PHASE_OFFSET gating on 'a' (stale last_tick_started must not leak)"
+
+    # No stale run-1 waves delivered to run 2's first tick of 'b': the
+    # reservoir must have started empty and grown only from run-2 waves.
+    edge_state = tw._edge_state[("a", "b")]
+    assert len(edge_state.waves) <= len(tides_2), "reservoir must not carry over run-1 waves into run 2"
+    assert len(fires) > 0, "run 2 must have actually ticked currents"

@@ -253,7 +253,38 @@ class Tideweaver:
         self._backlog_backoff_factor = backlog_backoff_factor
         self._recent_pass_metrics: deque[tuple[float, int]] = deque(maxlen=10)
 
-        self._state: dict[str, _CurrentState] = {c.name: _CurrentState() for c in watershed.currents}
+        self._currents_by_name: dict[str, Current] = {c.name: c for c in watershed.currents}
+        self._topo: list[str] = watershed.toposort()
+        self._upstream: dict[str, list[tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
+        self._downstream: dict[str, list[tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
+        for e in watershed.edges:
+            self._upstream[e.to_name].append((e.from_name, e.flow))
+            self._downstream[e.from_name].append((e.to_name, e.flow))
+        self._transitive_cache: dict[str, list[str]] = {}
+
+        self._reset_run_state()
+
+    def _reset_run_state(self) -> None:
+        """(Re)initialize every per-run mutable field so a :class:`Tideweaver` is truly reusable.
+
+        Called once from ``__init__`` and again from the top of :meth:`run`
+        — the second call is what makes a second ``run()`` on the same
+        instance behave like a fresh session: tide numbering restarts,
+        reservoirs and consumption watermarks start empty, canal rejects
+        and their dedup set are cleared, the due-heap is emptied so
+        ``phase_offset_sec`` re-anchors off the new ``_run_started_at``,
+        and a stale (possibly already-``set()``) wake event can't leak
+        into the new run.
+
+        Does NOT touch constructor-supplied config (``watershed``,
+        ``tick_factory``, ``logger_name``, ``log_currents``,
+        ``pass_interval``, ``_backlog_backoff_factor``) or fields derived
+        purely from watershed topology (``_currents_by_name``, ``_topo``,
+        ``_upstream``, ``_downstream``, ``_transitive_cache``) — topology
+        doesn't change between runs, so rebuilding those would be wasteful
+        and would contradict "same config, reusable instance."
+        """
+        self._state: dict[str, _CurrentState] = {c.name: _CurrentState() for c in self.watershed.currents}
         # ``_last_consumed`` keys on edge tuples, not current names — so it's
         # a standalone dict instead of a field on ``_CurrentState``.
         self._last_consumed: dict[tuple[str, str], datetime] = {}
@@ -269,16 +300,9 @@ class Tideweaver:
         # (with per-current meta).  The LoggedTideweaver.run finally-sweep skips
         # these so a tick-routed reject is not emitted a second time.
         self._routed_reject_ids: set[int] = set()
-        self._currents_by_name: dict[str, Current] = {c.name: c for c in watershed.currents}
-        self._topo: list[str] = watershed.toposort()
-        self._upstream: dict[str, list[tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
-        self._downstream: dict[str, list[tuple[str, FlowControl]]] = {c.name: [] for c in watershed.currents}
-        self._edge_state: dict[tuple[str, str], _EdgeState] = {}
-        for e in watershed.edges:
-            self._upstream[e.to_name].append((e.from_name, e.flow))
-            self._downstream[e.from_name].append((e.to_name, e.flow))
-            self._edge_state[(e.from_name, e.to_name)] = _EdgeState()
-        self._transitive_cache: dict[str, list[str]] = {}
+        self._edge_state: dict[tuple[str, str], _EdgeState] = {
+            (e.from_name, e.to_name): _EdgeState() for e in self.watershed.edges
+        }
 
         # Heap entries are ``(due_at_monotonic, counter, name)`` — counter
         # tiebreaks so heapq never compares Current names lexicographically.
@@ -286,6 +310,11 @@ class Tideweaver:
         self._due_heap: list[tuple[float, int, str]] = []
         self._heap_counter: int = 0
         self._run_started_at: float | None = None
+        self._client_pool: dict[tuple[Any, ...], httpx.AsyncClient] = {}
+        # Adaptive wake-timeout samples (duration, in_flight) — per-run
+        # telemetry; run 2 must re-learn its backlog pacing from scratch
+        # rather than inherit run 1's congestion profile.
+        self._recent_pass_metrics = deque(maxlen=10)
 
     # ------------------------------------------------------------------
     # Public API
@@ -364,9 +393,11 @@ class Tideweaver:
         reached the loop drains in-flight ticks (bounded by
         ``watershed.drain_timeout``) and then exits cleanly.
         """
-        # HTTP client pool + phase-offset anchor reset per-run, so a
+        # Reset every per-run mutable field (HTTP client pool, phase-offset
+        # anchor, tide numbering, reservoirs, consumption watermarks, canal
+        # rejects, due-heap, wake event — see ``_reset_run_state``) so a
         # Tideweaver instance is safely reusable across ``run()`` calls.
-        self._client_pool: dict[tuple[Any, ...], httpx.AsyncClient] = {}
+        self._reset_run_state()
         self._run_started_at = time.monotonic()
         for c in self.watershed.currents:
             if c.phase_offset_sec > 0.0:
@@ -760,8 +791,16 @@ class Tideweaver:
         state = self._state[current.name]
         state.last_tick_started = now_mono
         state.started_at = now_mono
-        # Capture upstream consumption BEFORE the tick runs so a fast upstream
-        # finishing concurrently doesn't double-count its wave.
+        # SNAPSHOT-WINS CONTRACT: this snapshot IS the watermark that
+        # ``_tick_wrapper.finally`` writes back to ``_last_consumed`` on
+        # success — there is no later overwrite.  A wave the upstream
+        # emits AFTER this snapshot is taken (including one that lands
+        # before ``finally`` runs, mid-tick) is deliberately NOT counted
+        # as consumed: the gate stays open, so the downstream re-fires on
+        # the next pass and reads the newest reservoir wave (``waves[-1]``
+        # in ``_tick_fjord``), whose cumulative snapshot already includes
+        # the mid-tick data.  This delivers the mid-tick wave instead of
+        # dropping it, at the cost of one extra (harmless) re-fire.
         #
         # ``consumed_snapshot`` is threaded as a positional arg deliberately —
         # a :class:`contextvars.ContextVar` alternative was evaluated and
@@ -872,8 +911,13 @@ class Tideweaver:
             #   1. ``state.last_wave_at`` — set only on success; ``state.
             #      last_failed_at`` is set instead on failure (mutually
             #      exclusive per tick).
-            #   2. Both ``_last_consumed`` writes (pre-tick snapshot value
-            #      and post-tick ``latest`` overwrite).
+            #   2. ``_last_consumed[edge_key]`` — written ONCE, from the
+            #      pre-tick ``consumed_snapshot`` (see SNAPSHOT-WINS CONTRACT
+            #      in ``_spawn_tick``).  There is no post-tick overwrite from
+            #      ``self._state[up_name].last_wave_at``: doing so would
+            #      stamp a mid-tick upstream wave as consumed even though
+            #      this tick never read it, permanently blocking the
+            #      downstream's next fire under ``HardLock``.
             #   3. ``edge_state.flow_state.last_consumed_at`` — its own
             #      docstring specifies "on every SUCCESSFUL consumption."
             #   4. ``Penstock.post_consume`` — a failed tick must not debit
@@ -903,9 +947,6 @@ class Tideweaver:
                     snapshot_value = consumed_snapshot.get(up_name)
                     if snapshot_value is not None:
                         self._last_consumed[edge_key] = snapshot_value
-                    latest = self._state[up_name].last_wave_at
-                    if latest is not None:
-                        self._last_consumed[edge_key] = latest
 
                     if edge_state is not None:
                         edge_state.flow_state.last_consumed_at = now_mono

@@ -249,7 +249,9 @@ async def test_get_scheduler_events_returns_records_for_failing_tick(
     for rec in records:
         assert "scheduler_event" in rec, f"each record must have 'scheduler_event' key; got {rec}"
 
-    failure_evts = [r["scheduler_event"] for r in records if r["scheduler_event"].get("event_type") == "isolated_tick_failure"]
+    failure_evts = [
+        r["scheduler_event"] for r in records if r["scheduler_event"].get("event_type") == "isolated_tick_failure"
+    ]
     assert failure_evts, f"expected at least one isolated_tick_failure record; got {records}"
     evt = failure_evts[0]
     assert evt.get("current_name") == "failing_current", f"current_name mismatch: {evt}"
@@ -278,9 +280,7 @@ async def test_get_scheduler_events_clean_run_has_only_watershed_events(
         currents=[Stream(name="clean", cls=_Src, interval=0.05, incorp_params={})],
     )
 
-    tw = LoggedTideweaver(
-        ws, tick_factory=_noop_tick, pass_interval=0.05, enable_logging=True, logger_name=logger_name
-    )
+    tw = LoggedTideweaver(ws, tick_factory=_noop_tick, pass_interval=0.05, enable_logging=True, logger_name=logger_name)
     async for _ in tw.run():
         pass
 
@@ -288,9 +288,10 @@ async def test_get_scheduler_events_clean_run_has_only_watershed_events(
 
     records = await LoggedTideweaver.get_scheduler_events(logger_name)
     event_types = {r["scheduler_event"]["event_type"] for r in records}
-    assert event_types <= {"watershed_started", "watershed_completed"}, (
-        f"expected only watershed lifecycle events for a clean run; got {event_types}"
-    )
+    assert event_types <= {
+        "watershed_started",
+        "watershed_completed",
+    }, f"expected only watershed lifecycle events for a clean run; got {event_types}"
 
 
 @pytest.mark.asyncio
@@ -316,9 +317,7 @@ async def test_get_scheduler_events_returns_watershed_lifecycle_events(
         name=ws_name,
     )
 
-    tw = LoggedTideweaver(
-        ws, tick_factory=_noop_tick, pass_interval=0.05, enable_logging=True, logger_name=logger_name
-    )
+    tw = LoggedTideweaver(ws, tick_factory=_noop_tick, pass_interval=0.05, enable_logging=True, logger_name=logger_name)
     async for _ in tw.run():
         pass
 
@@ -606,3 +605,86 @@ async def test_logged_tideweaver_drain_cancel_emits_no_phantom_current_records(
     records = await LoggedTideweaver.get_current(logger_name, 'code:"a"')
     wave_records = [r for r in records if "wave" in r]
     assert wave_records == [], f"a cancelled tick must not emit a wave-shaped record; got {wave_records}"
+
+
+# ---------------------------------------------------------------------------
+# D5-03: LoggedTideweaver reuse across two sequential run() calls
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_logged_tideweaver_two_runs_behave_like_fresh_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """(T5) Two sequential run() calls on one LoggedTideweaver each behave like a fresh session.
+
+    Asserts: ``watershed_started``/``watershed_completed`` fire again for
+    run 2 (not just once total), tide numbering restarts at 1 in run 2's
+    Tide records, per-current session routing (``get_current``) keeps
+    tagging run-2 waves correctly, and a run-1 isolated-tick-failure
+    reject that was already routed (dedup'd via ``_routed_reject_ids``)
+    does not suppress an equivalent run-2 reject from being routed too --
+    proving ``Tideweaver._reset_run_state()`` clears the dedup set that
+    ``LoggedTideweaver.run``'s finally-sweep consults.
+
+    Relies solely on ``Tideweaver.run()``'s reset propagating through
+    ``LoggedTideweaver.run``'s ``super().run()`` call -- no LoggedTideweaver
+    code change is required for this to pass.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class _FlakySrc(Incorporator):
+        pass
+
+    fail_calls = {"count": 0}
+
+    async def dispatch(current: Current) -> None:
+        fail_calls["count"] += 1
+        raise RuntimeError(f"flaky failure #{fail_calls['count']}")
+
+    logger_name = "TestTwoRunFreshSession"
+    flaky = Stream(name="flaky", cls=_FlakySrc, interval=0.04, incorp_params={}, on_error="isolate")
+    ws = Watershed.parallel(window=_short_window(0.3), currents=[flaky])
+
+    tw = LoggedTideweaver(ws, tick_factory=dispatch, pass_interval=0.03, enable_logging=True, logger_name=logger_name)
+
+    tides_1 = [t async for t in tw.run()]
+    assert tides_1[0].tide_number == 1
+    fails_after_run_1 = fail_calls["count"]
+    assert fails_after_run_1 > 0, "run 1 must have produced at least one isolated tick failure"
+
+    fail_calls["count"] = 0
+    # Reuse the same watershed's window shape but anchored to "now" so
+    # run 2 has an open window (real callers supply a fresh window per run).
+    tw.watershed.window = _short_window(0.3)
+
+    tides_2 = [t async for t in tw.run()]
+    assert tides_2[0].tide_number == 1, f"run 2 must restart tide numbering at 1; got {tides_2[0].tide_number}"
+    assert fail_calls["count"] > 0, "run 2 must have actually ticked (and failed) again"
+
+    _wait_flush()
+
+    # watershed_started / watershed_completed fire again for run 2 (2 of each total).
+    sched_events = await LoggedTideweaver.get_scheduler_events(logger_name)
+    started_events = [e for e in sched_events if e["scheduler_event"]["event_type"] == "watershed_started"]
+    completed_events = [e for e in sched_events if e["scheduler_event"]["event_type"] == "watershed_completed"]
+    assert len(started_events) == 2, f"expected 2 watershed_started events (one per run); got {len(started_events)}"
+    assert len(completed_events) == 2, (
+        f"expected 2 watershed_completed events (one per run); got {len(completed_events)}"
+    )
+
+    # isolated_tick_failure fires in both runs -- not suppressed in run 2 by
+    # a stale _routed_reject_ids dedup set leaking from run 1.
+    failure_events = [
+        e["scheduler_event"] for e in sched_events if e["scheduler_event"]["event_type"] == "isolated_tick_failure"
+    ]
+    assert len(failure_events) >= 2, (
+        f"expected isolated_tick_failure events from BOTH runs; got {len(failure_events)}: {failure_events}"
+    )
+
+    # Per-current session routing (current_meta) keeps working in run 2:
+    # the failing current's records are still retrievable via get_current.
+    current_records = await LoggedTideweaver.get_current(logger_name, 'current:"flaky"')
+    assert current_records, "run 2's per-current session routing must still tag records retrievably"
