@@ -63,7 +63,9 @@ def sum_attributes(*args: Any) -> float:
     return total
 
 
-def split_and_get(delimiter: str = "/", index: int = -1, cast_type: Callable[[Any], Any] | None = None) -> Op:
+def split_and_get(
+    delimiter: str = "/", index: int = -1, cast_type: Callable[[Any], Any] | None = None, pure: bool = True
+) -> Op:
     """Extract an ID from a delimited string — the HATEOAS URL-tail / colon-separated-key one-liner.
 
     Reach for it whenever an API hands back a delimited value and the
@@ -90,6 +92,14 @@ def split_and_get(delimiter: str = "/", index: int = -1, cast_type: Callable[[An
             non-empty part).
         cast_type: Optional callable applied to the extracted string
             (e.g. ``int`` to convert a numeric ID).
+        pure: Defaults to ``True`` — the split/strip logic is always pure, and
+            the shipped ``cast_type`` values (``int``, ``float``, ``str``) are
+            pure builtins, so identical extracted substrings are computed once
+            and the result reused (the dispatcher's adaptive lru_cache wrapping
+            for low-cardinality input tuples).  Pass ``pure=False`` explicitly
+            when your ``cast_type`` must run for its side effects on every row
+            (not just once per unique extracted substring) or returns a mutable
+            object that must not be shared across rows.
 
     Returns an :class:`~incorporator.schema.converters.Op` for use in ``conv_dict``.  Garbage values
     (``None``, ``""``, ``"N/A"``, ``"null"``, ``"unknown"``, ``"nan"``,
@@ -111,7 +121,7 @@ def split_and_get(delimiter: str = "/", index: int = -1, cast_type: Callable[[An
         except (IndexError, ValueError, TypeError):
             return None
 
-    return Op(_split, input_keys=(), is_pure=True)
+    return Op(_split, input_keys=(), is_pure=pure)
 
 
 # ==========================================
@@ -440,7 +450,9 @@ def as_list() -> Op:
 
     Returns:
         An :class:`~incorporator.schema.converters.Op` instance.  Scalar inputs are wrapped in a
-        single-element list.
+        single-element list.  Each call returns a fresh, per-row list —
+        results are never shared or aliased across rows, even for repeated
+        equal scalar inputs.
 
     See :func:`each` (N requests) and :func:`join_all` (one request,
     delimited string) for the other request-count patterns.
@@ -449,4 +461,4 @@ def as_list() -> Op:
     def _wrap_or_pass(data: Any) -> list[Any]:
         return data if isinstance(data, list) else [data]
 
-    return Op(_wrap_or_pass, input_keys=(), is_pure=True)
+    return Op(_wrap_or_pass, input_keys=(), is_pure=False)

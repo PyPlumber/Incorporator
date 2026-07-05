@@ -430,6 +430,103 @@ def test_datapath_int_segment_on_dict_uses_string_key() -> None:
 
 
 # ==========================================
+# 13. as_list() — cross-row mutable-aliasing fix (D7-03)
+# ==========================================
+
+
+def test_as_list_returns_distinct_objects_across_calls() -> None:
+    """as_list()'s Op must return a fresh list per invocation, even for equal scalar inputs.
+
+    Pre-fix (is_pure=True), the Op's lru_cache wrapper returned the IDENTICAL
+    list object for two calls with equal hashable scalars — mutating one row's
+    list silently mutated its sibling row's list too. This must fail against
+    the pre-fix code (git stash the one-line is_pure=False change and re-run).
+    """
+    op = as_list()
+    first = op(5)
+    second = op(5)
+    assert first == second == [5]
+    assert first is not second
+
+    first.append("mutated")
+    assert second == [5]  # sibling untouched
+
+
+def test_as_list_scalar_wrapping_and_passthrough_unchanged() -> None:
+    """as_list() still wraps scalars and passes lists through unchanged (behavior parity)."""
+    op = as_list()
+    assert op(1) == [1]
+    assert op([1, 2, 3]) == [1, 2, 3]
+
+
+# ==========================================
+# 14. split_and_get(pure=...) — opt-out for arbitrary user cast_type (D2-05)
+# ==========================================
+
+
+def test_split_and_get_pure_false_invokes_cast_type_per_row() -> None:
+    """split_and_get(pure=False) must invoke a stateful cast_type once PER ROW, no memoization."""
+    calls: List[Any] = []
+
+    def counting_cast(value: str) -> str:
+        calls.append(value)
+        return value
+
+    op = split_and_get("/", index=-1, cast_type=counting_cast, pure=False)
+    for _ in range(4):
+        op("a/b/42")
+    assert len(calls) == 4  # invoked every time, no caching
+
+
+def test_split_and_get_default_pure_memoizes_cast_type() -> None:
+    """split_and_get's default (pure=True) still memoizes cast_type — the shipped low-cardinality win."""
+    calls: List[Any] = []
+
+    def counting_cast(value: str) -> int:
+        calls.append(value)
+        return int(value)
+
+    op = split_and_get("/", index=-1, cast_type=counting_cast)
+    for _ in range(4):
+        op("a/b/42")
+    assert len(calls) == 1  # memoized — computed once for the repeated input
+
+
+def test_split_and_get_garbage_short_circuits_before_cast_type() -> None:
+    """Garbage inputs must short-circuit to None before the cast_type callable is ever invoked."""
+    calls: List[Any] = []
+
+    def counting_cast(value: str) -> str:
+        calls.append(value)
+        return value
+
+    op = split_and_get("/", index=-1, cast_type=counting_cast, pure=False)
+    for garbage in (None, "", "n/a", "null", "unknown", "nan", "undefined"):
+        assert op(garbage) is None
+    assert calls == []  # cast_type never invoked on garbage
+
+
+# ==========================================
+# 15. Declarative POST token path — as_list() unaffected by the purity fix
+# ==========================================
+
+
+def test_as_list_handles_unhashable_list_input_directly() -> None:
+    """as_list()'s Op, called directly with a list argument, returns it unchanged.
+
+    Pins the json_payload POST-token path (router.resolve_declarative_routing's
+    ``v(extracted_data)`` call): a list argument is unhashable, so pre-fix this
+    already bypassed the lru_cache via the __wrapped__ fallback in Op.__call__.
+    Post-fix (is_pure=False), there is no cache wrapper at all — same observable
+    behavior either way. Behavior-neutral pin, not a new capability.
+    """
+    op = as_list()
+    payload = [1, 2, 3]
+    result = op(payload)
+    assert result is payload  # list passthrough, untouched
+
+
+# ==========================================
 # 12. IncorporatorList.failed_sources — cache identity and correctness
 # ==========================================
 

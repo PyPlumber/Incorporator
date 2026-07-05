@@ -12,6 +12,7 @@ from incorporator.schema.builder import (
     sanitize_json_key,
 )
 from incorporator.schema.converters import calc, calc_all
+from incorporator.schema.extractors import as_list
 
 
 # ==========================================
@@ -118,6 +119,33 @@ def test_apply_etl_conv_dict_standard_exception_skips_key() -> None:
     # Key is left unchanged; the exception must not propagate
     assert isinstance(result, list)
     assert result[0]["id"] == "abc"
+
+
+def test_apply_etl_as_list_no_cross_dispatch_aliasing() -> None:
+    """The SAME as_list() Op reused across two apply_etl_transformations dispatches (D7-03).
+
+    Models Tideweaver's persisted-conv_dict replay: the identical Op instance
+    (and its cache, if any) recurs every tick. A second dispatch with an
+    overlapping input value must not observe mutations made to a list
+    returned by the first dispatch — each row gets a fresh, unaliased list.
+    """
+    op = as_list()
+    conv_dict = {"ids": op}
+
+    dispatch_one: List[Dict[str, Any]] = [{"ids": 7}, {"ids": 7}]
+    apply_etl_transformations(dispatch_one, conv_dict=conv_dict)
+    assert dispatch_one[0]["ids"] == [7]
+    assert dispatch_one[1]["ids"] == [7]
+    assert dispatch_one[0]["ids"] is not dispatch_one[1]["ids"]
+
+    # Mutate a row's list after the first dispatch completes.
+    dispatch_one[0]["ids"].append("poison")
+
+    # Second dispatch with the SAME Op instance and an overlapping input value.
+    dispatch_two: List[Dict[str, Any]] = [{"ids": 7}]
+    apply_etl_transformations(dispatch_two, conv_dict=conv_dict)
+    assert dispatch_two[0]["ids"] == [7]  # unaffected by the prior mutation
+    assert "poison" not in dispatch_two[0]["ids"]
 
 
 # ==========================================
