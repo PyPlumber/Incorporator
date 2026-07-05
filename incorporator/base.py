@@ -1635,9 +1635,13 @@ class Incorporator(BaseModel):
 
         # When inflow= defines a top-level ``inflow(state)`` callable, fjord
         # switches to sequential seed and calls it before each source's
-        # ``incorp()`` to obtain per-source ``conv_dict`` overrides.  Without
-        # that callable, the sidecar's public names still extend the token
-        # resolver's allow-list and fjord keeps the parallel asyncio.gather seed.
+        # ``incorp()`` to obtain per-source ``conv_dict`` overrides.  Any
+        # entry declaring ``depends_on`` switches to the validated, tiered
+        # seed regardless of whether an inflow callable is present — that
+        # check is a structural graph guarantee, not an inflow side effect.
+        # With neither an inflow callable nor any ``depends_on``, the
+        # sidecar's public names still extend the token resolver's allow-list
+        # and fjord keeps the parallel asyncio.gather seed.
         inflow_callable: Any = None
         if inflow is not None:
             from .usercode import load_inflow_callable

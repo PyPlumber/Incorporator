@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`depends_on` was silently ignored on fjord seeds with no `inflow=`**
+  (`incorporator/pipeline/fjord.py`): `_run_fjord_engine` branched on
+  `inflow_callable is None` *before* checking `_has_any_depends_on`, so a
+  `depends_on` graph declared on a config with no `inflow` sidecar fell
+  straight through to the plain parallel `asyncio.gather` seed — a typo'd
+  peer name never raised, cycles were never detected, and tiered ordering
+  never ran, contradicting the already-documented contract ("Unknown names
+  raise `ValueError` at engine entry"). The `depends_on` check is now hoisted
+  ahead of the `inflow_callable` branch: any entry declaring `depends_on` is
+  validated and tiered-seeded regardless of `inflow` presence. Configs with
+  no `depends_on` anywhere keep the byte-identical parallel-gather seed.
+
+- **Stateful `stream()`'s seed-only path ignored a supplied `inflow=`**
+  (`incorporator/pipeline/_stateful_shim.py`): `stream(stateful_polling=True,
+  refresh_params=None, export_params=None)` — the genuine seed-only
+  short-circuit — called `receiver_cls.incorp(**incorp_params)` directly,
+  bypassing `inflow_callable` even though it was accepted and forwarded on
+  the daemon path. The seed-only branch now routes through
+  `fjord._seed_one_source` (single-source, no peers) so an `inflow(state)`
+  sidecar's `conv_dict` overrides apply during seed-only the same way they
+  do on the daemon path. An `inflow(state)` exception in this path now
+  surfaces via `_build_seed_reject`'s actionable missing-peer `KeyError`
+  guidance instead of a bare `f"Seed Error: {exc}"` string.
+
 ## [1.3.5] - 2026-07-03
 
 ### Added

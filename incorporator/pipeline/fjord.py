@@ -262,13 +262,21 @@ async def _run_fjord_engine(
 
     Lifecycle:
       1. Seed phase:
-         * **No inflow callable** → concurrent ``entry["cls"].incorp(**...)``
-           across all entries via ``asyncio.gather`` (today's behaviour;
-           zero added latency).
-         * **inflow callable present** → sequential seed in the order
-           established by ``refresh_interval`` (when dict) or
-           ``stream_params`` declaration order.  Before each source's
-           ``incorp()`` the engine calls ``inflow(state)`` with the
+         * **Any entry declares ``depends_on``** → validated (unknown peer
+           names raise ``ValueError`` at engine entry) and seeded in topo
+           tiers — within-tier parallel, between-tier sequential — so
+           each tier's ``inflow(state)`` call (when an inflow callable is
+           supplied) sees prior tiers' state.  This branch fires
+           regardless of whether ``inflow_callable`` is set: ``depends_on``
+           ordering/validation is a structural guarantee of the seed graph,
+           not a side effect of having an inflow sidecar.
+         * **No ``depends_on`` anywhere, no inflow callable** → concurrent
+           ``entry["cls"].incorp(**...)`` across all entries via
+           ``asyncio.gather`` (today's behaviour; zero added latency).
+         * **No ``depends_on`` anywhere, inflow callable present** →
+           sequential seed in the order established by ``refresh_interval``
+           (when dict) or ``stream_params`` declaration order.  Before each
+           source's ``incorp()`` the engine calls ``inflow(state)`` with the
            cumulative state-so-far and merges any returned ``conv_dict``
            overrides into that source's ``incorp_params`` — this is how
            ``link_to(state["Planet"], …)`` gets a live registry handle.
@@ -289,23 +297,17 @@ async def _run_fjord_engine(
     seed_order = _resolve_seed_order(stream_params, r_interval)
 
     seed_start = time.perf_counter()
-    if inflow_callable is None:
-        # Today's parallel seed — pure async, no ordering, no latency cost.
-        seed_results = await asyncio.gather(
-            *[entry["cls"].incorp(**entry["incorp_params"]) for entry in stream_params],
-            return_exceptions=True,
-        )
-        results_by_idx: dict[int, Any] = dict(enumerate(seed_results))
-    elif _has_any_depends_on(stream_params):
-        # Opt-in tiered seed: within-tier parallel, between-tier sequential.
-        # Entries without depends_on (or whose deps are satisfied) run together
-        # via gather; tier N waits for tiers 0..N-1 to finish so state[...] is
-        # populated for each tier's inflow(state) call.  Failures are surfaced
-        # via return_exceptions and stored in results_by_idx for the wave loop
-        # below to translate into per-source failure waves.
+    if _has_any_depends_on(stream_params):
+        # depends_on presence is the primary switch — validated/tiered
+        # regardless of inflow_callable presence, so a typo'd peer name or a
+        # cycle is caught at engine entry even when no inflow sidecar is
+        # supplied.  ``_seed_one_source`` itself already tolerates
+        # inflow_callable=None (its ``if inflow_callable is not None:`` guard
+        # short-circuits to a plain ``cls.incorp(**incorp_params)``), so this
+        # tiered loop needs no branching on inflow presence.
         _validate_depends_on(stream_params)
         state: dict[str, Any] = {}
-        results_by_idx = dict.fromkeys(range(len(stream_params)))
+        results_by_idx: dict[int, Any] = dict.fromkeys(range(len(stream_params)))
         idx_by_id = {id(entry): i for i, entry in enumerate(stream_params)}
         for tier in _tiered_seed_order(stream_params):
             tier_results = await asyncio.gather(
@@ -317,6 +319,14 @@ async def _run_fjord_engine(
                 results_by_idx[orig_idx] = result
                 if not isinstance(result, Exception):
                     state[entry["cls"].__name__] = result
+    elif inflow_callable is None:
+        # Today's parallel seed — pure async, no ordering, no latency cost.
+        # Byte-identical to pre-hoist behaviour for the no-depends_on case.
+        seed_results = await asyncio.gather(
+            *[entry["cls"].incorp(**entry["incorp_params"]) for entry in stream_params],
+            return_exceptions=True,
+        )
+        results_by_idx = dict(enumerate(seed_results))
     else:
         # Legacy sequential seed in resolved order so each source can
         # ``link_to`` its predecessors via ``state[...]``.  Bit-identical to

@@ -343,3 +343,105 @@ async def test_stream_stateful_shim_wires_inflow_callable(
     assert StreamTargetModel.inc_dict.get(2) is not None
     assert StreamTargetModel.inc_dict[1].name == "Alice"
     assert StreamTargetModel.inc_dict[2].name == "Bob"
+
+
+# ----------------------------------------------------------------------
+# D6-01 — the seed-only short-circuit (refresh_params=None AND
+# export_params=None) must also honor a supplied ``inflow`` sidecar.
+# Pre-fix, this path called ``receiver_cls.incorp(**incorp_params)``
+# directly, bypassing ``inflow_callable`` entirely — only the daemon path
+# (test above, which uses refresh_params={}) reached it.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_stateful_seed_only_applies_inflow_conv_dict_override(
+    tmp_path: Path, stream_target_model: Type[LoggedIncorporator]
+) -> None:
+    """Seed-only path (no refresh/export params) applies inflow(state)'s conv_dict override.
+
+    MUST FAIL pre-fix: today the seed-only branch calls incorp() directly and
+    the inflow-returned conv_dict override never reaches incorp_params, so
+    ``name`` would come through as the raw uppercase source value instead of
+    the lower-cased value the override's converter produces.
+    """
+    StreamTargetModel = stream_target_model
+    json_file = tmp_path / "live_data.json"
+    json_file.write_text(
+        json.dumps([{"id": 1, "name": "ALICE"}, {"id": 2, "name": "BOB"}]),
+        encoding="utf-8",
+    )
+
+    inflow_py = tmp_path / "inflow.py"
+    inflow_py.write_text(
+        # Overrides conv_dict so `name` is lower-cased — proves the override
+        # actually reached incorp_params rather than being silently dropped.
+        f"def inflow(state):\n"
+        f"    return {{{StreamTargetModel.__name__!r}: {{'conv_dict': {{'name': lambda v: v.lower()}}}}}}\n",
+        encoding="utf-8",
+    )
+
+    waves: List[Wave] = []
+    async for wave in StreamTargetModel.stream(
+        incorp_params={"inc_file": str(json_file), "code_attr": "id"},
+        refresh_params=None,  # genuine seed-only short-circuit
+        export_params=None,
+        stateful_polling=True,
+        poll_interval=None,
+        inflow=str(inflow_py),
+    ):
+        waves.append(wave)
+
+    assert waves and waves[0].operation == "incorp"
+    assert not waves[0].failed_sources
+    assert StreamTargetModel.inc_dict[1].name == "alice"
+    assert StreamTargetModel.inc_dict[2].name == "bob"
+
+
+@pytest.mark.asyncio
+async def test_stream_stateful_seed_only_inflow_error_surfaces_as_seed_failure(
+    tmp_path: Path, stream_target_model: Type[LoggedIncorporator]
+) -> None:
+    """An inflow(state) exception in the seed-only path surfaces as a seed-failure wave.
+
+    Not an unhandled crash — and the message is the actionable
+    ``_build_seed_reject`` guidance (missing-peer KeyError under an active
+    inflow callable), not the generic bare ``f"Seed Error: {exc}"`` string.
+    """
+    StreamTargetModel = stream_target_model
+    json_file = tmp_path / "live_data.json"
+    json_file.write_text(
+        json.dumps([{"id": 1, "name": "Alice"}]),
+        encoding="utf-8",
+    )
+
+    inflow_py = tmp_path / "inflow.py"
+    inflow_py.write_text(
+        # No peers exist in state={} for a single-source seed-only pipeline —
+        # this KeyError is exactly the "missing peer" pattern _build_seed_reject
+        # special-cases when inflow_active=True.
+        "def inflow(state):\n    return state['NoSuchPeer']\n",
+        encoding="utf-8",
+    )
+
+    waves: List[Wave] = []
+    async for wave in StreamTargetModel.stream(
+        incorp_params={"inc_file": str(json_file), "code_attr": "id"},
+        refresh_params=None,
+        export_params=None,
+        stateful_polling=True,
+        poll_interval=None,
+        inflow=str(inflow_py),
+    ):
+        waves.append(wave)
+
+    assert len(waves) == 1
+    wave = waves[0]
+    assert wave.operation == "incorp"
+    assert wave.rows_processed == 0
+    assert wave.failed_sources
+    message = wave.failed_sources[0]
+    assert "missing peer 'NoSuchPeer'" in message
+    assert "state.get('NoSuchPeer')" in message
+    assert "depends_on" in message
+    assert wave.rejects and wave.rejects[0].message == message

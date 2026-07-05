@@ -723,3 +723,164 @@ def test_format_seed_error_keyerror_without_inflow_uses_fallback() -> None:
     msg = _format_seed_error("Race", KeyError("Track"), inflow_active=False)
     assert "inflow(state)" not in msg
     assert msg.startswith("Seed Error in source 'Race': KeyError:")
+
+
+# ----------------------------------------------------------------------
+# D6-02 — depends_on must be validated/tiered at engine entry regardless
+# of whether an ``inflow`` callable is supplied.  Pre-fix, ``fjord()``
+# branched on ``inflow_callable is None`` FIRST, so a config with no
+# inflow but a typo'd/cyclic ``depends_on`` silently fell through to the
+# plain parallel gather — no validation, no tiering.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fjord_depends_on_typo_raises_without_inflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A typo'd depends_on peer name raises ValueError at engine entry, even with no inflow=.
+
+    MUST FAIL pre-fix: before the hoist, no inflow callable meant the
+    ``inflow_callable is None`` branch won unconditionally and the typo was
+    never checked.
+    """
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+    monkeypatch.chdir(tmp_path)
+
+    outflow_file = _write_outflow(tmp_path)
+    out_file = tmp_path / "markets.ndjson"
+
+    with pytest.raises(ValueError, match="unknown peer class 'Coyn'"):
+        await _drain(
+            Incorporator.fjord(
+                stream_params=[
+                    {
+                        "cls": Coin,
+                        "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"},
+                        "refresh_params": None,
+                    },
+                    {
+                        "cls": BinanceFutures,
+                        "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                        "refresh_params": None,
+                        "depends_on": ["Coyn"],  # typo: should be "Coin"
+                    },
+                ],
+                outflow=outflow_file,
+                export_params={"file_path": str(out_file)},
+                # No inflow= — this is the exact gap D6-02 closes.
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_fjord_depends_on_cycle_raises_without_inflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A depends_on cycle is detected at engine entry, even with no inflow=.
+
+    MUST FAIL pre-fix for the same reason as the typo case above.
+    """
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+    monkeypatch.chdir(tmp_path)
+
+    outflow_file = _write_outflow(tmp_path)
+    out_file = tmp_path / "markets.ndjson"
+
+    with pytest.raises(ValueError, match="depends_on cycle detected"):
+        await _drain(
+            Incorporator.fjord(
+                stream_params=[
+                    {
+                        "cls": Coin,
+                        "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"},
+                        "refresh_params": None,
+                        "depends_on": ["BinanceFutures"],
+                    },
+                    {
+                        "cls": BinanceFutures,
+                        "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                        "refresh_params": None,
+                        "depends_on": ["Coin"],
+                    },
+                ],
+                outflow=outflow_file,
+                export_params={"file_path": str(out_file)},
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_fjord_depends_on_tier_order_honored_without_inflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A valid depends_on graph seeds in tier order (dependency first) with no inflow=.
+
+    Confirms the tiered-seed path actually runs (not just skips validation)
+    when there's no inflow callable: Coin (tier 0) must seed before
+    BinanceFutures (tier 1, depends_on=["Coin"]).
+    """
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+    monkeypatch.chdir(tmp_path)
+
+    outflow_file = _write_outflow(tmp_path)
+    out_file = tmp_path / "markets.ndjson"
+
+    waves = await _drain(
+        Incorporator.fjord(
+            stream_params=[
+                {
+                    "cls": Coin,
+                    "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"},
+                    "refresh_params": None,
+                },
+                {
+                    "cls": BinanceFutures,
+                    "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                    "refresh_params": None,
+                    "depends_on": ["Coin"],
+                },
+            ],
+            outflow=outflow_file,
+            export_params={"file_path": str(out_file)},
+        )
+    )
+
+    seed_ops = [w.operation for w in waves if w.operation.startswith("fjord_incorp:")]
+    assert seed_ops.index("fjord_incorp:Coin") < seed_ops.index("fjord_incorp:BinanceFutures")
+
+    outflow_wave = next(w for w in waves if w.operation == "outflow:CoinMarket")
+    assert outflow_wave.rows_processed == 2
+    assert not outflow_wave.failed_sources
+
+
+@pytest.mark.asyncio
+async def test_fjord_no_depends_on_parallel_gather_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No depends_on anywhere, no inflow= → plain parallel gather seed, byte-identical.
+
+    Regression pin for the hoist: configs with no depends_on must keep
+    hitting the ``asyncio.gather`` branch, not the tiered path.
+    """
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+    monkeypatch.chdir(tmp_path)
+
+    outflow_file = _write_outflow(tmp_path)
+    out_file = tmp_path / "markets.ndjson"
+
+    waves = await _drain(
+        Incorporator.fjord(
+            stream_params=[
+                {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
+                {
+                    "cls": BinanceFutures,
+                    "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                    "refresh_params": None,
+                },
+            ],
+            outflow=outflow_file,
+            export_params={"file_path": str(out_file)},
+        )
+    )
+
+    operations = [w.operation for w in waves]
+    assert "fjord_incorp:Coin" in operations
+    assert "fjord_incorp:BinanceFutures" in operations
+    outflow_wave = next(w for w in waves if w.operation == "outflow:CoinMarket")
+    assert outflow_wave.rows_processed == 2
+    assert not outflow_wave.failed_sources

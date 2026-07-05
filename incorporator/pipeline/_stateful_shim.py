@@ -41,7 +41,7 @@ from ..observability.logger import Wave
 from ..rejects import RejectEntry
 from . import DEFAULT_EXPORT_INTERVAL_SEC, DEFAULT_REFRESH_INTERVAL_SEC
 from ._shared import _row_count
-from .fjord import _run_fjord_engine
+from .fjord import _build_seed_reject, _run_fjord_engine, _seed_one_source
 
 __all__ = ["stream_stateful_via_fjord"]
 
@@ -65,7 +65,11 @@ async def stream_stateful_via_fjord(
     nor ``export_params``, this adapter does the seed in-line and emits one
     Wave — no daemons spawn.  Mirrors the legacy ``_run_stateful_engine``
     behaviour and avoids fjord's "always spawn the outflow daemon" path
-    emitting an extra phantom wave.
+    emitting an extra phantom wave.  When ``inflow_callable`` is supplied,
+    this path honors it too: the seed calls :func:`.fjord._seed_one_source`
+    (single-source, no peers — ``state={}``) instead of ``incorp()``
+    directly, so ``inflow(state)``'s ``conv_dict`` overrides merge into
+    ``incorp_params`` exactly as they would on the engine's daemon path.
 
     Args:
         receiver_cls: The Incorporator subclass whose registry is the source
@@ -86,6 +90,9 @@ async def stream_stateful_via_fjord(
             that function is used in place of the synthesised identity
             outflow.  Either way the module is passed to ``flush()`` so its
             pre-declared subclass (by ``__name__``) wins the class match.
+        inflow_callable: optional ``inflow(state)`` sidecar.  Applies on
+            BOTH the seed-only short-circuit (single-source, ``state={}``)
+            and the daemon path (forwarded to ``_run_fjord_engine``).
 
     Yields:
         Wave: with op-strings remapped to stream's documented contract
@@ -100,17 +107,26 @@ async def stream_stateful_via_fjord(
     if refresh_params is None and export_params is None:
         seed_start = time.perf_counter()
         try:
-            initial_dataset = await receiver_cls.incorp(**incorp_params)
+            # Single-source, no-peers seed — state={} because there is no
+            # second source to populate it.  Reuses fjord's own merge
+            # semantics (inflow-returned conv_dict wins on key conflicts)
+            # instead of re-implementing them here.
+            initial_dataset = await _seed_one_source(
+                {"cls": receiver_cls, "incorp_params": incorp_params}, {}, inflow_callable
+            )
         except Exception as exc:
-            # No IncorporatorList was returned — synthesise a RejectEntry for
-            # httpx errors so URL-traffic failures reach api.log via wave.rejects.
+            # No IncorporatorList was returned — build the same structured
+            # reject the engine's seed path uses so a missing-peer KeyError
+            # under inflow(state) gets the actionable "use state.get() or
+            # depends_on=[X]" guidance instead of a bare `Seed Error: {exc}`.
             _is_url_exc = isinstance(exc, (httpx.HTTPStatusError, httpx.RequestError)) or isinstance(
                 getattr(exc, "__cause__", None), (httpx.HTTPStatusError, httpx.RequestError)
             )
+            _shim_reject_base = _build_seed_reject(cls_name, exc, inflow_active=inflow_callable is not None)
             _shim_reject = RejectEntry.model_construct(
-                source=cls_name,
-                error_kind=type(exc).__name__,
-                message=f"Seed Error: {exc}",
+                source=_shim_reject_base.source,
+                error_kind=_shim_reject_base.error_kind,
+                message=_shim_reject_base.message,
                 retry_after=None,
                 wave_index=None,
                 duration_sec=None,
@@ -120,7 +136,7 @@ async def stream_stateful_via_fjord(
                 chunk_index=1,
                 operation="incorp",
                 rows_processed=0,
-                failed_sources=[f"Seed Error: {exc}"],
+                failed_sources=[_shim_reject_base.message],
                 rejects=[_shim_reject],
                 processing_time_sec=time.perf_counter() - seed_start,
                 source_url=None,
