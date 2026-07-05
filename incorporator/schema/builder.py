@@ -12,6 +12,7 @@ from __future__ import annotations
 import keyword
 import logging
 import re
+import threading
 import weakref
 from collections import OrderedDict
 from collections.abc import Callable
@@ -31,6 +32,17 @@ logger = logging.getLogger(__name__)
 # fall off the front while hot schemas stay at the end.
 SCHEMA_REGISTRY: OrderedDict[tuple[str, frozenset[Any], int], type[BaseModel]] = OrderedDict()
 MAX_REGISTRY_SIZE = 1000  # Hard boundary to prevent OOM leaks
+
+# infer_dynamic_schema runs inside asyncio.to_thread worker threads dispatched
+# from both incorp() and refresh() — real OS threads, not coroutines — and
+# SCHEMA_REGISTRY is module-global across every Incorporator subclass, so two
+# concurrent calls (same or different classes) can interleave OrderedDict
+# mutations. Unlike a dict, OrderedDict's move_to_end/popitem/__setitem__ are
+# not atomic relative to each other, so this needs an explicit lock — same
+# precedent as base.py's ``_counter_lock`` guarding ``_auto_counter`` under
+# the identical to_thread threading model. Only the O(1) LRU bookkeeping is
+# guarded; ``create_model`` and field-building never run under the lock.
+_SCHEMA_REGISTRY_LOCK = threading.Lock()
 
 PYDANTIC_RESERVED = {
     "model_config",
@@ -363,11 +375,16 @@ def infer_dynamic_schema(
         frozenset((k, type(v).__name__) for k, v in sample_dict.items()),
         id(base_class),
     )
-    if cache_key in SCHEMA_REGISTRY:
-        # LRU: promote this key to the most-recently-used position so hot
-        # schemas are never evicted while cold ones age off the front.
-        SCHEMA_REGISTRY.move_to_end(cache_key)
-        return SCHEMA_REGISTRY[cache_key]
+    with _SCHEMA_REGISTRY_LOCK:
+        if cache_key in SCHEMA_REGISTRY:
+            # LRU: promote this key to the most-recently-used position so hot
+            # schemas are never evicted while cold ones age off the front.
+            SCHEMA_REGISTRY.move_to_end(cache_key)
+            cached_model = SCHEMA_REGISTRY[cache_key]
+        else:
+            cached_model = None
+    if cached_model is not None:
+        return cached_model
 
     fields: dict[str, Any] = {}
     for raw_key, value in sample_dict.items():
@@ -417,9 +434,18 @@ def infer_dynamic_schema(
         # LRU cache insert: evict the least-recently-used entry when the
         # registry is full.  OrderedDict.popitem(last=False) removes the
         # oldest (front) entry in O(1) — guaranteed by CPython's dict impl.
-        if len(SCHEMA_REGISTRY) >= MAX_REGISTRY_SIZE:
-            SCHEMA_REGISTRY.popitem(last=False)
-        SCHEMA_REGISTRY[cache_key] = DynamicModel
+        # Two threads racing on the same still-uncached cache_key can both
+        # reach here and both build a DynamicModel outside the lock; whichever
+        # acquires the lock second simply overwrites the first's entry
+        # (last-writer-wins). Both models are functionally identical since
+        # cache_key already encodes the field-type frozenset, so this is a
+        # benign duplicate-construction race — the same idempotent-write
+        # tolerance documented for ``_cached_effective_conv`` in factory.py,
+        # just applied to the registry insert instead of a per-class cache.
+        with _SCHEMA_REGISTRY_LOCK:
+            if len(SCHEMA_REGISTRY) >= MAX_REGISTRY_SIZE:
+                SCHEMA_REGISTRY.popitem(last=False)
+            SCHEMA_REGISTRY[cache_key] = DynamicModel
 
         return DynamicModel
     except Exception as e:

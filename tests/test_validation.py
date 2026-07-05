@@ -11,6 +11,7 @@ from typing import Any, List
 import pytest
 
 from incorporator import Incorporator
+from incorporator.schema.builder import MAX_REGISTRY_SIZE
 
 
 # ==========================================
@@ -208,6 +209,68 @@ async def test_schema_union_concurrent_gather_safety(tmp_path: Path) -> None:
             # Every worker's fields must appear in the union regardless of finish order
             for fields in worker_field_sets:
                 assert all(f in ConcurrentModel._schema_union for f in fields)  # type: ignore[attr-defined]
+    finally:
+        sys.setswitchinterval(original_switch_interval)
+
+
+@pytest.mark.asyncio
+async def test_schema_registry_concurrent_gather_integrity(tmp_path: Path) -> None:
+    """Concurrent incorp() calls across MULTIPLE DISTINCT classes must not corrupt SCHEMA_REGISTRY.
+
+    Unlike ``_schema_union`` (per-class), ``SCHEMA_REGISTRY`` is a single
+    module-global ``OrderedDict`` shared by every ``Incorporator`` subclass.
+    ``infer_dynamic_schema`` runs inside ``asyncio.to_thread`` worker threads,
+    so two concurrent ``incorp()`` calls — on the SAME or DIFFERENT classes —
+    can interleave the registry's ``move_to_end`` / ``popitem`` / item-insert
+    calls, which are not atomic relative to each other. Each round fans out
+    ``incorp()`` across several fresh classes with unique per-round field
+    names, guaranteeing every call is a registry miss (insert path fires)
+    rather than a hit, and lowers ``sys.setswitchinterval`` to maximize real
+    OS-thread interleaving odds.
+
+    Honesty note (per brief): unlike the D3-02 ``_schema_union`` fix, this is
+    NOT a deterministic pre-fix crash reproduction — ``OrderedDict`` mutation
+    races don't reliably raise under a short test run. This test is an
+    integrity canary + regression lock: it asserts the registry stays within
+    its size bound and every surviving entry is retrievable/functional after
+    the fix, not that it demonstrably crashes without the fix. Observed:
+    run pre-fix (no ``_SCHEMA_REGISTRY_LOCK``), this exact test passed anyway
+    — the default ``MAX_REGISTRY_SIZE`` (1000) is never approached by this
+    round count/worker count, so the eviction race window this test targets
+    isn't hit. The deterministic reproduction of corruption lives in
+    ``tests/test_schema_builder.py::test_infer_schema_registry_concurrent_eviction_deterministic``
+    (small monkeypatched ``MAX_REGISTRY_SIZE`` forces the eviction path).
+    """
+    from incorporator.schema.builder import SCHEMA_REGISTRY
+
+    original_switch_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for round_idx in range(10):
+            n_workers = 8
+            worker_files = []
+            for w in range(n_workers):
+                fields = {f"reg_{round_idx}_{w}_{i}": i for i in range(10)}
+                fp = tmp_path / f"reg_{round_idx}_{w}.json"
+                fp.write_text(json.dumps(fields), encoding="utf-8")
+                worker_files.append(fp)
+
+            worker_classes = []
+            for _ in range(n_workers):
+
+                class RegistryConcurrentModel(Incorporator):
+                    pass
+
+                worker_classes.append(RegistryConcurrentModel)
+
+            await asyncio.gather(
+                *[cls.incorp(inc_file=str(fp)) for cls, fp in zip(worker_classes, worker_files, strict=True)]
+            )
+
+        assert len(SCHEMA_REGISTRY) <= MAX_REGISTRY_SIZE
+        # Every surviving entry must still be a usable Pydantic model class.
+        for model_cls in list(SCHEMA_REGISTRY.values()):
+            assert hasattr(model_cls, "model_fields")
     finally:
         sys.setswitchinterval(original_switch_interval)
 

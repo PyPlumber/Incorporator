@@ -1,10 +1,13 @@
 """Unit tests for schema/builder.py — sanitize, ETL engine, and infer_dynamic_schema edge cases."""
 
+import concurrent.futures
+import sys
 from typing import Any, Dict, List, Optional
 
 import pytest
 from pydantic import BaseModel
 
+from incorporator.schema import builder as schema_builder
 from incorporator.schema.builder import (
     SCHEMA_REGISTRY,
     apply_etl_transformations,
@@ -212,6 +215,59 @@ def test_infer_schema_registry_lru_eviction() -> None:
         # Overflow model must be present
         assert any("LRUModelOverflow" in str(k) for k in SCHEMA_REGISTRY)
     finally:
+        SCHEMA_REGISTRY.clear()
+        SCHEMA_REGISTRY.update(saved)
+
+
+def test_infer_schema_registry_concurrent_eviction_deterministic() -> None:
+    """Concurrent registry inserts must force deterministic evictions without corruption.
+
+    Monkeypatches ``MAX_REGISTRY_SIZE`` down to a small value so that a real
+    thread pool building many distinct fresh schemas concurrently is
+    guaranteed to cross the eviction threshold multiple times within the
+    run — deterministic, unlike relying on timing alone. Lowers
+    ``sys.setswitchinterval`` to maximize interleaving odds between the
+    hit-path ``move_to_end`` and the miss-path ``popitem``/insert critical
+    sections in :func:`infer_dynamic_schema`. Asserts the registry never
+    exceeds its bound and every surviving entry is a usable model class —
+    the same integrity-canary contract as
+    ``test_schema_registry_concurrent_gather_integrity`` in
+    ``tests/test_validation.py``, but exercised via real OS threads (a
+    ``ThreadPoolExecutor``) instead of ``asyncio.to_thread``, and with a
+    small, deterministic ``MAX_REGISTRY_SIZE`` so eviction races are
+    guaranteed to occur rather than merely possible.
+
+    Honesty note (per brief): pre-fix (no ``_SCHEMA_REGISTRY_LOCK``), this
+    test reliably and deterministically FAILED — observed
+    ``len(SCHEMA_REGISTRY) == 9 > MAX_REGISTRY_SIZE == 8`` — because
+    concurrent ``popitem``/insert calls interleaved past the size check.
+    Post-fix it passes. Unlike the asyncio-``gather`` canary in
+    ``tests/test_validation.py`` (which is not guaranteed to reproduce
+    corruption under a short run), this ``ThreadPoolExecutor`` variant with a
+    small ``MAX_REGISTRY_SIZE`` does reproduce it deterministically — both
+    outcomes are reported here rather than assumed.
+    """
+    saved = dict(SCHEMA_REGISTRY)
+    original_max = schema_builder.MAX_REGISTRY_SIZE
+    original_switch_interval = sys.getswitchinterval()
+    schema_builder.MAX_REGISTRY_SIZE = 8
+    sys.setswitchinterval(1e-6)
+    try:
+        SCHEMA_REGISTRY.clear()
+
+        def build_one(i: int) -> type[BaseModel]:
+            return infer_dynamic_schema(f"ConcurrentEvictModel{i}", {f"field_{i}": i}, BaseModel)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+            results = list(pool.map(build_one, range(200)))
+
+        assert len(SCHEMA_REGISTRY) <= schema_builder.MAX_REGISTRY_SIZE
+        assert all(hasattr(r, "model_fields") for r in results)
+        for model_cls in list(SCHEMA_REGISTRY.values()):
+            assert hasattr(model_cls, "model_fields")
+    finally:
+        sys.setswitchinterval(original_switch_interval)
+        schema_builder.MAX_REGISTRY_SIZE = original_max
         SCHEMA_REGISTRY.clear()
         SCHEMA_REGISTRY.update(saved)
 
