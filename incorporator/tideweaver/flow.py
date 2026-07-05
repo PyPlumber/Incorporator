@@ -628,7 +628,7 @@ _GateUnion = Annotated[
     Field(discriminator="type"),
 ]
 _PenstockUnion = Annotated[
-    SustainedPenstock | BurstPenstock | WindowPenstock | BackpressurePenstock | SignalPenstock,
+    SustainedPenstock | BurstPenstock | WindowPenstock | BackpressurePenstock | SignalPenstock | NullPenstock,
     Field(discriminator="type"),
 ]
 _SpillwayUnion = Annotated[

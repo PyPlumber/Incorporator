@@ -318,6 +318,39 @@ def test_subclass_variants_construct() -> None:
     assert (s.name, f.name, e.name, bare.name) == ("s", "f", "e", "x")
 
 
+def test_export_missing_destination_raises_at_construction() -> None:
+    """(D8-02) ``Export`` with no ``file_path``/``sql_table`` in ``export_params`` raises ``ValueError``.
+
+    Pre-fix, construction silently succeeded and every ``_tick_export``
+    call misread the ``instance=<registry rows>`` list's repr as the
+    destination path, raising ``IncorporatorFormatError`` on every tick
+    instead of failing loudly at plan-build time.
+    """
+    with pytest.raises(ValueError, match="file_path.*sql_table|sql_table.*file_path"):
+        Export(name="e", cls=_A, interval=15.0, export_params={})
+    with pytest.raises(ValueError, match="file_path.*sql_table|sql_table.*file_path"):
+        Export(name="e", cls=_A, interval=15.0)
+
+
+def test_export_with_file_path_or_sql_table_constructs() -> None:
+    """``Export`` with either ``file_path`` or ``sql_table`` in ``export_params`` constructs cleanly."""
+    e1 = Export(name="e1", cls=_A, interval=15.0, export_params={"file_path": "out.csv"})
+    e2 = Export(name="e2", cls=_A, interval=15.0, export_params={"sql_table": "my_table"})
+    assert e1.export_params["file_path"] == "out.csv"
+    assert e2.export_params["sql_table"] == "my_table"
+
+
+def test_fjord_empty_export_params_still_constructs() -> None:
+    """(D8-02 scope fence) ``Fjord`` with empty ``export_params`` is a supported config — must NOT raise.
+
+    Only ``Export`` gets the destination-required validator; ``Fjord``
+    flushes via ``outflow()`` and never falls into ``export()``'s
+    in-state-mode path, so its empty-dict default stays legal.
+    """
+    f = Fjord(name="f", cls=_A, interval=10.0)
+    assert f.export_params == {}
+
+
 def test_tide_log_meta_shape() -> None:
     """Tide.log_meta() produces the expected compact one-line meta string."""
     tide = Tide(tide_number=3, fired=["a"], skipped=[("b", "not_due")], duration_sec=0.123)
@@ -1068,6 +1101,117 @@ async def test_penstock_none_means_unlimited() -> None:
     assert "penstock_limited" not in reasons, f"Default (no Penstock) must NOT emit 'penstock_limited'; got {reasons}"
     if "_tideweaver_snapshot" in _A.__dict__:
         delattr(_A, "_tideweaver_snapshot")
+
+
+def test_null_penstock_validates_in_flowcontrol() -> None:
+    """``FlowControl(penstock=NullPenstock())`` constructs (D8-01 narrowing-regression fix).
+
+    ``NullPenstock`` was importable and advertised in ``flow.py``'s
+    ``__all__`` but excluded from ``_PenstockUnion``, so this raised
+    ``ValidationError`` before the fix.
+    """
+    from incorporator.io.penstock import NullPenstock
+
+    flow = FlowControl(gate=HardLock(), penstock=NullPenstock())
+    assert isinstance(flow.penstock, NullPenstock)
+
+
+@pytest.mark.asyncio
+async def test_null_penstock_tick_path_matches_penstock_none_control() -> None:
+    """(D8-01 L4 rider) ``NullPenstock`` is inert through the full tick path, not just validation.
+
+    Runs two otherwise-identical scheduler passes — one edge with no
+    penstock, one with ``FlowControl(penstock=NullPenstock())`` — and
+    asserts identical observable outcomes: equal fire counts, zero
+    ``penstock_limited`` skips, zero ``PenstockLimited`` canal rejects,
+    and the ``FlowState`` fields ``NullPenstock`` never touches
+    (``bucket_tokens``, ``window_log``) stay at their defaults.
+    """
+    from incorporator.io.penstock import NullPenstock
+
+    async def _run(penstock: Any) -> Tuple[List[str], Tideweaver]:
+        fires: List[str] = []
+        strong_refs: List[_A] = []
+
+        async def fake(current: Current) -> None:
+            if current.name == "a":
+                inst = _A(inc_code=f"a-{len(strong_refs)}")
+                strong_refs.append(inst)
+                _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
+            fires.append(current.name)
+
+        a = _stream("a", interval=0.05)
+        b = _stream("b", interval=0.05)
+        edge_flow = FlowControl(gate=HardLock(), penstock=penstock)
+        ws = Watershed(
+            window=_short_window(0.4),
+            currents=[a, b],
+            edges=[Edge(from_name="a", to_name="b", flow=edge_flow)],
+        )
+        tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+        await _collect_tides(tw)
+        if "_tideweaver_snapshot" in _A.__dict__:
+            delattr(_A, "_tideweaver_snapshot")
+        return fires, tw
+
+    control_fires, control_tw = await _run(None)
+    null_fires, null_tw = await _run(NullPenstock())
+
+    # Real-clock windowed scheduler: tolerate +/-1 wall-clock jitter between the
+    # two sequential runs rather than asserting exact equality.
+    assert abs(null_fires.count("b") - control_fires.count("b")) <= 1, (
+        f"NullPenstock must fire 'b' within jitter tolerance of no-penstock control; "
+        f"got null={null_fires.count('b')}, control={control_fires.count('b')}"
+    )
+    control_rejects = [r for r in control_tw.rejects if r.error_kind == "PenstockLimited"]
+    null_rejects = [r for r in null_tw.rejects if r.error_kind == "PenstockLimited"]
+    assert control_rejects == [] and null_rejects == [], (
+        f"neither config should surface PenstockLimited rejects; control={control_rejects}, null={null_rejects}"
+    )
+    null_flow_state = null_tw._edge_state[("a", "b")].flow_state
+    assert null_flow_state.bucket_tokens is None, "NullPenstock must never touch bucket_tokens"
+    assert null_flow_state.window_log == [], "NullPenstock must never touch window_log"
+    assert null_flow_state.last_consumed_at is not None, (
+        "last_consumed_at is set by the scheduler on every successful consumption, independent of penstock type"
+    )
+
+
+@pytest.mark.asyncio
+async def test_null_penstock_failure_gate_leaves_flow_state_untouched() -> None:
+    """(D8-01 L4 rider) A failed tick with ``NullPenstock`` on the edge debits/mutates nothing.
+
+    Reuses the existing ``_tick_raised``-gated contract (scheduler.py):
+    ``post_consume`` and ``last_consumed_at`` updates are skipped
+    entirely when the current's tick raises, regardless of penstock type.
+    """
+    from incorporator.io.penstock import NullPenstock
+
+    async def fake(current: Current) -> None:
+        if current.name == "a":
+            inst = _A(inc_code="a-1")
+            _A._tideweaver_snapshot = [inst]  # type: ignore[attr-defined]
+        elif current.name == "b":
+            raise RuntimeError("boom")
+
+    a = _stream("a", interval=0.05)
+    b = Stream(name="b", cls=_B, interval=0.05, incorp_params={}, on_error="isolate")
+    edge_flow = FlowControl(gate=HardLock(), penstock=NullPenstock())
+    ws = Watershed(
+        window=_short_window(0.3),
+        currents=[a, b],
+        edges=[Edge(from_name="a", to_name="b", flow=edge_flow)],
+    )
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    await _collect_tides(tw)
+    if "_tideweaver_snapshot" in _A.__dict__:
+        delattr(_A, "_tideweaver_snapshot")
+
+    edge_state = tw._edge_state[("a", "b")]
+    assert edge_state.flow_state.last_consumed_at is None, (
+        "a permanently-failing dependent must never record a successful consumption"
+    )
+    assert edge_state.flow_state.bucket_tokens is None
+    assert edge_state.flow_state.window_log == []
 
 
 @pytest.mark.asyncio
@@ -2217,6 +2361,126 @@ async def test_export_current_snapshots_upstream(tmp_path: Path, monkeypatch: py
     assert lines, "Export tick must have written at least one row"
 
 
+@pytest.mark.asyncio
+async def test_export_current_sql_table_snapshots_upstream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """(T5) An ``Export`` current configured with ``sql_table`` (no ``file_path``) constructs and ticks cleanly.
+
+    Regression guard that the D8-02 construction-time validator only
+    rejects the *missing-both-keys* case, not the legitimate
+    ``sql_table``-only configuration.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class TickSql(Incorporator):
+        """Per-tick source row used by the Export sql_table regression test."""
+
+    out_db = tmp_path / "ticks.sqlite"
+    tick_strong_refs: List[TickSql] = []
+
+    async def fake_upstream(current: Current) -> None:
+        if current.name == "ticks":
+            inst = TickSql()
+            tick_strong_refs.append(inst)
+            TickSql.inc_dict[f"t-{len(tick_strong_refs)}"] = inst
+            TickSql._tideweaver_snapshot = list(tick_strong_refs)  # type: ignore[attr-defined]
+
+    src = Stream(name="ticks", cls=TickSql, interval=0.1, incorp_params={}, on_error="fail_watershed")
+    dump = Export(
+        name="dump",
+        cls=TickSql,
+        interval=0.1,
+        export_params={"file_path": str(out_db), "sql_table": "ticks", "if_exists": "append"},
+        on_error="fail_watershed",
+    )
+    ws = Watershed.chain(window=_short_window(0.7), currents=[src, dump])
+    tw = Tideweaver(ws, pass_interval=0.05)
+
+    async def selective(current: Current) -> None:
+        if isinstance(current, Export):
+            await tw._tick_export(current)
+        else:
+            await fake_upstream(current)
+
+    monkeypatch.setattr(tw, "_invoke_tick", selective)
+    await _collect_tides(tw)
+
+    assert out_db.exists(), "Export tick with sql_table must write the sqlite file"
+
+
+@pytest.mark.asyncio
+async def test_fjord_empty_export_params_flushes_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """(T6) ``Fjord(export_params={})`` regression guard — constructs and flushes exactly as before D8-02.
+
+    ``Fjord`` never gained the ``Export``-only destination validator;
+    this asserts its flush-via-outflow path is untouched by the fix.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class Lap2(Incorporator):
+        """Per-lap source used by the Fjord empty-export_params regression test."""
+
+    class State2(Incorporator):
+        """Derived state class produced by outflow(state)."""
+
+    outflow_py = tmp_path / "outflow.py"
+    outflow_py.write_text(
+        "def outflow(state):\n    laps = state.get('Lap2', [])\n    return [{'lap_id': i} for i in range(len(laps))]\n",
+        encoding="utf-8",
+    )
+
+    lap_strong_refs: List[Lap2] = []
+
+    async def fake_upstream(current: Current) -> None:
+        if current.name == "laps":
+            inst = Lap2()
+            lap_strong_refs.append(inst)
+            Lap2.inc_dict[f"lap-{len(lap_strong_refs)}"] = inst
+
+    a = Stream(name="laps", cls=Lap2, interval=0.1, incorp_params={}, on_error="fail_watershed")
+    f = Fjord(
+        name="state",
+        cls=State2,
+        interval=0.1,
+        export_params={},
+        outflow=outflow_py,
+        on_error="fail_watershed",
+    )
+    assert f.export_params == {}
+    ws = Watershed.chain(window=_short_window(0.5), currents=[a, f])
+    tw = Tideweaver(ws, tick_factory=fake_upstream, pass_interval=0.05)
+
+    async def selective(current: Current) -> None:
+        if isinstance(current, Fjord):
+            await tw._tick_fjord(current)
+        else:
+            await fake_upstream(current)
+
+    monkeypatch.setattr(tw, "_invoke_tick", selective)
+    tides = await _collect_tides(tw)
+    assert any("state" in tide.fired for tide in tides), "Fjord with empty export_params must still fire/flush"
+
+
+def test_json_export_missing_destination_raises_at_construction(tmp_path: Path) -> None:
+    """(T4 JSON variant) A watershed.json ``verb: 'export'`` entry with no ``export_params`` raises at load time.
+
+    The loader forwards ``entry.get('export_params', {})`` straight
+    into ``Export(...)``, so the same construction-time ``ValueError``
+    fires for a JSON-defined plan as for the Python API.
+    """
+    from incorporator.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("chain", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "export", "interval": 30},
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(ValueError, match="file_path.*sql_table|sql_table.*file_path"):
+        load_watershed(cfg)
+
+
 # ---------------------------------------------------------------------------
 # JSON config loader
 # ---------------------------------------------------------------------------
@@ -2397,6 +2661,51 @@ def test_json_custom_edge_full_flowcontrol(tmp_path: Path) -> None:
     assert isinstance(edge.flow.surge_barrier, SurgeBarrier)
     assert edge.flow.surge_barrier.action == "bypass"
     assert edge.flow.surge_barrier.threshold_multiple == 10.0
+
+
+@pytest.mark.asyncio
+async def test_json_custom_edge_null_penstock_validates_and_runs(tmp_path: Path) -> None:
+    """A per-edge ``flow: {"penstock": {"type": "null"}}`` round-trips (D8-01) and ticks cleanly.
+
+    Prior to the ``_PenstockUnion`` fix, this JSON shape raised
+    ``ValidationError`` at ``load_watershed`` time.
+    """
+    from incorporator.io.penstock import NullPenstock
+    from incorporator.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [
+        {"from": "a", "to": "b", "flow": {"penstock": {"type": "null"}}},
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+    [edge] = ws.edges
+    assert isinstance(edge.flow.penstock, NullPenstock)
+
+    # Re-window so the scheduler treats the plan as open "now", then run a pass.
+    ws.window = _short_window(0.3)
+    strong_refs: List[Any] = []
+
+    async def fake(current: Current) -> None:
+        cls = current.cls
+        inst = cls()
+        strong_refs.append(inst)
+        cls._tideweaver_snapshot = list(i for i in strong_refs if isinstance(i, cls))  # type: ignore[attr-defined]
+
+    tw = Tideweaver(ws, tick_factory=fake, pass_interval=0.02)
+    tides = await _collect_tides(tw)
+    reasons = [reason for tide in tides for _name, reason in tide.skipped]
+    assert "penstock_limited" not in reasons, f"NullPenstock must never emit 'penstock_limited'; got {reasons}"
+    for name in ("LapData", "PitStops"):
+        cls_obj = next(c for c in {type(i) for i in strong_refs} if c.__name__ == name)
+        if "_tideweaver_snapshot" in cls_obj.__dict__:
+            delattr(cls_obj, "_tideweaver_snapshot")
 
 
 def test_json_custom_edge_rejects_both_flow_and_mode(tmp_path: Path) -> None:

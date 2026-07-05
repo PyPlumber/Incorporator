@@ -263,12 +263,41 @@ class Export(Current):
     tick.
 
     Attributes:
-        export_params: Forwarded to :meth:`Incorporator.export`. The
-            ``file_path`` extension picks the format
-            (``.parquet`` / ``.ndjson`` / ``.csv`` / ``.sqlite`` / etc.).
+        export_params: Forwarded to :meth:`Incorporator.export`. Must
+            contain ``file_path`` or ``sql_table`` — the ``file_path``
+            extension picks the format (``.parquet`` / ``.ndjson`` /
+            ``.csv`` / ``.sqlite`` / etc.). Omitting both raises
+            ``ValueError`` at construction time (see
+            :meth:`_require_export_destination`): ``_tick_export``
+            always forwards ``instance=<list of registry rows>``, and
+            without ``file_path``/``sql_table`` ``export()`` falls back
+            to its in-state one-liner mode, which misreads that list's
+            ``repr`` as the destination path and fails every tick.
     """
 
     export_params: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _require_export_destination(self) -> Export:
+        """Reject ``export_params`` missing a destination at construction time.
+
+        ``Export`` always calls :meth:`Incorporator.export` with
+        ``instance=<registry rows list>``, never a bare path — so
+        omitting both ``file_path`` and ``sql_table`` from
+        ``export_params`` silently falls into ``export()``'s in-state
+        one-liner mode (meant for ``cls.export("path.json")`` calls
+        where ``instance`` IS the path) and reads the row list's
+        ``repr`` as a file path, failing on every tick.
+        """
+        if "file_path" not in self.export_params and "sql_table" not in self.export_params:
+            raise ValueError(
+                f"Export(name={self.name!r}): export_params must set 'file_path' or 'sql_table' — "
+                "e.g. export_params={'file_path': 'snapshot.ndjson'} or "
+                "export_params={'sql_table': 'my_table'}.  Without one of these, _tick_export's "
+                "instance=<registry rows> forwards straight to Incorporator.export()'s in-state "
+                "mode, which misreads the row-list repr as the destination path and fails every tick."
+            )
+        return self
 
 
 class CustomCurrent(Current):
