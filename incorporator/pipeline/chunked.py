@@ -20,6 +20,12 @@ from ._shared import _enrich_and_load, _row_count
 
 logger = logging.getLogger(__name__)
 
+# One-time-per-process WARNING dedup for the two AIMD tuner diagnostics below,
+# mirroring _warn_on_bare_user_class's guard-then-emit idiom (outflow.py) so a
+# long-running poll loop doesn't spam the same diagnosis every tick.
+_AIMD_LOW_FLOOR_WARNED = False
+_AIMD_PARKED_WARNED: set[int] = set()
+
 
 async def _run_chunking_engine(
     cls: Any,
@@ -68,6 +74,19 @@ async def _run_chunking_engine(
         )
     _aimd_enabled = adapt_chunk_size
     _ring: deque[float] = deque(maxlen=5)
+    # Hysteresis state: an adjustment only mutates ``paginator.chunk_size`` once its
+    # direction is recorded; ``_aimd_last_dir`` tracks the most recently APPLIED
+    # direction and ``_aimd_alternation_streak`` counts consecutive applied
+    # adjustments that reversed direction from the one before. A genuine regime
+    # change reverses once and then either holds or continues in the new
+    # direction, so it never accumulates a streak — only a size-independent,
+    # flip-flopping signal (e.g. alternating cache hit/miss latency) keeps
+    # reversing decision after decision. Once the streak crosses the threshold,
+    # the tuner parks (stops mutating) and emits a single WARNING.
+    _aimd_last_dir: str | None = None
+    _aimd_alternation_streak = 0
+    _aimd_parked = False
+    _AIMD_ALTERNATION_PARK_THRESHOLD = 3
     if _aimd_enabled and paginator is not None:
         if not hasattr(paginator, "chunk_size"):
             logger.debug(
@@ -75,6 +94,16 @@ async def _run_chunking_engine(
                 type(paginator).__name__,
             )
             _aimd_enabled = False
+        elif chunk_size_min < 5:
+            global _AIMD_LOW_FLOOR_WARNED
+            if not _AIMD_LOW_FLOOR_WARNED:
+                _AIMD_LOW_FLOOR_WARNED = True
+                logger.warning(
+                    "AIMD: chunk_size_min=%d is unusually small (< 5); the tuner's "
+                    "growth step is floored at +1 per decision at this size, so "
+                    "convergence toward chunk_size_max will be slow.",
+                    chunk_size_min,
+                )
 
     try:
         while True:
@@ -162,14 +191,39 @@ async def _run_chunking_engine(
                         if len(_ring) == _ring.maxlen:
                             med = statistics.median(_ring)
                             current_cs = paginator.chunk_size
+                            direction: str | None
                             if med < target_min_sec:
-                                new_cs = min(chunk_size_max, current_cs + current_cs // 5)
+                                direction = "grow"
+                                new_cs = min(chunk_size_max, current_cs + max(1, current_cs // 5))
                             elif med > target_max_sec:
+                                direction = "shrink"
                                 new_cs = max(chunk_size_min, current_cs // 2)
                             else:
+                                direction = None
                                 new_cs = current_cs
-                            if new_cs != current_cs:
-                                paginator.chunk_size = new_cs
+                            if not _aimd_parked and direction is not None and new_cs != current_cs:
+                                if _aimd_last_dir is not None and direction != _aimd_last_dir:
+                                    _aimd_alternation_streak += 1
+                                else:
+                                    _aimd_alternation_streak = 0
+                                if _aimd_alternation_streak >= _AIMD_ALTERNATION_PARK_THRESHOLD:
+                                    _aimd_parked = True
+                                    if id(paginator) not in _AIMD_PARKED_WARNED:
+                                        _AIMD_PARKED_WARNED.add(id(paginator))
+                                        logger.warning(
+                                            "AIMD: chunk_size tuner detected a flip-flopping, "
+                                            "size-independent latency signal (direction reversed "
+                                            "%d times in a row) — parking at chunk_size=%d instead "
+                                            "of limit-cycling. This usually means the P50/P99 "
+                                            "targets don't match a bimodal or cache-dependent "
+                                            "workload; consider disabling adapt_chunk_size or "
+                                            "widening target_min_sec/target_max_sec.",
+                                            _aimd_alternation_streak,
+                                            current_cs,
+                                        )
+                                else:
+                                    paginator.chunk_size = new_cs
+                                    _aimd_last_dir = direction
                                 # Post-adjustment cooldown: stale pre-adjustment samples must not
                                 # drive the next decision. The len(_ring)==maxlen guard above then
                                 # forces 5 fresh samples under the new chunk_size before deciding again.

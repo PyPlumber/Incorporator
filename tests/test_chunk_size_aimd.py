@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import logging
 from typing import Any, AsyncGenerator, List, Optional
 from unittest.mock import AsyncMock, patch
 
@@ -11,7 +11,6 @@ import pytest
 from incorporator.pipeline.chunked import _run_chunking_engine
 from incorporator.tideweaver.architect import _tune_chunk_size
 from incorporator.observability.wave import Wave
-
 
 # ---------------------------------------------------------------------------
 # Test doubles
@@ -126,9 +125,7 @@ async def _collect_waves(
     )
 
     with ctx:
-        with patch(
-            "incorporator.pipeline.chunked._enrich_and_load", new=AsyncMock(side_effect=_noop_enrich)
-        ):
+        with patch("incorporator.pipeline.chunked._enrich_and_load", new=AsyncMock(side_effect=_noop_enrich)):
             gen: AsyncGenerator[Wave, None] = _run_chunking_engine(
                 cls=cls_under_test,
                 incorp_params={},
@@ -244,7 +241,13 @@ async def test_aimd_bounded_by_min_max(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_aimd_paginator_without_chunk_size_no_op(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the paginator has no chunk_size attribute, AIMD must disable cleanly with no exception."""
+    """When the paginator has no chunk_size attribute, AIMD must disable cleanly with no exception.
+
+    No wall-clock ``asyncio.wait_for`` bound here: this test proves clean AIMD
+    disablement, not timing, and a tight timeout flakes under heavy parallel
+    CPU contention (observed failing once at ~5x fast-tier load; stable
+    12/12 as a unit and 3/3 isolated).
+    """
     paginator = _MockPaginatorNoChunkSize(num_chunks=6)
 
     # Should complete without AttributeError or any other exception.
@@ -272,7 +275,7 @@ async def test_aimd_paginator_without_chunk_size_no_op(monkeypatch: pytest.Monke
                 if len(waves) >= 3:
                     break
 
-    await asyncio.wait_for(_drive(), timeout=5.0)
+    await _drive()
 
     assert len(waves) >= 1
     assert not hasattr(paginator, "chunk_size")
@@ -486,6 +489,198 @@ async def test_aimd_regime_change_isolation(monkeypatch: pytest.MonkeyPatch) -> 
     assert paginator.chunk_size == max(100, grown_cs // 2), (
         "After the fast->slow regime flip, the decrease must halve the grown chunk_size using "
         "only the post-flip slow samples, not a blend with stale fast samples"
+    )
+
+
+@pytest.mark.asyncio
+async def test_aimd_growth_floor_progresses_below_five(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D6-07: growth must make progress even when current_cs < 5, not freeze forever.
+
+    ``current_cs // 5`` is 0 for any ``current_cs < 5``, so the pre-fix growth
+    step ``current_cs + current_cs // 5`` is a no-op and the tuner freezes at a
+    tiny size forever even when every window says "grow" — reachable whenever
+    a user configures ``chunk_size_min`` below 5. This test fails pre-fix
+    (chunk_size stays pinned at 3 across all decisions) and passes post-fix
+    (``max(1, current_cs // 5)`` guarantees +1 per decision at minimum).
+    """
+    paginator = _MockPaginator(num_chunks=40, chunk_size=3)
+    initial_cs = paginator.chunk_size
+
+    # 4 decisions worth of fast waves (5 waves per decision, plus 1 to observe
+    # the 4th decision's effect) — enough to prove sustained progress, not a
+    # single +1 blip.
+    await _collect_waves(
+        paginator,
+        num_chunks=21,
+        adapt_chunk_size=True,
+        chunk_size_min=1,
+        chunk_size_max=100_000,
+        target_min_sec=0.030,
+        target_max_sec=0.100,
+        processing_time_override=0.001,
+    )
+
+    assert paginator.chunk_size > initial_cs + 1, (
+        "growth must progress past a single +1 step when current_cs < 5 across multiple decisions"
+    )
+
+
+@pytest.mark.asyncio
+async def test_aimd_low_floor_warning_emitted_once(caplog: pytest.LogCaptureFixture) -> None:
+    """D6-07 (optional observability): chunk_size_min < 5 emits one WARNING, not per-tick spam."""
+    import incorporator.pipeline.chunked as chunked_mod
+
+    chunked_mod._AIMD_LOW_FLOOR_WARNED = False
+    paginator = _MockPaginator(num_chunks=20, chunk_size=3)
+
+    with caplog.at_level(logging.WARNING, logger="incorporator.pipeline.chunked"):
+        await _collect_waves(
+            paginator,
+            num_chunks=12,
+            adapt_chunk_size=True,
+            chunk_size_min=1,
+            chunk_size_max=100_000,
+            target_min_sec=0.030,
+            target_max_sec=0.100,
+            processing_time_override=0.001,
+        )
+
+    low_floor_records = [r for r in caplog.records if "chunk_size_min" in r.getMessage()]
+    assert len(low_floor_records) == 1, "the low-floor WARNING must fire exactly once, not per decision"
+    assert not getattr(low_floor_records[0], "is_api", False), (
+        "AIMD tuner diagnostics are logic/degradation signals — must never carry is_api=True"
+    )
+
+
+@pytest.mark.asyncio
+async def test_aimd_bimodal_signal_parks_instead_of_limit_cycling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D6-06: a bimodal, size-independent signal must PARK, not limit-cycle forever.
+
+    Alternates ``processing_time_override`` between a value below
+    ``target_min_sec`` and a value above ``target_max_sec`` every wave,
+    independent of ``current_cs`` (simulating e.g. alternating cache
+    hit/miss latency). Pre-fix, the asymmetric grow/shrink steps
+    deterministically ratchet chunk_size down to chunk_size_min and then
+    limit-cycle between it and one grow-step above indefinitely, mutating
+    ``paginator.chunk_size`` on every single decision. Post-fix, the tuner
+    must detect the repeated direction reversal, park at a stable size, and
+    stop mutating — bounding the number of chunk_size changes.
+    """
+    paginator = _MockPaginator(num_chunks=200, chunk_size=1000)
+
+    async def _noop_enrich(*args: Any, **kwargs: Any) -> None:
+        pass
+
+    chunk_counter = [0]
+    fast_override = 0.001
+    slow_override = 0.500
+    real_perf_counter = __import__("time").perf_counter
+
+    def _fake_perf(original=real_perf_counter) -> float:
+        # 4 perf_counter() calls per wave (see test_aimd_regime_change_isolation);
+        # alternate the signal every wave, independent of chunk_size.
+        chunk_counter[0] += 1
+        wave_number = (chunk_counter[0] - 1) // 4 + 1
+        override = fast_override if wave_number % 2 == 1 else slow_override
+        return chunk_counter[0] * (override / 2.0)
+
+    waves: List[Wave] = []
+    chunk_size_history: List[int] = []
+    with patch("incorporator.pipeline.chunked.time.perf_counter", side_effect=_fake_perf):
+        with patch("incorporator.pipeline.chunked._enrich_and_load", new=AsyncMock(side_effect=_noop_enrich)):
+            gen: AsyncGenerator[Wave, None] = _run_chunking_engine(
+                cls=_MockCls,
+                incorp_params={},
+                refresh_params=None,
+                export_params=None,
+                poll_interval=None,
+                paginator=paginator,
+                adapt_chunk_size=True,
+                chunk_size_min=100,
+                chunk_size_max=100_000,
+                target_min_sec=0.030,
+                target_max_sec=0.100,
+            )
+            async for wave in gen:
+                waves.append(wave)
+                chunk_size_history.append(paginator.chunk_size)
+                paginator._remaining -= 1
+                if paginator._remaining <= 0:
+                    paginator.is_exhausted = True
+                if len(waves) >= 120:
+                    break
+
+    mutation_count = sum(1 for a, b in zip(chunk_size_history, chunk_size_history[1:]) if a != b)
+    assert mutation_count <= 4, (
+        f"bimodal size-independent signal must park after a bounded number of reversals, "
+        f"got {mutation_count} mutations across {len(waves)} waves"
+    )
+    # Once parked, the size must hold steady for the remainder of the drain.
+    assert chunk_size_history[-1] == chunk_size_history[-20], (
+        "tuner must have settled at a stable size well before the end of the drain"
+    )
+
+
+@pytest.mark.asyncio
+async def test_aimd_bimodal_signal_emits_park_warning_not_api_log(caplog: pytest.LogCaptureFixture) -> None:
+    """D6-06: parking on a bimodal signal must emit a WARNING via the module logger, not <cls>_api.log.
+
+    Asserts the WARNING fires from ``incorporator.pipeline.chunked`` (a plain
+    module logger with no ``is_api`` extra) — the logging-contract HARD rule
+    that logic/degradation signals never land on the class-named
+    ``<cls>_api.log`` surface, which is reserved for URL/httpx traffic.
+    """
+    import incorporator.pipeline.chunked as chunked_mod
+
+    chunked_mod._AIMD_PARKED_WARNED.clear()
+    paginator = _MockPaginator(num_chunks=200, chunk_size=1000)
+
+    async def _noop_enrich(*args: Any, **kwargs: Any) -> None:
+        pass
+
+    chunk_counter = [0]
+    fast_override = 0.001
+    slow_override = 0.500
+    real_perf_counter = __import__("time").perf_counter
+
+    def _fake_perf(original=real_perf_counter) -> float:
+        chunk_counter[0] += 1
+        wave_number = (chunk_counter[0] - 1) // 4 + 1
+        override = fast_override if wave_number % 2 == 1 else slow_override
+        return chunk_counter[0] * (override / 2.0)
+
+    waves: List[Wave] = []
+    with caplog.at_level(logging.WARNING, logger="incorporator.pipeline.chunked"):
+        with patch("incorporator.pipeline.chunked.time.perf_counter", side_effect=_fake_perf):
+            with patch("incorporator.pipeline.chunked._enrich_and_load", new=AsyncMock(side_effect=_noop_enrich)):
+                gen = _run_chunking_engine(
+                    cls=_MockCls,
+                    incorp_params={},
+                    refresh_params=None,
+                    export_params=None,
+                    poll_interval=None,
+                    paginator=paginator,
+                    adapt_chunk_size=True,
+                    chunk_size_min=100,
+                    chunk_size_max=100_000,
+                    target_min_sec=0.030,
+                    target_max_sec=0.100,
+                )
+                async for wave in gen:
+                    waves.append(wave)
+                    paginator._remaining -= 1
+                    if paginator._remaining <= 0:
+                        paginator.is_exhausted = True
+                    if len(waves) >= 120:
+                        break
+
+    park_records = [r for r in caplog.records if "parking at chunk_size" in r.getMessage()]
+    assert len(park_records) == 1, "the park WARNING must fire exactly once, not per subsequent decision"
+    assert park_records[0].levelno == logging.WARNING
+    assert park_records[0].name == "incorporator.pipeline.chunked"
+    assert not getattr(park_records[0], "is_api", False), (
+        "the park/give-up signal is tuner logic, not URL traffic — must never carry is_api=True "
+        "(that routing is exclusive to APIFilter-backed <cls>_api.log handlers)"
     )
 
 
