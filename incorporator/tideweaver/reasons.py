@@ -25,6 +25,7 @@ class SkipReason(str, Enum):
     SKIP_AHEAD = "skip_ahead"
     SURGE_HALTED = "surge_halted"
     PENSTOCK_LIMITED = "penstock_limited"
+    PARKED = "parked"
 
 
 class WakeReason(str, Enum):

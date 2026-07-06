@@ -23,7 +23,7 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-from .current import Current, Fjord, Stream
+from .current import Current, Export, Fjord, Stream
 from .flow import FlowControl, GateMode, flow_from_mode
 
 
@@ -203,6 +203,34 @@ class Watershed(BaseModel):
         if any(v > 1 for v in counts.values()):
             dupes = sorted(n for n, v in counts.items() if v > 1)
             raise ValueError(f"Watershed currents must have unique names; duplicates: {dupes}")
+
+        # Two currents that PRODUCE data (Stream / Fjord / CustomCurrent —
+        # anything but Export) sharing a ``cls.__name__`` silently collide on
+        # the scheduler's ``cls.__name__``-keyed state: the fjord flush's
+        # ``state[dep.cls.__name__]`` dict and the class-level
+        # ``_tideweaver_snapshot`` strong-ref both key/park by name/identity.
+        # ``Export`` is deliberately excluded — it's read-only (snapshots an
+        # upstream's registry to disk) and is INTENDED to share ``cls`` with
+        # its upstream Stream/Fjord; that's not a collision, it's the
+        # documented usage pattern (see Export's class docstring).
+        producer_currents = [c for c in self.currents if not isinstance(c, Export)]
+        cls_names = [c.cls.__name__ for c in producer_currents]
+        cls_counts = Counter(cls_names)
+        if any(v > 1 for v in cls_counts.values()):
+            dupe_cls = sorted(n for n, v in cls_counts.items() if v > 1)
+            offenders = {
+                cls_name: sorted(c.name for c in producer_currents if c.cls.__name__ == cls_name)
+                for cls_name in dupe_cls
+            }
+            raise ValueError(
+                f"Watershed currents must bind distinct Incorporator classes; "
+                f"cls.__name__ collision(s): {offenders}. "
+                "Two producing currents (Stream/Fjord/CustomCurrent) sharing a class "
+                "silently overwrite each other's fjord state (keyed by cls.__name__) and "
+                "_tideweaver_snapshot (parked on the class). Subclass or rename so each "
+                "current's cls.__name__ is unique. (Export is exempt — it legitimately "
+                "shares cls with its upstream to snapshot that registry to disk.)"
+            )
 
         start, end = self.window
         if end <= start:

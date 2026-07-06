@@ -339,14 +339,44 @@ class RaiseOverflow(Spillway):
         )
 
 
+# Module-level, identity-keyed "warned once" set — mirrors
+# ``_warn_on_bare_user_class``'s pattern (module-level dict keyed by class
+# identity) since ``ExportToArchive`` is ``frozen=True`` and can't carry
+# mutable per-instance state.  Keyed by ``id(archive_cls)`` so two
+# ``ExportToArchive`` instances pointed at the same class share one
+# first-trip WARNING rather than each emitting their own.
+_ARCHIVE_CAP_WARNED: set[int] = set()
+
+
 class ExportToArchive(Spillway):
-    """Append each displaced wave's instances to ``archive_cls._spillway_backlog`` (a strong-ref list)."""
+    """Append each displaced wave's instances to ``archive_cls._spillway_backlog`` (a strong-ref list).
+
+    When ``max_entries`` is left at its default of ``None`` the backlog
+    grows without bound for the lifetime of the run — every displaced
+    wave's instances are appended and never evicted.  For a long-window
+    run on a hot edge (or a rejoin of duplicate waves from
+    restart-exhaustion republishing) this is unbounded strong-ref growth.
+    Set ``max_entries`` to cap the backlog: once the cap is exceeded the
+    oldest entries are evicted to make room for the newest, and a
+    one-time WARNING is emitted (via the session's structured
+    scheduler-event log when a ``logger_name`` is active, else the bare
+    module logger) the first time eviction happens — so silent unbounded
+    growth becomes an observable signal instead.
+    """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     type: Literal["export_to_archive"] = "export_to_archive"
     archive_cls: builtins.type[Any] = Field(
         description="Incorporator subclass (or any class) that receives displaced wave instances.",
+    )
+    max_entries: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Optional cap on backlog size. When exceeded, oldest entries are evicted and a "
+            "one-time WARNING is emitted. None (default) leaves the backlog unbounded."
+        ),
     )
 
     def overflow(
@@ -364,6 +394,64 @@ class ExportToArchive(Spillway):
             backlog = []
             self.archive_cls._spillway_backlog = backlog
         backlog.extend(displaced_wave)
+        if self.max_entries is not None and len(backlog) > self.max_entries:
+            del backlog[: len(backlog) - self.max_entries]
+            archive_key = id(self.archive_cls)
+            if archive_key not in _ARCHIVE_CAP_WARNED:
+                _ARCHIVE_CAP_WARNED.add(archive_key)
+                detail = (
+                    f"Tideweaver: spillway archive backlog on {self.archive_cls.__name__!r} "
+                    f"exceeded max_entries={self.max_entries}; oldest entries evicted "
+                    f"(edge {edge[0]} → {edge[1]})"
+                )
+                if logger_name is not None:
+                    # Deferred import — mirrors RaiseOverflow.overflow's precedent to
+                    # avoid pulling tideweaver/__init__.py's eager import chain into
+                    # flow.py at module load.
+                    from ..observability.logger import _route_scheduler_event_to_log  # noqa: PLC0415
+
+                    _route_scheduler_event_to_log(
+                        logger_name,
+                        "spillway_backlog_capped",
+                        None,
+                        detail,
+                        edge=edge,
+                        tide_number=None,
+                    )
+                else:
+                    logger.warning(
+                        "Tideweaver: spillway archive backlog on %r exceeded max_entries=%d; "
+                        "oldest entries evicted (edge %s → %s)",
+                        self.archive_cls.__name__,
+                        self.max_entries,
+                        edge[0],
+                        edge[1],
+                    )
+
+    @staticmethod
+    def drain(archive_cls: builtins.type[Any]) -> list[Any]:
+        """Pop and return every entry currently in ``archive_cls._spillway_backlog``.
+
+        Convenience for callers who want to periodically empty the backlog
+        rather than rely solely on ``max_entries`` eviction — e.g. flush the
+        archive to disk every N minutes and start the next window's backlog
+        from empty. Safe to call when no backlog has been parked yet
+        (returns ``[]``).
+
+        Args:
+            archive_cls: The class whose ``_spillway_backlog`` should be
+                drained — typically the same class passed as
+                ``ExportToArchive.archive_cls``.
+
+        Returns:
+            The backlog's contents, in insertion order. The class's
+            ``_spillway_backlog`` is left as a fresh empty list.
+        """
+        backlog: list[Any] | None = getattr(archive_cls, "_spillway_backlog", None)
+        if backlog is None:
+            return []
+        archive_cls._spillway_backlog = []
+        return backlog
 
 
 # ---------------------------------------------------------------------------

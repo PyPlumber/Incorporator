@@ -289,6 +289,45 @@ def test_watershed_rejects_cycle() -> None:
         )
 
 
+def test_watershed_rejects_cls_name_collision() -> None:
+    """Two currents bound to distinct classes sharing a ``cls.__name__`` raise ValueError.
+
+    Regression for D5-05: the scheduler's fjord flush keys upstream state by
+    ``dep.cls.__name__`` and parks ``_tideweaver_snapshot`` on the class itself —
+    two currents whose classes happen to share a ``__name__`` (even if they are
+    different class objects) silently overwrite each other's fjord state and
+    snapshot. The Watershed validator must reject this at construction time,
+    matching the sibling name-uniqueness / cycle / window validators in the
+    same method (raise, not warn-only).
+    """
+
+    class _Dup(Incorporator):
+        pass
+
+    def _make_dup() -> type:
+        class _Dup(Incorporator):  # noqa: F811 -- deliberately shadowing to build a distinct class object
+            pass
+
+        return _Dup
+
+    other_dup = _make_dup()
+    assert other_dup is not _Dup
+    assert other_dup.__name__ == _Dup.__name__
+
+    a = Stream(name="a", cls=_Dup, interval=5.0, incorp_params={})
+    b = Stream(name="b", cls=other_dup, interval=5.0, incorp_params={})
+    with pytest.raises(ValueError, match="cls.__name__ collision"):
+        Watershed.parallel(window=_window(), currents=[a, b])
+
+
+def test_watershed_allows_distinct_cls_names() -> None:
+    """Two currents with distinct ``cls.__name__``s construct without error (no false positive)."""
+    a = _stream("a")
+    b = _stream("b")
+    ws = Watershed.parallel(window=_window(), currents=[a, b])
+    assert ws.currents == [a, b]
+
+
 def test_stream_rejects_stateful_polling_kwarg() -> None:
     """``Stream(stateful_polling=True)`` raises with a Fjord hint."""
     with pytest.raises(ValueError, match="Fjord"):
@@ -1005,6 +1044,12 @@ async def test_reservoir_per_edge_isolation() -> None:
     """Two outgoing edges from the same upstream have independent reservoirs."""
     from incorporator.tideweaver import HardLock, Reservoir
 
+    class _SinkA(Incorporator):
+        """Distinct sink class so this current's cls.__name__ doesn't collide with _A / _SinkB."""
+
+    class _SinkB(Incorporator):
+        """Distinct sink class so this current's cls.__name__ doesn't collide with _A / _SinkA."""
+
     strong_refs: List[_A] = []
 
     async def fake(current: Current) -> None:
@@ -1014,8 +1059,8 @@ async def test_reservoir_per_edge_isolation() -> None:
             _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
 
     src = _stream("src", interval=0.05)
-    sink_a = _stream("sink_a", interval=10.0)
-    sink_b = _stream("sink_b", interval=10.0)
+    sink_a = Stream(name="sink_a", cls=_SinkA, interval=10.0, incorp_params={})
+    sink_b = Stream(name="sink_b", cls=_SinkB, interval=10.0, incorp_params={})
     flow_depth_2 = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=2))
     flow_depth_5 = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=5))
     ws = Watershed(
@@ -1219,6 +1264,12 @@ async def test_sustained_penstock_per_edge_independent() -> None:
     """Two edges from the same upstream with different SustainedPenstocks operate independently."""
     from incorporator.tideweaver import HardLock, SustainedPenstock
 
+    class _FastSink(Incorporator):
+        """Distinct sink class so this current's cls.__name__ doesn't collide with _A / _SlowSink."""
+
+    class _SlowSink(Incorporator):
+        """Distinct sink class so this current's cls.__name__ doesn't collide with _A / _FastSink."""
+
     strong_refs: List[_A] = []
 
     async def fake(current: Current) -> None:
@@ -1228,8 +1279,8 @@ async def test_sustained_penstock_per_edge_independent() -> None:
             _A._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
 
     src = _stream("src", interval=0.05)
-    fast_sink = _stream("fast_sink", interval=0.05)
-    slow_sink = _stream("slow_sink", interval=0.05)
+    fast_sink = Stream(name="fast_sink", cls=_FastSink, interval=0.05, incorp_params={})
+    slow_sink = Stream(name="slow_sink", cls=_SlowSink, interval=0.05, incorp_params={})
     fast_flow = FlowControl(
         gate=HardLock(), penstock=SustainedPenstock(rate_per_sec=50.0)
     )  # cap >> tick interval; basically uncapped
@@ -2932,6 +2983,41 @@ def test_json_export_to_archive_resolves_archive_cls(tmp_path: Path) -> None:
     [edge] = ws.edges
     assert isinstance(edge.flow.spillway, ExportToArchive)
     assert edge.flow.spillway.archive_cls.__name__ == "ArchivedTrades"
+
+
+def test_json_export_to_archive_max_entries_round_trips(tmp_path: Path) -> None:
+    """``ExportToArchive.max_entries`` round-trips through the JSON watershed loader."""
+    from incorporator.tideweaver import ExportToArchive
+    from incorporator.tideweaver.config import load_watershed
+
+    _write_sidecar(
+        tmp_path / "outflow.py",
+        "from incorporator import Incorporator\n"
+        "class LapData(Incorporator):\n    pass\n"
+        "class PitStops(Incorporator):\n    pass\n"
+        "class ArchivedTrades(Incorporator):\n    pass\n"
+        "def outflow(state):\n    return []\n",
+    )
+    body = _watershed_json_body("custom", with_mode=False)
+    body["currents"] = [
+        {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        {"name": "b", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    body["edges"] = [
+        {
+            "from": "a",
+            "to": "b",
+            "flow": {
+                "spillway": {"type": "export_to_archive", "archive_cls": "ArchivedTrades", "max_entries": 100},
+            },
+        },
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+    [edge] = ws.edges
+    assert isinstance(edge.flow.spillway, ExportToArchive)
+    assert edge.flow.spillway.max_entries == 100
 
 
 def test_json_export_to_archive_missing_class_raises(tmp_path: Path) -> None:

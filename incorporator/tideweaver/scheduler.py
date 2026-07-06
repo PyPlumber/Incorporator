@@ -144,6 +144,19 @@ class _CurrentState(BaseModel):
     task completes (``.done()`` returns True) so the scheduler can
     still inspect the finished task for restart / error-isolation logic."""
 
+    parked: bool = False
+    """Set ``True`` when ``on_error="restart"`` exhausts its retry budget.
+
+    Checked FIRST in :meth:`Tideweaver._gate_reason` (short-circuits to
+    ``SkipReason.PARKED`` before the interval/phase-offset logic) so a
+    current that has exhausted its restart policy stops re-firing the
+    full exponential-backoff cycle every interval for the rest of the
+    run.  Reset implicitly every ``run()`` call because
+    ``_reset_run_state`` rebuilds ``_state`` from fresh
+    ``_CurrentState()`` instances.  ``on_error="isolate"`` never sets
+    this flag — isolate's contract is "log and continue," i.e. the
+    current keeps re-firing on its own cadence."""
+
 
 def _build_canal_reject(
     source: str,
@@ -638,7 +651,13 @@ class Tideweaver:
         :class:`SurgeBarrier` tripped with ``action="bypass"`` this pass.
         Penstock post-consumption must be skipped for these edges.
         """
-        last = self._state[current.name].last_tick_started
+        state = self._state[current.name]
+        if state.parked:
+            # Restart-exhaustion parking (see ``_CurrentState.parked``) —
+            # checked before interval/phase-offset so a parked current
+            # never re-enters the tenacity backoff cycle again this run.
+            return SkipReason.PARKED, frozenset()
+        last = state.last_tick_started
         if last is None:
             # First tick — honor ``phase_offset_sec`` for green-wave coordination.
             if current.phase_offset_sec > 0.0 and self._run_started_at is not None:
@@ -875,6 +894,12 @@ class Tideweaver:
             _tick_raised = True
             if current.on_error == "fail_watershed":
                 raise
+            # Only the "restart" policy's tenacity loop reaches this clause with
+            # a non-fail_watershed policy — "isolate" is fully handled and
+            # swallowed in its own try/except above and never re-raises here.
+            # So this is unconditionally restart-exhaustion: really park the
+            # current so the log message ("current parked") reflects reality.
+            self._state[current.name].parked = True
             if isinstance(self.logger_name, str):
                 _route_scheduler_event_to_log(
                     self.logger_name,

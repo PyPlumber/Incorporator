@@ -379,6 +379,10 @@ class _SpillwaySrc(Incorporator):
     """Stand-in upstream source for spillway-overflow tests."""
 
 
+class _SpillwaySink(Incorporator):
+    """Stand-in downstream sink for spillway-overflow tests — distinct cls from the upstream."""
+
+
 @pytest.mark.asyncio
 async def test_spillway_overflow_routes_to_session_log(
     monkeypatch: pytest.MonkeyPatch,
@@ -405,7 +409,7 @@ async def test_spillway_overflow_routes_to_session_log(
             _SpillwaySrc._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
 
     a = Stream(name="a", cls=_SpillwaySrc, interval=0.05, incorp_params={})
-    b = Stream(name="b", cls=_SpillwaySrc, interval=10.0, incorp_params={})
+    b = Stream(name="b", cls=_SpillwaySink, interval=10.0, incorp_params={})
     flow = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=1), spillway=RaiseOverflow())
 
     logger_name = "TestSpillwaySession"
@@ -462,7 +466,7 @@ async def test_spillway_overflow_falls_back_to_module_logger_without_session(
             _SpillwaySrc._tideweaver_snapshot = list(strong_refs)  # type: ignore[attr-defined]
 
     a = Stream(name="a", cls=_SpillwaySrc, interval=0.05, incorp_params={})
-    b = Stream(name="b", cls=_SpillwaySrc, interval=10.0, incorp_params={})
+    b = Stream(name="b", cls=_SpillwaySink, interval=10.0, incorp_params={})
     flow = FlowControl(gate=HardLock(), reservoir=Reservoir(depth=1), spillway=RaiseOverflow())
 
     ws = Watershed(

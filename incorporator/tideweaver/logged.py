@@ -264,8 +264,8 @@ class LoggedTideweaver(Tideweaver):
         The event types that produce records here are:
         ``isolated_tick_failure``, ``tick_parked``, ``empty_output``,
         ``empty_parent_snapshot``, ``fjord_flush_failure``,
-        ``spillway_overflow``, ``watershed_started``, and
-        ``watershed_completed``.
+        ``spillway_overflow``, ``spillway_backlog_capped``,
+        ``watershed_started``, and ``watershed_completed``.
 
         After an upstream ``isolated_tick_failure`` / ``tick_parked``, hard-
         gated dependents show ``awaiting_upstream`` skips each pass until the

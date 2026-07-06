@@ -44,6 +44,13 @@ class _BenchTarget(Incorporator):
     """Minimal Incorporator subclass — never actually invoked thanks to ``tick_factory``."""
 
 
+def _make_bench_targets(n: int) -> List[type]:
+    """Build ``n`` distinct Incorporator subclasses so Watershed's cls.__name__ collision
+    validator doesn't reject N parallel currents that would otherwise all share ``_BenchTarget``.
+    """
+    return [type(f"_BenchTarget{i}", (Incorporator,), {}) for i in range(n)]
+
+
 def _window(seconds: float) -> Tuple[datetime, datetime]:
     now = datetime.now(timezone.utc)
     return (now, now + timedelta(seconds=seconds))
@@ -70,8 +77,9 @@ HEAVY_FLOOR_PASSES_PER_SEC = 20.0  # N=50 — same as N=5; per-current cost is s
 
 async def _run_and_count(n_currents: int) -> Tuple[int, float]:
     """Spin a Tideweaver with N zero-work currents; return (tide_count, elapsed_seconds)."""
+    targets = _make_bench_targets(n_currents)
     streams: List[Stream] = [
-        Stream(name=f"c{i}", cls=_BenchTarget, interval=0.05, incorp_params={}) for i in range(n_currents)
+        Stream(name=f"c{i}", cls=targets[i], interval=0.05, incorp_params={}) for i in range(n_currents)
     ]
     ws = Watershed.parallel(currents=streams, window=_window(WINDOW_SECONDS))
     tw = Tideweaver(ws, tick_factory=_noop_tick, pass_interval=0.05)

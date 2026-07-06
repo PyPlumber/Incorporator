@@ -694,7 +694,7 @@ list with a per-edge `"flow"` for mixed topologies:
 | **`surge_barrier`** | (single shape — `threshold_multiple` + `action`) | When upstream's tick runs long (>= `threshold_multiple × upstream.interval`), fire `action`: `"skip"` / `"halt"` / `"bypass"`. `bypass` ignores this edge's gate AND penstock for that pass. |
 | **`penstock`** | `"sustained"` / `"burst"` / `"window"` / `"backpressure"` / `"signal"` / `"null"` | Edge-level rate limit. `sustained` flat rate; `burst` token bucket; `window` sliding-window cap; `backpressure` interpolates `max_rate → min_rate` as the reservoir fills; `signal` calls a user `rate_fn` callable; `null` is an explicit no-op (equivalent to omitting `penstock`, but names the "no throttling here" intent). Returns skip reason `"penstock_limited"`. |
 | **`reservoir`** | (single shape — `depth: 1..1024`) | Per-edge FIFO buffer of recent waves. Default `depth: 1` keeps just the latest. |
-| **`spillway`** | `"drop_oldest"` / `"raise_overflow"` / `"export_to_archive"` | Fires when a wave is displaced from a full reservoir. `drop_oldest` is silent; `raise_overflow` logs a WARNING — routed into the active session's `error.log` (retrievable via `LoggedTideweaver.get_scheduler_events`) when running under a `LoggedTideweaver` session, falling back to the bare module logger otherwise; `export_to_archive` extends `archive_cls._spillway_backlog` (strong refs). |
+| **`spillway`** | `"drop_oldest"` / `"raise_overflow"` / `"export_to_archive"` | Fires when a wave is displaced from a full reservoir. `drop_oldest` is silent; `raise_overflow` logs a WARNING — routed into the active session's `error.log` (retrievable via `LoggedTideweaver.get_scheduler_events`) when running under a `LoggedTideweaver` session, falling back to the bare module logger otherwise; `export_to_archive` extends `archive_cls._spillway_backlog` (strong refs) — unbounded by default, or capped via `max_entries` (evicts oldest, WARNING on first trip, see below). |
 | **`observer`** | `"null"` / `"logging"` / `"signal"` | Declarative per-edge telemetry. Hooks: `on_fire`, `on_skip`, `on_spillway`, `on_reservoir_level`. Synchronous and cheap — the scheduler does not await them. JSON type-tags are resolved: `{"type": "logging", "fire_level": "info"}` deserialises directly. `SignalObserver.callback` accepts a bare name or `module:fn` form (same resolution as `SignalPenstock.rate_fn`). For a custom subclass, use the Python API. |
 
 **Sidecar string resolution:** `SignalPenstock.rate_fn` accepts either a
@@ -702,6 +702,19 @@ bare name (`"peak_rate"`, looked up on the watershed-level `outflow.py`)
 or a `module:attr` form (`"mymodule.signals:peak_rate"`).  Same for
 `ExportToArchive.archive_cls` — `"AuditArchive"` (sidecar) or
 `"audit:AuditArchive"` (module path).  Missing names raise at load time.
+
+**`ExportToArchive.max_entries`** (optional `int`, `>= 1`, default `None`):
+caps the strong-ref backlog on `archive_cls._spillway_backlog`. Without it
+the backlog grows unbounded for the run's lifetime — every displaced wave's
+instances are appended and never evicted, which matters for a long-window
+run on a hot edge. Setting `max_entries` evicts the oldest entries once the
+cap is exceeded and emits a one-time WARNING the first time eviction
+happens (routed through `LoggedTideweaver.get_scheduler_events` under
+`event_type="spillway_backlog_capped"`, or the bare module logger
+otherwise) — so unbounded growth becomes an observable signal instead of
+silent. Call `ExportToArchive.drain(archive_cls)` to pop-and-clear the
+backlog yourself (e.g. flush to disk on a schedule) instead of relying
+solely on the cap.
 
 **The top-level `gate_mode` is shorthand** for `"flow": {"gate": {"type": "<mode>"}}` —
 plus an implicit `SurgeBarrier(threshold_multiple=2.0, action="skip")`
