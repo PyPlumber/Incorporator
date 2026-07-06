@@ -13,6 +13,10 @@ _HTTP_INNER_WAIT_MAX: float = 30.0
 _HTTP_INNER_WAIT_MIN: float = 2.0
 _HTTP_INNER_WAIT_MULTIPLIER: float = 1.5
 
+# Sane ceiling on a live 429/503 wait even when the server's Retry-After hint
+# is honored (see _make_http_wait) -- caps abusive or misconfigured hints.
+_HTTP_RETRY_AFTER_CEILING: float = 120.0
+
 # Separate attempt cap for network-layer errors (connect-phase and post-send
 # on idempotent methods).  Kept low so a dead host stops quickly.
 # Semantics: total invocations including the first — stop fires when

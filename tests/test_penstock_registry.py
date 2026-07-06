@@ -142,6 +142,50 @@ def test_register_accepts_factory_callable(monkeypatch: pytest.MonkeyPatch) -> N
     assert bound.penstock.rate_per_sec == 4.4
 
 
+def test_register_rate_per_sec_shorthand_builds_sustained_penstock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bare ``rate_per_sec=`` builds a SustainedPenstock equal to the explicit form."""
+    monkeypatch.setattr("incorporator.io.penstock._HOST_PENSTOCKS", dict(_HOST_PENSTOCKS), raising=False)
+    register_host_penstock("shorthand.example.com", rate_per_sec=12.5)
+    bound = resolve_penstock("https://shorthand.example.com/x")
+    assert isinstance(bound.penstock, SustainedPenstock)
+    assert bound.penstock.rate_per_sec == 12.5
+    assert bound.penstock == SustainedPenstock(rate_per_sec=12.5)
+
+
+def test_register_rate_per_sec_with_burst_shorthand_builds_burst_penstock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``rate_per_sec=`` + ``burst=`` builds a BurstPenstock, not a SustainedPenstock."""
+    monkeypatch.setattr("incorporator.io.penstock._HOST_PENSTOCKS", dict(_HOST_PENSTOCKS), raising=False)
+    register_host_penstock("burst-shorthand.example.com", rate_per_sec=50.0, burst=200)
+    bound = resolve_penstock("https://burst-shorthand.example.com/x")
+    assert isinstance(bound.penstock, BurstPenstock)
+    assert bound.penstock.rate_per_sec == 50.0
+    assert bound.penstock.burst == 200
+    assert bound.penstock == BurstPenstock(rate_per_sec=50.0, burst=200)
+
+
+def test_register_neither_penstock_nor_rate_raises_type_error() -> None:
+    """Passing neither a penstock nor rate_per_sec is a caller mistake -> TypeError."""
+    with pytest.raises(TypeError, match="requires either a penstock instance/factory or rate_per_sec"):
+        register_host_penstock("nothing.example.com")
+
+
+def test_register_both_penstock_and_rate_per_sec_raises_type_error() -> None:
+    """Passing both a penstock instance AND rate_per_sec/burst is ambiguous -> TypeError.
+
+    Architect's explicit call: raise rather than silently pick a precedence,
+    since the combination has no established convention (unlike
+    resolve_penstock's single precedence chain for one "pick a penstock" job).
+    """
+    with pytest.raises(TypeError, match="got both a penstock instance and rate_per_sec/burst"):
+        register_host_penstock("ambiguous.example.com", SustainedPenstock(rate_per_sec=1.0), rate_per_sec=2.0)
+
+
+def test_register_both_penstock_and_burst_only_also_raises_type_error() -> None:
+    """The ambiguous-args guard also fires when only ``burst`` accompanies a penstock instance."""
+    with pytest.raises(TypeError, match="got both a penstock instance and rate_per_sec/burst"):
+        register_host_penstock("ambiguous-burst.example.com", SustainedPenstock(rate_per_sec=1.0), burst=10)
+
+
 def test_register_re_registration_replaces(monkeypatch: pytest.MonkeyPatch) -> None:
     """Re-registering an already-registered host replaces the previous penstock."""
     monkeypatch.setitem(_HOST_PENSTOCKS, "api.example.com", SustainedPenstock(rate_per_sec=0.5))

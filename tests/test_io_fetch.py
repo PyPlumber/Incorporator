@@ -1580,6 +1580,219 @@ async def test_execute_request_network_error_wait_is_bounded(
 
 
 # ----------------------------------------------------------------------
+# D1 — live 429/503 wait honors Retry-After (bounded, not exhaustion-only)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_request_429_retry_after_raises_wait_floor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 429 with 'Retry-After: 60' produces a live wait >= 60s (and <= ceiling).
+
+    Regression test for D1: before the fix, _make_http_wait ignored the
+    Retry-After header during the live retry loop and used only the
+    wait_random_exponential(max=30) backoff, so a host asking for a 60s
+    cooldown would be re-hit ~7 times too early.  Uses the fake-sleep
+    pattern (no real wall-clock consumed) mirrored from
+    test_execute_request_network_error_wait_is_bounded.
+    """
+    import asyncio
+
+    from incorporator.io._retry_defaults import _HTTP_RETRY_AFTER_CEILING
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+
+    total_slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds > 0:
+            total_slept.append(seconds)
+        else:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+    def _429_transport(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, request=request, headers={"Retry-After": "60"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_429_transport)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await execute_request(url="https://limited.example.com/data", client=client)
+
+    assert total_slept, "expected at least one retry wait"
+    assert all(w >= 60.0 for w in total_slept), f"every wait should be floored at 60s, got {total_slept}"
+    assert all(w <= _HTTP_RETRY_AFTER_CEILING for w in total_slept), (
+        f"wait should be capped at the ceiling {_HTTP_RETRY_AFTER_CEILING}, got {total_slept}"
+    )
+
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_execute_request_503_retry_after_raises_wait_floor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 503 with 'Retry-After' behaves the same as 429 — floor + ceiling apply."""
+    import asyncio
+
+    from incorporator.io._retry_defaults import _HTTP_RETRY_AFTER_CEILING
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+
+    total_slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds > 0:
+            total_slept.append(seconds)
+        else:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+    def _503_transport(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, request=request, headers={"Retry-After": "45"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_503_transport)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await execute_request(url="https://limited.example.com/data", client=client)
+
+    assert total_slept, "expected at least one retry wait"
+    assert all(w >= 45.0 for w in total_slept), f"every wait should be floored at 45s, got {total_slept}"
+    assert all(w <= _HTTP_RETRY_AFTER_CEILING for w in total_slept)
+
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_execute_request_429_retry_after_ceiling_caps_extreme_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Retry-After far above the ceiling is capped, not honored verbatim."""
+    import asyncio
+
+    from incorporator.io._retry_defaults import _HTTP_RETRY_AFTER_CEILING
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+
+    total_slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds > 0:
+            total_slept.append(seconds)
+        else:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+    def _429_transport(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, request=request, headers={"Retry-After": "99999"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_429_transport)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await execute_request(url="https://limited.example.com/data", client=client)
+
+    assert total_slept
+    assert all(w <= _HTTP_RETRY_AFTER_CEILING for w in total_slept), (
+        f"an extreme Retry-After hint must be capped at {_HTTP_RETRY_AFTER_CEILING}, got {total_slept}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_request_429_no_retry_after_uses_exponential_wait_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 429 with no Retry-After header still uses the plain exponential wait (unchanged).
+
+    Bounded by _HTTP_INNER_WAIT_MAX, same as before the D1 fix — proves the
+    Retry-After branch only engages when the header is present and parseable.
+    """
+    import asyncio
+
+    from incorporator.io._retry_defaults import _HTTP_INNER_WAIT_MAX
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+
+    total_slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds > 0:
+            total_slept.append(seconds)
+        else:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+    def _429_transport(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_429_transport)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await execute_request(url="https://limited.example.com/data", client=client)
+
+    assert total_slept, "expected at least one retry wait"
+    assert all(w <= _HTTP_INNER_WAIT_MAX for w in total_slept), (
+        f"without Retry-After, waits must stay bounded by the plain exponential max, got {total_slept}"
+    )
+
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_execute_request_429_retry_after_stop_policy_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attempt count for an exhausted 429 with Retry-After matches _HTTP_INNER_STOP unchanged.
+
+    The D1 fix touches WAIT only; STOP (attempt-count budget) must stay
+    byte-identical whether or not a Retry-After header is present.
+    """
+    import asyncio
+
+    from incorporator.io._retry_defaults import _HTTP_INNER_STOP
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+    call_count = 0
+
+    def _429_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(429, request=request, headers={"Retry-After": "60"})
+
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds <= 0:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_429_transport)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await execute_request(url="https://limited.example.com/data", client=client)
+
+    assert call_count == _HTTP_INNER_STOP, (
+        f"429 with Retry-After should still exhaust the full inner budget {_HTTP_INNER_STOP}, got {call_count}"
+    )
+
+    await asyncio.sleep(0)
+
+
+# ----------------------------------------------------------------------
 # Commit B — 408 / 425 are now retryable (behavior change)
 # ----------------------------------------------------------------------
 

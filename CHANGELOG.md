@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`register_host_penstock` keyword shorthand** (`incorporator/io/penstock.py`):
+  `register_host_penstock(host, rate_per_sec=50.0)` (optionally `+ burst=200`)
+  collapses the two-symbol `SustainedPenstock`/`BurstPenstock` construction
+  into one call, mirroring `resolve_penstock`'s existing precedence (bare
+  rate -> `SustainedPenstock`; `+ burst` -> `BurstPenstock`). The explicit
+  `Penstock` instance/factory form is unchanged and fully backward
+  compatible; passing both a `penstock` and `rate_per_sec`/`burst` raises
+  `TypeError` (ambiguous — pass one or the other).
+
+- **Live 429/503 retry wait now honors `Retry-After`** (`incorporator/io/fetch.py`):
+  `_make_http_wait` previously only consulted `Retry-After` after final
+  retry exhaustion (via `_build_reject_entry`, for `RejectEntry.retry_after`).
+  During the *live* retry loop it used the plain
+  `wait_random_exponential(max=30)` backoff regardless of the header, so a
+  host replying `429 Retry-After: 60` was re-hit roughly 7x too early and
+  landed in rejects even though waiting once would have succeeded. The wait
+  callable now reads the existing `_extract_retry_after()` parser for 429/503
+  and returns `min(max(retry_after, exponential), _HTTP_RETRY_AFTER_CEILING)`
+  (ceiling 120s, `incorporator/io/_retry_defaults.py`).
+
+  **Note:** this deliberately relaxes the "AsyncRetrying params byte-identical
+  to the old `@retry` decorator" invariant recorded elsewhere in this file for
+  the v1.2.0 `execute_request` refactor (the entry reading "`execute_request`
+  refactored... byte-identical to v1.2.0") — for the **wait** callable only.
+  The stop policy (`_make_http_stop`, attempt-count budget) is unchanged.
+
 ### Fixed
 
 - **Rename precedence divergence between config-time `Pk` rewrite and runtime rename**

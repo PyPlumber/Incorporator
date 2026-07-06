@@ -502,7 +502,13 @@ _BYPASS_ENV_VAR: str = "INCORPORATOR_RATE_LIMIT_BYPASS"
 """Set to ``"1"`` to force :class:`NullPenstock` everywhere — test-only."""
 
 
-def register_host_penstock(host: str, penstock: Penstock | Callable[[], Penstock]) -> None:
+def register_host_penstock(
+    host: str,
+    penstock: Penstock | Callable[[], Penstock] | None = None,
+    *,
+    rate_per_sec: float | None = None,
+    burst: int | None = None,
+) -> None:
     """Register a per-host penstock for outbound HTTP throttling.
 
     Use this to attach a rate-limit policy to an in-house API or to
@@ -511,11 +517,33 @@ def register_host_penstock(host: str, penstock: Penstock | Callable[[], Penstock
     penstock config but with its own :class:`FlowState` + lock) so
     each fan-out leg gets independent state.
 
+    Two call styles are supported:
+
+    - Pass a :class:`Penstock` instance (or zero-arg factory) directly
+      for full control (any subclass: :class:`WindowPenstock`,
+      :class:`SignalPenstock`, a custom one, etc).
+    - Pass ``rate_per_sec`` (optionally with ``burst``) as a shorthand
+      that mirrors :func:`resolve_penstock`'s own precedence: a bare
+      ``rate_per_sec`` builds a :class:`SustainedPenstock`; adding
+      ``burst`` builds a :class:`BurstPenstock` instead.
+
     Args:
         host: Lowercase hostname (e.g. ``"api.internal.acme.com"``).
         penstock: Either a :class:`Penstock` instance (preferred) or a
             zero-arg callable returning a fresh :class:`Penstock`
             (alternative form, e.g. ``lambda: BurstPenstock(rate_per_sec=50.0, burst=200)``).
+            Mutually exclusive with ``rate_per_sec``/``burst``.
+        rate_per_sec: Shorthand for a :class:`SustainedPenstock` (or the
+            refill rate of a :class:`BurstPenstock` when ``burst`` is
+            also given).  Required when ``penstock`` is not supplied.
+        burst: Shorthand burst capacity; only meaningful alongside
+            ``rate_per_sec``.  Selects :class:`BurstPenstock` over
+            :class:`SustainedPenstock`.
+
+    Raises:
+        TypeError: If neither ``penstock`` nor ``rate_per_sec`` is
+            supplied, or if both ``penstock`` and ``rate_per_sec``/
+            ``burst`` are supplied (ambiguous — pass one or the other).
 
     Example::
 
@@ -526,7 +554,30 @@ def register_host_penstock(host: str, penstock: Penstock | Callable[[], Penstock
             "api.internal.acme.com",
             BurstPenstock(rate_per_sec=50.0, burst=200),
         )
+
+    Example (keyword shorthand)::
+
+        from incorporator import register_host_penstock
+
+        register_host_penstock("api.internal.acme.com", rate_per_sec=50.0)
+        register_host_penstock("api.internal.acme.com", rate_per_sec=50.0, burst=200)
     """
+    if penstock is not None and (rate_per_sec is not None or burst is not None):
+        raise TypeError(
+            "register_host_penstock got both a penstock instance and rate_per_sec/burst "
+            f"kwargs for host '{host}'; pass one or the other, not both."
+        )
+    if penstock is None:
+        if rate_per_sec is None:
+            raise TypeError(
+                "register_host_penstock requires either a penstock instance/factory or "
+                f"rate_per_sec (got neither for host '{host}')."
+            )
+        if burst is not None:
+            penstock = BurstPenstock(rate_per_sec=rate_per_sec, burst=burst)
+        else:
+            penstock = SustainedPenstock(rate_per_sec=rate_per_sec)
+
     if callable(penstock) and not isinstance(penstock, Penstock):
         _HOST_PENSTOCKS[host] = penstock()
     else:

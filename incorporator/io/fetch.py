@@ -30,6 +30,7 @@ from ._retry_defaults import (
     _HTTP_NETWORK_WAIT_MAX,
     _HTTP_NETWORK_WAIT_MIN,
     _HTTP_NETWORK_WAIT_MULTIPLIER,
+    _HTTP_RETRY_AFTER_CEILING,
 )
 from .compression import decompress_data, infer_compression
 from .formats import FormatType, infer_format
@@ -255,7 +256,12 @@ def _make_http_wait(method: str) -> Callable[[RetryCallState], float]:
     (:data:`io._retry_defaults._HTTP_NETWORK_WAIT_MIN` ..
     :data:`io._retry_defaults._HTTP_NETWORK_WAIT_MAX`) so a dead host fails
     quickly.  Server-responded errors (5xx / 429) keep the existing slower
-    exponential to respect back-pressure signals.
+    exponential to respect back-pressure signals, except that a 429/503
+    carrying a ``Retry-After`` header raises the wait's floor to the
+    server's hint (capped at
+    :data:`io._retry_defaults._HTTP_RETRY_AFTER_CEILING`) so a host that
+    asks for a specific cooldown isn't re-hit by the exponential schedule
+    before it's ready.
 
     Args:
         method: HTTP verb string.  Case-insensitive.  Forwarded to
@@ -276,7 +282,20 @@ def _make_http_wait(method: str) -> Callable[[RetryCallState], float]:
         exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
         if exc is not None and _is_network_class_error(exc, method):
             return _network_wait(retry_state)
-        return _inner_wait(retry_state)
+        exponential = _inner_wait(retry_state)
+        if (
+            exc is not None
+            and isinstance(exc, httpx.HTTPStatusError)
+            and exc.response.status_code
+            in (
+                httpx.codes.TOO_MANY_REQUESTS,
+                httpx.codes.SERVICE_UNAVAILABLE,
+            )
+        ):
+            retry_after = _extract_retry_after(exc)
+            if retry_after is not None:
+                return min(max(retry_after, exponential), _HTTP_RETRY_AFTER_CEILING)
+        return exponential
 
     return _wait
 
