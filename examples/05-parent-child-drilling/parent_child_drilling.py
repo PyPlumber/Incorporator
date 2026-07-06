@@ -30,10 +30,23 @@ import os
 
 from incorporator import Incorporator, register_host_penstock
 from incorporator.io.penstock import SustainedPenstock
+from incorporator.schema.converters import inc
+from incorporator.schema.extractors import pluck
 
 # Pace api.coingecko.com at 0.2 req/sec (12/min — comfortably under
 # the 5-15/min free-tier ceiling).
 register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+
+# Build-time lift of the nested `links.homepage` path and an ASCII default for
+# `genesis_date` — collapses the read-time null-guard pyramid to plain attrs.
+# CoinGecko can omit `links` entirely (memecoins / new listings); pluck()
+# resolves missing path segments to None rather than raising, so the read-time
+# loop still needs one `or []` guard for that None-vs-[] case (honest
+# boundary, not a design flaw).
+COINDETAIL_CONV_DICT = {
+    "links_homepage": pluck("links.homepage"),
+    "genesis_date": inc(str, default="-"),
+}
 
 
 class Coin(Incorporator):
@@ -54,9 +67,9 @@ async def main() -> None:
     # respective ceilings.  Reader can override either way.
     rps = 0.5 if demo_key else 0.2
     if demo_key:
-        print("🔑 Using CoinGecko Demo API key (30 req/min).")
+        print("OK: Using CoinGecko Demo API key (30 req/min).")
     else:
-        print("ℹ️  No COINGECKO_DEMO_API_KEY set — running anonymous (12 req/min).")
+        print("INFO: No COINGECKO_DEMO_API_KEY set - running anonymous (12 req/min).")
 
     # ------------------------------------------------------------------
     # PHASE 1 — Load the parent list (top 10 by market cap).
@@ -70,7 +83,7 @@ async def main() -> None:
         headers=headers,
         requests_per_second=rps,
     )
-    print(f"✅ Loaded {len(coins)} parent market rows.")
+    print(f"OK: Loaded {len(coins)} parent market rows.")
 
     # ------------------------------------------------------------------
     # PHASE 2 — Drill /coins/{id} for every parent, concurrently.
@@ -91,14 +104,18 @@ async def main() -> None:
         excl_lst=["image", "tickers", "community_data", "developer_data"],
         headers=headers,
         requests_per_second=rps,
+        conv_dict=COINDETAIL_CONV_DICT,
     )
-    print(f"✅ Drilled {len(details)} per-coin detail records.\n")
+    print(f"OK: Drilled {len(details)} per-coin detail records.\n")
 
     # ------------------------------------------------------------------
     # PHASE 3 — Application-side O(1) two-way join.
     # ------------------------------------------------------------------
     # Each Incorporator subclass keeps its own inc_dict.  The join lives
     # in this loop; the framework gives you O(1) lookups on both sides.
+    # Honest read-time boundary: CoinDetail is drilled per-coin via
+    # inc_parent/inc_child (T5's core pattern) — the two-registry join is
+    # deliberately read-time; see "Two registries, manual join" in the README.
     header = f"{'COIN':<14} {'PRICE':>14} {'GENESIS':<12} HOMEPAGE"
     print("=" * 80)
     print(header)
@@ -107,22 +124,16 @@ async def main() -> None:
         detail = CoinDetail.inc_dict.get(coin.id)
         if detail is None:
             continue
-        # Defensive guards: CoinGecko's /coins/{id} sometimes omits ``links``
-        # (memecoins / new listings); ``genesis_date`` is null for many.  Use
-        # ``getattr`` with defaults so the demo doesn't blow up on the first
-        # incomplete record.
-        links_obj = getattr(detail, "links", None)
-        homepage_list = getattr(links_obj, "homepage", []) if links_obj else []
+        homepage_list = detail.links_homepage or []
         homepage = (homepage_list[0] if homepage_list else "")[:38]
-        genesis = getattr(detail, "genesis_date", None) or "—"
-        print(f"{coin.name:<14} ${coin.current_price:>12,.2f} {genesis:<12} {homepage}")
+        print(f"{coin.name:<14} ${coin.current_price:>12,.2f} {detail.genesis_date:<12} {homepage}")
 
     # Failed sources surface on each result list for reject-retry workflows.
     # Structured view (preferred): ``details.rejects`` carries per-source
     # ``error_kind`` / ``retry_after`` / ``wave_index`` (one ``RejectEntry``
     # per failed source).
     if details.failed_sources:
-        print(f"\n⚠️  Failed detail drills: {details.failed_sources}")
+        print(f"\nWARN: Failed detail drills: {details.failed_sources}")
 
 
 if __name__ == "__main__":

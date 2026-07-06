@@ -66,13 +66,30 @@ from pathlib import Path
 
 from incorporator import Incorporator, register_host_penstock
 from incorporator.io.penstock import SustainedPenstock
-from incorporator.schema.extractors import join_all
+from incorporator.schema.converters import calc
+from incorporator.schema.extractors import join_all, pluck
 
 # Pace NHTSA vPIC at 1.5 req/sec (90/min — under the 100-200/min ceiling).
 # register_host_penstock applies to all HTTP methods, including POST.
 register_host_penstock("vpic.nhtsa.dot.gov", SustainedPenstock(rate_per_sec=1.5))
 
 HERE = Path(__file__).resolve().parent
+
+# Build-time lift of the nested Vehicle.* fields Jimmy's ledger buries three
+# levels deep — pluck(chain=str.upper) drills + normalizes in one pass, so the
+# report loop below reads plain attributes instead of a getattr pyramid.
+INVOICE_CONV_DICT = {
+    "jimmy_vin": pluck("Vehicle.VIN"),
+    "jimmy_make": pluck("Vehicle.Make", chain=str.upper),
+    "jimmy_model": pluck("Vehicle.Model", chain=str.upper),
+}
+
+# NHTSA's Results rows are already flat; calc() is required (not inc()) because
+# the output key (true_make) differs from the source key (Make).
+NHTSA_CONV_DICT = {
+    "true_make": calc(str.upper, "Make", default="UNKNOWN", target_type=str),
+    "true_model": calc(str.upper, "Model", default="UNKNOWN", target_type=str),
+}
 
 
 class Invoice(Incorporator):
@@ -92,7 +109,7 @@ async def run_audit() -> None:
         inc_code="id",
         # inc_child caches the VIN path on the list for the enrichment call below.
         inc_child="Vehicle.VIN",
-        xml_force_list=["Invoice"],   # prevents shape drift when ledger has 1 record
+        conv_dict=INVOICE_CONV_DICT,
     )
 
     print(f"Extracted {len(invoices)} invoices. Contacting Federal Databases...")
@@ -111,6 +128,7 @@ async def run_audit() -> None:
         },
         rec_path="Results",
         inc_code="VIN",
+        conv_dict=NHTSA_CONV_DICT,
     )
 
     print(f"Government data received for {len(govt_specs)} vehicles. Running audit...\n")
@@ -122,27 +140,25 @@ async def run_audit() -> None:
     fraud_count = 0
 
     for inv in invoices:
-        inv_id = getattr(inv, "inc_code", "UNKNOWN")
-        jimmy_vin = getattr(inv.Vehicle, "VIN", "UNKNOWN")
-        jimmy_make = getattr(inv.Vehicle, "Make", "UNKNOWN").upper()
-        jimmy_model = getattr(inv.Vehicle, "Model", "UNKNOWN").upper()
-        jimmy_claim = f"{jimmy_make} {jimmy_model}"
+        jimmy_claim = f"{inv.jimmy_make} {inv.jimmy_model}"
 
-        # O(1) lookup via inc_code-keyed registry
-        true_spec = govt_specs.inc_dict.get(jimmy_vin)
+        # Honest read-time boundary: NHTSASpec doesn't exist until AFTER Invoice
+        # is fully built (the POST enrichment is a second network phase keyed on
+        # invoices as inc_parent) — the VIN join is inherently read-time, and
+        # .inc_dict.get() IS the O(1) lookup this tutorial demonstrates.
+        true_spec = govt_specs.inc_dict.get(inv.jimmy_vin)
 
         if true_spec:
-            true_make = getattr(true_spec, "Make", "UNKNOWN").upper()
-            true_model = getattr(true_spec, "Model", "UNKNOWN").upper()
-            federal_claim = f"{true_make} {true_model}"
+            federal_claim = f"{true_spec.true_make} {true_spec.true_model}"
         else:
             federal_claim = "API OFFLINE / UNKNOWN"
 
-        if jimmy_make not in federal_claim and federal_claim != "API OFFLINE / UNKNOWN":
-            print(f"FRAUD  {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25}")
+        row = f"{inv.inc_code:<7} | {inv.jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25}"
+        if inv.jimmy_make not in federal_claim and federal_claim != "API OFFLINE / UNKNOWN":
+            print(f"FRAUD  {row}")
             fraud_count += 1
         else:
-            print(f"OK     {inv_id:<7} | {jimmy_vin:<18} | {jimmy_claim:<20} | {federal_claim:<25}")
+            print(f"OK     {row}")
 
     print("=" * 85)
     if fraud_count > 0:
@@ -167,7 +183,7 @@ Parsing XML in standard Python requires `xml.etree.ElementTree` and recursive lo
 
 ### 2. Shape Stability with `xml_force_list`
 
-XML collapses a single child element into a dict, but returns multiple children as a list. A ledger with one invoice would produce `dict`; a ledger with ten produces `list[dict]`. Passing `xml_force_list=["Invoice"]` forces the tag to always be a list, preventing downstream shape drift when ledger size varies (`incorporator/io/handlers/text.py:291`).
+XML collapses a single child element into a dict, but returns multiple children as a list. A ledger with one invoice would produce `dict`; a ledger with ten produces `list[dict]`. Passing `xml_force_list=["Invoice"]` forces the tag to always be a list, preventing downstream shape drift when ledger size varies (`incorporator/io/handlers/text.py:291`). Not needed for the 10-invoice ledger shipped in this directory (already parses as a list), so the code block above omits it — add it if you swap in a ledger that might ever hold exactly one invoice.
 
 ### 3. The State Carrier (`inc_child`)
 

@@ -86,6 +86,19 @@ Two registries, fully populated, ready for an O(1) two-way join.
 import asyncio
 
 from incorporator import Incorporator
+from incorporator.schema.converters import inc
+from incorporator.schema.extractors import pluck
+
+# Build-time lift of the nested `links.homepage` path and an ASCII default for
+# `genesis_date` — collapses the read-time null-guard pyramid to plain attrs.
+# CoinGecko can omit `links` entirely (memecoins / new listings); pluck()
+# resolves missing path segments to None rather than raising, so the read-time
+# loop still needs one `or []` guard for that None-vs-[] case (honest
+# boundary, not a design flaw).
+COINDETAIL_CONV_DICT = {
+    "links_homepage": pluck("links.homepage"),
+    "genesis_date": inc(str, default="-"),
+}
 
 
 class Coin(Incorporator):
@@ -104,7 +117,7 @@ async def main():
         inc_code="id",
         inc_name="name",
     )
-    print(f"📥 Loaded {len(coins)} parent market rows.")
+    print(f"OK: Loaded {len(coins)} parent market rows.")
 
     # Concurrent child drill — one /coins/{id} per parent.
     details = await CoinDetail.incorp(
@@ -113,23 +126,27 @@ async def main():
         inc_child="id",
         inc_code="id",
         excl_lst=["image", "tickers", "community_data", "developer_data"],
+        conv_dict=COINDETAIL_CONV_DICT,
     )
-    print(f"🔗 Drilled {len(details)} per-coin detail records.\n")
+    print(f"OK: Drilled {len(details)} per-coin detail records.\n")
 
-    # Application-side O(1) join over the two registries.
+    # Application-side O(1) join over the two registries. Honest read-time
+    # boundary: CoinDetail is drilled per-coin via inc_parent/inc_child (this
+    # tutorial's core pattern) — the two-registry join is deliberately
+    # read-time; see "Two registries, manual join" above.
     print(f"{'COIN':<14} {'PRICE':>14} {'GENESIS':<12} {'HOMEPAGE'}")
     print("=" * 80)
     for coin in coins:
         detail = CoinDetail.inc_dict.get(coin.id)
         if detail is None:
             continue
-        homepage = (detail.links.homepage or [""])[0] if detail.links else ""
-        genesis = detail.genesis_date or "—"
+        homepage_list = detail.links_homepage or []
+        homepage = (homepage_list[0] if homepage_list else "")[:38]
         print(
             f"{coin.name:<14} "
             f"${coin.current_price:>12,.2f} "
-            f"{genesis:<12} "
-            f"{homepage[:38]}"
+            f"{detail.genesis_date:<12} "
+            f"{homepage}"
         )
 
 
@@ -144,8 +161,8 @@ COIN                    PRICE GENESIS      HOMEPAGE
 ================================================================================
 Bitcoin         $    67,234.51 2009-01-03   http://www.bitcoin.org
 Ethereum        $     3,210.88 2015-07-30   https://www.ethereum.org/
-Tether          $         1.00 —            https://tether.to/
-BNB             $       582.34 —            http://www.binance.com
+Tether          $         1.00 -            https://tether.to/
+BNB             $       582.34 -            http://www.binance.com
 Solana          $       148.21 2020-03-16   https://solana.com/
 ...
 ```
