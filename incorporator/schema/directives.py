@@ -283,7 +283,15 @@ def _normalize_etl_kwargs(
     # name_chg renames, inc_code binding must follow the field to its new
     # name before the rename pass runs.
     if pk_list and nm_tuple:
-        rename_map = {nm.old: nm.new for nm in nm_tuple}
+        # First-hit wins on duplicate old keys (dict comprehension would
+        # resolve last-hit, disagreeing with apply_rename's sequential
+        # runtime pass where the first A→B observably wins once A moves).
+        # For distinct keys (the chained-rename case, e.g. A→B, B→C) this
+        # is unchanged from the old comprehension: only duplicate-old-key
+        # resolution order differs.
+        rename_map: dict[str, str] = {}
+        for nm in nm_tuple:
+            rename_map.setdefault(nm.old, nm.new)
         pk_list = [Pk(rename_map[pk.source], target=pk.target) if pk.source in rename_map else pk for pk in pk_list]
 
     return NormalizedKwargs(

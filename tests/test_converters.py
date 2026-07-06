@@ -469,6 +469,62 @@ def test_calc_all_short_circuits_when_every_cell_garbage(caplog: pytest.LogCaptu
     assert not [r for r in caplog.records if "calc_all failed" in r.getMessage()]
 
 
+def test_calc_garbage_default_with_incompatible_target_type(caplog: pytest.LogCaptureFixture) -> None:
+    """D2-01 (resolved: symmetric, no code change) — calc's all-garbage short-circuit.
+
+    Pins the resolved-correct behaviour: when every input is garbage, calc
+    short-circuits to ``default`` silently at the func-invocation level (no
+    "calc failed" warning — the func is never called). But target_type
+    coercion is still attempted on that default per calc()'s documented
+    contract ("target_type: Optional type the result is coerced to" makes no
+    func-vs-default distinction). Here default=None and target_type=int, so
+    int(None) raises TypeError inside the coercion try/except; the coercion
+    branch catches it, re-falls-back to default (None again), and correctly
+    emits the "calc type coercion failed" WARNING. This is a KEEP, not a bug:
+    the warning is the only signal that the user's declared default is
+    incompatible with target_type — see D2-01 resolution (original review's
+    claimed CalcOp/CalcAllOp asymmetry did not match the code at HEAD).
+    """
+    op = calc(str.lower, "title", default=None, target_type=int)
+    rows = [{"title": None}, {"title": ""}, {"title": "n/a"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert all(r["out"] is None for r in result), "coercion failure on default must fall back to default"
+    assert not [r for r in caplog.records if "calc failed" in r.getMessage()], (
+        "garbage rows must not trigger the func-invocation warning"
+    )
+    assert [r for r in caplog.records if "calc type coercion failed" in r.getMessage()], (
+        "an incompatible default must still trigger the coercion-failure warning"
+    )
+
+
+def test_calc_all_garbage_default_with_incompatible_target_type(caplog: pytest.LogCaptureFixture) -> None:
+    """D2-01 calc_all twin — same resolved-correct, symmetric behaviour as calc().
+
+    All cells garbage → calc_all short-circuits to [default] * len(rows)
+    silently (no "calc_all failed" warning). target_type=int is still
+    applied to each row's default value; int(None) raises, the coercion
+    branch falls back to default again, and the "calc_all type coercion
+    failed" warning fires per row. Symmetric with CalcOp — see D2-01
+    resolution (KEEP, not a bug).
+    """
+
+    def should_not_run(titles: list) -> list:
+        raise AssertionError("calc_all func must not run when every cell is garbage")
+
+    op = calc_all(should_not_run, "title", default=None, target_type=int)
+    rows = [{"title": None}, {"title": ""}, {"title": "n/a"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert all(r["out"] is None for r in result), "coercion failure on default must fall back to default"
+    assert not [r for r in caplog.records if "calc_all failed" in r.getMessage()], (
+        "garbage rows must not trigger the func-invocation warning"
+    )
+    assert [r for r in caplog.records if "calc_all type coercion failed" in r.getMessage()], (
+        "an incompatible default must still trigger the coercion-failure warning"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bundle G: dotted-path input keys for calc, calc_all, and inc_code binding.
 # ---------------------------------------------------------------------------

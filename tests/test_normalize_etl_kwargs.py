@@ -182,7 +182,13 @@ def test_pk_source_no_rewrite_case_b() -> None:
 
 
 def test_pk_source_rewrite_first_hit_only() -> None:
-    """First-hit rule: chained renames a→b→c only rewrite code_attr='a' to 'b', not 'c'."""
+    """First-hit rule: chained renames a→b→c only rewrite code_attr='a' to 'b', not 'c'.
+
+    D2-03 pin (distinct-key case): 'a' and 'b' are distinct old keys, so the
+    rename_map construction (dict comprehension pre-fix, first-hit scan
+    post-fix) agrees either way — this test passes both before and after
+    the fix. It pins the docstring's no-chained-rewrites contract.
+    """
     result = _normalize_etl_kwargs(
         excl_lst=None,
         conv_dict=None,
@@ -192,6 +198,27 @@ def test_pk_source_rewrite_first_hit_only() -> None:
     )
     # 'a' maps to 'b' in the rename_map; 'b' maps to 'c' but that's a separate
     # entry — first-hit stops at 'b'.
+    assert result.pk_tuple == (Pk("b", target="code"),)
+
+
+def test_pk_source_rewrite_duplicate_old_key_first_hit() -> None:
+    """D2-03: duplicate old key in name_chg — Pk.source rewrites to the FIRST match.
+
+    name_chg=[("a", "b"), ("a", "c")] has the SAME old key 'a' twice. Pre-fix,
+    the dict comprehension `{nm.old: nm.new for nm in nm_tuple}` resolves
+    last-hit, binding Pk('a') to 'c' — disagreeing with the runtime
+    apply_rename pass, which applies renames sequentially: 'a' moves to 'b'
+    on the first Nm, so the second Nm('a', 'c') is a no-op (there is no 'a'
+    left to rename). Post-fix, the first-hit scan binds Pk('a') to 'b',
+    matching both the docstring and the runtime rename pass.
+    """
+    result = _normalize_etl_kwargs(
+        excl_lst=None,
+        conv_dict=None,
+        name_chg=[("a", "b"), ("a", "c")],
+        code_attr="a",
+        name_attr=None,
+    )
     assert result.pk_tuple == (Pk("b", target="code"),)
 
 

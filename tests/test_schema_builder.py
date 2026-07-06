@@ -124,6 +124,33 @@ def test_apply_etl_conv_dict_standard_exception_skips_key() -> None:
     assert result[0]["id"] == "abc"
 
 
+def test_apply_etl_duplicate_old_key_rename_matches_runtime_pk_bind() -> None:
+    """D2-03 end-to-end: config-time Pk.source rewrite must match runtime apply_rename.
+
+    name_chg has a DUPLICATE old key ("a" appears twice): [("a", "b"), ("a", "c")].
+    Pre-fix, _normalize_etl_kwargs's rename_map dict comprehension resolves
+    last-hit, binding Pk('a') to 'c'. But the runtime Nm pass applies renames
+    sequentially: the first Nm("a", "b") moves 'a' to 'b'; the second
+    Nm("a", "c") is then a no-op since there's no 'a' left. So a
+    last-hit-bound Pk('c') would never find a source and inc_code would be
+    silently missing from the output — the misbinding this test repros.
+
+    Post-fix, Pk.source rewrites first-hit to 'b', which the runtime rename
+    pass actually produces, so inc_code is present in the output.
+    """
+    data: List[Dict[str, Any]] = [{"a": "team-42"}]
+    result = apply_etl_transformations(
+        data,
+        code_attr="a",
+        name_chg=[("a", "b"), ("a", "c")],
+    )
+    assert isinstance(result, list)
+    assert "inc_code" in result[0], "config-time Pk rewrite must agree with the runtime rename pass"
+    assert result[0]["inc_code"] == "team-42"
+    assert result[0]["b"] == "team-42"
+    assert "c" not in result[0]
+
+
 def test_apply_etl_as_list_no_cross_dispatch_aliasing() -> None:
     """The SAME as_list() Op reused across two apply_etl_transformations dispatches (D7-03).
 

@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Rename precedence divergence between config-time `Pk` rewrite and runtime rename**
+  (`incorporator/schema/directives.py::_normalize_etl_kwargs`): the config-time
+  `rename_map` used to build the Pk-source rewrite was a dict comprehension
+  (`{nm.old: nm.new for nm in nm_tuple}`), which resolves a duplicate `old` key
+  in `name_chg` LAST-hit. But the runtime `apply_rename` pass applies renames
+  sequentially, so a duplicate old key's FIRST rename observably wins (once the
+  field moves, a later rename of the same original name is a no-op). A
+  `name_chg` like `[("a", "b"), ("a", "c")]` combined with `code_attr="a"` bound
+  `Pk` to `'c'` at config time while the data actually landed at `'b'` —
+  `inc_code` silently went missing. `rename_map` now builds via a first-hit
+  scan (`dict.setdefault`), matching both the function's own docstring
+  ("no chained rewrites... a `Pk` on `A` binds to `B`, not `C`") and the
+  runtime rename pass. Chained-rename behavior for distinct keys (e.g.
+  `A → B, B → C`) is unaffected — only duplicate-old-key resolution order
+  changes.
+
 - **`depends_on` was silently ignored on fjord seeds with no `inflow=`**
   (`incorporator/pipeline/fjord.py`): `_run_fjord_engine` branched on
   `inflow_callable is None` *before* checking `_has_any_depends_on`, so a
