@@ -23,6 +23,7 @@ import httpx
 import pytest
 
 from incorporator.io import fetch
+from incorporator.schema.converters import calc
 from incorporator.tideweaver import (
     Current,
     Export,
@@ -31,7 +32,6 @@ from incorporator.tideweaver import (
     Tideweaver,
     Watershed,
 )
-from incorporator.schema.converters import calc
 from tests.helpers import load_sidecar
 
 # ---------------------------------------------------------------------------
@@ -50,6 +50,7 @@ MLBAllTeam = _mlb_outflow.MLBAllTeam
 MLBHitting = _mlb_outflow.MLBHitting
 MLBPitching = _mlb_outflow.MLBPitching
 MLBSchedule = _mlb_outflow.MLBSchedule
+MLBSTANDINGS_CONV_DICT = _mlb_outflow.MLBSTANDINGS_CONV_DICT
 MLBStandings = _mlb_outflow.MLBStandings
 TeamPulseCard = _mlb_outflow.TeamPulseCard
 
@@ -413,6 +414,7 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
             "rec_path": "records",
             "inc_code": "division.id",
             "inc_name": "division.name",
+            "conv_dict": MLBSTANDINGS_CONV_DICT,
             "ignore_ssl": True,
         },
     )

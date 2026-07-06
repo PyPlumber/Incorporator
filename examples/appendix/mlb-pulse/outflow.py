@@ -26,6 +26,7 @@ import operator
 from typing import Any
 
 from incorporator import Incorporator, SustainedPenstock, register_host_penstock
+from incorporator.schema.converters import calc, is_garbage_value
 
 # ---------------------------------------------------------------------------
 # Host throttle — 1 req/sec = 60 req/min, well under any undocumented MLB cap.
@@ -34,6 +35,72 @@ from incorporator import Incorporator, SustainedPenstock, register_host_penstock
 # ---------------------------------------------------------------------------
 
 register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))
+
+# ---------------------------------------------------------------------------
+# Named module-level helpers (lambda-free, per AGENTS.md H3 idiom)
+# ---------------------------------------------------------------------------
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    """Reuse the framework's garbage-value contract; only try int() on real data."""
+    if is_garbage_value(value):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    """Reuse the framework's garbage-value contract; only try float() on real data."""
+    if is_garbage_value(value):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_games_back(value: Any) -> float:
+    """MLB's league-leader sentinel is the literal string '-', not covered by
+    ``is_garbage_value``'s GARBAGE_VALUES set — explicit sentinel maps to 0.0.
+    """
+    if value in ("-", "", None):
+        return 0.0
+    return _coerce_float(value, 0.0)
+
+
+def _flatten_team_records(team_records: list[dict]) -> list[dict]:
+    """Flatten + coerce one division's raw ``teamRecords`` list into clean rows.
+
+    Runs once per MLBStandings row at build time (inside ``calc``), so
+    ``outflow()`` reads plain dict keys with no getattr/isinstance branching.
+    Falls back top-level field -> ``leagueRecord`` sub-dict, matching the
+    live MLB Stats API's occasional omission of the top-level duplicate.
+    """
+    rows: list[dict] = []
+    for tr in team_records or []:
+        league_rec = tr.get("leagueRecord") or {}
+        team_id = (tr.get("team") or {}).get("id")
+        if team_id is None:
+            continue
+        wins = tr.get("wins", league_rec.get("wins", 0))
+        losses = tr.get("losses", league_rec.get("losses", 0))
+        win_pct_raw = tr.get("winningPercentage", league_rec.get("pct", "0"))
+        gb_raw = tr.get("gamesBack", "0")
+        rows.append(
+            {
+                "team_id": _coerce_int(team_id, 0),
+                "wins": _coerce_int(wins, 0),
+                "losses": _coerce_int(losses, 0),
+                "win_pct": _coerce_float(win_pct_raw, 0.0),
+                "games_back": _coerce_games_back(gb_raw),
+                "runs_scored": _coerce_float(tr.get("runsScored", 0), 0.0),
+                "runs_allowed": _coerce_float(tr.get("runsAllowed", 0), 0.0),
+            }
+        )
+    return rows
+
 
 # ---------------------------------------------------------------------------
 # Incorporator subclasses — one per stream node + two derived output classes
@@ -53,12 +120,23 @@ class MLBAllTeam(Incorporator):
     """
 
 
+# Build-time flattening: teamRecords[] nests team.id + a top-level/leagueRecord
+# W-L/pct dual-path per row.  Coercing + flattening once here (rather than at
+# outflow read-time) means outflow() reads plain dict keys off ``team_rows``
+# with zero getattr/isinstance branching.  See the README's honest-boundary
+# note for why the team/hitting/pitching JOIN itself still happens read-time.
+MLBSTANDINGS_CONV_DICT = {
+    "team_rows": calc(_flatten_team_records, "teamRecords", default=[]),
+}
+
+
 class MLBStandings(Incorporator):
     """AL division standings record from /api/v1/standings?leagueId=103 — rec_path 'records'.
 
     Returns one record per AL division (East/Central/West). Each carries its
-    own ``teamRecords`` list. ``outflow()`` iterates ALL records to build a
-    league-wide leaderboard.
+    own ``teamRecords`` list, flattened + coerced at build time into
+    ``team_rows`` (see ``MLBSTANDINGS_CONV_DICT``). ``outflow()`` iterates
+    ALL records to build a league-wide leaderboard.
     """
 
 
@@ -72,11 +150,6 @@ class MLBPitching(Incorporator):
 
 class TeamPulseCard(Incorporator):
     """Derived AL Pulse Card — one row per team, produced by outflow(state)."""
-
-
-# ---------------------------------------------------------------------------
-# Named module-level helpers (lambda-free, per AGENTS.md H3 idiom)
-# ---------------------------------------------------------------------------
 
 
 def derive_power_index(ops: float, era: float, mean_ops: float, mean_era: float) -> float:
@@ -104,26 +177,6 @@ def derive_pythag(runs_scored: float, runs_allowed: float) -> float:
     return round(runs_scored**2 / denom, 4) if denom > 0 else 0.5
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    """Coerce a value to float; return ``default`` on failure or None."""
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    """Coerce a value to int; return ``default`` on failure or None."""
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
 # ---------------------------------------------------------------------------
 # Outflow function — joins 4 upstream graph maps into ranked Pulse Cards
 # ---------------------------------------------------------------------------
@@ -131,6 +184,11 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Join standings + hitting + pitching + team metadata into one Pulse Card per AL team.
+
+    A Tideweaver ``diamond`` has no cross-current inflow hook, so this join
+    stays read-time (see the README's honest-boundary note) — but every
+    field it reads off either side is now a plain, pre-coerced attribute or
+    dict key sourced from each current's own build-time ``conv_dict``.
 
     Args:
         state: Keyed by upstream ``Incorporator`` subclass name; maps to a list
@@ -140,7 +198,28 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     Returns:
         Up to 15 rows sorted by ``power_index`` descending, one per AL team,
         or an empty list when any required upstream hasn't fired yet.
+
+    Raises:
+        RuntimeError: If a ``MLBStandings`` instance lacks ``team_rows`` — this
+            happens only when the ``standings`` current was built without
+            ``MLBSTANDINGS_CONV_DICT``, which is exactly what the CLI
+            ``watershed.json`` form does (it cannot express a user-defined
+            ``calc()`` helper as a JSON conv_dict string; see this file's
+            ``_flatten_team_records`` and the JSON's ``_doc_limitation_``
+            field). Fails loud on the first offending row instead of letting
+            the join silently degrade to zero rows.
     """
+    standings_records = state.get("MLBStandings", [])
+    for standings_row in standings_records:
+        if not hasattr(standings_row, "team_rows"):
+            raise RuntimeError(
+                "MLBStandings instance is missing 'team_rows' -- this means "
+                "the 'standings' current was built without MLBSTANDINGS_CONV_DICT. "
+                "The watershed.json CLI form cannot express this conv_dict entry "
+                "(see the _doc_limitation_ field in watershed.json); use "
+                "`python mlb_pulse.py` for a working run of this appendix."
+            )
+
     teams_by_id = {t.inc_code: t for t in state.get("MLBAllTeam", [])}
     hitting_by_id = {h.inc_code: h for h in state.get("MLBHitting", [])}
     pitching_by_id = {p.inc_code: p for p in state.get("MLBPitching", [])}
@@ -149,7 +228,6 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     if not hitting_by_id or not pitching_by_id:
         return []
 
-    standings_records = state.get("MLBStandings", [])
     if not standings_records:
         return []
 
@@ -158,9 +236,33 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     # already scoped the parent set, so any team appearing in standings + teams
     # + hitting + pitching is in scope.
     for standings_row in standings_records:
-        team_records: list[Any] = getattr(standings_row, "teamRecords", None) or []
-        for tr in team_records:
-            rows.extend(_build_team_row_or_skip(tr, teams_by_id, hitting_by_id, pitching_by_id))
+        # ``team_rows`` is a calc()-computed list[dict]; the schema builder still
+        # promotes each dict into a nested dynamic sub-model (list[dict] fields
+        # get the same dict->submodel treatment as raw JSON), so reads here are
+        # plain attributes, not dict subscripts.
+        for tr_row in standings_row.team_rows:
+            team_id = tr_row.team_id
+            team = teams_by_id.get(team_id)
+            hit = hitting_by_id.get(team_id)
+            pit = pitching_by_id.get(team_id)
+            if team is None or hit is None or pit is None:
+                continue
+            rows.append(
+                {
+                    "inc_code": team_id,
+                    "team_name": team.inc_name,
+                    "wins": tr_row.wins,
+                    "losses": tr_row.losses,
+                    "win_pct": tr_row.win_pct,
+                    "games_back": tr_row.games_back,
+                    "ops": hit.ops,
+                    "era": pit.era,
+                    "power_index": 0.0,  # filled after league means computed
+                    "pythag": derive_pythag(tr_row.runs_scored, tr_row.runs_allowed),
+                    "pythag_delta": 0.0,  # filled after power_index pass
+                    "power_rank": 0,  # filled after sort
+                }
+            )
 
     if not rows:
         return []
@@ -178,101 +280,4 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     for rank, r in enumerate(rows, start=1):
         r["power_rank"] = rank
 
-    return rows
-
-
-def _build_team_row_or_skip(
-    tr: Any,
-    teams_by_id: dict[Any, Any],
-    hitting_by_id: dict[Any, Any],
-    pitching_by_id: dict[Any, Any],
-) -> list[dict[str, Any]]:
-    """Build a single team row from a teamRecord; return [] when any input is missing.
-
-    Wraps the per-team extraction logic so the outer outflow can simply
-    ``extend`` regardless of whether this row qualifies.
-    """
-    rows: list[dict[str, Any]] = []
-    for _ in (None,):  # single-iteration loop to allow `continue` semantics
-        # teamRecord.team may be a sub-Incorporator instance OR a raw dict
-        # depending on how MLBStandings' nested list is materialised.
-        team_sub = getattr(tr, "team", None)
-        if team_sub is not None:
-            # Instance attribute path
-            team_id = getattr(team_sub, "id", None)
-            if team_id is None and isinstance(team_sub, dict):
-                team_id = team_sub.get("id")
-        else:
-            # Dict access path
-            raw_tr = tr if isinstance(tr, dict) else {}
-            team_id = raw_tr.get("team", {}).get("id")
-
-        if team_id is None or team_id not in teams_by_id:
-            continue
-
-        team = teams_by_id[team_id]
-        hit = hitting_by_id.get(team_id)
-        pit = pitching_by_id.get(team_id)
-        if hit is None or pit is None:
-            continue
-
-        # Extract W-L from teamRecord; path depends on materialisation form.
-        if isinstance(tr, dict):
-            wins = _safe_int(tr.get("wins", tr.get("leagueRecord", {}).get("wins", 0)))
-            losses = _safe_int(tr.get("losses", tr.get("leagueRecord", {}).get("losses", 0)))
-            win_pct_raw = tr.get("winningPercentage", tr.get("leagueRecord", {}).get("pct", "0"))
-            games_back_raw = tr.get("gamesBack", "0")
-            runs_scored = _safe_float(tr.get("runsScored", 0))
-            runs_allowed = _safe_float(tr.get("runsAllowed", 0))
-        else:
-            league_rec = getattr(tr, "leagueRecord", None) or {}
-            wins = _safe_int(
-                getattr(
-                    tr,
-                    "wins",
-                    getattr(league_rec, "wins", 0) if not isinstance(league_rec, dict) else league_rec.get("wins", 0),
-                )
-            )
-            losses = _safe_int(
-                getattr(
-                    tr,
-                    "losses",
-                    getattr(league_rec, "losses", 0)
-                    if not isinstance(league_rec, dict)
-                    else league_rec.get("losses", 0),
-                )
-            )
-            win_pct_raw = getattr(
-                tr,
-                "winningPercentage",
-                getattr(league_rec, "pct", "0") if not isinstance(league_rec, dict) else league_rec.get("pct", "0"),
-            )
-            games_back_raw = getattr(tr, "gamesBack", "0")
-            runs_scored = _safe_float(getattr(tr, "runsScored", 0))
-            runs_allowed = _safe_float(getattr(tr, "runsAllowed", 0))
-
-        win_pct = _safe_float(win_pct_raw)
-        games_back_str = str(games_back_raw) if games_back_raw is not None else "0"
-        games_back = 0.0 if games_back_str in ("-", "") else _safe_float(games_back_str)
-
-        ops = _safe_float(getattr(hit, "ops", 0.0))
-        era = _safe_float(getattr(pit, "era", 9.99), default=9.99)
-        pythag = derive_pythag(runs_scored, runs_allowed)
-
-        rows.append(
-            {
-                "inc_code": team_id,
-                "team_name": getattr(team, "name", ""),
-                "wins": wins,
-                "losses": losses,
-                "win_pct": win_pct,
-                "games_back": games_back,
-                "ops": ops,
-                "era": era,
-                "power_index": 0.0,  # filled after league means computed
-                "pythag": pythag,
-                "pythag_delta": 0.0,  # filled after power_index pass
-                "power_rank": 0,  # filled after sort
-            }
-        )
     return rows

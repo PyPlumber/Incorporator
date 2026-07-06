@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from incorporator import Incorporator, SustainedPenstock, register_host_penstock
+from incorporator.schema.converters import calc
 from incorporator.tideweaver import (
     Fjord,
     LoggedTideweaver,
@@ -41,7 +42,6 @@ from incorporator.tideweaver import (
     Watershed,
 )
 from incorporator.tideweaver.architect import tune
-from incorporator.schema.converters import calc
 
 HERE = Path(__file__).resolve().parent
 OUTFLOW_PATH = HERE / "outflow.py"
@@ -57,6 +57,7 @@ if str(HERE) not in sys.path:
 # Import class definitions + outflow() from the shared sidecar so both the
 # Python entry and the CLI watershed.json form stay in lockstep.
 from outflow import (  # noqa: E402
+    MLBSTANDINGS_CONV_DICT,
     MLBAllTeam,
     MLBHitting,
     MLBPitching,
@@ -92,7 +93,7 @@ _PITCHING_URL = "https://statsapi.mlb.com/api/v1/teams/{}/stats?group=pitching&s
 
 async def _probe() -> None:
     """Run architect() against the five source endpoints and print schemas."""
-    print("\nPhase 1 — Pre-flight schema probe via Incorporator.architect()...\n")
+    print("\nPhase 1 - Pre-flight schema probe via Incorporator.architect()...\n")
     sources = {
         "schedule": {
             "inc_url": _SCHEDULE_URL,
@@ -113,7 +114,7 @@ async def _probe() -> None:
     }
     plan = await Incorporator.architect(sources, output="plan")
     if plan is None:
-        print("  (probe skipped — architect returned None)")
+        print("  (probe skipped - architect returned None)")
         return
     for spec in plan.currents:
         field_count = len(spec.conv_dict_template)
@@ -167,13 +168,12 @@ async def _run() -> list[dict]:
         cls=MLBStandings,
         interval=8.0,
         on_error="isolate",
-        # No conv_dict: outflow() reads ``teamRecords`` directly as a raw nested
-        # list and uses local _safe_int/_safe_float helpers for per-row values.
         incorp_params={
             "inc_url": _STANDINGS_URL,
             "rec_path": "records",
             "inc_code": "division.id",
             "inc_name": "division.name",
+            "conv_dict": MLBSTANDINGS_CONV_DICT,
         },
     )
     hitting_stream = Stream(
@@ -226,7 +226,7 @@ async def _run() -> list[dict]:
         drain_timeout=20.0,
     )
 
-    print("Phase 2 — Building Watershed.diamond...\n")
+    print("Phase 2 - Building Watershed.diamond...\n")
     tw = LoggedTideweaver(watershed, enable_logging=True, logger_name="MLBPulse")
     collected_tides = []
     async for tide in tw.run():
@@ -243,16 +243,16 @@ async def _run() -> list[dict]:
         rows = [json.loads(ln) for ln in lines]
         print(f"\n  Wrote {len(rows)} Pulse Card rows to {out_file}\n")
     else:
-        print("\n  (no output file produced — hitting/pitching streams may not have fired)\n")
+        print("\n  (no output file produced - hitting/pitching streams may not have fired)\n")
 
     # Phase 3 — Post-run tuning feedback
-    print("Phase 3 — Post-run feedback via architect.tune()...\n")
+    print("Phase 3 - Post-run feedback via architect.tune()...\n")
     report = tune(rejects=tw.rejects, tides=collected_tides, pass_interval=tw.pass_interval)
     meaningful_hints = [h for h in report.hints if h.severity in ("high", "med", "low")]
     if meaningful_hints:
         print(report.render())
     else:
-        print("  No tuning hints — all knobs look well-tuned for this run.\n")
+        print("  No tuning hints - all knobs look well-tuned for this run.\n")
 
     return rows
 
@@ -267,11 +267,11 @@ def _print_leaderboard(rows: list[dict]) -> None:
     sep = "=" * 94
     thin = "-" * 94
     print(sep)
-    print("  AL Pulse — 2026 season (live MLB Stats API)")
+    print("  AL Pulse - 2026 season (live MLB Stats API)")
     print(sep)
     print(
         f"  {'Rank':<6}{'Team':<32}{'W-L':<8}{'PCT':<7}{'GB':<6}"
-        f"{'OPS':<7}{'ERA':<7}{'PowerIdx':<10}{'Pythag':<8}{'±':>6}"
+        f"{'OPS':<7}{'ERA':<7}{'PowerIdx':<10}{'Pythag':<8}{'+/-':>6}"
     )
     print(thin)
     for r in rows:
@@ -299,7 +299,7 @@ async def main() -> None:
     if rows:
         _print_leaderboard(rows)
     else:
-        print("(no rows to display — check out/logs/MLBPulse_error.log)")
+        print("(no rows to display - check out/logs/MLBPulse_error.log)")
 
 
 if __name__ == "__main__":
