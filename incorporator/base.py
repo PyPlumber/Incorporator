@@ -1091,7 +1091,10 @@ class Incorporator(BaseModel):
         Raises:
             TypeError: When ``file_path`` is provided but ``instance`` is
                 neither a list nor a ``BaseModel`` (e.g. a plain string).
-            ValueError: When ``outflow`` is provided but its
+            ValueError: When ``file_path`` is omitted (in-state mode) but
+                ``instance`` is not a ``str``/``Path`` (e.g. a list of
+                rows, which would otherwise misread as the destination
+                path).  Also raised when ``outflow`` is provided but its
                 ``transform()`` function has more or fewer than one
                 parameter.
             IncorporatorFormatError: On unsupported format / unwritable path.
@@ -1127,6 +1130,14 @@ class Incorporator(BaseModel):
                 )
         """
         if file_path is None:
+            if not isinstance(instance, str | Path):
+                raise ValueError(
+                    f"{cls.__name__}.export(): 'instance' is a {type(instance).__name__}"
+                    " with 'file_path' omitted, which reads as in-state export mode, but a"
+                    " list of rows (or a bare model instance) is not a valid destination"
+                    " path.  Pass file_path=... to write these rows, or omit 'instance' (or"
+                    " pass a str/Path) to use in-state mode (cls.inc_dict)."
+                )
             actual_path = str(instance)
             instances: list[TIncorporator] = cast(list[TIncorporator], list(cls.inc_dict.values()))
         else:

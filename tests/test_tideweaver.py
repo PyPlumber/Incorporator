@@ -4541,3 +4541,20 @@ async def test_sequential_runs_reset_full_scheduler_state() -> None:
     edge_state = tw._edge_state[("a", "b")]
     assert len(edge_state.waves) <= len(tides_2), "reservoir must not carry over run-1 waves into run 2"
     assert len(fires) > 0, "run 2 must have actually ticked currents"
+
+
+def test_watershed_module_docstring_does_not_overclaim_serialisability() -> None:
+    """D8-03: the module docstring must not call Watershed 'serialisable' — model_dump_json() raises.
+
+    ``Current.cls`` holds a live class object, so JSON-mode dumping fails
+    and a python-mode dump-then-validate round-trip downgrades typed
+    currents to bare ``Current``. Guards against the docstring drifting
+    back to the over-claim.
+    """
+    import incorporator.tideweaver.watershed as watershed_module
+
+    doc = watershed_module.__doc__
+    assert doc is not None
+    assert "serialisable description" not in doc
+    assert "declarative plan" in doc
+    assert "not itself JSON-dumpable" in doc

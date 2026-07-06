@@ -541,6 +541,47 @@ def test_calc_real_data_passes_through_unchanged(caplog: pytest.LogCaptureFixtur
     assert not [r for r in caplog.records if "calc failed" in r.getMessage()]
 
 
+def test_calc_none_return_on_real_input_is_stored_as_is(caplog: pytest.LogCaptureFixture) -> None:
+    """D2-06: a genuine ``None`` return from ``func`` on real input is NOT replaced by ``default``.
+
+    Pins the chosen (behavior-preserving) contract: ``default`` only fires
+    on all-garbage input or a func raise — never on a real ``None`` return.
+    The docstring previously over-promised "raises or returns None"; this
+    test locks in the actual dispatcher behavior at builder.py Pass 2.
+    """
+
+    def returns_none(x: Any) -> None:
+        return None
+
+    op = calc(returns_none, "id", default="sentinel")
+    rows = [{"id": "real-value"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert result[0]["out"] is None, "a genuine None return on real input must be stored as-is, not defaulted"
+    assert not [r for r in caplog.records if "calc failed" in r.getMessage()]
+
+
+def test_calc_all_none_element_in_same_length_list_is_stored_as_is(caplog: pytest.LogCaptureFixture) -> None:
+    """D2-06 calc_all twin: a ``None`` element inside a same-length returned list is stored as-is.
+
+    ``default`` only fires on all-garbage input, a func raise, or a
+    genuinely short returned list — not on a ``None`` element within a
+    correctly-sized list.
+    """
+
+    def one_none(ids: list[Any]) -> list[Any]:
+        return [None if i == v else v for i, v in enumerate(ids)]
+
+    op = calc_all(one_none, "id", default="sentinel")
+    rows = [{"id": "a"}, {"id": 1}, {"id": "c"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert result[0]["out"] == "a"
+    assert result[1]["out"] is None, "a None element in a same-length list must be stored as-is, not defaulted"
+    assert result[2]["out"] == "c"
+    assert not [r for r in caplog.records if "calc_all failed" in r.getMessage()]
+
+
 def test_calc_all_short_circuits_when_every_cell_garbage(caplog: pytest.LogCaptureFixture) -> None:
     """All-garbage across every column → silent per-row default; no warning."""
 
@@ -752,20 +793,15 @@ def test_op_unhashable_arg_routes_through_wrapped_fallback() -> None:
     assert calls == [payload], "unhashable arg must reach the body exactly once via __wrapped__"
 
 
-def test_op_user_typeerror_on_hashable_arg_double_invokes_and_propagates() -> None:
-    """Documents the double-invocation quirk: a body TypeError on a HASHABLE arg is not clean.
+def test_op_user_typeerror_on_hashable_arg_propagates_on_first_call() -> None:
+    """A body TypeError on a HASHABLE arg propagates on the first call — no silent re-invoke.
 
-    Op.__call__'s ``except TypeError:`` cannot structurally distinguish
-    "lru_cache rejected an unhashable key" from "the wrapped body itself
-    raised TypeError" — both look identical at that boundary.  So a
-    hashable arg (e.g. an int) that makes the user's body raise TypeError
-    triggers the SAME fallback: ``__wrapped__`` is invoked a SECOND time,
-    the body runs again, and the exception that actually propagates is
-    from that second invocation — the first call's TypeError (and any
-    side effect up to the point of raising) is silently swallowed.  This
-    is a genuine pre-existing quirk, not a regression to fix here; the
-    assertion below pins measured behavior (call_count == 2), not the
-    assumption that the body would only run once.
+    Op.__call__ now pre-checks ``hash(val)`` before delegating to the
+    lru_cache-wrapped ``_func``.  A hashable arg means any TypeError raised
+    from that call is the user's own — it must propagate immediately, and
+    the body must run exactly once.  Only a genuinely unhashable arg (list,
+    dict) routes to ``__wrapped__`` as a fallback (see
+    ``test_op_unhashable_arg_routes_through_wrapped_fallback``).
     """
     from incorporator.schema.converters import Op
 
@@ -776,7 +812,7 @@ def test_op_user_typeerror_on_hashable_arg_double_invokes_and_propagates() -> No
         raise TypeError(f"boom on call #{len(calls)}")
 
     op = Op(body, is_pure=True)
-    with pytest.raises(TypeError, match=r"boom on call #2"):
+    with pytest.raises(TypeError, match=r"boom on call #1"):
         op(5)
 
-    assert calls == [5, 5], "hashable-arg TypeError re-invokes the body a second time via the fallback"
+    assert calls == [5], "hashable-arg TypeError must propagate on the first call, body invoked exactly once"

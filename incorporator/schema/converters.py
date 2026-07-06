@@ -121,16 +121,21 @@ class Op:
             self._func = functools.lru_cache(maxsize=10_000)(func)
 
     def __call__(self, val: Any) -> Any:
-        try:
+        if self.is_pure and not self.whole_row:
+            # self._func is lru_cache-wrapped in this branch (see __init__). lru_cache
+            # raises TypeError itself when val is unhashable (e.g. dict, list) — probe
+            # hashability directly so a user func's own TypeError on a hashable val
+            # propagates on the first call instead of being swallowed and retried
+            # against __wrapped__.
+            try:
+                hash(val)
+            except TypeError:
+                wrapped = getattr(self._func, "__wrapped__", None)
+                if wrapped is not None:
+                    return wrapped(val)
+                raise
             return self._func(val)
-        except TypeError:
-            # lru_cache raises TypeError on unhashable arguments (e.g. dict, list).
-            # Fall back to the unwrapped callable so callers that pass unhashable
-            # values (join_all receiving a list, inc(new) receiving a dict) still work.
-            wrapped = getattr(self._func, "__wrapped__", None)
-            if wrapped is not None:
-                return wrapped(val)
-            raise
+        return self._func(val)
 
 
 def calc(
@@ -168,7 +173,9 @@ def calc(
             argument per name in ``input_keys`` (missing keys arrive
             as ``None``).
         *input_keys: Source field names whose values are passed to ``func``.
-        default: Value used when ``func`` raises or returns ``None``.
+        default: Value used when every input is garbage (see Null handling
+            below) or ``func`` raises. A genuine ``None`` return from
+            ``func`` on real input is stored as-is, not replaced.
         target_type: Optional type the result is coerced to (``int``,
             ``float``, ...).
         pure: Defaults to ``True`` — the conv_dict layer is a data-transform
@@ -246,8 +253,10 @@ def calc_all(
             value for that key.  Must return a list with one element per
             row, in the same order.
         *input_keys: Source field names.
-        default: Per-row fallback when the returned list is shorter than
-            the row count or contains ``None``.
+        default: Per-row fallback when every input cell is garbage (see
+            Null handling below), ``func`` raises, or the returned list is
+            shorter than the row count. A genuine ``None`` element inside
+            a same-length returned list is stored as-is, not replaced.
         target_type: Optional coercion type applied per row.
         pure: Defaults to ``True`` — the conv_dict layer is a data-transform
             layer, and side-effect lambdas (``datetime.now()``, logging, DB

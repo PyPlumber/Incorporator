@@ -1,10 +1,17 @@
 """The :class:`Watershed` plan — currents + edges over a single time window.
 
-A ``Watershed`` is a serialisable description of one Tideweaver run: when the
-window opens and closes, which :class:`Current` nodes are in the graph, and
-which edges connect them.  Four shape constructors cover the common topologies
+A ``Watershed`` is a declarative plan for one Tideweaver run: when the window
+opens and closes, which :class:`Current` nodes are in the graph, and which
+edges connect them.  Four shape constructors cover the common topologies
 (``chain`` / ``diamond`` / ``fanout`` / ``parallel``); the bare ``Watershed(...)``
 constructor stays available for custom shapes with mixed-mode edges.
+
+Build a ``Watershed`` from ``watershed.json`` via
+:func:`~incorporator.tideweaver.config.load_watershed`.  A ``Watershed``
+instance is not itself JSON-dumpable: ``Current.cls`` holds a live class
+object, so ``model_dump_json()`` raises, and a python-mode dump-then-validate
+round-trip downgrades ``Stream``/``Fjord``/``Export`` currents to bare
+``Current``.
 
 Each edge carries a :class:`~.flow.FlowControl` — the per-edge composition of
 gate / surge barrier / penstock / reservoir / spillway that the scheduler

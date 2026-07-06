@@ -34,6 +34,33 @@ async def test_export_rejects_invalid_instance_type(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_export_raw_list_instance_without_file_path_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D8-02 residual: raw export(instance=[...]) with file_path omitted must raise, not misread as a path.
+
+    Without the guard, export() flips into in-state mode and reads
+    ``str(instance)`` — the row-list repr — as the destination path,
+    either silently writing a junk file named after that repr or raising
+    a cryptic format error. It must now raise ValueError before any write,
+    and no file may be created in the cwd.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class RawListExportModel(Incorporator):
+        pass
+
+    json_file = tmp_path / "data.json"
+    json_file.write_text(json.dumps([{"id": 1, "name": "Alice"}]), encoding="utf-8")
+    rows = await RawListExportModel.incorp(inc_file=str(json_file), inc_code="id", inc_name="name")
+
+    with pytest.raises(ValueError, match="in-state export mode"):
+        await RawListExportModel.export(instance=rows)  # file_path omitted — the misread case
+
+    assert list(tmp_path.iterdir()) == [json_file], "no junk file may be written on the misread path"
+
+
+@pytest.mark.asyncio
 async def test_export_accepts_list_instance(tmp_path: Path) -> None:
     """export() must NOT raise when instance is a properly populated list."""
     json_file = tmp_path / "data.json"
