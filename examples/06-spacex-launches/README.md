@@ -29,7 +29,7 @@ We'll cover two patterns in one tutorial:
 ```python
 import asyncio
 
-from incorporator import Incorporator
+from incorporator import Incorporator, link_to
 
 
 class Launch(Incorporator):
@@ -45,13 +45,14 @@ class Pad(Incorporator):
 
 
 async def main():
-    # 1. Parent — upcoming launches (~18 records).
+    # 1. Parent — upcoming launches (~18 records).  Raw FK strings for now —
+    # the drill below needs them as-is, before any join runs.
     launches = await Launch.incorp(
         inc_url="https://api.spacexdata.com/v4/launches/upcoming",
         inc_code="id",
         inc_name="name",
     )
-    print(f"✅ Loaded {len(launches)} upcoming launches.")
+    print(f"OK: Loaded {len(launches)} upcoming launches.")
 
     # 2. Concurrent two-way drill.  Dedup before fan-out collapses
     # ~36 child references (rocket + launchpad per launch) into ~5
@@ -70,24 +71,48 @@ async def main():
             inc_code="id",
         ),
     )
-    print(f"✅ {len(rockets)} unique rockets, {len(pads)} unique launchpads.\n")
+    print(f"OK: {len(rockets)} unique rockets, {len(pads)} unique launchpads.\n")
 
-    # 3. O(1) three-way join in application code.
+    # 3. Build-time join, applied once: link_to() returns a plain callable —
+    # invoking it directly re-coerces the already-built `launches` list in
+    # place, no second incorp() round-trip needed.  After this, launch.rocket
+    # / launch.launchpad ARE the resolved Rocket / Pad instances.
+    resolve_rocket = link_to(rockets)
+    resolve_pad = link_to(pads)
+    for launch in launches:
+        launch.rocket = resolve_rocket(launch.rocket)
+        launch.launchpad = resolve_pad(launch.launchpad)
+
+    # 4. Read the join as plain attributes — a launch may legitimately
+    # reference a rocket/pad outside the fetched set, so the None-guard
+    # here is an honest display-time boundary, not a re-lookup.
     for launch in launches[:5]:
-        rocket = Rocket.inc_dict.get(launch.rocket)
-        pad = Pad.inc_dict.get(launch.launchpad)
+        rocket, pad = launch.rocket, launch.launchpad
         print(
             f"{launch.name:<32} "
-            f"{rocket.name:<14} "
-            f"{pad.name:<20} "
-            f"{pad.region:<12} "
-            f"{pad.launch_successes}/{pad.launch_attempts}"
+            f"{rocket.name if rocket else '?':<14} "
+            f"{pad.name if pad else '?':<20} "
+            f"{pad.region if pad else '?':<12} "
+            f"{f'{pad.launch_successes}/{pad.launch_attempts}' if pad else '-'}"
         )
 
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+
+> **Why the join can't sit in `Launch`'s own `conv_dict`.** `link_to(rockets)`
+> needs `rockets` to already exist — but `rockets` is drilled FROM `launches`
+> via `inc_parent=launches, inc_child="rocket"`, and that drill reads the raw
+> FK string off the already-built `Launch` instances. If `Launch`'s own
+> `conv_dict` resolved `rocket` to a `Rocket` instance first, the drill would
+> try to URL-template that instance into `.../rockets/{}` instead of its id.
+> The fix: build `launches` once (raw FKs), drill `rockets` / `pads` from it
+> (unchanged T5 mechanics), then apply `link_to` as a single build-time pass
+> over the already-built `launches` list — still one join, done once, before
+> any reader touches `launch.rocket`, just not inside the `incorp()` call
+> itself. See `docs/api_atlas.md`'s "Build-time vs read-time: where coercion
+> + joins belong" section for the general rule.
 
 Output (real SpaceX data):
 
@@ -175,7 +200,7 @@ async def daemon():
         enable_logging=True,
     ):
         if wave.failed_sources:
-            print(f"⚠️  Failures in chunk {wave.chunk_index}: {wave.failed_sources}")
+            print(f"WARN: Failures in chunk {wave.chunk_index}: {wave.failed_sources}")
 ```
 
 Ctrl+C / SIGTERM triggers the graceful drain — in-flight requests finish, final export

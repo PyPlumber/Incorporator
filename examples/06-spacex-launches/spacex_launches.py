@@ -26,7 +26,7 @@ Run with:
 import asyncio
 from pathlib import Path
 
-from incorporator import Incorporator, LoggedIncorporator
+from incorporator import Incorporator, LoggedIncorporator, link_to
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
@@ -61,18 +61,22 @@ async def parent_child_demo() -> None:
     # Graceful degradation: if the feed is unreachable there's nothing to drill —
     # surface why (per-source RejectEntry detail) and stop, rather than fanning out
     # into more failing requests and printing an empty table.  Checked BEFORE the
-    # success line so a failed feed doesn't print "✅ Loaded 0" and then immediately
+    # success line so a failed feed doesn't print "OK Loaded 0" and then immediately
     # contradict it with the unreachable notice.
     if not launches:
-        print("\n⚠️  SpaceX feed unreachable — no launches loaded.")
+        print("\nWARN: SpaceX feed unreachable - no launches loaded.")
         for entry in launches.rejects:
-            print(f"   • {entry}")
+            print(f"   - {entry}")
         print("   The pipeline is fine; the upstream API is down. Re-run when it recovers.\n")
         return
 
-    print(f"✅ Loaded {len(launches)} upcoming launches.")
+    print(f"OK: Loaded {len(launches)} upcoming launches.")
 
-    # Concurrent fan-out — dedup collapses ~36 child refs into ~5 unique IDs.
+    # Concurrent fan-out — dedup collapses ~36 child refs into ~5 unique IDs.  The
+    # drill reads `launch.rocket` / `launch.launchpad` as RAW FK strings off the
+    # already-built Launch instances (extract_parent_data getattr's the built
+    # attribute) — link_to() must not run before this, or the fan-out would try to
+    # URL-template a Rocket/Pad instance instead of its id.
     rockets, pads = await asyncio.gather(
         Rocket.incorp(
             inc_url="https://api.spacexdata.com/v4/rockets/{}",
@@ -89,20 +93,33 @@ async def parent_child_demo() -> None:
             timeout=5,
         ),
     )
-    print(f"✅ Loaded {len(rockets)} unique rockets, {len(pads)} unique launchpads.\n")
+    print(f"OK: Loaded {len(rockets)} unique rockets, {len(pads)} unique launchpads.\n")
 
-    # O(1) three-way join.
+    # Build-time join, applied once, right after the drill that needed the raw FKs.
+    # link_to() returns an Op (a plain single-arg callable) — invoking it directly
+    # here re-coerces the already-built `launches` list in place, without a second
+    # incorp() network round-trip.  After this, launch.rocket / launch.launchpad
+    # ARE the resolved Rocket / Pad instances (or None if unmatched) for every
+    # reader downstream, including the display loop below.
+    resolve_rocket = link_to(rockets)
+    resolve_pad = link_to(pads)
+    for launch in launches:
+        launch.rocket = resolve_rocket(launch.rocket)
+        launch.launchpad = resolve_pad(launch.launchpad)
+
+    # O(1) three-way join — already done above; this loop only reads plain attributes.
     header = f"{'LAUNCH':<32} {'ROCKET':<14} {'PAD':<20} {'REGION':<12} {'SUCCESS':>8}"
     print("=" * len(header))
     print(header)
     print("=" * len(header))
     for launch in launches[:15]:
-        rocket = Rocket.inc_dict.get(launch.rocket)
-        pad = Pad.inc_dict.get(launch.launchpad)
+        # A launch may legitimately reference a rocket/pad outside this fetched
+        # set — the None-guard is an honest display-time boundary, not a re-lookup.
+        rocket, pad = launch.rocket, launch.launchpad
         rocket_name = rocket.name if rocket else "?"
         pad_name = (pad.name if pad else "?")[:20]
         region = (pad.region if pad else "?")[:12]
-        success = f"{pad.launch_successes}/{pad.launch_attempts}" if pad and pad.launch_attempts else "—"
+        success = f"{pad.launch_successes}/{pad.launch_attempts}" if pad and pad.launch_attempts else "-"
         name = (launch.name or "Unknown")[:32]
         print(f"{name:<32} {rocket_name:<14} {pad_name:<20} {region:<12} {success:>8}")
 
@@ -111,7 +128,7 @@ async def parent_child_demo() -> None:
     # (one ``RejectEntry`` per failed source) — see Tutorial 6's "Reading
     # the structured reject list" section.
     if rockets.failed_sources or pads.failed_sources:
-        print(f"\n⚠️  Failed: rockets={rockets.failed_sources}, pads={pads.failed_sources}")
+        print(f"\nWARN: Failed: rockets={rockets.failed_sources}, pads={pads.failed_sources}")
 
 
 # ----------------------------------------------------------------------
@@ -138,7 +155,7 @@ async def streaming_demo() -> None:
         enable_logging=True,
     ):
         if wave.failed_sources:
-            print(f"⚠️  Failures in chunk {wave.chunk_index}: {wave.failed_sources}")
+            print(f"WARN: Failures in chunk {wave.chunk_index}: {wave.failed_sources}")
 
 
 async def main() -> None:
