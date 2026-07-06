@@ -2583,6 +2583,73 @@ def test_json_chain_shape(tmp_path: Path) -> None:
     assert [(e.from_name, e.to_name) for e in ws.edges] == [("laps", "pits")]
 
 
+def test_json_conv_dict_resolves_sidecar_helper(tmp_path: Path) -> None:
+    """A watershed.json current's ``incorp_params.conv_dict`` may reference a
+    PUBLIC helper defined in the outflow sidecar — the token resolves to the
+    actual callable object, not left as a raw string / not silently parked.
+    """
+    from incorporator.tideweaver.config import load_watershed
+
+    _write_sidecar(
+        tmp_path / "outflow.py",
+        "from incorporator import Incorporator\n"
+        "class LapData(Incorporator):\n    pass\n"
+        "class PitStops(Incorporator):\n    pass\n"
+        "def upper_name(v):\n    return str(v).upper()\n"
+        "def outflow(state):\n    return []\n",
+    )
+    body = _watershed_json_body("chain")
+    body["currents"] = [
+        {
+            "name": "laps",
+            "class": "LapData",
+            "verb": "stream",
+            "interval": 30,
+            "incorp_params": {"conv_dict": {"name": "@upper_name"}},
+        },
+        {"name": "pits", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+
+    [laps] = [c for c in ws.currents if c.name == "laps"]
+    assert isinstance(laps, Stream)
+    resolved = laps.incorp_params["conv_dict"]["name"]
+    assert callable(resolved)
+    assert not isinstance(resolved, str)
+    assert resolved("abc") == "ABC"
+
+
+def test_json_builtin_token_only_conv_dict_unchanged(tmp_path: Path) -> None:
+    """Back-compat: a watershed.json using only built-in tokens (no sidecar
+    helper reference) in ``conv_dict`` resolves identically to before FIX 2.
+    """
+    from incorporator.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    body = _watershed_json_body("chain")
+    body["currents"] = [
+        {
+            "name": "laps",
+            "class": "LapData",
+            "verb": "stream",
+            "interval": 30,
+            "incorp_params": {"conv_dict": {"created_at": "inc(datetime)"}},
+        },
+        {"name": "pits", "class": "PitStops", "verb": "stream", "interval": 30, "incorp_params": {}},
+    ]
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    ws = load_watershed(cfg)
+
+    [laps] = [c for c in ws.currents if c.name == "laps"]
+    assert isinstance(laps, Stream)
+    resolved = laps.incorp_params["conv_dict"]["created_at"]
+    assert callable(resolved)
+    assert [(e.from_name, e.to_name) for e in ws.edges] == [("laps", "pits")]
+
+
 def test_json_diamond_shape(tmp_path: Path) -> None:
     """``shape: 'diamond'`` parses head/middle/tail into the right 4-edge set."""
     from incorporator.tideweaver.config import load_watershed

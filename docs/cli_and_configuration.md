@@ -655,6 +655,15 @@ for the full walk-through plus the Python-API equivalents.
 > were removed in v1.3.0. Using either now raises `ValueError` with migration
 > guidance: rename to `"gate_mode"`. There is no silent back-compat path.
 
+> **Sidecar helpers in token fields.** Just like `pipeline.json`, any
+> text-form token inside `watershed.json` — most commonly a `conv_dict`
+> entry under a current's `incorp_params` — may reference a **public**
+> helper defined in the top-level `inflow` and/or `outflow` sidecar, using
+> the same `@name` / call-grammar syntax documented in
+> [Text-Form Tokens](#text-form-tokens-paginators-converters-etc) above.
+> The sidecar module(s) are loaded before token resolution, so this works
+> identically to the Python `Stream(conv_dict=...)` / `incorp()` form.
+
 ### Per-edge flow control
 
 Beyond `gate_mode`, watershed.json supports the full per-edge **canal

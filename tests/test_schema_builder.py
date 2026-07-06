@@ -51,6 +51,13 @@ def test_sanitize_digit_prefix_gets_leading_underscore() -> None:
     assert result == "_123abc"
 
 
+def test_sanitize_leading_underscore_gets_field_prefix() -> None:
+    """Keys starting with '_' must be prefixed with 'field' (Pydantic V2's
+    create_model rejects field names with a leading underscore)."""
+    result = sanitize_json_key("_key")
+    assert result == "field_key"
+
+
 def test_sanitize_normal_key_unchanged() -> None:
     """Well-formed keys pass through without modification."""
     assert sanitize_json_key("user_id") == "user_id"
@@ -312,6 +319,16 @@ def test_infer_schema_cache_hit_returns_same_class() -> None:
     m1 = infer_dynamic_schema("CachedModel", {"x": 1}, BaseModel)
     m2 = infer_dynamic_schema("CachedModel", {"x": 1}, BaseModel)
     assert m1 is m2
+
+
+def test_infer_schema_leading_underscore_key_builds_and_retrievable() -> None:
+    """A raw leading-underscore key (e.g. Kraken's '_key') must build without
+    raising and be retrievable under its sanitized 'field_key' name, instead
+    of crashing on Pydantic V2's leading-underscore field name rejection."""
+    model = infer_dynamic_schema("UnderscoreKeyModel", {"_key": "value"}, BaseModel)
+    assert "field_key" in model.model_fields
+    instance = model.model_validate({"_key": "value"})
+    assert getattr(instance, "field_key") == "value"
 
 
 # ==========================================

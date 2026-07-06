@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`watershed.json` `conv_dict` (and other token fields) may reference
+  sidecar helpers** (`incorporator/tideweaver/config.py::load_watershed`):
+  previously, `resolve_tokens(raw)` ran before the `inflow`/`outflow`
+  sidecar modules were loaded, so a token like `"@my_helper"` inside a
+  current's `incorp_params.conv_dict` always failed with
+  `TokenResolutionError` even though the equivalent Python
+  `Stream(conv_dict=...)` / `incorp()` call already supported it via
+  `apply_inflow_resolution`. `load_watershed` now loads the top-level
+  `inflow`/`outflow` sidecar(s) first, unions their public names, and
+  passes them as `extra_names` into `resolve_tokens` — matching the
+  trinity (`incorp()`/`refresh()`) and CLI `pipeline.json` capability.
+  Existing `watershed.json` files using only built-in tokens are
+  unaffected (strictly additive to the allow-list).
+
 - **`register_host_penstock` keyword shorthand** (`incorporator/io/penstock.py`):
   `register_host_penstock(host, rate_per_sec=50.0)` (optionally `+ burst=200`)
   collapses the two-symbol `SustainedPenstock`/`BurstPenstock` construction
@@ -36,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The stop policy (`_make_http_stop`, attempt-count budget) is unchanged.
 
 ### Fixed
+
+- **`sanitize_json_key` crashed on leading-underscore JSON keys**
+  (`incorporator/schema/builder.py`): a raw key like Kraken's `"_key"`
+  survived `sanitize_json_key` untouched (only digit-prefix, keyword, and
+  Pydantic-reserved collisions were handled), then blew up
+  `infer_dynamic_schema` with `IncorporatorSchemaError` because Pydantic
+  V2's `create_model` rejects field names with a leading underscore.
+  Leading-underscore keys are now prefixed (`"_key"` -> `"field_key"`),
+  checked before the existing digit-prefix branch so the two rules don't
+  collide (a digit-prefixed key like `"123abc"` still sanitizes to
+  `"_123abc"`, unchanged).
 
 - **Rename precedence divergence between config-time `Pk` rewrite and runtime rename**
   (`incorporator/schema/directives.py::_normalize_etl_kwargs`): the config-time

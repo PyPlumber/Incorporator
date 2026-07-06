@@ -81,14 +81,22 @@ def sanitize_json_key(key: str) -> str:
     """Convert a raw JSON key to a safe Python identifier.
 
     Replaces non-alphanumeric characters with ``_``, prefixes digit-leading
-    names, appends ``_`` to Python keywords, and prefixes Pydantic reserved
-    names with ``safe_`` to prevent ``model_dump`` and friends from colliding.
+    names, prefixes leading-underscore names with ``field`` (Pydantic V2's
+    ``create_model`` rejects field names starting with ``_``), appends ``_``
+    to Python keywords, and prefixes Pydantic reserved names with ``safe_``
+    to prevent ``model_dump`` and friends from colliding.
     """
     clean_key = _SANITIZE_RE.sub("_", str(key))
 
     if not clean_key:
         clean_key = "empty_key"
-    if clean_key[0].isdigit():
+    if clean_key.startswith("_"):
+        # Checked before the digit-prefix branch so a genuinely leading-
+        # underscore key ("_key") is caught here, while a digit-leading key
+        # ("123abc") only starts with "_" AFTER the branch below runs — so
+        # it never loops back through this check.
+        clean_key = f"field{clean_key}"
+    elif clean_key[0].isdigit():
         clean_key = f"_{clean_key}"
     if keyword.iskeyword(clean_key):
         clean_key = f"{clean_key}_"

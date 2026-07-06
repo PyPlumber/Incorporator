@@ -32,6 +32,12 @@ from .watershed import Edge, Watershed
 def load_watershed(path: Path) -> Watershed:
     """Load, env-expand, token-resolve, and construct a :class:`Watershed`.
 
+    Mirrors the trinity path (:func:`incorporator.usercode.apply_inflow_resolution`):
+    the top-level ``inflow``/``outflow`` sidecar modules are loaded BEFORE
+    token resolution, so a ``conv_dict`` string anywhere in the config
+    (e.g. inside a current's ``incorp_params``) may reference a public
+    sidecar helper name, not just the built-in token grammar.
+
     Args:
         path: Path to a ``watershed.json`` file.  Relative paths inside the
             JSON (``inflow``, ``outflow``) are resolved against the JSON
@@ -50,17 +56,45 @@ def load_watershed(path: Path) -> Watershed:
     # that imports back into this module).
     from ..cli.envexpand import expand_env
     from ..cli.tokens import resolve_tokens
+    from ..usercode import extract_public_names
 
     if not path.is_file():
         raise FileNotFoundError(f"watershed config not found: {path}")
 
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw = expand_env(raw)
-    raw = resolve_tokens(raw)
     if not isinstance(raw, dict):
         raise ValueError(f"watershed.json must be a JSON object at the top level; got {type(raw).__name__}.")
 
+    # base_dir only depends on `path`, so it can be computed before the raw
+    # dict is otherwise inspected.  resolve_config_paths is idempotent
+    # (already-absolute paths pass through unchanged), so calling it here
+    # AND again inside build_watershed is safe — it's needed here to rebase
+    # the top-level inflow/outflow sidecar paths before load_user_module can
+    # find them, since build_watershed's own rebase runs after this function
+    # returns.
     base_dir = path.parent.resolve()
+    raw = resolve_config_paths(raw, base_dir)
+
+    inflow_val = raw.get("inflow")
+    outflow_val = raw.get("outflow")
+    inflow = Path(inflow_val) if isinstance(inflow_val, str) and inflow_val else None
+    outflow = Path(outflow_val) if isinstance(outflow_val, str) and outflow_val else None
+
+    # Union outflow-then-inflow public names into one allow-list extension.
+    # Order is arbitrary (no existing precedent merges both at once — the
+    # trinity path only ever sees one sidecar) but must be consistent: an
+    # inflow helper wins over an outflow helper of the same name.
+    extra_names: dict[str, Any] = {}
+    if outflow is not None:
+        extra_names.update(extract_public_names(load_user_module(outflow)))
+    if inflow is not None:
+        extra_names.update(extract_public_names(load_user_module(inflow)))
+
+    raw = resolve_tokens(raw, extra_names=extra_names or None)
+    if not isinstance(raw, dict):
+        raise ValueError(f"watershed.json must be a JSON object at the top level; got {type(raw).__name__}.")
+
     return build_watershed(raw, base_dir)
 
 
