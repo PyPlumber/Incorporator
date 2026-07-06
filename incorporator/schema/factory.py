@@ -432,7 +432,8 @@ def build_instances(
         # Cache-lifetime invariant: the adapter is bound to ``ActualClass``'s
         # identity, and invalidation happens automatically via
         # ``infer_dynamic_schema``'s fresh-class-per-shape contract.  The
-        # SCHEMA_REGISTRY key (currently ``(name, frozenset(field_name_type_pairs), depth)``;
+        # SCHEMA_REGISTRY key (currently
+        # ``(model_name, frozenset((field, type_name) pairs), id(base_class))``;
         # see ``incorporator/schema/builder.py``) carries field-type info,
         # so a structurally-different payload resolves to a fresh
         # ``ActualClass`` with no ``_cached_type_adapter`` attribute set.

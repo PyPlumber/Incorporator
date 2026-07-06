@@ -89,7 +89,9 @@ def split_and_get(
             identically.
         index: Position to return from the resulting list — negative
             indices count from the end (default ``-1`` returns the last
-            non-empty part).
+            part).  An all-delimiter or empty-tail input (e.g. ``"//"``)
+            strips down to ``""`` before the split, so the selected
+            position can itself be the empty string rather than ``None``.
         cast_type: Optional callable applied to the extracted string
             (e.g. ``int`` to convert a numeric ID).
         pure: Defaults to ``True`` — the split/strip logic is always pure, and
@@ -336,11 +338,13 @@ def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Op:
     ``"a.b"`` returns ``None`` safely.
 
     **Null handling.**  The optional ``chain`` callable is only invoked
-    when the extracted value passes :func:`is_garbage_value` — missing
-    path segments / garbage leaf values short-circuit to ``None``
-    without entering the chain callable.  Lets you compose stdlib
-    callables (``pluck("data.title", chain=str.lower)``) without writing
-    a defensive null guard.
+    when the extracted value does *not* pass :func:`is_garbage_value`.
+    Missing path segments resolve to ``None`` (via :meth:`DataPath.resolve`);
+    a garbage-sentinel leaf value (e.g. ``"n/a"``, ``"unknown"``) is
+    returned unchanged, not coerced to ``None``, and in either case the
+    chain callable is never entered.  Lets you compose stdlib callables
+    (``pluck("data.title", chain=str.lower)``) without writing a
+    defensive null guard.
     """
     path = DataPath.parse(key)
 

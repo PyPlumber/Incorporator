@@ -386,7 +386,7 @@ class PageNumberPaginator(AsyncPaginator):
             incorp_params={
                 "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
                 "inc_code": "id",
-                "request_params": {"vs_currency": "usd", "per_page": 250},
+                "params": {"vs_currency": "usd", "per_page": 250},
                 "inc_page": PageNumberPaginator(page_param="page"),
             },
             export_params={"file_path": "coins.ndjson", "if_exists": "append"},
