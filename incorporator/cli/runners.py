@@ -79,11 +79,11 @@ def _load_pipeline_config(config_path: Path) -> dict[str, Any]:
     **Validate / run invariant.**  This function is the SINGLE config-loading
     entry point shared by ``incorporator validate <cfg>`` and every run verb
     (``stream`` / ``fjord`` / ``tideweaver run``).  Every step performed here
-    — JSON parse, ``${VAR}`` / ``${file:...}`` expansion, inflow sidecar
-    load + token resolution — must execute on BOTH paths so ``validate``
-    never accepts a config that ``run`` would reject.  Do not introduce a
-    "validate-fast" mode that short-circuits any step; surface the same
-    errors at both entry points.
+    — JSON parse, ``${VAR}`` / ``${file:...}`` expansion, inflow+outflow
+    sidecar load + token resolution — must execute on BOTH paths so
+    ``validate`` never accepts a config that ``run`` would reject.  Do not
+    introduce a "validate-fast" mode that short-circuits any step; surface
+    the same errors at both entry points.
     """
     if not config_path.is_file():
         _err(f"Error: Configuration file not found at {config_path}", fg=_red())
@@ -112,24 +112,34 @@ def _load_pipeline_config(config_path: Path) -> dict[str, Any]:
     config_dir = config_path.parent.resolve()
     rebased = resolve_config_paths(expanded, config_dir)
 
-    # Load the optional inflow= sidecar once.  Its public symbols extend the
-    # token resolver's allow-list, so JSON strings like "@calc_bst" or
-    # "calc(my_reducer, 'stats')" resolve to real callables before the engine
-    # ever sees the config.  importlib's sys.modules cache absorbs any
-    # later re-load via the same path.  The inflow path is already config-dir-
-    # absolute after the resolve_config_paths call above.
-    extra_names: dict[str, Any] = {}
+    # Load the optional inflow=/outflow= sidecars once.  Their public symbols
+    # extend the token resolver's allow-list, so JSON strings like
+    # "@calc_bst" or "calc(my_reducer, 'stats')" resolve to real callables
+    # before the engine ever sees the config — matching load_watershed's
+    # behavior via the same shared helper.  importlib's sys.modules cache
+    # absorbs any later re-load via the same path.  Both paths are already
+    # config-dir-absolute after the resolve_config_paths call above.
+    #
+    # strict_outflow=False: a missing/broken outflow sidecar is NOT a hard
+    # error here — `_run_validation` (via `validate_config`) is the canonical
+    # place that reports it, aggregated alongside the config's other
+    # structural errors (see tests/test_cli.py::test_cli_fjord_missing_required_keys
+    # and ::test_cli_fjord_outflow_not_found).  Failing fast here would
+    # short-circuit that friendlier, aggregated diagnostic.  The inflow=
+    # field has no such deferred path, so it remains a hard error.
     inflow_field = rebased.get("inflow")
-    if inflow_field:
-        try:
-            from ..usercode import extract_public_names, load_user_module
+    outflow_field = rebased.get("outflow")
+    try:
+        from ..usercode import merge_sidecar_extra_names
 
-            inflow_path = Path(str(inflow_field))
-            module = load_user_module(inflow_path, name_hint="_inc_cli_inflow")
-            extra_names = extract_public_names(module)
-        except (FileNotFoundError, ImportError, SyntaxError) as e:
-            _err(f"Error: failed to load inflow file {inflow_field!r}: {e}", fg=_red())
-            sys.exit(1)
+        extra_names: dict[str, Any] = merge_sidecar_extra_names(
+            Path(str(inflow_field)) if inflow_field else None,
+            Path(str(outflow_field)) if outflow_field else None,
+            strict_outflow=False,
+        )
+    except (FileNotFoundError, ImportError, SyntaxError) as e:
+        _err(f"Error: failed to load inflow file {inflow_field!r}: {e}", fg=_red())
+        sys.exit(1)
 
     # Resolve JSON-text tokens (e.g. "@my_pager", "inc(datetime)",
     # "join_all(';')") into real Python objects before the config reaches

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CLI `incorporator tideweaver run`/`validate` now resolve `conv_dict`
+  tokens against BOTH inflow and outflow sidecar public names**
+  (`incorporator/cli/runners.py::_load_pipeline_config`): the real CLI
+  path does not call `load_watershed` — it uses `_load_pipeline_config` +
+  `build_watershed` — and that function previously unioned the `inflow`
+  sidecar only, never `outflow`. An outflow-only `watershed.json` (the
+  natural shape for a Tideweaver diamond with one `outflow.py` sidecar and
+  no separate `inflow.py`) could not resolve its own sidecar helper tokens
+  on the real CLI path, even though `load_watershed` (the Python-API path)
+  already supported it. Both paths now share one implementation,
+  `incorporator.usercode.merge_sidecar_extra_names`, so `conv_dict`
+  resolution is identical whether a watershed is loaded via
+  `load_watershed(...)` in Python or run/validated through the CLI. A
+  missing/broken `outflow` sidecar is still reported by the CLI's
+  aggregated structural validator (`validate_config`), not by this earlier
+  loading step, preserving existing error-reporting behavior.
+
 ### Added
 
 - **`watershed.json` `conv_dict` (and other token fields) may reference

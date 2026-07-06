@@ -11,6 +11,12 @@ exactly one job: read a ``.py`` off disk and surface its symbols.
 - :func:`extract_public_names` — return ``{name: obj}`` for every
   top-level non-underscore name in a loaded module. Used by the token
   resolver to extend its allow-list with the inflow module's symbols.
+- :func:`merge_sidecar_extra_names` — union public names from the
+  outflow and inflow sidecars into one token-resolver allow-list
+  (inflow wins on name collision). Shared by
+  :func:`incorporator.tideweaver.config.load_watershed` and the CLI's
+  ``_load_pipeline_config`` so both paths resolve ``conv_dict`` tokens
+  against the same sidecar symbols.
 - :func:`apply_inflow_resolution` — load the inflow sidecar and
   resolve string-form tokens in ``conv_dict`` / ``inc_page`` against
   its public symbols (shared by :meth:`Incorporator.incorp` and
@@ -119,6 +125,58 @@ def extract_public_names(module: ModuleType) -> dict[str, Any]:
     "public by default" convention follows Python's standard rules.
     """
     return {n: getattr(module, n) for n in dir(module) if not n.startswith("_")}
+
+
+def merge_sidecar_extra_names(
+    inflow: str | Path | None,
+    outflow: str | Path | None,
+    *,
+    strict_outflow: bool = True,
+) -> dict[str, Any]:
+    """Union public names from the outflow and inflow sidecar modules.
+
+    Single source of truth for "which sidecar symbols may a JSON config's
+    ``conv_dict`` (or other token-resolved field) reference by name" — shared
+    by :func:`incorporator.tideweaver.config.load_watershed` and
+    :func:`incorporator.cli.runners._load_pipeline_config` so the Tideweaver
+    CLI path (``incorporator tideweaver run``) and the direct Python
+    ``load_watershed`` path resolve tokens against the exact same allow-list.
+
+    Loads ``outflow`` first, then ``inflow``, and updates outflow's dict with
+    inflow's — an inflow helper wins over an outflow helper of the same name.
+
+    Args:
+        inflow: Path to an ``inflow.py`` sidecar, or ``None`` to skip it.
+        outflow: Path to an ``outflow.py`` sidecar, or ``None`` to skip it.
+        strict_outflow: When ``True`` (default), a missing/broken ``outflow``
+            sidecar raises immediately, same as ``inflow``.  Callers that defer
+            outflow existence/import errors to a later, friendlier aggregated
+            validator (the CLI's ``_load_pipeline_config`` does, ahead of
+            ``_run_validation``) should pass ``False`` — the outflow sidecar is
+            then skipped silently on ``FileNotFoundError`` / ``ImportError`` /
+            ``SyntaxError`` instead of propagating.  ``inflow`` errors always
+            propagate regardless of this flag.
+
+    Returns:
+        ``{name: obj}`` for every public name across both sidecars (``{}``
+        when both are ``None``, or when a non-strict outflow load fails).
+
+    Raises:
+        FileNotFoundError: ``inflow`` (always) or ``outflow`` (when
+            ``strict_outflow=True``) does not resolve to a file.
+        ImportError: ``inflow`` (always) or ``outflow`` (when
+            ``strict_outflow=True``) cannot be loaded as a Python module.
+    """
+    extra_names: dict[str, Any] = {}
+    if outflow is not None:
+        try:
+            extra_names.update(extract_public_names(load_user_module(outflow)))
+        except (FileNotFoundError, ImportError, SyntaxError):
+            if strict_outflow:
+                raise
+    if inflow is not None:
+        extra_names.update(extract_public_names(load_user_module(inflow)))
+    return extra_names
 
 
 def _extract_user_callable(

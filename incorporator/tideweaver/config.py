@@ -23,7 +23,7 @@ from typing import Any, cast
 
 from ..base import Incorporator
 from ..io.config_paths import resolve_config_paths
-from ..usercode import load_user_module
+from ..usercode import load_user_module, merge_sidecar_extra_names
 from .current import Current, Export, Fjord, Stream
 from .flow import FlowControl, GateMode, flow_from_mode
 from .watershed import Edge, Watershed
@@ -56,7 +56,6 @@ def load_watershed(path: Path) -> Watershed:
     # that imports back into this module).
     from ..cli.envexpand import expand_env
     from ..cli.tokens import resolve_tokens
-    from ..usercode import extract_public_names
 
     if not path.is_file():
         raise FileNotFoundError(f"watershed config not found: {path}")
@@ -81,15 +80,11 @@ def load_watershed(path: Path) -> Watershed:
     inflow = Path(inflow_val) if isinstance(inflow_val, str) and inflow_val else None
     outflow = Path(outflow_val) if isinstance(outflow_val, str) and outflow_val else None
 
-    # Union outflow-then-inflow public names into one allow-list extension.
-    # Order is arbitrary (no existing precedent merges both at once — the
-    # trinity path only ever sees one sidecar) but must be consistent: an
-    # inflow helper wins over an outflow helper of the same name.
-    extra_names: dict[str, Any] = {}
-    if outflow is not None:
-        extra_names.update(extract_public_names(load_user_module(outflow)))
-    if inflow is not None:
-        extra_names.update(extract_public_names(load_user_module(inflow)))
+    # Union outflow-then-inflow public names into one allow-list extension —
+    # shared with the CLI's _load_pipeline_config via merge_sidecar_extra_names
+    # so both paths resolve conv_dict tokens against the same sidecar symbols.
+    # An inflow helper wins over an outflow helper of the same name.
+    extra_names = merge_sidecar_extra_names(inflow, outflow)
 
     raw = resolve_tokens(raw, extra_names=extra_names or None)
     if not isinstance(raw, dict):

@@ -346,6 +346,15 @@ def calculate_bst(stats):
 The CLI imports `inflow.py` **once** per pipeline run (cached via
 `sys.modules`); per-chunk operations don't re-import anything.
 
+> **`outflow` sidecar names count too.** Every verb that shares the CLI's
+> config loader — `stream`, `fjord`, and `tideweaver run`/`validate` — unions
+> public names from **both** `inflow` and `outflow` (when a config declares
+> both, as a stateful `stream` config with `outflow=` can) into the same
+> token-resolver allow-list. An inflow helper wins over an outflow helper of
+> the same name.
+
+
+
 ### What still needs an outflow / fjord pattern
 
 A user-defined Incorporator subclass (with custom methods, computed
