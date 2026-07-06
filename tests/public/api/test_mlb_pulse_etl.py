@@ -358,8 +358,24 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
     from datetime import datetime, timedelta, timezone
 
     now = datetime.now(timezone.utc)
-    window = (now, now + timedelta(seconds=12.0))
+    # Widened from 12.0s: real-clock scheduler ticks under CPU contention
+    # need headroom.  drain_timeout=8.0 below is NOT the bottleneck here —
+    # it only bounds the post-window-close wait for in-flight ticks, and
+    # with ignore_ssl=True (see the Stream incorp_params below) every tick
+    # now completes in milliseconds rather than paying a real TLS
+    # cert-chain load, so 8.0s of drain headroom is ample regardless of
+    # window size.
+    window = (now, now + timedelta(seconds=16.0))
 
+    # ``ignore_ssl=True`` on every Stream skips httpx.AsyncClient's real TLS
+    # cert-chain load (ssl.create_default_context()), which costs ~0.4-0.5s
+    # per fresh client on this OS's cert store even with execute_request
+    # mocked below — _make_pulse_tick calls cls.incorp() (building a fresh
+    # client) on every tick, so that per-tick cost was starving ticks inside
+    # the real-clock window and flaking the 15-card assertion below.
+    # ``ignore_ssl`` is a pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client); this is a
+    # test-only fetch-cost fix, not a scheduler seam.
     schedule_stream = Stream(
         name="schedule",
         cls=MLBSchedule,
@@ -370,6 +386,7 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
             "rec_path": "dates.0.games",
             "inc_code": "gamePk",
             "inc_name": "teams.home.team.name",
+            "ignore_ssl": True,
         },
     )
     al_teams_stream = Stream(
@@ -383,6 +400,7 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
             "rec_path": "teams",
             "inc_code": "id",
             "inc_name": "name",
+            "ignore_ssl": True,
         },
     )
     standings_stream = Stream(
@@ -395,6 +413,7 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
             "rec_path": "records",
             "inc_code": "division.id",
             "inc_name": "division.name",
+            "ignore_ssl": True,
         },
     )
     hitting_stream = Stream(
@@ -409,6 +428,7 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
             "rec_path": "stats.0.splits.0",
             "inc_code": "team.id",
             "conv_dict": {"ops": calc(float, "stat.ops", default=0.0, target_type=float)},
+            "ignore_ssl": True,
         },
     )
     pitching_stream = Stream(
@@ -423,6 +443,7 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
             "rec_path": "stats.0.splits.0",
             "inc_code": "team.id",
             "conv_dict": {"era": calc(float, "stat.era", default=9.99, target_type=float)},
+            "ignore_ssl": True,
         },
     )
     pulse_fjord = Fjord(

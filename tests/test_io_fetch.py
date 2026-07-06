@@ -1437,6 +1437,14 @@ async def test_execute_request_503_retried_up_to_inner_stop(
         call_count += 1
         return httpx.Response(503, request=request)
 
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds <= 0:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(_503_transport)) as client:
         with pytest.raises(httpx.HTTPStatusError):
             await execute_request(url="https://flaky.example.com/", client=client)
@@ -1464,6 +1472,14 @@ async def test_execute_request_429_retried_up_to_inner_stop(
         nonlocal call_count
         call_count += 1
         return httpx.Response(429, request=request)
+
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds <= 0:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(_429_transport)) as client:
         with pytest.raises(httpx.HTTPStatusError):
@@ -1591,6 +1607,14 @@ async def test_execute_request_408_retried_up_to_inner_stop(
         call_count += 1
         return httpx.Response(408, request=request)
 
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds <= 0:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(_408_transport)) as client:
         with pytest.raises(httpx.HTTPStatusError):
             await execute_request(url="https://slow.example.com/api", client=client)
@@ -1622,6 +1646,14 @@ async def test_execute_request_425_retried_up_to_inner_stop(
         nonlocal call_count
         call_count += 1
         return httpx.Response(425, request=request)
+
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds <= 0:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(_425_transport)) as client:
         with pytest.raises(httpx.HTTPStatusError):
@@ -2399,6 +2431,8 @@ async def test_stream_to_path_genuine_failure_still_rejects_with_metadata(
     _process_single_source would reach the short-circuit, and the D1-03
     enrichment applies identically to the non-streaming case.
     """
+    import asyncio
+
     from incorporator.io import fetch
 
     monkeypatch.chdir(tmp_path)
@@ -2409,6 +2443,14 @@ async def test_stream_to_path_genuine_failure_still_rejects_with_metadata(
         nonlocal call_count
         call_count += 1
         return httpx.Response(503, request=request)
+
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds <= 0:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
     try:

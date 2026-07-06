@@ -392,6 +392,92 @@ def test_get_url_injection() -> None:
     ]
 
 
+def test_get_non_template_plain_ids_are_silently_dropped() -> None:
+    """D7-10: GET, no {} template, plain (non-URL) extracted IDs — current behavior pin.
+
+    ``extracted_strs`` are scalar IDs (not "http"/"/"-prefixed), so
+    ``valid_urls`` is empty; ``source_urls`` is non-empty so the
+    ``elif not source_urls`` legacy-attribute branch is also skipped.
+    Neither branch fires and ``kwargs`` is returned unchanged — the
+    extracted IDs are silently dropped and ``inc_url`` stays exactly the
+    caller-supplied ``source_urls``.  This pins CURRENT behavior; a
+    ``logger.warning`` for this silent-drop case is a deferred design
+    suggestion, not something this test enforces.
+    """
+    source_urls = ["https://api.example.com/base"]
+
+    kwargs = router.resolve_declarative_routing(
+        "Test",
+        extracted_data=["id-1", "id-2"],
+        source_urls=source_urls,
+        http_method="GET",
+        inc_url=source_urls[0],
+    )
+
+    assert kwargs["inc_url"] == source_urls[0], "plain IDs must be dropped; inc_url stays untouched"
+
+
+def test_get_url_children_appended_after_base_url() -> None:
+    """D7-10: GET extracted values that look like URLs are appended after source_urls.
+
+    When ``extracted_strs`` entries start with ``"http"`` or ``"/"``,
+    the ``valid_urls`` branch fires and the final ``inc_url`` is
+    ``source_urls + valid_urls`` — the base URL(s) stay first, HATEOAS
+    child URLs are appended after.
+    """
+    source_urls = ["https://api.example.com/base"]
+    extracted_data = [
+        "https://api.example.com/child/1",
+        "https://api.example.com/child/2",
+    ]
+
+    kwargs = router.resolve_declarative_routing(
+        "Test",
+        extracted_data=extracted_data,
+        source_urls=source_urls,
+        http_method="GET",
+        inc_url=source_urls[0],
+    )
+
+    assert kwargs["inc_url"] == source_urls + extracted_data
+
+
+def test_post_each_url_count_mismatch_raises_missing_target_url() -> None:
+    """D7-10: each() with >1 source_urls raises, it does not silently pass through.
+
+    Only ``len(source_urls) == 1`` takes the URL-multiplication branch;
+    any other count (0 or >1) is ambiguous for a per-item fan-out POST
+    and raises ``ValueError("Missing Target URL")`` — mirrors the bulk
+    branch's guard.  Empirically re-verified: this is NOT a silent
+    url-count x payload-count mismatch pass-through.
+    """
+    with pytest.raises(ValueError, match="Missing Target URL"):
+        router.resolve_declarative_routing(
+            "Test",
+            extracted_data=["id-1", "id-2", "id-3"],
+            source_urls=["https://api.example.com/1", "https://api.example.com/2"],
+            http_method="POST",
+            json_payload={"id": each()},
+        )
+
+
+def test_post_empty_form_payload_falls_through_to_json_payload() -> None:
+    """D7-10: form_payload={} is falsy — json_payload wins per `or` short-circuit."""
+    source_urls = ["https://api.example.com/base"]
+
+    kwargs = router.resolve_declarative_routing(
+        "Test",
+        extracted_data=["id-1", "id-2"],
+        source_urls=source_urls,
+        http_method="POST",
+        form_payload={},
+        json_payload={"x": 1},
+    )
+
+    assert kwargs["payload_list"] == [{"x": 1}]
+    assert len(kwargs["payload_list"]) == len(source_urls)
+
+
 # ---------------------------------------------------------------------------
 # H3 reshape: calc/calc_all null-handling aligned with inc().
 #
@@ -617,3 +703,80 @@ def test_calc_pure_true_is_default() -> None:
     assert rows[0]["out"] == "foo"
     assert rows[1]["out"] == "bar"
     assert rows[2]["out"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Op direct-construction quirks (D7-06 / D7-09) — is_pure=False re-invocation,
+# unhashable-arg __wrapped__ fallback, and the double-invocation quirk when
+# the user body itself raises TypeError on a hashable arg.
+# ---------------------------------------------------------------------------
+
+
+def test_op_is_pure_false_runs_body_every_call() -> None:
+    """Op(..., is_pure=False) is never lru_cache-wrapped — the body runs every call."""
+    from incorporator.schema.converters import Op
+
+    calls: list[int] = []
+
+    def body(v: int) -> int:
+        calls.append(v)
+        return v * 2
+
+    op = Op(body, is_pure=False)
+    for _ in range(3):
+        assert op(5) == 10
+    assert calls == [5, 5, 5], "is_pure=False must invoke the body every call, no memoization"
+
+
+def test_op_unhashable_arg_routes_through_wrapped_fallback() -> None:
+    """Op(..., is_pure=True) called with an unhashable arg falls back to __wrapped__, no raise.
+
+    lru_cache raises TypeError trying to hash a list key; Op.__call__'s
+    except-TypeError branch recovers by calling self._func.__wrapped__
+    (the un-cached original) directly — same as link_to_list/as_list
+    receiving a list argument.
+    """
+    from incorporator.schema.converters import Op
+
+    calls: list[list[int]] = []
+
+    def body(v: list[int]) -> list[int]:
+        calls.append(v)
+        return list(v)
+
+    op = Op(body, is_pure=True)
+    payload = [1, 2, 3]
+    result = op(payload)
+
+    assert result == payload
+    assert calls == [payload], "unhashable arg must reach the body exactly once via __wrapped__"
+
+
+def test_op_user_typeerror_on_hashable_arg_double_invokes_and_propagates() -> None:
+    """Documents the double-invocation quirk: a body TypeError on a HASHABLE arg is not clean.
+
+    Op.__call__'s ``except TypeError:`` cannot structurally distinguish
+    "lru_cache rejected an unhashable key" from "the wrapped body itself
+    raised TypeError" — both look identical at that boundary.  So a
+    hashable arg (e.g. an int) that makes the user's body raise TypeError
+    triggers the SAME fallback: ``__wrapped__`` is invoked a SECOND time,
+    the body runs again, and the exception that actually propagates is
+    from that second invocation — the first call's TypeError (and any
+    side effect up to the point of raising) is silently swallowed.  This
+    is a genuine pre-existing quirk, not a regression to fix here; the
+    assertion below pins measured behavior (call_count == 2), not the
+    assumption that the body would only run once.
+    """
+    from incorporator.schema.converters import Op
+
+    calls: list[int] = []
+
+    def body(v: int) -> int:
+        calls.append(v)
+        raise TypeError(f"boom on call #{len(calls)}")
+
+    op = Op(body, is_pure=True)
+    with pytest.raises(TypeError, match=r"boom on call #2"):
+        op(5)
+
+    assert calls == [5, 5], "hashable-arg TypeError re-invokes the body a second time via the fallback"

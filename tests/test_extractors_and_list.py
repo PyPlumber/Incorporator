@@ -6,8 +6,10 @@ from typing import Any, List
 import pytest
 
 from incorporator.list import IncorporatorList, _deduplicate_extracted
+from incorporator.schema.converters import _EachSentinel
 from incorporator.schema.extractors import (
     as_list,
+    each,
     join_all,
     link_to,
     link_to_list,
@@ -16,7 +18,7 @@ from incorporator.schema.extractors import (
     sum_attributes,
 )
 from incorporator.schema.path import DataPath
-from incorporator.schema.router import extract_parent_data
+from incorporator.schema.router import extract_parent_data, resolve_declarative_routing
 
 
 # ==========================================
@@ -524,6 +526,46 @@ def test_as_list_handles_unhashable_list_input_directly() -> None:
     payload = [1, 2, 3]
     result = op(payload)
     assert result is payload  # list passthrough, untouched
+
+
+# ==========================================
+# 16. each() — sentinel marker (D7-05)
+# ==========================================
+
+
+def test_each_returns_each_sentinel_instance() -> None:
+    """each() returns an _EachSentinel instance — the marker resolve_declarative_routing switches on."""
+    marker = each()
+    assert isinstance(marker, _EachSentinel)
+
+
+# ==========================================
+# 17. as_list() — declarative routing (bulk, non-each) branch (D7-05)
+# ==========================================
+
+
+def test_as_list_declarative_routing_bulk_branch() -> None:
+    """as_list() through resolve_declarative_routing's bulk (non-each) POST branch.
+
+    ``as_list()``'s Op is callable with the whole extracted_data list, so it
+    takes the ``built_payload`` branch (not the per-item ``each()`` fanout):
+    one payload dict, replicated once per source URL.
+    """
+    extracted_data = ["id-1", "id-2", "id-3"]
+    source_urls = ["https://api.example.com/bulk"]
+
+    kwargs = resolve_declarative_routing(
+        "Caller",
+        extracted_data,
+        source_urls,
+        http_method="POST",
+        json_payload={"ids": as_list()},
+        inc_url=source_urls[0],
+    )
+
+    payload_list = kwargs["payload_list"]
+    assert len(payload_list) == len(source_urls)
+    assert payload_list == [{"ids": extracted_data}]
 
 
 # ==========================================

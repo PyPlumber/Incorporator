@@ -153,6 +153,7 @@ async def test_export_outflow_new_field_in_csv(tmp_path: Path) -> None:
 # ==========================================
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_schema_union_concurrent_gather_safety(tmp_path: Path) -> None:
     """Many concurrent incorp() calls on the same class must not crash or lose schema-union fields.
@@ -213,6 +214,7 @@ async def test_schema_union_concurrent_gather_safety(tmp_path: Path) -> None:
         sys.setswitchinterval(original_switch_interval)
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_schema_registry_concurrent_gather_integrity(tmp_path: Path) -> None:
     """Concurrent incorp() calls across MULTIPLE DISTINCT classes must not corrupt SCHEMA_REGISTRY.

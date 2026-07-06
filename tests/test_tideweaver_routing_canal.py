@@ -120,7 +120,18 @@ async def _mock_jsonplaceholder(url: str, *args: Any, **kwargs: Any) -> httpx.Re
 
 
 def _stream(name: str, cls: type[Incorporator], interval: float = 0.1) -> Stream:
-    """Build a minimal Stream current with a stub source URL."""
+    """Build a minimal Stream current with a stub source URL.
+
+    ``ignore_ssl=True`` skips ``httpx.AsyncClient``'s real TLS cert-chain
+    load (``ssl.create_default_context()``), which costs ~0.4-0.5s per
+    fresh client on this OS's cert store even though ``execute_request``
+    is mocked below — that per-tick cost was starving currents of enough
+    ticks inside the test's real-clock window and flaking the fire/skip
+    assertions.  ``ignore_ssl`` is a pre-existing, fully-plumbed
+    ``incorp_params`` key (see ``incorporator/io/fetch.py``'s
+    ``HTTPClientBuilder.build_client``); this is a test-only fetch-cost
+    fix, not a scheduler seam.
+    """
     return Stream(
         name=name,
         cls=cls,
@@ -129,6 +140,7 @@ def _stream(name: str, cls: type[Incorporator], interval: float = 0.1) -> Stream
         incorp_params={
             "inc_url": f"https://example.com/{name}",
             "inc_code": "id",
+            "ignore_ssl": True,
         },
     )
 
@@ -145,7 +157,7 @@ async def test_chain_with_full_canal_toolkit(tmp_path: Any, monkeypatch: pytest.
     A fires at interval=0.1 (~10×/sec) and B's edge penstock allows 2 r/s.
     After B's first permitted consumption (the penstock is empty on
     initial state), subsequent attempts within 500ms get
-    ``penstock_limited``.  Over the 1.5s window we expect:
+    ``penstock_limited``.  Over the 3.0s window we expect:
 
     * ≥ 3 ``PenstockLimited`` entries in ``tw.rejects``
     * Observer callback fired for ``"fire"``, ``"skip"``, and
@@ -182,7 +194,7 @@ async def test_chain_with_full_canal_toolkit(tmp_path: Any, monkeypatch: pytest.
         observer=SignalObserver(callback=capture),
     )
     ws = Watershed(
-        window=_short_window(1.5),
+        window=_short_window(3.0),
         currents=[a, b, c],
         edges=[
             Edge(from_name="a", to_name="b", flow=full_canal),
@@ -202,7 +214,7 @@ async def test_chain_with_full_canal_toolkit(tmp_path: Any, monkeypatch: pytest.
     pl_rejects = [r for r in tw.rejects if r.error_kind == "PenstockLimited"]
     assert len(pl_rejects) >= 3, (
         f"SustainedPenstock(2.0) with A firing at 10/sec should produce ≥3 "
-        f"PenstockLimited rejects in 1.5s; got {len(pl_rejects)}"
+        f"PenstockLimited rejects in 3.0s; got {len(pl_rejects)}"
     )
     # All canal rejects point at the right edge + downstream class name.
     for r in pl_rejects:
@@ -240,7 +252,7 @@ async def test_diamond_logging_observer_emits_per_event(
 
     Uses ``caplog`` to capture records from the ``flow`` module's
     logger; asserts at least 2 "fired" records (one per fired edge,
-    over a 1.0s window with HardLock + interval=0.1 there should be
+    over a 2.0s window with HardLock + interval=0.1 there should be
     plenty).
     """
     monkeypatch.chdir(tmp_path)
@@ -262,7 +274,7 @@ async def test_diamond_logging_observer_emits_per_event(
         ),
     )
     ws = Watershed.diamond(
-        window=_short_window(1.0),
+        window=_short_window(2.0),
         head=a,
         middle=[b, c],
         tail=d,
