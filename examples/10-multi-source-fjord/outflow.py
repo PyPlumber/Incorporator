@@ -7,8 +7,18 @@ export wave to fuse them into a single row stream: the basis-point
 spread between CoinGecko USD price and Binance USDT price for every
 overlapping symbol.
 
+The cross-source join (CoinGecko symbol -> Binance pair) and both
+sources' numeric coercion happen at BUILD time, in the `conv_dict`s
+declared in `crypto_spread.py` and the sibling `inflow.py` — see those
+files' docstrings for the wiring. By the time a row reaches `outflow()`
+below, `coin.binance_pair` is either a resolved `BinancePair` instance
+or `None` (never a raw string to parse), and `coin.current_price` /
+`pair.price` are already floats. Reads here are plain attribute access;
+no `getattr(..., default) or fallback`, no `float(x or 0)`, no
+`.inc_dict.get(...)` registry lookup.
+
 Dynamic output class is built from this file's stem —
-`outflow.py` → `Outflow`.
+`outflow.py` -> `Outflow`.
 """
 
 from datetime import datetime, timezone
@@ -28,38 +38,30 @@ class BinancePair(Incorporator):
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Join CoinGecko USD vs Binance USDT for overlapping symbols.
 
-    For each CoinGecko coin where a matching ``{SYMBOL}USDT`` pair
-    exists in Binance, emit a row containing the symbol, both prices,
-    and the basis-point spread.
+    For each CoinGecko coin whose ``binance_pair`` resolved (build-time
+    join via `inflow.py`'s `link_to`), emit a row containing the symbol,
+    both prices, and the basis-point spread.
 
     ``state`` is a snapshot of each source by class name, taken under
     the engine's shared lock. Return ``list[dict]``; fjord handles the
     export.
     """
     coins = state["CoinGecko"] or []
-    pairs = state["BinancePair"]
-    if pairs is None:
-        return []
 
     rows: list[dict[str, Any]] = []
     now = datetime.now(timezone.utc).isoformat()
 
     for coin in coins:
-        symbol = getattr(coin, "symbol", "").upper()
-        if not symbol:
-            continue
-
-        binance_key = f"{symbol}USDT"
-        pair = pairs.inc_dict.get(binance_key)
+        pair = coin.binance_pair  # plain attribute — None if unmatched on Binance
         if pair is None:
-            continue  # CoinGecko coin not traded on Binance
-
-        try:
-            gecko_usd = float(getattr(coin, "current_price", 0) or 0)
-            binance_usdt = float(getattr(pair, "price", 0) or 0)
-        except (TypeError, ValueError):
             continue
 
+        gecko_usd = coin.current_price  # already coerced float
+        binance_usdt = pair.price  # already coerced float (BinancePair's own conv_dict)
+
+        # Cross-field validity check on the JOINED pair (both legs must be
+        # positive to compute a spread) — this is output-shaping business
+        # logic, not a null-safety workaround, so it stays in outflow().
         if gecko_usd <= 0 or binance_usdt <= 0:
             continue
 
@@ -68,7 +70,7 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
 
         rows.append(
             {
-                "symbol": symbol,
+                "symbol": pair.inc_code.removesuffix("USDT"),
                 "coingecko_usd": gecko_usd,
                 "binance_usdt": binance_usdt,
                 "spread_bps": spread_bps,

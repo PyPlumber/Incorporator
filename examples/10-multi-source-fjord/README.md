@@ -55,31 +55,58 @@ stem (`outflow.py` → `Outflow`).
 
 ---
 
-## Step 1: `outflow.py` — The Outflow Sidecar
+## Step 1: `inflow.py` + `outflow.py` — Build-Time Join, Read-Time Fuse
 
 `fjord()` needs Python code (class definitions + the join logic), so
-it lives in a sidecar file.
+it lives in two sidecar files split by direction of data flow:
+`inflow.py` wires the cross-source join into CoinGecko's own
+`conv_dict` at build time; `outflow.py` declares the source classes and
+reads the already-joined, already-coerced fields as plain attributes.
 
-At every export wave, `fjord()` calls your `outflow(state)` function and
-passes it `state` — a `dict[str, IncorporatorList]` keyed by source class
-name, snapshotted under a lock at the start of the wave. Your function
-reads the current data from each source, joins them, and returns a list
-of dicts for the output class.
+> **Read-time DX rule: coerce + join at build time; outflow reads plain
+> attributes.**  The pre-rewrite version of this tutorial hand-rolled
+> the join and the coercion inside `outflow()` itself —
+> `pairs.inc_dict.get(f"{symbol}USDT")`, `float(getattr(pair, "price",
+> 0) or 0)`.  Every one of those guards exists only because the raw
+> field hadn't been resolved/coerced yet.  Move the resolution earlier
+> (into the `conv_dict` at each source's own build time, via
+> `link_to()` and `inc()`/`calc()`) and the guards disappear — not
+> relocated, *eliminated* — because the framework's `is_garbage_value`
+> null contract already did the defensive work once, at construction.
+> See `docs/api_atlas.md`'s "Build-time vs read-time: where coercion +
+> joins belong" section for the general rule.
 
-> **Don't pre-declare the output class.**  For multi-output
-> `outflow(state) -> dict[ClassName, list[dict]]`, the framework builds
-> one dynamic Pydantic class per dict key.  For single-output, it builds
-> one named after the outflow file's stem (PascalCase).  Declaring a
-> bare `class Outflow(Incorporator): pass` would suppress field
-> inference and silently drop every row column.  T9 walks the
-> multi-output version of this contract; T10's single-output shape works
-> the same way under the hood.
->
-> If you *do* pre-declare (e.g. to type the output for a downstream
-> consumer), the subclass must declare every field you intend to keep —
-> Pydantic V2's default `extra='ignore'` silently drops unknown fields.
-> The framework emits a one-time WARNING per bare-class trap so you'll
-> spot it in logs the first time it fires.
+CoinGecko needs the Binance registry to exist before its own
+`conv_dict` runs, so it declares `depends_on=["BinancePair"]` —
+this switches `fjord()`'s seed from all-parallel to **tiered**:
+BinancePair seeds in tier 0, then `inflow(state)` fires for CoinGecko
+in tier 1 with `state["BinancePair"]` already a live `IncorporatorList`.
+
+```python
+# examples/10-multi-source-fjord/inflow.py
+from incorporator import inc, link_to
+
+
+def _to_binance_symbol(sym: str) -> str:
+    """CoinGecko ticker symbol -> Binance USDT pair key: 'btc' -> 'BTCUSDT'."""
+    return f"{sym.upper()}USDT"
+
+
+def inflow(state):
+    overrides = {}
+    if "BinancePair" in state:
+        overrides["CoinGecko"] = {
+            "conv_dict": {
+                "current_price": inc(float, default=0.0),
+                # link_to()'s conv_dict key must match the SOURCE field it
+                # reads ("symbol") -- the dispatcher feeds it d.get(key).
+                # name_chg (below, in crypto_spread.py) frees a clean,
+                # distinctly-named attribute for outflow.py.
+                "symbol": link_to(state["BinancePair"], extractor=_to_binance_symbol),
+            }
+        }
+    return overrides
+```
 
 ```python
 # examples/10-multi-source-fjord/outflow.py
@@ -99,39 +126,27 @@ class BinancePair(Incorporator):
 
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Join CoinGecko USD vs Binance USDT for overlapping symbols."""
-    # Either source can be ``None`` if its initial seed returned no rows
-    # (geo-block, transient outage, etc.).  ``coins`` uses ``or []`` to
-    # iterate as empty; ``pairs`` short-circuits because we need its
-    # ``.inc_dict.get(...)`` later.
     coins = state["CoinGecko"] or []
-    pairs = state["BinancePair"]
-    if pairs is None:
-        return []
-
     rows = []
     now = datetime.now(timezone.utc).isoformat()
 
     for coin in coins:
-        symbol = getattr(coin, "symbol", "").upper()
-        if not symbol:
-            continue
-
-        pair = pairs.inc_dict.get(f"{symbol}USDT")
+        pair = coin.binance_pair            # plain attribute -- None if unmatched
         if pair is None:
-            continue                                      # not traded on Binance
-
-        try:
-            gecko_usd = float(getattr(coin, "current_price", 0) or 0)
-            binance_usdt = float(getattr(pair, "price", 0) or 0)
-        except (TypeError, ValueError):
             continue
+
+        gecko_usd = coin.current_price      # already a float
+        binance_usdt = pair.price           # already a float (BinancePair's own conv_dict)
+
+        # Cross-field validity check on the JOINED pair -- output-shaping
+        # business logic, not a null guard, so it stays in outflow().
         if gecko_usd <= 0 or binance_usdt <= 0:
             continue
 
         spread_bps = round(((binance_usdt - gecko_usd) / gecko_usd) * 10_000, 2)
 
         rows.append({
-            "symbol": symbol,
+            "symbol": pair.inc_code.removesuffix("USDT"),
             "coingecko_usd": gecko_usd,
             "binance_usdt": binance_usdt,
             "spread_bps": spread_bps,
@@ -142,7 +157,26 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
 ```
 
 Two source classes + one function. No daemon plumbing, no lock
-acquisition, no wave emission — `fjord()` handles all of it.
+acquisition, no wave emission, and — after this rewrite — no
+`getattr(..., default) or fallback`, no `float(x or 0)`, no
+`.inc_dict.get(...)` registry lookup: `fjord()` handles the plumbing,
+the build-time `conv_dict` handles the defensive work, `outflow()`
+reads plain attributes.
+
+> **Don't pre-declare the output class.**  For multi-output
+> `outflow(state) -> dict[ClassName, list[dict]]`, the framework builds
+> one dynamic Pydantic class per dict key.  For single-output, it builds
+> one named after the outflow file's stem (PascalCase).  Declaring a
+> bare `class Outflow(Incorporator): pass` would suppress field
+> inference and silently drop every row column.  T9 walks the
+> multi-output version of this contract; T10's single-output shape works
+> the same way under the hood.
+>
+> If you *do* pre-declare (e.g. to type the output for a downstream
+> consumer), the subclass must declare every field you intend to keep —
+> Pydantic V2's default `extra='ignore'` silently drops unknown fields.
+> The framework emits a one-time WARNING per bare-class trap so you'll
+> spot it in logs the first time it fires.
 
 ---
 
@@ -165,16 +199,20 @@ async def main():
                     "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
                     "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
                     "inc_code": "id",
+                    "name_chg": [("symbol", "binance_pair")],
                 },
+                "depends_on": ["BinancePair"],     # waits for tier 0 -- see inflow.py
             },
             {
                 "cls": BinancePair,
                 "incorp_params": {
                     "inc_url": "https://api.binance.us/api/v3/ticker/price",
                     "inc_code": "symbol",
+                    "conv_dict": {"price": inc(float, default=0.0)},
                 },
             },
         ],
+        inflow="examples/10-multi-source-fjord/inflow.py",
         outflow="examples/10-multi-source-fjord/outflow.py",
         export_params={"file_path": "out/crypto_spread.ndjson"},
         refresh_interval={"CoinGecko": 60, "BinancePair": 30},   # per-source cadences
@@ -274,8 +312,12 @@ if __name__ == "__main__":
 
 ## What `fjord()` is Doing Under the Hood
 
-1. **Concurrent seed.** All `stream_params[*].cls.incorp(...)` calls
-   run in parallel via `asyncio.gather`. One wave per source.
+1. **Tiered seed.** Because CoinGecko declares `depends_on=["BinancePair"]`,
+   `fjord()` seeds in topological tiers instead of one flat parallel batch:
+   BinancePair (tier 0) seeds first, then CoinGecko (tier 1) seeds with
+   `inflow(state)`'s build-time `link_to()` override applied. Sources with
+   no `depends_on` at all fall back to the fully-parallel `asyncio.gather`
+   path — one wave per source either way.
 2. **Per-source refresh daemons.** One daemon per entry. Each
    independently re-fetches on its own `refresh_interval` (override
    per entry — CoinGecko's free tier is rate-limited while Binance is
@@ -309,6 +351,7 @@ The same pipeline as a `pipeline.json`:
 
 ```json
 {
+  "inflow": "examples/10-multi-source-fjord/inflow.py",
   "outflow": "examples/10-multi-source-fjord/outflow.py",
   "stream_params": [
     {
@@ -316,14 +359,17 @@ The same pipeline as a `pipeline.json`:
       "incorp_params": {
         "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
         "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
-        "inc_code": "id"
-      }
+        "inc_code": "id",
+        "name_chg": [["symbol", "binance_pair"]]
+      },
+      "depends_on": ["BinancePair"]
     },
     {
       "cls_name": "BinancePair",
       "incorp_params": {
         "inc_url": "https://api.binance.us/api/v3/ticker/price",
-        "inc_code": "symbol"
+        "inc_code": "symbol",
+        "conv_dict": {"price": "inc(float, default=0.0)"}
       }
     }
   ],
@@ -332,6 +378,13 @@ The same pipeline as a `pipeline.json`:
   "export_interval": 60.0
 }
 ```
+
+> `inc()` sigils (`"inc(float, default=0.0)"`) resolve straight out of
+> plain JSON — no sidecar needed for coercion alone. `link_to()` is
+> different: it needs the *peer dataset* (`state["BinancePair"]`), which
+> only exists inside a Python `inflow(state)` callable, so the join
+> itself stays in `inflow.py` and `pipeline.json` only needs to point
+> `"inflow"` at it plus declare `depends_on`.
 
 ```bash
 incorporator validate pipeline.json

@@ -29,6 +29,7 @@ The same eight verbs — `incorp / test / architect / refresh / export / stream 
 - [Daemons](#daemons)
   - [`stream`](#stream)
   - [`fjord`](#fjord)
+  - [Build-time vs read-time: where coercion + joins belong](#build-time-vs-read-time-where-coercion--joins-belong)
 - [REPL](#repl)
   - [`display`](#display)
 - [Orchestration](#orchestration)
@@ -508,6 +509,56 @@ def outflow(state):
 ```
 
 Three lessons: iterate the registry as a list; look up by `inc_dict[key]`; trust foreign keys that `link_to(state["..."])` resolved during inflow (don't re-look them up).
+
+> The `nht` lookup above is a read-time `inc_dict.get(...)` — one join that stayed read-time in this worked example, alongside `inv.Vehicle.VIN` which resolved at build time via `inflow()`.  See "Build-time vs read-time: where coercion + joins belong" below for the general rule and why both patterns coexist honestly rather than one replacing the other everywhere.
+
+### Build-time vs read-time: where coercion + joins belong
+
+**The rule:** coerce and join at **build time**, in the `conv_dict` passed to `incorp()` — via `inc()`/`calc()` for coercion and `link_to()`/`link_to_list()` for joins — so that `outflow(state)` (or any code reading the resulting instances) touches **plain attributes**. The framework's `is_garbage_value` null contract already does the defensive work once, at construction; a second `getattr(x, "field", default) or fallback` at read time is pure duplication of a guarantee the framework already gave you.
+
+```python
+# Read-time (avoid): defensive guards on every read, every export wave
+def outflow(state):
+    rows = []
+    for coin in state["CoinGecko"]:
+        symbol = getattr(coin, "symbol", "").upper()
+        pair = state["BinancePair"].inc_dict.get(f"{symbol}USDT")
+        price = float(getattr(pair, "price", 0) or 0) if pair else 0
+        ...
+
+# Build-time (prefer): join + coerce once, at each source's own incorp()
+def inflow(state):
+    return {
+        "CoinGecko": {
+            "conv_dict": {
+                "symbol": link_to(state["BinancePair"], extractor=to_binance_symbol),
+            }
+        }
+    }
+# BinancePair's own conv_dict: {"price": inc(float, default=0.0)}
+
+def outflow(state):
+    rows = []
+    for coin in state["CoinGecko"]:
+        pair = coin.binance_pair          # plain attribute, None if unmatched
+        if pair is None:
+            continue
+        price = pair.price                # already a float
+        ...
+```
+
+**Why build-time joins survive refresh.** `link_to(dataset, ...)` builds its own private `WeakValueDictionary` registry by walking `dataset` once, at the moment the `conv_dict` entry is constructed — it does not re-read the target class's `inc_dict` on every access. `Incorporator.refresh()` mutates existing instances' *fields* in place rather than replacing the objects, so a resolved reference from an earlier build-time join keeps seeing current data across refresh waves for free, with zero re-lookup cost. This is *not* the same guarantee as reading `Cls.inc_dict` directly inside `outflow()` — that dict is a `ClassVar[WeakValueDictionary]` and can be momentarily empty between a garbage-collection pass and the next tick; a `link_to()`-built registry sidesteps that race entirely because it isn't `inc_dict`.
+
+**`link_to()`'s conv_dict key must match the SOURCE field it reads.** The dispatcher feeds every non-`calc` conv_dict `Op` with `d.get(key)` — the same key it writes back — so `link_to()` (like `inc()`) only works when the conv_dict key equals the raw source field name (e.g. `"track_id": link_to(state["Track"])` reads and overwrites `track_id`). If you want the resolved object under a *different* name than the raw source field, pass `conv_dict={"symbol": link_to(...)}` together with `name_chg=[("symbol", "new_name")]` in the same `incorp()`/`incorp_params` call — the ETL pipeline runs `conv_dict` (pass 2) before `name_chg` (pass 3), so the rename applies to the already-resolved object, not the raw value. A bare new conv_dict key with no matching source field (e.g. `conv_dict={"binance_pair": link_to(...)}` when the raw row has no `binance_pair` field) silently resolves to `None` on every row — the dispatcher feeds it `d.get("binance_pair")`, which is garbage, so the join extractor never fires.
+
+**Two joins that genuinely can't move to build time — the honest boundary.** Not every read-time lookup is a shortcut; some are the correct design:
+
+1. **List-of-dicts fan-out.** When the FK lives inside a nested list of dicts (e.g. a roster `[{"series_id": 1, "driver_id": 3989}, ...]`) rather than a flat scalar field, `link_to()` can't fan out — it resolves exactly one scalar per conv_dict entry. Keep this read-time.
+2. **Runtime-chosen target dataset.** When *which* dataset to join against is itself decided per-row by another field's value (e.g. route to `CupStanding` vs `CupOwnerStanding` depending on a driver-status flag), `link_to()` binds to one dataset per conv_dict entry and can't branch. This is dynamic dispatch, not a static FK — keep it read-time.
+
+Both patterns are worked through in [Tutorial 9 — NASCAR Fantasy Fjord](../examples/09-nascar-fantasy-fjord/README.md)'s `FantasyTeam` view, alongside the build-time join in the same tutorial's `Race` source and in [Tutorial 10 — Multi-Source Fjord](../examples/10-multi-source-fjord/README.md)'s `CoinGecko` ↔ `BinancePair` spread.
+
+**No read-time registry accessor is being added.** A tempting "fix" for read-time joins is a convenience method like `inc_get(key)` or `inc_lookup(key)` that wraps `Cls.inc_dict.get(key)` with friendlier syntax. This is deliberately **not** a framework primitive: `inc_dict` is a `ClassVar[WeakValueDictionary]`, and a fjord `outflow(state)` wave runs against a `state` snapshot taken under a lock — reading the *class-level* registry instead of the snapshot re-introduces exactly the GC-race and stale-read risk the snapshot contract exists to avoid. The two honest boundaries above (list-fan-out, runtime dataset choice) are genuinely better served by keeping the lookup inline in `outflow(state)`, reading from the `state` snapshot's own `IncorporatorList.inc_dict` (a `@property` proxy onto the class-level registry, safe because the whole snapshot was captured together) — not by adding a new primitive that would encourage bypassing `state` entirely.
 
 **Common kwargs**
 - `stream_params` — list of `{"cls": ..., "incorp_params": {...}, "refresh_params": {...}, "refresh_interval": ..., "export_params": {...}}` per source.

@@ -109,18 +109,31 @@ _SERIES_LIST = ("Cup", "Busch", "Truck")
 def _hometown(driver: Any) -> str:
     """Compose ``City, ST`` from the driver's hometown fields, or
     ``Unknown`` if either piece is missing.
+
+    ``Hometown_City`` / ``Hometown_State`` are coerced to plain strings
+    at Driver's own build time (``inc(str, default="")`` in
+    `nascar_fantasy.py`) — no ``getattr(..., "") or ""`` guard needed
+    here.  The ``city and state`` composition is business logic (how to
+    format two strings together), not a null guard, so it stays.
     """
-    city = getattr(driver, "Hometown_City", "") or ""
-    state = getattr(driver, "Hometown_State", "") or ""
-    city = city.strip()
-    state = state.strip()
+    city = driver.Hometown_City.strip()
+    state = driver.Hometown_State.strip()
     if city and state:
         return f"{city}, {state}"
     return city or state or "Unknown"
 
 
 def _track_loc(track: Any) -> str:
-    """Compose ``City, ST`` for a track."""
+    """Compose ``City, ST`` for a track.
+
+    ``track`` itself can be ``None`` (a Race whose Track FK didn't
+    resolve) — that "is there a related object at all" check is a
+    legitimate null-object guard on the join result, not a field-
+    coercion guard, and stays.  Track's own ``city``/``state`` fields
+    are not build-time coerced (no matching conv_dict entry — NASCAR's
+    tracks.json ships them as plain strings already), so the local
+    ``or ""`` guard remains for defense against a genuinely missing key.
+    """
     if track is None:
         return "Unknown"
     city = (getattr(track, "city", "") or "").strip()
@@ -162,13 +175,19 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     # ════════════════════════════════════════════════════════════════
     monthly: list[dict[str, Any]] = []
     for race in races:
+        # date_scheduled arrives via inflow.py's inc(datetime) -- a Race
+        # with a genuinely missing schedule date is a null-object case
+        # (dt is None), not a coercion gap, so this guard stays.
         dt = getattr(race, "date_scheduled", None)
         if dt is None or dt.month != now.month or dt.year != now.year:
             continue
-        pole = getattr(race, "pole_winner_driver_id", None)
-        winner = getattr(race, "winner_driver_id", None)
+        # pole / winner / track can each be None -- the FK didn't resolve
+        # (link_to's sentinel-aware extractor for driver IDs; a Race whose
+        # track_id had no Track match) -- a null-object guard on the JOIN
+        # result, not a field-coercion guard, so `if track else` etc. stay.
+        pole = race.pole_winner_driver_id
+        winner = race.winner_driver_id
         track = getattr(race, "track", None) or getattr(race, "track_id", None)
-        playoff_round = getattr(race, "playoff_round", 0) or 0
 
         monthly.append(
             {
@@ -176,19 +195,17 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "date": dt.strftime("%Y-%m-%d"),
                 "race_name": getattr(race, "race_name", "TBD"),
                 "track": getattr(track, "inc_name", "Unknown") if track else "Unknown",
-                "track_type": getattr(track, "track_type", "Unknown") if track else "Unknown",
-                "track_miles": getattr(track, "length", None) if track else None,
+                "track_type": track.track_type if track else "Unknown",
+                "track_miles": track.length if track else None,
                 "track_loc": _track_loc(track),
                 "pole_winner": getattr(pole, "Full_Name", None) if pole else None,
-                # NASCAR returns 0.0 for races whose pole hasn't been set
-                # (same sentinel pattern as pole_winner_driver_id) — promote
-                # to None so consumers can show "TBD" without checking magic
-                # numbers.
-                "pole_speed": (getattr(race, "pole_winner_speed", None) or None) if pole else None,
+                # inflow.py's _speed_or_none already promotes NASCAR's
+                # 0.0-as-missing sentinel to None at build time.
+                "pole_speed": race.pole_winner_speed,
                 "winner": getattr(winner, "Full_Name", None) if winner else None,
-                "cars": getattr(race, "number_of_cars_in_field", 0),
-                "tv": getattr(race, "television_broadcaster", "TBD") or "TBD",
-                "playoff": bool(playoff_round),
+                "cars": race.number_of_cars_in_field,
+                "tv": race.television_broadcaster,
+                "playoff": bool(race.playoff_round),
             }
         )
     monthly.sort(key=lambda r: r["date"])
@@ -198,6 +215,11 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     # ════════════════════════════════════════════════════════════════
     # Materialise each team's roster by series, sorted by car number.
     # Read from state["LeagueRoster"] instead of a hardcoded constant.
+    # This roster -> Driver lookup stays read-time: LeagueRoster.roster is
+    # a list of {series_id, driver_id} dicts (not a flat FK field), and
+    # Driver seeds in the same tier as LeagueRoster with no ordering
+    # guarantee between tier-0 siblings -- link_to() can't fan out a
+    # nested list-of-dicts at build time, so this is the honest boundary.
     league_teams: dict[str, dict[int, list[Any]]] = {}
     for team in league:
         team_cd = team.team_id
@@ -210,7 +232,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 league_teams[team_cd].setdefault(sid, []).append(driver_obj)
         for sid in (1, 2, 3):
             if sid in league_teams[team_cd]:
-                league_teams[team_cd][sid].sort(key=lambda d: int(getattr(d, "Badge", 0) or 0))
+                league_teams[team_cd][sid].sort(key=lambda d: int(d.Badge))
 
     fantasy: list[dict[str, Any]] = []
     for team_cd, roster in league_teams.items():
@@ -234,6 +256,12 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             series_cls = points_standings.get(series_id)
             for car_idx, driver in enumerate(roster[series_id], start=1):
                 did = int(driver.inc_code)
+                # Conditional join whose TARGET dataset is chosen per-row at
+                # runtime (series_id picks Cup/Busch/Truck; OWNER_SCORED
+                # membership picks Owner vs Cup) -- link_to() binds to ONE
+                # dataset per conv_dict entry and can't branch between three
+                # datasets on another field's runtime value.  Stays read-time;
+                # this is dynamic dispatch, not a static FK.
                 if did in OWNER_SCORED and series_id == 1:
                     # Kyle Busch (driver_id 454) and any future deceased Cup
                     # driver: score from the owner-entry standings instead of
@@ -246,8 +274,12 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                     stnd = series_cls.inc_dict.get(driver.inc_code) if series_cls else None
                     owner_seat = None
 
-                pts = getattr(stnd, "points", 0) if stnd else 0
-                wins = getattr(stnd, "wins", 0) if stnd else 0
+                # stnd itself is a null-object guard on the join result (a
+                # driver with no standings row) -- every field READ off stnd
+                # below is a plain attribute because Cup/Busch/TruckStanding's
+                # own conv_dict (nascar_fantasy.py) already coerced them.
+                pts = stnd.points if stnd else 0
+                wins = stnd.wins if stnd else 0
                 per_series[series_id] += pts
                 total_wins += wins
 
@@ -256,11 +288,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 # season-current) and fall back to the driver record.
                 # Owner standings don't carry manufacturer; fall back to
                 # the driver record for owner-seated picks.
-                mfg = (
-                    (getattr(stnd, "manufacturer", "") if stnd and owner_seat is None else "")
-                    or getattr(driver, "Manufacturer", "")
-                    or "Unknown"
-                )
+                mfg = (stnd.manufacturer if stnd and owner_seat is None else "") or driver.Manufacturer or "Unknown"
                 mfg = mfg.strip() or "Unknown"
                 mfg_counter[mfg] += 1
 
@@ -269,23 +297,26 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                     "series": series_name,
                     "car_idx": car_idx,
                     "name": f"{driver_name} [owner seat: RCR #{owner_seat}]" if owner_seat else driver_name,
-                    "car": getattr(driver, "Badge", "N/A"),
-                    "team": (getattr(driver, "Team", "") or "Unknown").strip(),
+                    "car": driver.Badge,
+                    "team": driver.Team.strip() or "Unknown",
                     "manufacturer": mfg,
                     "hometown": _hometown(driver),
-                    "rank": getattr(stnd, "position", None) if stnd else None,
+                    "rank": stnd.position if stnd else None,
                     "wins": wins,
-                    "t10": getattr(stnd, "top_10", 0) if stnd else 0,
-                    "top_5": getattr(stnd, "top_5", 0) if stnd else 0,
+                    "t10": stnd.top_10 if stnd else 0,
+                    "top_5": stnd.top_5 if stnd else 0,
                     # laps_led is not tracked in owner standings; emit 0.
-                    "laps_led": getattr(stnd, "laps_led", 0) if stnd and owner_seat is None else 0,
+                    "laps_led": stnd.laps_led if stnd and owner_seat is None else 0,
                     "points": pts,
                     # ``delta_leader`` is signed in the raw feed (negative
                     # for drivers behind the leader, 0 for the leader).
                     # Fantasy UX wants "points behind leader" as a
                     # positive number — abs() makes the column intuitive
-                    # without altering the underlying truth.
-                    "points_back": abs(getattr(stnd, "delta_leader", 0) or 0) if stnd else None,
+                    # without altering the underlying truth.  CupOwnerStanding
+                    # doesn't carry delta_leader (different conv_dict, same
+                    # honest-boundary reason as laps_led above), so the
+                    # owner-seat branch reports None instead of reading it.
+                    "points_back": abs(stnd.delta_leader) if stnd and owner_seat is None else None,
                 }
                 if owner_seat is not None:
                     row["owner_seat"] = owner_seat
@@ -321,23 +352,23 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     mfg_buckets: dict[str, list[Any]] = defaultdict(list)
     if cup is not None:
         for stnd in cup:
-            mfg = (getattr(stnd, "manufacturer", "") or "").strip() or "Unknown"
+            mfg = stnd.manufacturer.strip() or "Unknown"
             mfg_buckets[mfg].append(stnd)
 
     manufacturer_rows: list[dict[str, Any]] = []
     for mfg, rows in mfg_buckets.items():
         if mfg == "Unknown":
             continue  # skip the catch-all bucket
-        top = max(rows, key=lambda s: getattr(s, "points", 0))
+        top = max(rows, key=lambda s: s.points)
         manufacturer_rows.append(
             {
                 "manufacturer": mfg,
                 "drivers": len(rows),
-                "total_points": sum(getattr(s, "points", 0) for s in rows),
-                "total_wins": sum(getattr(s, "wins", 0) for s in rows),
-                "playoff_seats": sum(1 for s in rows if getattr(s, "playoff_eligible", 0)),
+                "total_points": sum(s.points for s in rows),
+                "total_wins": sum(s.wins for s in rows),
+                "playoff_seats": sum(1 for s in rows if s.playoff_eligible),
                 "top_driver": getattr(top, "inc_name", "Unknown"),
-                "top_points": getattr(top, "points", 0),
+                "top_points": top.points,
             }
         )
     manufacturer_rows.sort(key=lambda r: -r["total_points"])

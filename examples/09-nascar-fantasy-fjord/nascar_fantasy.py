@@ -127,6 +127,10 @@ async def main() -> None:
                     "rec_path": "items",
                     "inc_code": "track_id",
                     "inc_name": "track_name",
+                    "conv_dict": {
+                        "track_type": inc(str, default="Unknown"),
+                        "length": inc(float, default=None),
+                    },
                 },
                 "refresh_params": None,  # tracks never change
             },
@@ -147,6 +151,14 @@ async def main() -> None:
                         # Empty Manufacturer fields are handled by is_garbage_value
                         # before the callable runs and land as default='Unknown'.
                         "Manufacturer": calc(_mfg_from_logo_url, "Manufacturer", default="Unknown", target_type=str),
+                        "Hometown_City": inc(str, default=""),
+                        "Hometown_State": inc(str, default=""),
+                        "Team": inc(str, default=""),
+                        # Badge is a numeric-string car number ("5", "8") in
+                        # the raw feed; keep the "0" default numeric-string
+                        # (not "N/A") so outflow.py's sort-by-car-number
+                        # int(driver.Badge) never breaks on a missing badge.
+                        "Badge": inc(str, default="0"),
                     },
                 },
                 "refresh_params": None,
@@ -184,6 +196,9 @@ async def main() -> None:
                         "top_5": inc(int, default=0),
                         "laps_led": inc(int, default=0),
                         "position": inc(int, default=0),
+                        "delta_leader": inc(int, default=0),
+                        "manufacturer": inc(str, default=""),
+                        "playoff_eligible": inc(bool, default=False),
                     },
                 },
                 "refresh_params": None,
@@ -202,6 +217,9 @@ async def main() -> None:
                         "top_5": inc(int, default=0),
                         "laps_led": inc(int, default=0),
                         "position": inc(int, default=0),
+                        "delta_leader": inc(int, default=0),
+                        "manufacturer": inc(str, default=""),
+                        "playoff_eligible": inc(bool, default=False),
                     },
                 },
                 "refresh_params": None,
@@ -220,6 +238,9 @@ async def main() -> None:
                         "top_5": inc(int, default=0),
                         "laps_led": inc(int, default=0),
                         "position": inc(int, default=0),
+                        "delta_leader": inc(int, default=0),
+                        "manufacturer": inc(str, default=""),
+                        "playoff_eligible": inc(bool, default=False),
                     },
                 },
                 "refresh_params": None,

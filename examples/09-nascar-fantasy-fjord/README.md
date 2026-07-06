@@ -64,6 +64,17 @@ The two sidecars are split by **direction of data flow**: anything that shapes a
 
 The output directory (`out/`) is created at runtime; you don't need to make it.
 
+> 💡 **Read-time DX rule: coerce + join at build time; outflow reads plain attributes.**
+> Every `getattr(x, "field", default) or fallback` guard in an `outflow()` function exists for one of two reasons: (1) the field hasn't been *coerced* yet (raw JSON string where you want an `int`/`float`/`bool`), or (2) the field hasn't been *joined* yet (a raw FK where you want the actual related object).  Both belong in the `conv_dict` at each source's own build time — `inc()`/`calc()` for coercion, `link_to()`/`link_to_list()` for joins — not in `outflow()`.  The framework's `is_garbage_value` null contract already does the defensive work once, at construction; a second defensive read at export time is pure duplication.
+>
+> This tutorial's `Standing` classes, `Track`, and `Driver` all coerce their own numeric/string fields in `nascar_fantasy.py`'s `conv_dict`s; `Race`'s three foreign keys and its `0.0`/`0`-sentinel fields resolve in `inflow.py`.  `outflow.py`'s three views read almost everything as plain attributes as a result.
+>
+> **Two joins stay deliberately read-time** — not because build-time is impossible in general, but because *this specific model* can't express them as a static per-field `conv_dict` entry:
+> 1. **Roster → Driver** (`drivers.inc_dict.get(driver_id)`) — `LeagueRoster.roster` is a list of `{series_id, driver_id}` dicts, not a flat FK field; `link_to()` resolves one scalar field per conv_dict entry, it doesn't fan out a nested list-of-dicts.
+> 2. **Per-pick Standings lookup** (`series_cls.inc_dict.get(...)` / `owner_standings.inc_dict.get(...)`) — the *target dataset itself* is chosen per-row at runtime (`series_id` picks Cup/Busch/Truck; `OWNER_SCORED` membership picks Owner vs Cup).  `link_to()` binds to ONE dataset per conv_dict entry; it can't branch between three datasets based on another field's runtime value.  This is dynamic dispatch, not a static FK — the honest boundary, not a shortcut.
+>
+> See `docs/api_atlas.md`'s "Build-time vs read-time: where coercion + joins belong" section for the general rule and why a read-time `inc_dict` registry accessor is deliberately **not** being added as a framework primitive.
+
 ---
 
 ## 🔧 Step 1: The Roster Fixture
@@ -371,12 +382,36 @@ def inflow(state: dict[str, Any]) -> dict[str, Any]:
                 "pole_winner_driver_id": link_to(state["Driver"], extractor=_driver_id_or_none),
                 "winner_driver_id":      link_to(state["Driver"], extractor=_driver_id_or_none),
                 **{key: inc(datetime) for key in _DATE_FIELDS},
+                # Build-time coercion so outflow.py reads these as plain
+                # attributes instead of getattr(race, "...", default).
+                "number_of_cars_in_field": inc(int, default=0),
+                "television_broadcaster": inc(str, default="TBD"),
+                "playoff_round": inc(int, default=0),
+                # 0.0-as-missing sentinel, same shape as the driver-ID
+                # fields above but for calc() since there's no dataset to
+                # join against -- just a float re-mapped to None.
+                "pole_winner_speed": calc(_speed_or_none, "pole_winner_speed"),
             }
         }
     return overrides
 ```
 
 Returning `{}` for a source = "no overrides, use the `incorp_params` as-declared".  Returning `{"Race": {"conv_dict": …}}` = "when fjord goes to seed `Race`, merge this `conv_dict` into its `incorp_params`".  The `link_to(state["Track"])` call captures the **live** `Track` registry, so when `Race`'s rows incorporate, every `track_id` integer is swapped for the matching `Track` Pydantic instance.
+
+**The `_speed_or_none` helper** mirrors `_driver_id_or_none`'s shape but for a plain float field instead of a joined dataset:
+
+```python
+def _speed_or_none(raw: Any) -> float | None:
+    """NASCAR returns 0.0 for pole_winner_speed on races whose pole hasn't
+    been set yet (same sentinel pattern as the driver-ID fields above).
+    Casts to float inline (rather than via calc()'s target_type=) so a
+    genuine None result doesn't hit float(None) and log a per-row
+    coercion warning.
+    """
+    return float(raw) if raw else None
+```
+
+`calc(_speed_or_none, "pole_winner_speed")` promotes the `0.0`-as-missing sentinel to `None` at build time — `outflow.py` then reads `race.pole_winner_speed` directly with no `if pole else None` guard.
 
 > **Keep the guard for refresh waves.**  During refresh, a peer source may temporarily fail — `Track` might be offline — which means `state["Track"]` is stale or absent.  The `if "Track" in state and "Driver" in state:` check lets `inflow` return `{}` safely, so `Race` re-uses its last-good `conv_dict` instead of getting a `KeyError`.  `depends_on` guarantees ordering at seed time; it does not suppress failures at refresh time.  See [Tutorial 10's seed-empty abort callout](../10-multi-source-fjord/README.md) for more on inflow failure handling.
 
@@ -393,18 +428,30 @@ Two small string-composition helpers used by the outflow.  Pure functions, no st
 def _hometown(driver: Any) -> str:
     """Compose ``City, ST`` from the driver's hometown fields, or
     ``Unknown`` if either piece is missing.
+
+    Hometown_City / Hometown_State are coerced to plain strings at
+    Driver's own build time (inc(str, default="") in nascar_fantasy.py)
+    -- no getattr(..., "") or "" guard needed here.  The ``city and
+    state`` composition is business logic (how to format two strings
+    together), not a null guard, so it stays.
     """
-    city = getattr(driver, "Hometown_City", "") or ""
-    state = getattr(driver, "Hometown_State", "") or ""
-    city = city.strip()
-    state = state.strip()
+    city = driver.Hometown_City.strip()
+    state = driver.Hometown_State.strip()
     if city and state:
         return f"{city}, {state}"
     return city or state or "Unknown"
 
 
 def _track_loc(track: Any) -> str:
-    """Compose ``City, ST`` for a track."""
+    """Compose ``City, ST`` for a track.
+
+    ``track`` itself can be None (a Race whose Track FK didn't resolve)
+    -- that "is there a related object at all" check is a legitimate
+    null-object guard on the join result, not a field-coercion guard,
+    and stays.  Track's city/state fields are not build-time coerced
+    (tracks.json ships them as plain strings already), so the local
+    ``or ""`` guard remains as defense against a genuinely missing key.
+    """
     if track is None:
         return "Unknown"
     city = (getattr(track, "city", "") or "").strip()
@@ -453,7 +500,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
 
 #### View 1 — `MonthlyRaceSchedule`
 
-Current-month Cup races with resolved track + driver context.  This is where the inflow's `link_to` work pays off: `race.track_id` is already a live `Track` instance (we renamed it to `race.track` via `name_chg` in the runner, but we fall back to the original name too), and `race.pole_winner_driver_id` / `race.winner_driver_id` are live `Driver` instances or `None` thanks to the sentinel filter.  Zero re-lookups in the outflow.
+Current-month Cup races with resolved track + driver context.  This is where both build-time mechanisms pay off: `race.track_id` is already a live `Track` instance (renamed to `race.track` via `name_chg` in the runner, but we fall back to the original name too), `race.pole_winner_driver_id` / `race.winner_driver_id` are live `Driver` instances or `None` thanks to the sentinel filter, and `race.pole_winner_speed` / `race.number_of_cars_in_field` / `race.television_broadcaster` / `race.playoff_round` are already coerced by `inflow.py`'s extended `conv_dict`.  Zero re-lookups, zero defensive coercion, in the outflow.
 
 ```python
     # ════════════════════════════════════════════════════════════════
@@ -461,28 +508,36 @@ Current-month Cup races with resolved track + driver context.  This is where the
     # ════════════════════════════════════════════════════════════════
     monthly: list[dict[str, Any]] = []
     for race in races:
+        # date_scheduled arrives via inflow.py's inc(datetime) -- a Race
+        # with a genuinely missing schedule date is a null-object case
+        # (dt is None), not a coercion gap, so this guard stays.
         dt = getattr(race, "date_scheduled", None)
         if dt is None or dt.month != now.month or dt.year != now.year:
             continue
-        pole = getattr(race, "pole_winner_driver_id", None)
-        winner = getattr(race, "winner_driver_id", None)
+        # pole / winner / track can each be None -- the FK didn't resolve
+        # (link_to's sentinel-aware extractor for driver IDs; a Race whose
+        # track_id had no Track match) -- a null-object guard on the JOIN
+        # result, not a field-coercion guard, so `if track else` etc. stay.
+        pole = race.pole_winner_driver_id
+        winner = race.winner_driver_id
         track = getattr(race, "track", None) or getattr(race, "track_id", None)
-        playoff_round = getattr(race, "playoff_round", 0) or 0
 
         monthly.append({
             "race_id":     race.inc_code,
             "date":        dt.strftime("%Y-%m-%d"),
             "race_name":   getattr(race, "race_name", "TBD"),
             "track":       getattr(track, "inc_name", "Unknown") if track else "Unknown",
-            "track_type":  getattr(track, "track_type", "Unknown") if track else "Unknown",
-            "track_miles": getattr(track, "length", None) if track else None,
+            "track_type":  track.track_type if track else "Unknown",
+            "track_miles": track.length if track else None,
             "track_loc":   _track_loc(track),
             "pole_winner": getattr(pole, "Full_Name", None) if pole else None,
-            "pole_speed":  (getattr(race, "pole_winner_speed", None) or None) if pole else None,
+            # inflow.py's _speed_or_none already promotes NASCAR's
+            # 0.0-as-missing sentinel to None at build time.
+            "pole_speed":  race.pole_winner_speed,
             "winner":      getattr(winner, "Full_Name", None) if winner else None,
-            "cars":        getattr(race, "number_of_cars_in_field", 0),
-            "tv":          getattr(race, "television_broadcaster", "TBD") or "TBD",
-            "playoff":     bool(playoff_round),
+            "cars":        race.number_of_cars_in_field,
+            "tv":          race.television_broadcaster,
+            "playoff":     bool(race.playoff_round),
         })
     monthly.sort(key=lambda r: r["date"])
 ```
@@ -492,21 +547,27 @@ Note the navigation idioms:
 * **`race.inc_code`** — every Incorporator instance exposes its primary key via `inc_code` and its display name via `inc_name`.  This is how you get back at the original ID after fjord's field renaming.
 * **`getattr(race, "track", None) or getattr(race, "track_id", None)`** — fjord renames `track_id` → `track` per the runner's `name_chg`, but we accept either spelling defensively.
 * **`getattr(pole, "Full_Name", None) if pole else None`** — `pole` is a live `Driver` Pydantic instance whose schema came from the API; `Full_Name` is the API's actual field name and reaches us unchanged.
+* **`race.pole_winner_speed` (plain attribute, no guard)** — `inflow.py`'s `_speed_or_none` converter already ran at Race's build time; the field is either a real float or `None`, never the raw `0.0` sentinel.
 
 #### View 2 — `FantasyTeam`
 
 Per-team scoreboard.  For each team's roster pick `{series_id, driver_id}`:
 
 1. Look up the driver in `state["Driver"].inc_dict` by `driver_id` → live `Driver` instance.
-2. Look up that same driver in the matching series Standings (`state["CupStanding"]` / `BuschStanding` / `TruckStanding`) by **the same key** — `Driver` and `*Standing` are keyed on the same `driver_id`, so `standings.inc_dict.get(driver.inc_code)` works.
-3. Pull manufacturer / wins / position / points off the Standings row, and hometown / team / car number off the Driver row.
+2. Look up that same driver in the matching series Standings (`state["CupStanding"]` / `BuschStanding` / `TruckStanding`) — or, for a Kyle-Busch-style owner-seat pick, in `state["CupOwnerStanding"]` instead (see the Kyle Busch section below).
+3. Pull manufacturer / wins / position / points off the Standings row (all build-time coerced — plain attribute reads), and hometown / team / car number off the Driver row (also build-time coerced).
 
-`.inc_dict.get(key)` is the framework's O(1) primary-key lookup on the registry — every `IncorporatorList` exposes it.
+`.inc_dict.get(key)` is the framework's O(1) primary-key lookup on the registry — every `IncorporatorList` exposes it.  This is the honest read-time boundary described above: **both** lookups here are joins whose target dataset can't be pinned to one `conv_dict` entry, so both stay read-time — everything downstream of them is a plain attribute read.
 
 ```python
     # ════════════════════════════════════════════════════════════════
     # View 2 — FantasyTeam
     # ════════════════════════════════════════════════════════════════
+    # This roster -> Driver lookup stays read-time: LeagueRoster.roster is
+    # a list of {series_id, driver_id} dicts (not a flat FK field), and
+    # Driver seeds in the same tier as LeagueRoster with no ordering
+    # guarantee between tier-0 siblings -- link_to() can't fan out a
+    # nested list-of-dicts at build time, so this is the honest boundary.
     league_teams: dict[str, dict[int, list[Any]]] = {}
     for team in league:
         team_cd = team.team_id
@@ -519,9 +580,7 @@ Per-team scoreboard.  For each team's roster pick `{series_id, driver_id}`:
                 league_teams[team_cd].setdefault(sid, []).append(driver_obj)
         for sid in (1, 2, 3):
             if sid in league_teams[team_cd]:
-                league_teams[team_cd][sid].sort(
-                    key=lambda d: int(getattr(d, "Badge", 0) or 0)
-                )
+                league_teams[team_cd][sid].sort(key=lambda d: int(d.Badge))
 
     fantasy: list[dict[str, Any]] = []
     for team_cd, roster in league_teams.items():
@@ -544,33 +603,56 @@ Per-team scoreboard.  For each team's roster pick `{series_id, driver_id}`:
                 continue
             series_cls = points_standings.get(series_id)
             for car_idx, driver in enumerate(roster[series_id], start=1):
-                stnd = series_cls.inc_dict.get(driver.inc_code) if series_cls else None
-                pts = getattr(stnd, "points", 0) if stnd else 0
-                wins = getattr(stnd, "wins", 0) if stnd else 0
+                did = int(driver.inc_code)
+                # Conditional join whose TARGET dataset is chosen per-row at
+                # runtime (series_id picks Cup/Busch/Truck; OWNER_SCORED
+                # membership picks Owner vs Cup) -- link_to() binds to ONE
+                # dataset per conv_dict entry and can't branch between three
+                # datasets on another field's runtime value.  Stays read-time.
+                if did in OWNER_SCORED and series_id == 1:
+                    owner_vnum = OWNER_SCORED[did]
+                    stnd = owner_standings.inc_dict.get(owner_vnum) if owner_standings else None
+                    owner_seat: str | None = owner_vnum
+                else:
+                    stnd = series_cls.inc_dict.get(driver.inc_code) if series_cls else None
+                    owner_seat = None
+
+                # stnd itself is a null-object guard on the join result (a
+                # driver with no standings row) -- every field READ off
+                # stnd below is a plain attribute because the Standing
+                # classes' own conv_dict (nascar_fantasy.py) coerced them.
+                pts = stnd.points if stnd else 0
+                wins = stnd.wins if stnd else 0
                 per_series[series_id] += pts
                 total_wins += wins
 
-                mfg = (getattr(stnd, "manufacturer", "") if stnd else "") or \
-                      getattr(driver, "Manufacturer", "") or "Unknown"
+                mfg = (stnd.manufacturer if stnd and owner_seat is None else "") or driver.Manufacturer or "Unknown"
                 mfg = mfg.strip() or "Unknown"
                 mfg_counter[mfg] += 1
 
-                team_obj["roster"].append({
+                driver_name = getattr(driver, "inc_name", "Unknown").strip()
+                row: dict[str, Any] = {
                     "series":       series_name,
                     "car_idx":      car_idx,
-                    "name":         getattr(driver, "inc_name", "Unknown").strip(),
-                    "car":          getattr(driver, "Badge", "N/A"),
-                    "team":         (getattr(driver, "Team", "") or "Unknown").strip(),
+                    "name":         f"{driver_name} [owner seat: RCR #{owner_seat}]" if owner_seat else driver_name,
+                    "car":          driver.Badge,
+                    "team":         driver.Team.strip() or "Unknown",
                     "manufacturer": mfg,
                     "hometown":     _hometown(driver),
-                    "rank":         getattr(stnd, "position", None) if stnd else None,
+                    "rank":         stnd.position if stnd else None,
                     "wins":         wins,
-                    "t10":          getattr(stnd, "top_10", 0) if stnd else 0,
-                    "top_5":        getattr(stnd, "top_5", 0) if stnd else 0,
-                    "laps_led":     getattr(stnd, "laps_led", 0) if stnd else 0,
+                    "t10":          stnd.top_10 if stnd else 0,
+                    "top_5":        stnd.top_5 if stnd else 0,
+                    # laps_led is not tracked in owner standings; emit 0.
+                    "laps_led":     stnd.laps_led if stnd and owner_seat is None else 0,
                     "points":       pts,
-                    "points_back":  abs(getattr(stnd, "delta_leader", 0) or 0) if stnd else None,
-                })
+                    # CupOwnerStanding doesn't carry delta_leader either --
+                    # same honest-boundary reason as laps_led above.
+                    "points_back":  abs(stnd.delta_leader) if stnd and owner_seat is None else None,
+                }
+                if owner_seat is not None:
+                    row["owner_seat"] = owner_seat
+                team_obj["roster"].append(row)
             team_score += per_series[series_id]
 
         for series_id, series_name in enumerate(_SERIES_LIST, start=1):
@@ -589,6 +671,8 @@ Per-team scoreboard.  For each team's roster pick `{series_id, driver_id}`:
     fantasy.sort(key=lambda t: -t["total_score"])
 ```
 
+Every field read off `stnd` or `driver` above is a plain attribute — no `getattr(..., default) or fallback` — because `nascar_fantasy.py`'s `conv_dict`s guarantee they're always present.  Only `stnd` itself (does this driver have a standings row at all?) and `owner_seat is None` (is this an owner-seated pick, whose source class lacks certain fields?) remain as guards — both null-object / cross-source-shape checks, not coercion gaps.
+
 #### View 3 — `ManufacturerLeaderboard`
 
 A third analytical view that's effectively "free" because the Cup standings are already in memory.  Bucket Cup drivers by `manufacturer`, sum points / wins / playoff seats per make, find the top driver per make by points.
@@ -601,22 +685,22 @@ A third analytical view that's effectively "free" because the Cup standings are 
     mfg_buckets: dict[str, list[Any]] = defaultdict(list)
     if cup is not None:
         for stnd in cup:
-            mfg = (getattr(stnd, "manufacturer", "") or "").strip() or "Unknown"
+            mfg = stnd.manufacturer.strip() or "Unknown"
             mfg_buckets[mfg].append(stnd)
 
     manufacturer_rows: list[dict[str, Any]] = []
     for mfg, rows in mfg_buckets.items():
         if mfg == "Unknown":
             continue
-        top = max(rows, key=lambda s: getattr(s, "points", 0))
+        top = max(rows, key=lambda s: s.points)
         manufacturer_rows.append({
             "manufacturer":  mfg,
             "drivers":       len(rows),
-            "total_points":  sum(getattr(s, "points", 0) for s in rows),
-            "total_wins":    sum(getattr(s, "wins", 0) for s in rows),
-            "playoff_seats": sum(1 for s in rows if getattr(s, "playoff_eligible", 0)),
+            "total_points":  sum(s.points for s in rows),
+            "total_wins":    sum(s.wins for s in rows),
+            "playoff_seats": sum(1 for s in rows if s.playoff_eligible),
             "top_driver":    getattr(top, "inc_name", "Unknown"),
-            "top_points":    getattr(top, "points", 0),
+            "top_points":    top.points,
         })
     manufacturer_rows.sort(key=lambda r: -r["total_points"])
 
@@ -626,6 +710,8 @@ A third analytical view that's effectively "free" because the Cup standings are 
         "ManufacturerLeaderboard": manufacturer_rows,
     }
 ```
+
+`stnd.manufacturer` / `stnd.points` / `stnd.wins` / `stnd.playoff_eligible` are plain attributes here too — `CupStanding`'s own `conv_dict` in `nascar_fantasy.py` coerces all four (`manufacturer` defaults to `""`, `playoff_eligible` defaults to `False`).  No null-object guard is needed at all in this view: every `stnd` came from iterating `cup` directly (a real `CupStanding` instance, never `None`).
 
 The three dict keys land verbatim as fjord-built class names and match the keys in the runner's `export_params`.
 
@@ -725,7 +811,7 @@ _DRIVER_EXCL = [
 
 
 async def main() -> None:
-    print("🏁 Initiating NASCAR Data Gateway (fjord)...\n")
+    print("Initiating NASCAR Data Gateway (fjord)...\n")
     DATA.mkdir(exist_ok=True)
 
     async for wave in Incorporator.fjord(
@@ -738,6 +824,10 @@ async def main() -> None:
                     "rec_path": "items",
                     "inc_code": "track_id",
                     "inc_name": "track_name",
+                    "conv_dict": {
+                        "track_type": inc(str, default="Unknown"),
+                        "length": inc(float, default=None),
+                    },
                 },
                 "refresh_params": None,  # tracks never change
             },
@@ -758,6 +848,14 @@ async def main() -> None:
                         # Empty Manufacturer fields are handled by is_garbage_value
                         # before the callable runs and land as default='Unknown'.
                         "Manufacturer": calc(_mfg_from_logo_url, "Manufacturer", default="Unknown", target_type=str),
+                        "Hometown_City": inc(str, default=""),
+                        "Hometown_State": inc(str, default=""),
+                        "Team": inc(str, default=""),
+                        # Badge is a numeric-string car number ("5", "8") in
+                        # the raw feed; keep the "0" default numeric-string
+                        # (not "N/A") so outflow.py's sort-by-car-number
+                        # int(driver.Badge) never breaks on a missing badge.
+                        "Badge": inc(str, default="0"),
                     },
                 },
                 "refresh_params": None,
@@ -795,6 +893,9 @@ async def main() -> None:
                         "top_5": inc(int, default=0),
                         "laps_led": inc(int, default=0),
                         "position": inc(int, default=0),
+                        "delta_leader": inc(int, default=0),
+                        "manufacturer": inc(str, default=""),
+                        "playoff_eligible": inc(bool, default=False),
                     },
                 },
                 "refresh_params": None,
@@ -813,6 +914,9 @@ async def main() -> None:
                         "top_5": inc(int, default=0),
                         "laps_led": inc(int, default=0),
                         "position": inc(int, default=0),
+                        "delta_leader": inc(int, default=0),
+                        "manufacturer": inc(str, default=""),
+                        "playoff_eligible": inc(bool, default=False),
                     },
                 },
                 "refresh_params": None,
@@ -831,6 +935,9 @@ async def main() -> None:
                         "top_5": inc(int, default=0),
                         "laps_led": inc(int, default=0),
                         "position": inc(int, default=0),
+                        "delta_leader": inc(int, default=0),
+                        "manufacturer": inc(str, default=""),
+                        "playoff_eligible": inc(bool, default=False),
                     },
                 },
                 "refresh_params": None,
@@ -905,14 +1012,14 @@ async def main() -> None:
     ):
         op = wave.operation
         if wave.failed_sources:
-            print(f"⚠️  {op:35s} chunk {wave.chunk_index}: {wave.failed_sources}")
+            print(f"WARN  {op:35s} chunk {wave.chunk_index}: {wave.failed_sources}")
         else:
-            print(f"✅ {op:35s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
+            print(f"OK    {op:35s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
 
-    print("\n✅ Pipeline complete.")
-    print(f"   • {DATA / 'nascar_monthly_schedule.ndjson'}")
-    print(f"   • {DATA / 'nascar_fantasy_scoreboard.ndjson'}")
-    print(f"   • {DATA / 'nascar_manufacturer_leaderboard.ndjson'}")
+    print("\nPipeline complete.")
+    print(f"   - {DATA / 'nascar_monthly_schedule.ndjson'}")
+    print(f"   - {DATA / 'nascar_fantasy_scoreboard.ndjson'}")
+    print(f"   - {DATA / 'nascar_manufacturer_leaderboard.ndjson'}")
 
 
 if __name__ == "__main__":
@@ -1064,12 +1171,12 @@ The affected roster row is relabelled in the output:
   "t10":        0,
   "top_5":      0,
   "laps_led":   0,
-  "points_back": 420,
+  "points_back": null,
   "owner_seat": "133"
 }
 ```
 
-`laps_led` is emitted as `0` because the owner-entry feed does not track laps led.  All other fields (`manufacturer`, `hometown`, `team`, `car`) still read from the `Driver` registry — the car number and team name on the driver record remain intact.
+`laps_led` is emitted as `0` and `points_back` as `null` because the owner-entry feed does not track laps led or delta-to-leader — both fields are `CupStanding`-only, gated on `owner_seat is None`.  All other fields (`manufacturer`, `hometown`, `team`, `car`) still read from the `Driver` registry — the car number and team name on the driver record remain intact.
 
 **Adding a new entry** to `OWNER_SCORED` (e.g., `{456: "17"}` for a future hypothetical) is the only change required to route another pick.  The `CupOwnerStanding` feed carries all 46 owner entries so the new vehicle number is already in the registry.
 
@@ -1106,7 +1213,11 @@ The same eight-source pipeline expressed as a JSON config — no Python wrapper 
         "inc_url":   "https://cf.nascar.com/cacher/tracks.json",
         "rec_path":  "items",
         "inc_code":  "track_id",
-        "inc_name":  "track_name"
+        "inc_name":  "track_name",
+        "conv_dict": {
+          "track_type": "inc(str, default='Unknown')",
+          "length":     "inc(float, default=None)"
+        }
       },
       "refresh_params": null
     },
@@ -1126,7 +1237,13 @@ The same eight-source pipeline expressed as a JSON config — no Python wrapper 
                       "Integrated_Sponsor_Name", "Integrated_Sponsor",
                       "Integrated_Sponsor_URL", "Silly_Season_Change",
                       "Silly_Season_Change_Description", "Driver_Post_Status",
-                      "Driver_Part_Time"]
+                      "Driver_Part_Time"],
+        "conv_dict": {
+          "Hometown_City":  "inc(str, default='')",
+          "Hometown_State": "inc(str, default='')",
+          "Team":           "inc(str, default='')",
+          "Badge":          "inc(str, default='0')"
+        }
       }
     },
     {
@@ -1150,12 +1267,15 @@ The same eight-source pipeline expressed as a JSON config — no Python wrapper 
         "excl_lst":  ["is_clinch", "driver_first_name", "driver_last_name",
                       "driver_suffix", "playoff_stage_wins"],
         "conv_dict": {
-          "points":   "inc(int, default=0)",
-          "wins":     "inc(int, default=0)",
-          "top_10":   "inc(int, default=0)",
-          "top_5":    "inc(int, default=0)",
-          "laps_led": "inc(int, default=0)",
-          "position": "inc(int, default=0)"
+          "points":           "inc(int, default=0)",
+          "wins":             "inc(int, default=0)",
+          "top_10":           "inc(int, default=0)",
+          "top_5":            "inc(int, default=0)",
+          "laps_led":         "inc(int, default=0)",
+          "position":         "inc(int, default=0)",
+          "delta_leader":     "inc(int, default=0)",
+          "manufacturer":     "inc(str, default='')",
+          "playoff_eligible": "inc(bool, default=False)"
         }
       }
     },

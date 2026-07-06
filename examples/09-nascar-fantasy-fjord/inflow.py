@@ -8,6 +8,9 @@ registries, plus the conv_dict helpers and constants those wires depend on.
   and must be coerced to ``datetime`` objects.
 * ``_driver_id_or_none`` — sentinel guard for NASCAR's ``0``-as-missing
   pattern on driver-ID fields; lets ``link_to`` short-circuit cleanly.
+* ``_speed_or_none`` — sentinel guard for NASCAR's ``0.0``-as-missing
+  pattern on ``pole_winner_speed``; same shape as ``_driver_id_or_none``
+  but for a float field consumed by ``calc()`` instead of ``link_to()``.
 * ``_mfg_from_logo_url`` — parses a NASCAR CDN logo URL into the make name
   (``'Chevrolet'``, ``'Ford'``, ``'Toyota'``, ``'Ram'``); used as the
   ``calc()`` converter for the Driver source's ``Manufacturer`` field.
@@ -21,7 +24,7 @@ in the sibling ``outflow.py``.
 from datetime import datetime
 from typing import Any
 
-from incorporator import inc, link_to
+from incorporator import calc, inc, link_to
 
 # ── Constants ──────────────────────────────────────────────────────
 
@@ -41,6 +44,18 @@ def _driver_id_or_none(raw: Any) -> Any:
     short-circuit and downstream consumers see ``None``.
     """
     return raw if raw else None
+
+
+def _speed_or_none(raw: Any) -> float | None:
+    """NASCAR returns ``0.0`` for ``pole_winner_speed`` on races whose pole
+    hasn't been set yet (same sentinel pattern as the driver-ID fields
+    above).  Mapping ``0.0`` to ``None`` at build time means outflow reads
+    ``race.pole_winner_speed`` directly — no ``if pole else None`` guard
+    needed against the magic-number sentinel.  Casts to ``float`` inline
+    (rather than via ``calc()``'s ``target_type=``) so a genuine ``None``
+    result doesn't hit ``float(None)`` and log a per-row coercion warning.
+    """
+    return float(raw) if raw else None
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -85,6 +100,15 @@ def inflow(state: dict[str, Any]) -> dict[str, Any]:
                 "pole_winner_driver_id": link_to(state["Driver"], extractor=_driver_id_or_none),
                 "winner_driver_id": link_to(state["Driver"], extractor=_driver_id_or_none),
                 **{key: inc(datetime) for key in _DATE_FIELDS},
+                # Build-time coercion so outflow.py reads these as plain
+                # attributes instead of getattr(race, "...", default).
+                "number_of_cars_in_field": inc(int, default=0),
+                "television_broadcaster": inc(str, default="TBD"),
+                "playoff_round": inc(int, default=0),
+                # 0.0-as-missing sentinel, same shape as the driver-ID
+                # fields above but for calc() since there's no dataset to
+                # join against — just a float re-mapped to None.
+                "pole_winner_speed": calc(_speed_or_none, "pole_winner_speed"),
             }
         }
     return overrides

@@ -23,7 +23,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from incorporator import Incorporator, register_host_penstock
+from incorporator import Incorporator, inc, register_host_penstock
 from incorporator.io.penstock import SustainedPenstock
 
 # Pace api.coingecko.com at 0.2 req/sec (12/min) — under the free-tier
@@ -60,7 +60,15 @@ async def main() -> None:
                     "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
                     "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
                     "inc_code": "id",
+                    # link_to()'s conv_dict key must match the SOURCE field
+                    # ("symbol") it reads; name_chg then frees a clean,
+                    # distinctly-named attribute for outflow.py post-join.
+                    "name_chg": [("symbol", "binance_pair")],
                 },
+                # Tier-1: waits for BinancePair (tier 0) so inflow.py's
+                # link_to(state["BinancePair"], ...) can resolve the
+                # build-time join — see inflow.py's docstring.
+                "depends_on": ["BinancePair"],
             },
             {
                 "cls": BinancePair,
@@ -70,9 +78,15 @@ async def main() -> None:
                     # shape; swap back to api.binance.com if you're outside those regions.
                     "inc_url": "https://api.binance.us/api/v3/ticker/price",
                     "inc_code": "symbol",
+                    # Coerce at the SOURCE's own build time: CoinGecko's
+                    # link_to() join hands back this same instance, so
+                    # `pair.price` must already be a clean float by then.
+                    "conv_dict": {"price": inc(float, default=0.0)},
                 },
             },
         ],
+        # State-aware inflow (inflow.py) wires CoinGecko's build-time join.
+        inflow=str(HERE / "inflow.py"),
         outflow=str(HERE / "outflow.py"),
         export_params={"file_path": str(OUT / "crypto_spread.ndjson")},
         refresh_interval={  # per-source cadences
@@ -85,9 +99,9 @@ async def main() -> None:
         if wave.failed_sources:
             # Surface the reason fjord might abort — empty seeds (geo-blocks,
             # rate limits, transient outages) cause the engine to bail early.
-            print(f"⚠️  {op:40s} chunk {wave.chunk_index}: {wave.failed_sources}")
+            print(f"WARN  {op:40s} chunk {wave.chunk_index}: {wave.failed_sources}")
         else:
-            print(f"✅ {op:40s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
+            print(f"OK    {op:40s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
 
 
 if __name__ == "__main__":
