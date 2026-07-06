@@ -462,6 +462,29 @@ def test_tune_penstock_rate_below_threshold_skipped() -> None:
     assert hints == []
 
 
+def test_tune_penstock_rate_429_no_cooldown_recommends_lower_rate() -> None:
+    """6+ HTTP 429 rejects with cooldown_sec=None must recommend LOWERING rate_per_sec.
+
+    HTTP 429 means the server is already rejecting the client for exceeding
+    its rate; recommending "Raise rate" with no Retry-After data is
+    backwards. The rationale must name SustainedPenstock, recommend a lower
+    rate_per_sec, and never say "Raise rate". It must also be honest that
+    Retry-After is not auto-applied to penstocks.
+    """
+    rejects = [_reject_http(host="api.example.com", cooldown_sec=None) for _ in range(6)]
+    hints = _tune_penstock_rate(rejects)
+    assert len(hints) == 1
+    h = hints[0]
+    assert h.severity == "med"
+    assert h.knob == "penstock.rate_per_sec"
+    assert h.scope.get("host") == "api.example.com"
+    assert h.recommended_value is None
+    assert "LOWER" in h.rationale and "rate_per_sec" in h.rationale
+    assert "SustainedPenstock" in h.rationale
+    assert "Raise rate" not in h.rationale
+    assert "not auto-applied to penstocks" in h.rationale.lower() or "NOT auto-applied to penstocks" in h.rationale
+
+
 # ---------------------------------------------------------------------------
 # _tune_surge_threshold
 # ---------------------------------------------------------------------------

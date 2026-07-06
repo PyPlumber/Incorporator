@@ -33,6 +33,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surfaces via `_build_seed_reject`'s actionable missing-peer `KeyError`
   guidance instead of a bare `f"Seed Error: {exc}"` string.
 
+- **AIMD chunk-size ring never cleared after an adjustment**
+  (`incorporator/pipeline/chunked.py::_run_chunking_engine`): the
+  `deque(maxlen=5)` ring of parse-time samples driving the AIMD
+  controller kept its pre-adjustment samples after `paginator.chunk_size`
+  was changed, so a single sustained slow (or fast) regime kept tripping
+  the threshold on stale samples for another 1-2 decision cycles,
+  producing cascaded adjustments (e.g. `1000 -> 500 -> 250`) where one
+  should do. The ring is now cleared immediately after any adjustment
+  fires (both the additive-increase and multiplicative-decrease
+  branches), so the existing "decide only when the ring is full" guard
+  now doubles as a post-adjustment cooldown — 5 fresh samples must
+  accumulate under the new `chunk_size` before the next decision.
+
+- **429-hint recommended raising the rate instead of lowering it**
+  (`incorporator/tideweaver/architect.py::_tune_penstock_rate`): the
+  no-cooldown fallback for HTTP-429-heavy host groups emitted rationale
+  text ending "Raise rate; cooldown_sec data unavailable for precise
+  recommendation" — backwards, since an HTTP 429 means the server is
+  already rejecting the client for exceeding its rate. The rationale now
+  recommends registering a `SustainedPenstock` with a *lower*
+  `rate_per_sec` than the 429-triggering rate via
+  `register_host_penstock`, and is explicit that `Retry-After` is
+  extracted into rejects but not auto-applied to penstocks, so a lower
+  configured rate is the mechanism that actually reduces 429s.
+
 ## [1.3.5] - 2026-07-03
 
 ### Added

@@ -1385,11 +1385,15 @@ def _tune_penstock_rate(
                     scope={"host": host},
                     current_value=None,
                     recommended_value=None,
-                    signal=f"{len(group)} HTTP 429 rejects for host {host!r}; no cooldown_sec data",
+                    signal=(f"{len(group)} HTTP 429 rejects for host {host!r}; no Retry-After/cooldown_sec data"),
                     rationale=(
-                        f"{len(group)} HTTPStatusError(429) rejects for host {host!r}, "
-                        f"but no cooldown_sec values were recorded.\n"
-                        f"Raise rate; cooldown_sec data unavailable for precise recommendation.{bps_note}"
+                        f"{len(group)} HTTPStatusError(429) rejects for host {host!r}; no Retry-After header "
+                        f"or cooldown_sec data recorded.\n"
+                        f"Register a SustainedPenstock with a LOWER rate_per_sec than the 429-triggering rate "
+                        f"for this host (e.g. register_host_penstock({host!r}, "
+                        f"SustainedPenstock(rate_per_sec=...))). Retry-After is extracted into rejects but "
+                        f"NOT auto-applied to penstocks — a lower configured rate is the mechanism that "
+                        f"actually reduces 429s.{bps_note}"
                     ),
                     sample_size=len(group),
                 )

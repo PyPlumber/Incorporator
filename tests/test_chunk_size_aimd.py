@@ -389,6 +389,106 @@ async def test_aimd_file_mode_still_adapts(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
 
+@pytest.mark.asyncio
+async def test_aimd_single_adjustment_per_regime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sustained slow regime must halve chunk_size exactly once, not cascade.
+
+    Without clearing the ring after an adjustment, the median stays
+    dominated by stale pre-adjustment samples for ~2 more decision cycles,
+    producing repeated halvings (e.g. 1000 -> 500 -> 250) from a single
+    slow regime. Feeding a constant slow processing_time_override across
+    10 waves (5 pre-adjustment + 5 post-adjustment) must halve exactly
+    once at wave 5, then hold at initial // 2 through wave 10 — the ring
+    only re-evaluates once a fresh set of 5 post-clear samples has
+    accumulated.
+    """
+    paginator = _MockPaginator(num_chunks=20, chunk_size=1000)
+    initial_cs = paginator.chunk_size
+
+    waves = await _collect_waves(
+        paginator,
+        num_chunks=10,
+        adapt_chunk_size=True,
+        chunk_size_min=100,
+        chunk_size_max=100_000,
+        target_min_sec=0.030,
+        target_max_sec=0.100,
+        processing_time_override=0.500,
+    )
+
+    assert len(waves) == 10
+    assert paginator.chunk_size == max(100, initial_cs // 2), (
+        "A single sustained-slow regime must halve exactly once, not cascade to initial // 4"
+    )
+
+
+@pytest.mark.asyncio
+async def test_aimd_regime_change_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A decrease decision after a fast->slow regime flip must use only post-flip samples.
+
+    Feeds 5 fast waves (triggers growth, visible once wave 6 is generated),
+    then 5 slow waves (triggers shrink, visible once wave 11 is generated).
+    An adjustment computed from wave N's sample is only applied to
+    ``paginator.chunk_size`` starting with wave N+1, so 11 waves must be
+    collected to observe the effect of the 10th (5th post-clear slow)
+    sample. Because the ring is cleared after the growth decision, the
+    5 post-flip slow samples are the only samples driving the shrink
+    decision, so the slow regime is correctly detected and the chunk_size
+    shrinks from its grown value — not left inflated by stale fast
+    samples diluting the slow median.
+    """
+    paginator = _MockPaginator(num_chunks=20, chunk_size=1000)
+    initial_cs = paginator.chunk_size
+
+    async def _noop_enrich(*args: Any, **kwargs: Any) -> None:
+        pass
+
+    chunk_counter = [0]
+    # First 5 waves fast (0.001s override), next 5 waves slow (0.500s override).
+    # 4 perf_counter() calls occur per wave (start_time, conv_start, conv_elapsed,
+    # processing_time_sec), so wave boundaries fall every 4 calls.
+    fast_override = 0.001
+    slow_override = 0.500
+    real_perf_counter = __import__("time").perf_counter
+
+    def _fake_perf(original=real_perf_counter) -> float:
+        chunk_counter[0] += 1
+        wave_number = (chunk_counter[0] - 1) // 4 + 1
+        override = fast_override if wave_number <= 5 else slow_override
+        return chunk_counter[0] * (override / 2.0)
+
+    waves: List[Wave] = []
+    with patch("incorporator.pipeline.chunked.time.perf_counter", side_effect=_fake_perf):
+        with patch("incorporator.pipeline.chunked._enrich_and_load", new=AsyncMock(side_effect=_noop_enrich)):
+            gen: AsyncGenerator[Wave, None] = _run_chunking_engine(
+                cls=_MockCls,
+                incorp_params={},
+                refresh_params=None,
+                export_params=None,
+                poll_interval=None,
+                paginator=paginator,
+                adapt_chunk_size=True,
+                chunk_size_min=100,
+                chunk_size_max=100_000,
+                target_min_sec=0.030,
+                target_max_sec=0.100,
+            )
+            async for wave in gen:
+                waves.append(wave)
+                paginator._remaining -= 1
+                if paginator._remaining <= 0:
+                    paginator.is_exhausted = True
+                if len(waves) >= 11:
+                    break
+
+    assert len(waves) == 11
+    grown_cs = min(100_000, initial_cs + initial_cs // 5)
+    assert paginator.chunk_size == max(100, grown_cs // 2), (
+        "After the fast->slow regime flip, the decrease must halve the grown chunk_size using "
+        "only the post-flip slow samples, not a blend with stale fast samples"
+    )
+
+
 def test_aimd_network_and_offline_agree_fine() -> None:
     """Online AIMD parse signal and offline _tune_chunk_size must agree on a network-bound case.
 

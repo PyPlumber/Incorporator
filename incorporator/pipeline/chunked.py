@@ -170,6 +170,10 @@ async def _run_chunking_engine(
                                 new_cs = current_cs
                             if new_cs != current_cs:
                                 paginator.chunk_size = new_cs
+                                # Post-adjustment cooldown: stale pre-adjustment samples must not
+                                # drive the next decision. The len(_ring)==maxlen guard above then
+                                # forces 5 fresh samples under the new chunk_size before deciding again.
+                                _ring.clear()
 
                     del dataset
                     # Yield the event loop so other tasks can run between chunks.
