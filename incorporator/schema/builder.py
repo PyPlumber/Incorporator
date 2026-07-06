@@ -293,7 +293,7 @@ def infer_dynamic_schema(
 ) -> type[BaseModel]:
     """Recursively build a Pydantic V2 model class from a raw data sample.
 
-    Samples up to 50 records from ``data`` (Python's native list slicing
+    Samples up to 100 records from ``data`` (Python's native list slicing
     won't raise on shorter inputs), merges every observed key into a
     composite ``sample_dict``, and recursively invokes itself on nested
     dicts and lists so deeply nested schemas are fully typed.
@@ -325,16 +325,23 @@ def infer_dynamic_schema(
 
     sample_dict: dict[str, Any] = {}
 
-    # Stratified sampling: evenly spaced indices up to 100 records so rare
-    # field types that appear later in large datasets are more likely to be
-    # discovered.  On short lists (< 100) this degenerates to `data[:n]`.
+    # Stratified sampling: evenly spaced indices up to 100 records, computed
+    # directly as a linspace over [0, n-1] rather than strided-then-truncated
+    # — a strided slice capped with `[:100]` silently drops the tail whenever
+    # `step` rounds down small relative to n/100 (e.g. n=101..199 give
+    # step=1, so `data[::1][:100]` degenerates back to `data[:100]` and never
+    # reaches the last ~n-100 records).  Computing indices up front guarantees
+    # index 0 and index n-1 are always both included (first/last linspace
+    # terms), so a field that only appears in a tail record is never missed.
+    # On short lists (<= 100) this degenerates to sampling everything.
     if isinstance(data, list):
         n = len(data)
         if n <= 100:
             items_to_sample = data
         else:
-            step = n // 100
-            items_to_sample = data[::step][:100]
+            count = 100
+            sample_indices = sorted({round(i * (n - 1) / (count - 1)) for i in range(count)})
+            items_to_sample = [data[i] for i in sample_indices]
     else:
         items_to_sample = [data]
 
@@ -353,7 +360,10 @@ def infer_dynamic_schema(
                         sample_dict[k] = v
 
                 elif isinstance(current_val, list) and isinstance(v, list):
-                    # Merge so recursive calls see all nested keys; cap at 50 to bound memory.
+                    # Per-record nested-list-ITEMS merge cap: bounds the combined size of a
+                    # single nested list field across all sampled records to 50 entries (memory
+                    # safety for deeply-nested arrays) — unrelated to the outer up-to-100-record
+                    # sample size computed above.
                     if len(current_val) < 50:
                         current_val.extend(v[: 50 - len(current_val)])
 

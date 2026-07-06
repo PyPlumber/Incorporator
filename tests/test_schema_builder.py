@@ -285,3 +285,63 @@ def test_infer_schema_cache_hit_returns_same_class() -> None:
     m1 = infer_dynamic_schema("CachedModel", {"x": 1}, BaseModel)
     m2 = infer_dynamic_schema("CachedModel", {"x": 1}, BaseModel)
     assert m1 is m2
+
+
+# ==========================================
+# 4. infer_dynamic_schema sampling stride (D3-03)
+# ==========================================
+
+
+def test_infer_schema_samples_tail_fields_beyond_100_records() -> None:
+    """A field present only in a tail record (n=150) must still be discovered.
+
+    Pre-fix, the truncating stride (`step = n // 100`; `data[::step][:100]`)
+    degenerates to `data[:100]` whenever `n` is in [101, 199] (step=1), so a
+    field appearing only at index 149 or index 120 was silently dropped from
+    the inferred schema. This must fail before the linspace-index fix and
+    pass after it.
+    """
+    data: List[Dict[str, Any]] = [{"common": i} for i in range(150)]
+    data[149]["tail_only"] = True
+    data[120]["mid_tail_only"] = True
+
+    model = infer_dynamic_schema("TailFieldModel", data, BaseModel)
+
+    assert "tail_only" in model.model_fields
+    assert "mid_tail_only" in model.model_fields
+
+
+@pytest.mark.parametrize("n", [101, 150, 199, 200, 350])
+def test_infer_schema_stride_coverage_is_even_and_reaches_tail(n: int) -> None:
+    """Sampled index set (reconstructed via per-index sentinel fields) is evenly
+    spaced, capped at 100, includes index 0, and reaches the tail region.
+
+    Each record gets a unique field name `f_{i}` so the resulting
+    `model_fields` set exactly reveals which indices were sampled — a
+    black-box way to recover the sampling stride's index set without
+    depending on internal implementation details.
+    """
+    data: List[Dict[str, Any]] = [{f"f_{i}": i} for i in range(n)]
+    model = infer_dynamic_schema(f"StrideModel{n}", data, BaseModel)
+
+    sampled_indices = sorted(int(name.split("_", 1)[1]) for name in model.model_fields if name.startswith("f_"))
+
+    assert len(sampled_indices) <= 100
+    assert sampled_indices[0] == 0
+    # Tail region: the highest sampled index must land at or near n - 1,
+    # well past the truncating stride's unreachable-tail ceiling.
+    assert sampled_indices[-1] >= n - max(1, n // 100) - 1
+
+    # Evenly spaced: consecutive gaps must not vary wildly (linspace-style
+    # rounding permits +/-1 jitter between adjacent gaps).
+    gaps = [b - a for a, b in zip(sampled_indices, sampled_indices[1:])]
+    assert max(gaps) - min(gaps) <= 1
+
+
+def test_infer_schema_n_le_100_samples_everything_unchanged() -> None:
+    """Existing behavior pin: n <= 100 must still sample every record."""
+    data: List[Dict[str, Any]] = [{f"f_{i}": i} for i in range(100)]
+    model = infer_dynamic_schema("SmallSampleModel", data, BaseModel)
+
+    sampled_indices = sorted(int(name.split("_", 1)[1]) for name in model.model_fields if name.startswith("f_"))
+    assert sampled_indices == list(range(100))

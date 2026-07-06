@@ -58,6 +58,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extracted into rejects but not auto-applied to penstocks, so a lower
   configured rate is the mechanism that actually reduces 429s.
 
+- **Schema sampling stride made the tail of large datasets unreachable**
+  (`incorporator/schema/builder.py::infer_dynamic_schema`): the truncating
+  stride `step = n // 100; data[::step][:100]` silently dropped up to
+  ~99% of a large list's tail — for any `n` in `[101, 199]`, `step` floors
+  to `1`, so `data[::1][:100]` degenerates back to `data[:100]` and no
+  index above `99 * (n // 100)` is ever reachable regardless of `n`. A
+  field present only in tail records was therefore silently absent from
+  the inferred schema for single-shot incorps, and for first-occurrence
+  shapes in Tideweaver/fjord per-tick inference the `SCHEMA_REGISTRY`
+  cache then pinned the incomplete schema for that shape. The stride is
+  replaced with a linspace-style index computation
+  (`round(i * (n - 1) / (count - 1))` for `i` in `range(count)`) that
+  guarantees index `0` and index `n - 1` are always both sampled,
+  evenly spaced, capped at 100 records, and unchanged for `n <= 100`
+  (samples everything). Because `SCHEMA_REGISTRY` cache keys derive from
+  the sampled field-type set, this fix can produce richer cache keys for
+  the same underlying data than before — previously-truncated tail
+  fields may now be observed and included in the model. That is the
+  intended effect of the fix, not a regression.
+
 ## [1.3.5] - 2026-07-03
 
 ### Added
