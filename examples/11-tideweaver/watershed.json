@@ -27,7 +27,12 @@
     "interval": 15,
     "incorp_params": {
       "inc_file": "fixtures/binance_book.json",
-      "inc_code": "symbol"
+      "inc_code": "symbol",
+      "conv_dict": {
+        "asset": "calc(normalize_asset, 'symbol', default=None)",
+        "bid": "calc(float, 'bidPrice', default=0.0, target_type=float)",
+        "ask": "calc(float, 'askPrice', default=0.0, target_type=float)"
+      }
     }
   },
 
@@ -39,7 +44,12 @@
       "interval": 30,
       "incorp_params": {
         "inc_file": "fixtures/coinbase_ticker.json",
-        "inc_code": "trade_id"
+        "inc_code": "trade_id",
+        "conv_dict": {
+          "asset": "calc(normalize_asset, 'product_id', default=None)",
+          "bid": "calc(float, 'bid', default=0.0, target_type=float)",
+          "ask": "calc(float, 'ask', default=0.0, target_type=float)"
+        }
       }
     },
     {
@@ -49,7 +59,13 @@
       "interval": 30,
       "incorp_params": {
         "inc_file": "fixtures/kraken_ticker.json",
-        "inc_code": "_key"
+        "inc_code": "pair",
+        "name_chg": [["_key", "pair"]],
+        "conv_dict": {
+          "asset": "calc(normalize_asset, '_key', default=None)",
+          "bid": "calc(float, 'b.0', default=0.0, target_type=float)",
+          "ask": "calc(float, 'a.0', default=0.0, target_type=float)"
+        }
       }
     }
   ],

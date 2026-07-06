@@ -237,6 +237,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from incorporator import Incorporator, Fjord, Stream, Tideweaver, Watershed
+from incorporator.schema.converters import calc
 
 
 class BinanceBook(Incorporator):
@@ -268,6 +269,11 @@ async def main() -> None:
             incorp_params={
                 "inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
                 "inc_code": "symbol",
+                "conv_dict": {
+                    "asset": calc(normalize_asset, "symbol", default=None),
+                    "bid": calc(float, "bidPrice", default=0.0, target_type=float),
+                    "ask": calc(float, "askPrice", default=0.0, target_type=float),
+                },
             },
         ),
         middle=[
@@ -278,6 +284,11 @@ async def main() -> None:
                 incorp_params={
                     "inc_url": "https://api.exchange.coinbase.com/products/BTC-USD/ticker",
                     "inc_code": "trade_id",
+                    "conv_dict": {
+                        "asset": calc(normalize_asset, "product_id", default=None),
+                        "bid": calc(float, "bid", default=0.0, target_type=float),
+                        "ask": calc(float, "ask", default=0.0, target_type=float),
+                    },
                 },
             ),
             Stream(
@@ -287,7 +298,19 @@ async def main() -> None:
                 incorp_params={
                     "inc_url": "https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD",
                     "rec_path": "result",
-                    "inc_code": "_key",
+                    # Kraken's raw pair key is "_key"; Pydantic V2 rejects
+                    # leading-underscore field names, so rename before Pk-bind.
+                    "inc_code": "pair",
+                    "name_chg": [("_key", "pair")],
+                    "conv_dict": {
+                        # conv_dict (pass 2) runs BEFORE name_chg (pass 3), so
+                        # this must reference the raw pre-rename key "_key".
+                        "asset": calc(normalize_asset, "_key", default=None),
+                        # "b"/"a" are 3-element [price, wholeLotVolume,
+                        # lotVolume] string lists — index 0 drills the price.
+                        "bid": calc(float, "b.0", default=0.0, target_type=float),
+                        "ask": calc(float, "a.0", default=0.0, target_type=float),
+                    },
                 },
             ),
         ],
@@ -329,10 +352,28 @@ The `BestMarket` Fjord current's tick is a **fjord flush**:
 ### `outflow.py` — symbol normalization + best-market join
 
 The three exchanges return the same logical asset under different symbol shapes —
-Binance "BTCUSDT", Coinbase "BTC-USD", Kraken "XXBTZUSD" / "XBTUSD".  The outflow
-function normalizes to a canonical key (e.g. `"BTC"`), then computes best bid / best
-ask across venues.
+Binance "BTCUSDT", Coinbase "BTC-USD", Kraken "XXBTZUSD" / "XBTUSD" — and each
+exchange's bid/ask lives under a different field name (Kraken's `b` / `a` are even
+3-element lists, not scalars).  Each venue Stream's build-time `conv_dict`
+(declared inline in `arb_scanner.py`, next to that `Stream(...)` call) normalizes
+all three away: `asset` via `calc(normalize_asset, <raw_symbol_key>, default=None)`,
+`bid` / `ask` via `calc(float, <raw_key>, default=0.0, target_type=float)` (Kraken's
+drills list index 0: `calc(float, "b.0", ...)`).  `outflow(state)` then reads
+`row.asset` / `row.bid` / `row.ask` uniformly across all three venues — no
+per-venue field-name params, no `getattr(..., default)`, no `try/except`.
 
+> **Bug fix, not a regression.**  Before this pass, Kraken's raw `_key` PK field
+> crashed Pydantic V2 schema build (leading-underscore field names are rejected)
+> and its `b` / `a` list-shaped bid/ask were silently dropped by the read-time
+> `float(getattr(...))` coercion — so Kraken never participated and the example
+> emitted zero arb opportunities. With `name_chg` renaming `_key` → `pair` and the
+> build-time `conv_dict` drilling `b.0` / `a.0`, Kraken now joins the cross-venue
+> best-bid/best-ask computation. The result: `BTC` stays below the 5 bps threshold
+> (~0.74 bps) but `ETH` now shows a real `arb_opportunity=true` at ~5.29 bps —
+> Kraken's higher bid (`3211.80`) crossing Binance's lower ask (`3210.10`). This is
+> the example working correctly for the first time, not a behavior change to guard
+> against.
+>
 > **Sidecar naming convention.**  All fjord/Tideweaver tutorials use the bare
 > semantic name `outflow.py` — matching the `incorporator init --type fjord`
 > scaffold and the DX convention established in T9/T10.
@@ -366,31 +407,36 @@ NORMALIZATION = {
 }
 
 
-def _venue_quotes(rows, symbol_attr: str, bid_attr: str, ask_attr: str, venue: str):
-    """Extract canonical (asset, bid, ask, venue) tuples from one exchange's registry."""
+def normalize_asset(raw: Any) -> str | None:
+    """Map one venue's raw symbol/pair key to a canonical asset code.
+
+    Referenced by each venue Stream's build-time conv_dict in arb_scanner.py
+    (calc(normalize_asset, <raw_symbol_key>, default=None)) AND by
+    watershed.json's conv_dict token (resolved via the outflow/inflow
+    sidecar wiring in load_watershed / the CLI token resolver).
+    """
+    return NORMALIZATION.get(str(raw))
+
+
+def _venue_quotes(rows, venue: str):
+    """Extract canonical (asset, bid, ask, venue) tuples — rows already carry
+    uniform pre-coerced asset/bid/ask attrs via each venue Stream's build-time
+    conv_dict (see arb_scanner.py Stream definitions and watershed.json)."""
     out = []
     for row in rows:
-        raw = getattr(row, symbol_attr, None)
-        if raw is None:
-            continue
-        asset = NORMALIZATION.get(str(raw))
+        asset = row.asset
         if asset is None:
             continue
-        try:
-            bid = float(getattr(row, bid_attr, 0) or 0)
-            ask = float(getattr(row, ask_attr, 0) or 0)
-        except (TypeError, ValueError):
-            continue
-        if bid > 0 and ask > 0:
-            out.append((asset, bid, ask, venue))
+        if row.bid > 0 and row.ask > 0:
+            out.append((asset, row.bid, row.ask, venue))
     return out
 
 
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     quotes = []
-    quotes += _venue_quotes(state.get("BinanceBook", []),    "symbol",   "bidPrice", "askPrice", "binance")
-    quotes += _venue_quotes(state.get("CoinbaseTicker", []), "product_id", "bid",    "ask",      "coinbase")
-    quotes += _venue_quotes(state.get("KrakenTicker", []),   "_key",     "b",        "a",        "kraken")
+    quotes += _venue_quotes(state.get("BinanceBook", []), "binance")
+    quotes += _venue_quotes(state.get("CoinbaseTicker", []), "coinbase")
+    quotes += _venue_quotes(state.get("KrakenTicker", []), "kraken")
 
     # Group by canonical asset.
     by_asset: dict[str, list[tuple]] = {}
@@ -467,14 +513,30 @@ applied at load time.
   "gate_mode": "hard",
   "head":   {"name": "binance", "class": "BinanceBook",    "verb": "stream", "interval": 15,
              "incorp_params": {"inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
-                               "inc_code": "symbol"}},
+                               "inc_code": "symbol",
+                               "conv_dict": {
+                                 "asset": "calc(normalize_asset, 'symbol', default=None)",
+                                 "bid": "calc(float, 'bidPrice', default=0.0, target_type=float)",
+                                 "ask": "calc(float, 'askPrice', default=0.0, target_type=float)"
+                               }}},
   "middle": [
     {"name": "coinbase", "class": "CoinbaseTicker", "verb": "stream", "interval": 30,
      "incorp_params": {"inc_url": "https://api.exchange.coinbase.com/products/BTC-USD/ticker",
-                       "inc_code": "trade_id"}},
+                       "inc_code": "trade_id",
+                       "conv_dict": {
+                         "asset": "calc(normalize_asset, 'product_id', default=None)",
+                         "bid": "calc(float, 'bid', default=0.0, target_type=float)",
+                         "ask": "calc(float, 'ask', default=0.0, target_type=float)"
+                       }}},
     {"name": "kraken",   "class": "KrakenTicker",   "verb": "stream", "interval": 30,
      "incorp_params": {"inc_url": "https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD",
-                       "rec_path": "result", "inc_code": "_key"}}
+                       "rec_path": "result", "inc_code": "pair",
+                       "name_chg": [["_key", "pair"]],
+                       "conv_dict": {
+                         "asset": "calc(normalize_asset, '_key', default=None)",
+                         "bid": "calc(float, 'b.0', default=0.0, target_type=float)",
+                         "ask": "calc(float, 'a.0', default=0.0, target_type=float)"
+                       }}}
   ],
   "tail":   {"name": "best_market", "class": "BestMarket", "verb": "fjord", "interval": 30,
              "export_params": {"file_path": "data/arb_signals.ndjson",
@@ -498,6 +560,15 @@ incorporator tideweaver run watershed.json --json-output
 ```
 
 The CLI resolves `outflow`, `inflow`, and `inc_file` paths relative to `watershed.json`'s directory, so the command works from any working directory. `export_params.file_path` (`"data/arb_signals.ndjson"`) is CWD-relative — the output file lands in `<your working directory>/data/`, not alongside the config.
+
+> **`conv_dict` tokens resolve against the `outflow` sidecar.**  A `conv_dict`
+> token like `"calc(normalize_asset, 'symbol', default=None)"` needs
+> `normalize_asset` in the token resolver's allow-list. The CLI's `tideweaver
+> run` load path extends that allow-list from BOTH the `inflow` and `outflow`
+> sidecars' public names, so declaring `normalize_asset` in `outflow.py` (no
+> separate `inflow.py` needed) is enough. The CLI form produces the exact same
+> rows as `python arb_scanner.py` — both show Kraken participating, with `ETH`
+> at `arb_opportunity=true`.
 
 One NDJSON `Tide` record per scheduler pass lands on stdout; status banners go to
 stderr so log shippers can ingest stdout directly.

@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from incorporator import Fjord, Stream, Tideweaver, Watershed
+from incorporator.schema.converters import calc
 
 HERE = Path(__file__).resolve().parent
 SNAPSHOT_DIR = HERE / "fixtures"
@@ -51,6 +52,7 @@ from outflow import (  # noqa: E402, F401
     BinanceBook,
     CoinbaseTicker,
     KrakenTicker,
+    normalize_asset,
 )
 
 
@@ -70,20 +72,52 @@ async def main() -> None:
             name="binance",
             cls=BinanceBook,
             interval=3.0,
-            incorp_params={"inc_file": str(SNAPSHOT_DIR / "binance_book.json"), "inc_code": "symbol"},
+            incorp_params={
+                "inc_file": str(SNAPSHOT_DIR / "binance_book.json"),
+                "inc_code": "symbol",
+                "conv_dict": {
+                    "asset": calc(normalize_asset, "symbol", default=None),
+                    "bid": calc(float, "bidPrice", default=0.0, target_type=float),
+                    "ask": calc(float, "askPrice", default=0.0, target_type=float),
+                },
+            },
         ),
         middle=[
             Stream(
                 name="coinbase",
                 cls=CoinbaseTicker,
                 interval=3.0,
-                incorp_params={"inc_file": str(SNAPSHOT_DIR / "coinbase_ticker.json"), "inc_code": "trade_id"},
+                incorp_params={
+                    "inc_file": str(SNAPSHOT_DIR / "coinbase_ticker.json"),
+                    "inc_code": "trade_id",
+                    "conv_dict": {
+                        "asset": calc(normalize_asset, "product_id", default=None),
+                        "bid": calc(float, "bid", default=0.0, target_type=float),
+                        "ask": calc(float, "ask", default=0.0, target_type=float),
+                    },
+                },
             ),
             Stream(
                 name="kraken",
                 cls=KrakenTicker,
                 interval=3.0,
-                incorp_params={"inc_file": str(SNAPSHOT_DIR / "kraken_ticker.json"), "inc_code": "_key"},
+                incorp_params={
+                    "inc_file": str(SNAPSHOT_DIR / "kraken_ticker.json"),
+                    # Kraken's raw pair key is "_key"; Pk-bind (pass 4) runs
+                    # AFTER name_chg (pass 3), so inc_code targets the
+                    # renamed field, not the raw leading-underscore one.
+                    "inc_code": "pair",
+                    "name_chg": [("_key", "pair")],
+                    "conv_dict": {
+                        # conv_dict (pass 2) runs BEFORE name_chg (pass 3), so
+                        # this must reference the RAW pre-rename key "_key".
+                        "asset": calc(normalize_asset, "_key", default=None),
+                        # "b"/"a" are 3-element [price, wholeLotVolume,
+                        # lotVolume] string lists -- index 0 drills the price.
+                        "bid": calc(float, "b.0", default=0.0, target_type=float),
+                        "ask": calc(float, "a.0", default=0.0, target_type=float),
+                    },
+                },
             ),
         ],
         tail=Fjord(
@@ -100,7 +134,7 @@ async def main() -> None:
         drain_timeout=10.0,
     )
 
-    print("⛓️  Running 3-exchange arb-scanner diamond for 15 s...\n")
+    print("Running 3-exchange arb-scanner diamond for 15 s...\n")
     async for tide in Tideweaver(watershed).run():
         print(
             f"Tide {tide.tide_number:3d} | fired: {','.join(tide.fired) or '-':<32} "
@@ -109,7 +143,7 @@ async def main() -> None:
 
     if out_file.exists():
         rows = out_file.read_text(encoding="utf-8").splitlines()
-        print(f"\n✅ Wrote {len(rows)} best-market rows to {out_file}")
+        print(f"\nWrote {len(rows)} best-market rows to {out_file}")
         for line in rows[-4:]:
             print(f"  {line}")
 

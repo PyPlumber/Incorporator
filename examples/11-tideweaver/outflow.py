@@ -2,13 +2,25 @@
 
 Defines the four ``Incorporator`` subclasses referenced from
 ``examples/11-tideweaver/watershed.json`` (one per exchange head/middle + the
-tail's derived output class) plus the ``outflow(state)`` function the
-``Fjord`` tail current calls each tick.
+tail's derived output class), the shared ``normalize_asset`` helper each
+venue Stream's build-time ``conv_dict`` calls, and the ``outflow(state)``
+function the ``Fjord`` tail current calls each tick.
 
-Symbol normalization is hard-coded for the demo (2 assets × 3 exchanges).
+Symbol normalization is hard-coded for the demo (2 assets x 3 exchanges).
 Real scanners would build the normalization table from each exchange's
 ``/exchangeInfo`` (or equivalent) endpoint — add a 4th ``Stream`` current
-for that and let ``outflow(state)`` consume it.
+for that and let ``normalize_asset`` consume it.
+
+Each venue Stream's build-time ``conv_dict`` (declared inline in
+``arb_scanner.py``, next to each ``Stream(...)`` call, and mirrored as JSON
+string tokens in ``watershed.json``) normalizes that venue's raw
+symbol/bid/ask fields to uniform ``asset`` / ``bid`` / ``ask`` attributes via
+``normalize_asset`` below. ``outflow()`` therefore reads plain, pre-coerced
+attributes across all three venues with no per-venue field-name plumbing and
+no try/except. ``normalize_asset`` has no leading underscore so it resolves
+both as a direct Python import and as a ``watershed.json`` conv_dict token
+(``calc(normalize_asset, ...)``) via the sidecar-helper wiring in
+``load_watershed``.
 
 Relative inc_file / outflow paths resolve against the config file's directory,
 so these commands work from any directory:
@@ -70,29 +82,28 @@ NORMALIZATION: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _venue_quotes(
-    rows: list[Any],
-    symbol_attr: str,
-    bid_attr: str,
-    ask_attr: str,
-    venue: str,
-) -> list[tuple[str, float, float, str]]:
-    """Extract canonical (asset, bid, ask, venue) tuples from one exchange's registry."""
+def normalize_asset(raw: Any) -> str | None:
+    """Map one venue's raw symbol/pair key to a canonical asset code.
+
+    Referenced by each venue Stream's build-time conv_dict in arb_scanner.py
+    (calc(normalize_asset, <raw_symbol_key>, default=None)) AND by
+    watershed.json's conv_dict token (resolved via load_watershed's
+    extra_names wiring, framework commit 221b16c).
+    """
+    return NORMALIZATION.get(str(raw))
+
+
+def _venue_quotes(rows: list[Any], venue: str) -> list[tuple[str, float, float, str]]:
+    """Extract canonical (asset, bid, ask, venue) tuples -- rows already carry
+    uniform pre-coerced asset/bid/ask attrs via each venue Stream's build-time
+    conv_dict (see arb_scanner.py Stream definitions and watershed.json)."""
     out: list[tuple[str, float, float, str]] = []
     for row in rows:
-        raw = getattr(row, symbol_attr, None)
-        if raw is None:
-            continue
-        asset = NORMALIZATION.get(str(raw))
+        asset = row.asset
         if asset is None:
             continue
-        try:
-            bid = float(getattr(row, bid_attr, 0) or 0)
-            ask = float(getattr(row, ask_attr, 0) or 0)
-        except (TypeError, ValueError):
-            continue
-        if bid > 0 and ask > 0:
-            out.append((asset, bid, ask, venue))
+        if row.bid > 0 and row.ask > 0:
+            out.append((asset, row.bid, row.ask, venue))
     return out
 
 
@@ -116,9 +127,9 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
         ``spread_bps > 5``.
     """
     quotes: list[tuple[str, float, float, str]] = []
-    quotes += _venue_quotes(state.get("BinanceBook", []), "symbol", "bidPrice", "askPrice", "binance")
-    quotes += _venue_quotes(state.get("CoinbaseTicker", []), "product_id", "bid", "ask", "coinbase")
-    quotes += _venue_quotes(state.get("KrakenTicker", []), "_key", "b", "a", "kraken")
+    quotes += _venue_quotes(state.get("BinanceBook", []), "binance")
+    quotes += _venue_quotes(state.get("CoinbaseTicker", []), "coinbase")
+    quotes += _venue_quotes(state.get("KrakenTicker", []), "kraken")
 
     by_asset: dict[str, list[tuple[float, float, str]]] = {}
     for asset, bid, ask, venue in quotes:
