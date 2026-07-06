@@ -9,7 +9,6 @@
   "_comment_8_": "T5 parent-child fan-out. The al_teams parent's inc_url scopes server-side via",
   "_comment_9_": "?sportId=1&leagueId=103, so no post-fetch row filter is needed — see the README",
   "_comment_10_": "row-filter decision tree (URL filter is the framework's preferred primitive).",
-  "_doc_limitation_": "KNOWN FRAMEWORK GAP -- this CLI form is currently NON-FUNCTIONAL for the 'standings' node. The Python entry (mlb_pulse.py) gives 'standings' a conv_dict entry -- team_rows: calc(_flatten_team_records, 'teamRecords', default=[]) -- that flattens+coerces teamRecords[] into MLBStandings.team_rows at build time, and outflow.py's shared outflow(state) reads standings_row.team_rows directly. This JSON form CANNOT express that conv_dict entry: Watershed's config loader (incorporator/tideweaver/config.py load_watershed) calls resolve_tokens(raw) BEFORE outflow.py/inflow.py are even loaded and with no extra_names, so conv_dict strings here can only reference incorporator.cli.tokens._ALLOWED_NAMES (builtins + calc/inc/pluck/etc. themselves) -- never a user-defined helper by name, public or private (unlike incorp_params.inflow's apply_inflow_resolution, which does merge sidecar public names). Practical effect: running `incorporator tideweaver run watershed.json` will build MLBStandings instances with NO team_rows attribute; outflow.py's outflow(state) now has an explicit fail-fast guard (its first statement) that raises a RuntimeError with an actionable remediation message the moment it sees a MLBStandings row missing team_rows, so the failure is loud and immediate (a WARNING-level 'isolated tick failure' log line every pulse tick, per this current's on_error='isolate' policy) instead of a silent AttributeError buried in an isolate-swallowed tick. Use the Python entry (mlb_pulse.py) for a working run; this JSON form is left in place for the CLI-declarative shape it demonstrates elsewhere (head/al_teams/hitting/pitching all still work), but the 'standings' + tail join is not currently expressible in JSON. See the implementer's return summary '## Suspected framework gaps' for the proposed primitive.",
   "window": {
     "start": "${PULSE_START:-2026-05-28T00:00:00+00:00}",
     "end":   "${PULSE_END:-2026-05-28T00:00:25+00:00}"
@@ -58,7 +57,10 @@
         "inc_url": "https://statsapi.mlb.com/api/v1/standings?leagueId=103",
         "rec_path": "records",
         "inc_code": "division.id",
-        "inc_name": "division.name"
+        "inc_name": "division.name",
+        "conv_dict": {
+          "team_rows": "calc(flatten_team_records, 'teamRecords', default=[])"
+        }
       }
     },
     {

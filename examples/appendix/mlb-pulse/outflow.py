@@ -70,7 +70,7 @@ def _coerce_games_back(value: Any) -> float:
     return _coerce_float(value, 0.0)
 
 
-def _flatten_team_records(team_records: list[dict]) -> list[dict]:
+def flatten_team_records(team_records: list[dict]) -> list[dict]:
     """Flatten + coerce one division's raw ``teamRecords`` list into clean rows.
 
     Runs once per MLBStandings row at build time (inside ``calc``), so
@@ -125,8 +125,14 @@ class MLBAllTeam(Incorporator):
 # outflow read-time) means outflow() reads plain dict keys off ``team_rows``
 # with zero getattr/isinstance branching.  See the README's honest-boundary
 # note for why the team/hitting/pitching JOIN itself still happens read-time.
+#
+# ``flatten_team_records`` is public (no leading underscore) so both entry
+# forms resolve it identically: the Python entry imports it directly via
+# this dict, and the CLI's watershed.json references it by name in its own
+# "standings" conv_dict entry — both paths merge outflow.py's public names
+# into the same token-resolver allow-list (usercode.merge_sidecar_extra_names).
 MLBSTANDINGS_CONV_DICT = {
-    "team_rows": calc(_flatten_team_records, "teamRecords", default=[]),
+    "team_rows": calc(flatten_team_records, "teamRecords", default=[]),
 }
 
 
@@ -201,23 +207,22 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
 
     Raises:
         RuntimeError: If a ``MLBStandings`` instance lacks ``team_rows`` — this
-            happens only when the ``standings`` current was built without
-            ``MLBSTANDINGS_CONV_DICT``, which is exactly what the CLI
-            ``watershed.json`` form does (it cannot express a user-defined
-            ``calc()`` helper as a JSON conv_dict string; see this file's
-            ``_flatten_team_records`` and the JSON's ``_doc_limitation_``
-            field). Fails loud on the first offending row instead of letting
-            the join silently degrade to zero rows.
+            signals the ``standings`` current was built without its
+            ``team_rows`` conv_dict entry (see ``flatten_team_records`` /
+            ``MLBSTANDINGS_CONV_DICT`` in this file), which both the Python
+            entry (``mlb_pulse.py``) and the CLI ``watershed.json`` form now
+            populate identically. Fails loud on the first offending row
+            instead of letting the join silently degrade to zero rows.
     """
     standings_records = state.get("MLBStandings", [])
     for standings_row in standings_records:
         if not hasattr(standings_row, "team_rows"):
             raise RuntimeError(
-                "MLBStandings instance is missing 'team_rows' -- this means "
-                "the 'standings' current was built without MLBSTANDINGS_CONV_DICT. "
-                "The watershed.json CLI form cannot express this conv_dict entry "
-                "(see the _doc_limitation_ field in watershed.json); use "
-                "`python mlb_pulse.py` for a working run of this appendix."
+                "MLBStandings instance is missing 'team_rows' -- every "
+                "MLBStandings instance must carry it. The 'standings' current's "
+                "conv_dict (MLBSTANDINGS_CONV_DICT in mlb_pulse.py; the "
+                "equivalent JSON conv_dict entry in watershed.json) is "
+                "responsible for populating it via flatten_team_records."
             )
 
     teams_by_id = {t.inc_code: t for t in state.get("MLBAllTeam", [])}

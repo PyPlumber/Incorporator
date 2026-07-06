@@ -72,7 +72,7 @@ measure → tune**.
 > `MLBHitting.ops` and `MLBPitching.era` already coerced their raw JSON strings
 > via `calc(float, "stat.ops", default=0.0, target_type=float)` in each
 > Stream's own `conv_dict`. `MLBStandings` now does the same for the deeply
-> nested `teamRecords[]` list: a single `calc(_flatten_team_records,
+> nested `teamRecords[]` list: a single `calc(flatten_team_records,
 > "teamRecords", default=[])` entry flattens each division's raw team records
 > into a clean `team_rows` list of pre-coerced dicts (`team_id`, `wins`,
 > `losses`, `win_pct`, `games_back`, `runs_scored`, `runs_allowed`) — one call,
@@ -204,6 +204,13 @@ cd examples/appendix/mlb-pulse
 python mlb_pulse.py
 ```
 
+Or the CLI-declarative form (same diamond, same `outflow.py`, same 15 cards):
+
+```bash
+cd examples/appendix/mlb-pulse
+incorporator tideweaver run watershed.json
+```
+
 Artifacts produced (all under `out/`, gitignored by repo policy):
 
 | File | What |
@@ -229,7 +236,7 @@ examples/appendix/mlb-pulse/
   README.md                  (this file)
   mlb_pulse.py               (entry point: probe + run + tune)
   outflow.py                 (Incorporator classes + outflow(state) join)
-  watershed.json             (CLI-equivalent declarative form — partial; see warning below)
+  watershed.json             (CLI-equivalent declarative form)
   out/                       (runtime artifacts; gitignored)
     al_pulse.ndjson
   logs/                      (runtime logs; gitignored)
@@ -243,23 +250,19 @@ Matches the [Tutorial 9](../../09-nascar-fantasy-fjord/), [Tutorial 11](../../11
 - Outflow sidecar with bare semantic name (`outflow.py`) — all Tideweaver examples (T9, T11, nascar-tideweaver, mlb-pulse) use this naming
 - Companion `watershed.json` for the CLI form
 
-> ⚠️ **`watershed.json`'s CLI form cannot run this appendix end-to-end.**
-> The build-time `team_rows` flattening (previous section) needs
-> `calc(_flatten_team_records, "teamRecords", default=[])` in `standings`'s
-> `conv_dict` — but Watershed's JSON loader resolves conv_dict strings
-> against a fixed builtin/framework allow-list *before* `outflow.py` is even
-> imported, so a user-defined helper (public or private) can never be
-> referenced by name from `watershed.json`. Because the shared `outflow(state)`
-> depends on `standings_row.team_rows` for every row it emits, this is not a
-> single-node degradation — the whole diamond's tail join fails. `outflow(state)`
-> now guards this explicitly: its first statement raises a `RuntimeError` with
-> an actionable remediation message the moment it sees a `MLBStandings` row
-> missing `team_rows`, so `incorporator tideweaver run watershed.json` fails
-> LOUD (a WARNING-level "isolated tick failure" log line every pulse tick)
-> instead of silently exiting 0 with an empty `out/al_pulse.ndjson`. See the
-> `_doc_limitation_` field inside `watershed.json` itself for the full
-> explanation. Use `python mlb_pulse.py` for a working run; the JSON form still
-> demonstrates the declarative shape for every other node.
+> ✅ **Both entry forms run this appendix end-to-end.** The `standings` node's
+> build-time `team_rows` flattening — `calc(flatten_team_records,
+> "teamRecords", default=[])` — is now expressed identically in both forms:
+> the Python entry (`mlb_pulse.py`) passes the callable directly via
+> `MLBSTANDINGS_CONV_DICT`, and `watershed.json`'s own `standings.conv_dict`
+> references the same helper by its public name (`flatten_team_records` has
+> no leading underscore, so it's visible to the CLI's token resolver). Both
+> paths merge `outflow.py`'s public symbols into the same token-resolver
+> allow-list (`usercode.merge_sidecar_extra_names`), so
+> `incorporator tideweaver run watershed.json` populates
+> `MLBStandings.team_rows` exactly like the Python entry does, and the
+> shared `outflow(state)` join produces the same 15 ranked Pulse Cards
+> either way.
 
 ---
 
