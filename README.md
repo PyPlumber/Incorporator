@@ -285,6 +285,7 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
       "id":     inc(int),                                              # type coerce
       "title":  calc(str.lower, "title", default="", target_type=str), # transform
       "status": calc("Alive".__eq__, "status", default=False),         # enum-to-bool
+      "region": pluck("meta.region.name"),                             # lift nested
   }
   ```
 

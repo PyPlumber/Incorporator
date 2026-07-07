@@ -83,8 +83,9 @@ INVOICE_CONV_DICT = {
     "jimmy_model": pluck("Vehicle.Model", chain=str.upper),
 }
 
-# NHTSA's Results rows are already flat; calc() is required (not inc()) because
-# the output key (true_make) differs from the source key (Make).
+# calc() is used here because uppercasing is a FUNCTION applied to the source
+# value, not a type coercion — calc(str.upper, "Make", ...) would still be the
+# right call even if the output key were "Make" (same as the source key).
 NHTSA_CONV_DICT = {
     "true_make": calc(str.upper, "Make", default="UNKNOWN", target_type=str),
     "true_model": calc(str.upper, "Model", default="UNKNOWN", target_type=str),

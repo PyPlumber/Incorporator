@@ -80,8 +80,9 @@ For a paste-ready lookup map of every public callable — signature, 3-7 step ps
 ### Submodules
 - `incorporator.schema.converters` — `inc()`, `calc()`, `each()`,
   `as_list()` — declarative tokens for `conv_dict`
-- `incorporator.schema.extractors` — `link_to()`, `link_to_list()`,
-  `split_and_get()`, `join_all()` — relational / multi-API joining
+- `incorporator.schema.extractors` — `pluck()`, `link_to()`,
+  `link_to_list()`, `split_and_get()`, `join_all()` — nested-path
+  extraction plus relational / multi-API joining
 - `incorporator.io.pagination` — `CursorPaginator`,
   `NextUrlPaginator`, `OffsetPaginator`, `PageNumberPaginator`,
   `LinkHeaderPaginator`, plus local-file `SQLitePaginator`,
