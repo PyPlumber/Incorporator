@@ -181,13 +181,12 @@ governs Tideweaver edge flow, so one vocabulary covers both:
 
 ```python
 from incorporator import register_host_penstock
-from incorporator.io.penstock import SustainedPenstock, BurstPenstock
 
 # Pace api.coingecko.com at 0.2 r/s (12 r/min — under the free-tier ceiling).
-register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
 
 # Token-bucket for an in-house API that allows bursts of 200 at 50 r/s sustained.
-register_host_penstock("api.internal.acme.com", BurstPenstock(rate_per_sec=50.0, burst=200))
+register_host_penstock("api.internal.acme.com", rate_per_sec=50.0, burst=200)
 ```
 
 Put these calls in a module imported before any pipeline runs — the

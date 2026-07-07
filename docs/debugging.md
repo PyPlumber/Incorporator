@@ -19,7 +19,7 @@ and every failure that class encounters is routed to one of two JSON-line
 log files under `logs/` — readable from any other process, retrievable
 in your own Python with one async call.
 
-**The routing rule (v1.3.3):** URL/internet-traffic errors — HTTP 4xx/5xx
+**The routing rule:** URL/internet-traffic errors — HTTP 4xx/5xx
 responses, network timeouts, and connection failures — route to
 `logs/<ClassName>_api.log`. Codebase errors — parse failures, schema
 errors, and other non-HTTP failures — route to `logs/<ClassName>_error.log`.

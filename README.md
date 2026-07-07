@@ -27,9 +27,7 @@ Both halves share the same primitives — Penstock throttling at the HTTP and ed
 
 ### ✨ Highlights
 * **Works with unpredictable JSON APIs** — digests XML, CSV, NDJSON, SQLite, Parquet, Avro without a line of schema; missing keys and mutating types absorbed without validation errors.
-* **One call sets up polite rate limiting** — `register_host_penstock(host, rate_per_sec=50.0)` replaces the two-symbol `SustainedPenstock`/`BurstPenstock` construction, and the live 429/503 retry wait now honors a server's `Retry-After` header instead of just recording it after the fact.
-* **The pipeline tells you what to tune, in plain English** — after a Tideweaver run, `architect.tune()` consumes the accumulated rejects, tides, and waves and emits a `TuningReport` of severity-sorted hints that say what happened, why it matters, and what to change; a clean run honestly says so.
-* **`watershed.json` and Python are the same pipeline** — `conv_dict` can reference `@sidecar` helper tokens on the CLI (`incorporator tideweaver run` / `validate`) exactly the way the Python `load_watershed()` API already did.
+* **The pipeline tells you what to tune** — after a Tideweaver run, `architect.tune()` consumes the accumulated rejects, tides, and waves and emits a `TuningReport` of severity-sorted hints.
 * **Disk-backed observability for orchestration** — `LoggedTideweaver` routes every `Tide` and `RejectEntry` through a `QueueHandler` pipeline, replayable with `get_tides()` / `get_rejects()`.
 
 ---
@@ -168,7 +166,7 @@ watershed = Watershed.diamond(
 async for tide in Tideweaver(watershed).run():
     print(tide.tide_number, tide.fired, tide.skipped)
 ```
-Four shape helpers (`parallel`, `chain`, `fanout`, `diamond`) plus `custom` with explicit `edges`. Declarative `watershed.json` config + `incorporator tideweaver run / validate` CLI mirror the `stream` / `fjord` workflow — including `conv_dict` tokens that reference `@sidecar` helpers, which the CLI now resolves the same way `load_watershed()` already did in Python. After the run, `Tideweaver.summary(tides=tides)` returns a `TuningReport` (see Resilience).
+Four shape helpers (`parallel`, `chain`, `fanout`, `diamond`) plus `custom` with explicit `edges`. Declarative `watershed.json` config + `incorporator tideweaver run / validate` CLI mirror the `stream` / `fjord` workflow. After the run, `Tideweaver.summary(tides=tides)` returns a `TuningReport` (see Resilience).
 **Probe → plan → run, no disk round-trip.** When you have N unknown endpoints, `architect()` profiles each one and emits a runnable plan you can tune in-memory before handing it to `Tideweaver`:
 
 ```python
@@ -278,9 +276,7 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
   register_host_penstock("pokeapi.co",        rate_per_sec=1.5)   # ~90 r/min
   ```
 
-  One call sets the rate; add `burst=200` for a token-bucket ceiling. Passing both a `penstock` instance and `rate_per_sec`/`burst` raises `TypeError` — no silent ambiguity about which one wins. The explicit instance form (`SustainedPenstock(rate_per_sec=0.2)`) still works everywhere, unchanged.
-
-  `architect()` surfaces 429 / `Retry-After` hints during probing and recommends a `Penstock` on the matching edge. A live 429/503 retry wait now honors the response's `Retry-After` header directly (bounded), instead of only recording it after the request had already been rejected. See [`register_host_penstock` in the API Atlas](./docs/api_atlas.md#register_host_penstock).
+  `architect()` surfaces 429 / `Retry-After` hints during probing and recommends a `Penstock` on the matching edge.  See [`register_host_penstock` in the API Atlas](./docs/api_atlas.md#register_host_penstock).
 * **Lambda-free `conv_dict`** — `inc`, `calc`, `calc_all`, `pluck`, `link_to`, `link_to_list`, `split_and_get` all short-circuit silently on garbage input (`None`, `""`, `"N/A"`, `"null"`, `"unknown"`, `"nan"`, `"undefined"`) before the user callable runs.  Defensive null guards inside lambdas are no longer needed; use stdlib callables directly:
 
   ```python
@@ -295,7 +291,7 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
   See `incorporator.io.SourceRef` for the opt-in typed source value (URL / file / parent / payload / kwargs) when you need explicit source dispatch.
 * **Atomic writes + spreadsheet-injection guard** — Parquet / Feather / ORC / JSON / XML / XLSX build via tempfile + `os.replace()` (no half-written files); CSV / XLSX cells starting with `=` / `@` / `+` / `-` are quoted on export (OWASP).
 * **Non-blocking observability with a routing split** — subclass `LoggedIncorporator`; logs flow through a `QueueHandler` so disk I/O never blocks the event loop. URL/internet-traffic errors (HTTP 4xx/5xx, network failures) route to `_api.log`; parse and codebase errors route to `_error.log`; `_debug.log` is the superset of both. The file location tells you whether the fault is the API's or your code's. `get_rejects()` unions both files so every reject is covered regardless of routing. For orchestration runs, `LoggedTideweaver` (from `incorporator.tideweaver`) is the parallel drop-in for `Tideweaver` — routes every yielded `Tide` and every accumulated `RejectEntry` to disk via the same `QueueHandler` pipeline; replay with `get_tides()` / `get_rejects()` / `get_scheduler_events()`.
-* **The pipeline tells you what to tune, in plain English.** `architect.tune()` reads accumulated rejects, tides, and pass interval and returns a `TuningReport` of severity-sorted hints — per-edge `Penstock` rates, byte-rate-aware penstock recommendations, evidence-based timeout hints via `tune(timeout=...)`, surge thresholds. Each hint states what happened, why it matters, and what to change; a clean run prints `No tuning hints - all knobs look well-tuned for this run.` instead of guessing. `tw.summary(tides=tides)` returns the same report from an existing instance.
+* **The pipeline tells you what to tune.** `architect.tune()` reads accumulated rejects, tides, and pass interval and returns a `TuningReport` of severity-sorted hints — per-edge `Penstock` rates, byte-rate-aware penstock recommendations, evidence-based timeout hints via `tune(timeout=...)`, surge thresholds. `tw.summary(tides=tides)` returns the same report from an existing instance.
 
   ```python
   from incorporator.tideweaver import LoggedTideweaver, tune
