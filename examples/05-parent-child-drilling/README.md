@@ -21,7 +21,7 @@ land child-drilled detail in a warehouse), [Tutorial 4](../04-xml-post-audit/REA
 >    `requests_per_second=0.2` directly to `incorp()` so the kwarg is
 >    visible to readers.  Local to each call; easiest to discover.
 > 2. **Process-wide registration (production).** Call
->    `register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))`
+>    `register_host_penstock("api.coingecko.com", rate_per_sec=0.2)`
 >    once at process start; every subsequent `incorp()` / `stream()` /
 >    `fjord()` against that host inherits the cap with no per-call kwarg.
 >    See [Penstock surface in the API Atlas](../../docs/api_atlas.md#shared-kwargs-glossary).

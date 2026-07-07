@@ -308,10 +308,9 @@ And the discovery loop you ran *before* that:
 
   ```python
   from incorporator import register_host_penstock
-  from incorporator.io.penstock import SustainedPenstock
 
   # 0.2 req/sec = 12 req/min, comfortably under the anon ceiling
-  register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+  register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
   ```
 
   Or pass `requests_per_second=0.2` directly to `incorp()` / `test()` per call.

@@ -288,9 +288,8 @@ if __name__ == "__main__":
 >
 > ```python
 > from incorporator import register_host_penstock
-> from incorporator.io.penstock import SustainedPenstock
 >
-> register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+> register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
 > ```
 >
 > Every subsequent `incorp()` / `stream()` / `fjord()` against

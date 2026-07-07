@@ -142,7 +142,7 @@ pokeapi `?limit=50&offset=0`; the same MLB appendix's `_STANDINGS_URL`
 | **Schema discovery** via `Incorporator.architect()` + per-class `test()` | Pre-flight probe profiles all 4 source endpoints in parallel, prints schemas + field counts, and fails loudly BEFORE the 25-second diamond run if any `rec_path` or field is missing. No registry pollution — `test()` stops at the schema. |
 | **`LoggedTideweaver`** runtime telemetry | Drops in for `Tideweaver`; routes each `Tide` and every `RejectEntry` to disk JSONL via the queue-handler-backed logger thread. Inspect `logs/MLBPulse_tide.log` (single-file source for `get_tides()`), `logs/MLBPulse_error.log` (codebase/canal rejects + scheduler events + tides), `logs/MLBPulse_api.log` (URL/HTTP errors), and `logs/MLBPulse_debug.log` (debug superset) after the run. `get_rejects()` unions `_error.log` + `_api.log`; `get_scheduler_events()` surfaces lifecycle events including `watershed_started`/`watershed_completed`. |
 | **`architect.tune()`** post-run feedback | After the run, accumulated outcome records feed `architect.tune(rejects, tides, pass_interval)` which emits concrete knob-tuning hints (or "no tuning needed" on a clean run — also a valid outcome). Closes the developer loop: **probe → run → measure → tune**. |
-| **Polite host throttle** | `register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))` at module top — 1 req/sec = 60 req/min, comfortably under any unstated MLB Stats API courtesy cap. |
+| **Polite host throttle** | `register_host_penstock("statsapi.mlb.com", rate_per_sec=1.0)` at module top — 1 req/sec = 60 req/min, comfortably under any unstated MLB Stats API courtesy cap. |
 | **Composite analytics** | Per-team Power Index AND Pythagorean win expectation computed in `outflow(state)`, joined across 4 upstream graph maps, pre-sorted by Power Index. Same insight in `pandas` = ~60 lines of merges + manual normalization + Pythag calc. |
 
 ---
@@ -178,9 +178,8 @@ pokeapi `?limit=50&offset=0`; the same MLB appendix's `_STANDINGS_URL`
 
 ```python
 from incorporator import register_host_penstock
-from incorporator.io.penstock import SustainedPenstock
 
-register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))
+register_host_penstock("statsapi.mlb.com", rate_per_sec=1.0)
 ```
 
 MLB Stats API is unauthenticated and publishes no rate limit — 1 req/sec

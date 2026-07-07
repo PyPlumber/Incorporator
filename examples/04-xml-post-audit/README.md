@@ -65,13 +65,12 @@ import asyncio
 from pathlib import Path
 
 from incorporator import Incorporator, register_host_penstock
-from incorporator.io.penstock import SustainedPenstock
 from incorporator.schema.converters import calc
 from incorporator.schema.extractors import join_all, pluck
 
 # Pace NHTSA vPIC at 1.5 req/sec (90/min — under the 100-200/min ceiling).
 # register_host_penstock applies to all HTTP methods, including POST.
-register_host_penstock("vpic.nhtsa.dot.gov", SustainedPenstock(rate_per_sec=1.5))
+register_host_penstock("vpic.nhtsa.dot.gov", rate_per_sec=1.5)
 
 HERE = Path(__file__).resolve().parent
 

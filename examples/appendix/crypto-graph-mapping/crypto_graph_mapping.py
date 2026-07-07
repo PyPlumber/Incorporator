@@ -12,12 +12,11 @@ to create a deeply interconnected, null-safe data graph.
 import asyncio
 
 from incorporator import Incorporator, link_to, register_host_penstock
-from incorporator.io.penstock import SustainedPenstock
 from incorporator.schema.converters import calc
 
 # Pace api.coingecko.com at 0.2 req/sec (12/min — under the 5-15/min
 # free-tier ceiling).
-register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
 
 
 # ==========================================

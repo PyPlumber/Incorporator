@@ -33,9 +33,8 @@ Build a "Gen 1 Power Ranking" table:
 >
 > ```python
 > from incorporator import register_host_penstock
-> from incorporator.io.penstock import SustainedPenstock
 >
-> register_host_penstock("pokeapi.co", SustainedPenstock(rate_per_sec=1.5))
+> register_host_penstock("pokeapi.co", rate_per_sec=1.5)
 > ```
 >
 > Register once at startup; every subsequent `incorp()` against `pokeapi.co`
@@ -88,10 +87,9 @@ Copy the suggested keys, swap `test()` for `incorp()`, and paste the kwargs.
 import asyncio
 from typing import Any
 from incorporator import Incorporator, NextUrlPaginator, calc, register_host_penstock
-from incorporator.io.penstock import SustainedPenstock
 
 # Pace pokeapi.co at 1.5 req/sec (90/min — under the documented 100/min ceiling).
-register_host_penstock("pokeapi.co", SustainedPenstock(rate_per_sec=1.5))
+register_host_penstock("pokeapi.co", rate_per_sec=1.5)
 
 # --- EXPLICIT SUBCLASSING ---
 class Nav(Incorporator): pass

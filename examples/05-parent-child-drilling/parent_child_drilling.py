@@ -29,13 +29,12 @@ import asyncio
 import os
 
 from incorporator import Incorporator, register_host_penstock
-from incorporator.io.penstock import SustainedPenstock
 from incorporator.schema.converters import inc
 from incorporator.schema.extractors import pluck
 
 # Pace api.coingecko.com at 0.2 req/sec (12/min — comfortably under
 # the 5-15/min free-tier ceiling).
-register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
 
 # Build-time lift of the nested `links.homepage` path and an ASCII default for
 # `genesis_date` — collapses the read-time null-guard pyramid to plain attrs.

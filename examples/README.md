@@ -20,7 +20,7 @@ The curriculum alternates CoinGecko-heavy steps with non-CoinGecko domain exampl
 | **T10** | [`10-multi-source-fjord/`](./10-multi-source-fjord/) | CG + Binance | continuous | 🌊 `fjord()` fuses two live sources into a derived spread. |
 | **T11** | [`11-tideweaver/`](./11-tideweaver/) | local fixtures | ~5 s | 🧵 Capstone — declarative diamond orchestration across three exchanges. |
 
-> **Why the alternating rhythm?**  CoinGecko's free public tier is 5–15 calls per minute, server-side.  Each CG-touching tutorial calls `register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))` near the top of its script (the framework ships with no implicit per-host throttle).  Interleaving non-CG steps between CG-heavy ones lets the per-minute window refresh while you learn a complementary pattern.
+> **Why the alternating rhythm?**  CoinGecko's free public tier is 5–15 calls per minute, server-side.  Each CG-touching tutorial calls `register_host_penstock("api.coingecko.com", rate_per_sec=0.2)` near the top of its script (the framework ships with no implicit per-host throttle).  Interleaving non-CG steps between CG-heavy ones lets the per-minute window refresh while you learn a complementary pattern.
 
 ## Appendix — optional side-quests, different domains
 

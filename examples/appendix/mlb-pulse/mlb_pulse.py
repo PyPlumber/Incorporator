@@ -33,7 +33,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from incorporator import Incorporator, SustainedPenstock, register_host_penstock
+from incorporator import Incorporator, register_host_penstock
 from incorporator.schema.converters import calc
 from incorporator.tideweaver import (
     Fjord,
@@ -71,7 +71,7 @@ from outflow import (  # noqa: E402
 # Both registrations are idempotent; the last one wins the penstock registry.
 # ---------------------------------------------------------------------------
 
-register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))
+register_host_penstock("statsapi.mlb.com", rate_per_sec=1.0)
 
 # ---------------------------------------------------------------------------
 # MLB Stats API endpoints — URL-level filtering scopes the parent to the

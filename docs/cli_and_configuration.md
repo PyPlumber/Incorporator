@@ -535,6 +535,18 @@ def outflow(state):
     return rows
 ```
 
+> **Note — read-time vs build-time.** The `futures.inc_dict.get(...)` /
+> `getattr(c, "name", "")` reads above are read-time joins/coercions, kept
+> here for a minimal single-file CLI illustration. For production fjord
+> configs, prefer resolving joins and coercions at build time (in each
+> source's own `conv_dict`, via `link_to()` / `inc()`) so `outflow()` reads
+> plain attributes with no defensive `getattr(..., default)`. See
+> [Build-time vs read-time: where coercion + joins belong](api_atlas.md#build-time-vs-read-time-where-coercion--joins-belong)
+> for the rule and the two cases where read-time is the correct design,
+> and [Tutorial 10 — Multi-Source Fjord](../examples/10-multi-source-fjord/README.md)
+> for the fully worked build-time equivalent of this same CoinGecko/
+> Binance-shaped join.
+
 #### `outflow()` contract — what you do vs. what fjord does
 
 | You write | fjord handles |

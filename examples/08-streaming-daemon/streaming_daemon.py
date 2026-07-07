@@ -31,11 +31,10 @@ from pathlib import Path
 
 from incorporator import LoggedIncorporator, register_host_penstock
 from incorporator.io.pagination import PageNumberPaginator
-from incorporator.io.penstock import SustainedPenstock
 
 # Pace api.coingecko.com at 0.2 req/sec (12/min) — the free-tier ceiling
 # is 5-15/min documented.
-register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
 
 
 HERE = Path(__file__).resolve().parent

@@ -14,13 +14,12 @@ from typing import Any
 
 from incorporator import Incorporator, register_host_penstock
 from incorporator.io.pagination import NextUrlPaginator
-from incorporator.io.penstock import SustainedPenstock
 from incorporator.schema.converters import calc
 
 # Pace pokeapi.co at 1.5 req/sec (90/min — under the 100/min documented
 # ceiling).  The framework ships penstock-agnostic; register explicitly
 # at startup.
-register_host_penstock("pokeapi.co", SustainedPenstock(rate_per_sec=1.5))
+register_host_penstock("pokeapi.co", rate_per_sec=1.5)
 
 
 # --- EXPLICIT SUBCLASSING ---

@@ -25,7 +25,7 @@ from __future__ import annotations
 import operator
 from typing import Any
 
-from incorporator import Incorporator, SustainedPenstock, register_host_penstock
+from incorporator import Incorporator, register_host_penstock
 from incorporator.schema.converters import calc, is_garbage_value
 
 # ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ from incorporator.schema.converters import calc, is_garbage_value
 # the same constraint regardless of import order.
 # ---------------------------------------------------------------------------
 
-register_host_penstock("statsapi.mlb.com", SustainedPenstock(rate_per_sec=1.0))
+register_host_penstock("statsapi.mlb.com", rate_per_sec=1.0)
 
 # ---------------------------------------------------------------------------
 # Named module-level helpers (lambda-free, per AGENTS.md H3 idiom)

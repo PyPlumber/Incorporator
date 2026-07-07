@@ -243,11 +243,17 @@ Returns a single `TIncorporator` for one-record sources, otherwise an `Incorpora
 
 **Signature**
 ```python
-def register_host_penstock(host: str, penstock: Penstock | Callable[[], Penstock]) -> None:
+def register_host_penstock(
+    host: str,
+    penstock: Penstock | Callable[[], Penstock] | None = None,
+    *,
+    rate_per_sec: float | None = None,
+    burst: int | None = None,
+) -> None:
 ```
 
 **What it does (pseudocode)**
-1. Registers a per-host `Penstock` keyed by lowercase hostname.  Accepts either a `Penstock` instance (canonical) or a zero-arg factory callable (legacy back-compat).
+1. Registers a per-host `Penstock` keyed by lowercase hostname.  Accepts a `Penstock` instance, a zero-arg factory callable (legacy back-compat), or the `rate_per_sec=`/`burst=` shorthand — a bare `rate_per_sec` builds a `SustainedPenstock`; adding `burst` builds a `BurstPenstock` instead.
 2. Each `resolve_penstock()` invocation builds a fresh `BoundPenstock` (sharing the registered config, with its own `FlowState` + `asyncio.Lock`) so fan-out legs run independently.
 3. Re-registering the same host replaces the previous penstock.
 
@@ -257,21 +263,18 @@ The framework ships with **no implicit per-host throttling**.  Use this to attac
 **Worked example**
 ```python
 from incorporator import register_host_penstock
-from incorporator.io.penstock import SustainedPenstock, BurstPenstock
 
 # Conservative rate for CoinGecko's anon tier (5-15 req/min documented).
-register_host_penstock("api.coingecko.com", SustainedPenstock(rate_per_sec=0.2))
+register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
 
 # Bursty in-house API: 50 req/s sustained, 200-burst tolerance.
-register_host_penstock(
-    "api.internal.acme.com",
-    BurstPenstock(rate_per_sec=50.0, burst=200),
-)
+register_host_penstock("api.internal.acme.com", rate_per_sec=50.0, burst=200)
 ```
 
 **Common kwargs**
 - `host` — lowercase hostname; `urllib.parse` extracts this from URLs at resolve time.
-- `penstock` — a `Penstock` instance (preferred) or a zero-arg callable returning one.  The `Penstock` config is frozen Pydantic; the per-call binding owns the mutable state + lock.
+- `penstock` — a `Penstock` instance (preferred for non-Sustained/Burst policies) or a zero-arg callable returning one.  The `Penstock` config is frozen Pydantic; the per-call binding owns the mutable state + lock.  Mutually exclusive with `rate_per_sec`/`burst`.
+- `rate_per_sec` / `burst` — keyword-only shorthand that builds a `SustainedPenstock` (bare `rate_per_sec`) or `BurstPenstock` (`rate_per_sec` + `burst`) inline, skipping the explicit import + instantiation.
 
 **Yields / returns**
 `None`.  Side-effect-only: mutates the module-level `_HOST_PENSTOCKS` dict.
@@ -1866,7 +1869,7 @@ from incorporator import (
 
 **Retry behavior (v1.3.3).** The fetch layer applies a phase-aware classifier:
 - Connect-phase errors (connection refused, DNS failure) are capped at ~3 attempts with short waits.
-- Server-responded errors (5xx, 429) use up to 8 attempts with exponential backoff; `Retry-After` is honored.
+- Server-responded errors (5xx, 429) use up to 8 attempts with exponential backoff; `Retry-After` is honored during the in-flight retry loop itself (bounded to a 120s ceiling), not only surfaced on the final-failure reject path.
 - Non-idempotent POST is not retried after a response is received.
 - HTTP 408 (Request Timeout) and 425 (Too Early) are retryable.
 - All other 4xx responses are permanent failures (single attempt).
