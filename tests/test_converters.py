@@ -116,6 +116,81 @@ def test_inc_caches_closures_per_type_and_default() -> None:
     assert c3("garbage") == 0
 
 
+def test_inc_warns_on_bare_callable_misuse(caplog: pytest.LogCaptureFixture) -> None:
+    """``inc(str.upper)`` is a misuse: it must warn once and still pass values through unchanged.
+
+    Transforms belong in ``calc``/``pluck``; ``inc`` on a bare callable used to silently no-op.
+    """
+    _inc_clear_for_tests()
+
+    with caplog.at_level("WARNING", logger="incorporator.schema.converters"):
+        inc_upper = inc(str.upper)
+        assert inc_upper("hello") == "hello"
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1, "inc() misuse should warn exactly once at build time"
+    assert "non-coercible" in warnings[0].getMessage()
+    assert "calc(fn, key)" in warnings[0].getMessage()
+    assert "pluck(key, chain=fn)" in warnings[0].getMessage()
+
+
+def test_inc_warns_on_bare_instance_misuse(caplog: pytest.LogCaptureFixture) -> None:
+    """``inc(some_instance)``, a non-type object Pydantic can't build a schema for, likewise warns.
+
+    The value still passes through unchanged.
+
+    Note: a plain ``lambda``/function is accepted by Pydantic's validate-call schema
+    generation and takes the separate, already-covered per-row runtime warning path
+    (``_ranked_converter``'s cast-failure branch), not this build-time misuse branch.
+    """
+    _inc_clear_for_tests()
+
+    class _NotAType:
+        pass
+
+    with caplog.at_level("WARNING", logger="incorporator.schema.converters"):
+        inc_instance = inc(_NotAType())
+        assert inc_instance("hello") == "hello"
+        assert inc_instance(42) == 42
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1, "inc() misuse should warn exactly once at build time"
+
+
+def test_inc_new_sentinel_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """``inc(new)`` legitimately reaches the same identity failsafe and must stay silent."""
+    _inc_clear_for_tests()
+
+    with caplog.at_level("WARNING", logger="incorporator.schema.converters"):
+        inc_any = inc(new)
+        assert inc_any("String") == "String"
+        assert inc_any(100) == 100
+
+    assert not [r for r in caplog.records if r.levelname == "WARNING"], (
+        "inc(new) is a legitimate pass-through and must never warn"
+    )
+
+
+def test_inc_concrete_and_union_types_stay_silent(caplog: pytest.LogCaptureFixture) -> None:
+    """Real coercible types (concrete + Pydantic union) build and coerce correctly, no warning."""
+    _inc_clear_for_tests()
+
+    with caplog.at_level("WARNING", logger="incorporator.schema.converters"):
+        assert inc(int)("42") == 42
+        assert inc(float)("1.5") == 1.5
+        assert inc(bool)("true") is True
+        assert inc(str)(42) == "42"
+        dt = inc(datetime)("2026-04-21T23:59:59Z")
+        assert isinstance(dt, datetime) and dt.year == 2026
+        union_conv = inc(int | None)
+        assert union_conv("7") == 7
+        assert union_conv(None) is None
+
+    assert not [r for r in caplog.records if r.levelname == "WARNING"], (
+        "Coercible concrete/union types must never trigger the misuse warning"
+    )
+
+
 def test_calc_and_calc_all_markers() -> None:
     """Asserts that calc and calc_all correctly generate Columnar Op markers."""
 

@@ -345,6 +345,9 @@ def pluck(key: str, chain: Callable[[Any], Any] | None = None) -> Op:
     chain callable is never entered.  Lets you compose stdlib callables
     (``pluck("data.title", chain=str.lower)``) without writing a
     defensive null guard.
+
+    For a flat-field transform (no nested extraction) use :func:`~incorporator.schema.converters.calc`
+    (fn, key).
     """
     path = DataPath.parse(key)
 

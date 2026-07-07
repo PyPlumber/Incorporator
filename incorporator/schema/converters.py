@@ -215,6 +215,8 @@ def calc(
 
     For column-wide aggregation (a single call across every row) use
     :func:`calc_all` instead.
+
+    For pure type coercion (no transform) use :func:`inc` (type).
     """
     return CalcOp(func, default, target_type, list(input_keys), pure=pure)
 
@@ -555,6 +557,9 @@ def inc(target_type: Any, default: Any = None) -> Op:
     This layers on top of the existing per-type :func:`_get_cached_adapter`
     cache and saves the ``TypeAdapter`` rebuild cost in long-running pipelines
     that re-construct ``conv_dict`` per tick.
+
+    For a transform (not a type coercion) use :func:`calc` (fn, key); for nested
+    extraction use :func:`pluck` (key, chain=fn).
     """
     # 1. The 'new' mapping: If 'new', accept ANY valid Python type.
     actual_type = Any if (target_type is new or isinstance(target_type, _NewSentinel)) else target_type
@@ -567,7 +572,17 @@ def inc(target_type: Any, default: Any = None) -> Op:
         ranks = [adapter.validate_python] + [r for r in ranks if r != adapter.validate_python]
 
     if not ranks:
-        ranks = [lambda x: x]  # Failsafe pass-through
+        if actual_type is Any:
+            ranks = [lambda x: x]  # inc(new): accept any shape, pass through unchanged
+        else:
+            logger.warning(
+                "inc(%r) received a non-coercible argument (a callable or non-type). inc() "
+                "coerces to a TYPE (int/float/bool/str/datetime or a Pydantic type) and will "
+                "pass values through UNCHANGED here. For a transform use calc(fn, key) or "
+                "pluck(key, chain=fn); to accept any shape use inc(new).",
+                target_type,
+            )
+            ranks = [lambda x: x]  # preserve current no-op behavior; the warning surfaces the misuse
 
     def _ranked_converter(val: Any) -> Any:
         # Instantly catch None, empties, and known API garbage.  The GARBAGE_VALUES
