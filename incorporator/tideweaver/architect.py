@@ -1020,7 +1020,10 @@ class TuningReport(BaseModel):
                 lines.append(f"        Current value: {hint.current_value}")
             if hint.recommended_value is not None:
                 lines.append(f"        Recommended: {hint.recommended_value}")
-            lines.append(f"        Sample size: {hint.sample_size}")
+            if hint.sample_size == 0:
+                lines.append("        Basis: configuration check (no run data needed)")
+            else:
+                lines.append(f"        Sample size: {hint.sample_size}")
             lines.append("")
 
         lines.append("--- Summary ---")
@@ -1126,14 +1129,14 @@ def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
                         recommended_value="raise from current (target ~5 ms p50 parse)",
                         signal=(
                             f"p50_parse={p50 * 1000:.2f}ms, p99_parse={p99 * 1000:.2f}ms"
-                            f" (p50_http={p50_http * 1000:.1f}ms) — parse completes in noise floor"
+                            f" (p50_http={p50_http * 1000:.1f}ms) - chunk_size is too small"
                         ),
                         rationale=(
-                            f"Parse-only p50={p50 * 1000:.2f}ms and p99={p99 * 1000:.2f}ms"
-                            f" are both below the 1 ms / 5 ms thresholds calibrated for"
-                            f" CPython json.loads ~300–500 MB/s throughput.\n"
-                            f"HTTP round-trip p50={p50_http * 1000:.1f}ms dominates each chunk;"
-                            f" raising chunk_size amortises the per-request overhead."
+                            f"Parse-only p50={p50 * 1000:.2f}ms and p99={p99 * 1000:.2f}ms are both under the"
+                            f" 1ms / 5ms thresholds. Chunks parse almost instantly (well under a millisecond),"
+                            f" so the network round-trip, not parsing, is the cost.\n"
+                            f"HTTP round-trip p50={p50_http * 1000:.1f}ms dominates each chunk; raising"
+                            f" chunk_size means fewer round-trips for the same amount of work."
                         ),
                         sample_size=n,
                     )
@@ -1146,14 +1149,13 @@ def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
                         scope=scope,
                         current_value=None,
                         recommended_value="lower from current (parse/validate dominates)",
-                        signal=(f"p99_parse={p99 * 1000:.1f}ms — parse/validate pass is heavy"),
+                        signal=(f"p99_parse={p99 * 1000:.1f}ms - parse/validate pass is heavy"),
                         rationale=(
-                            f"Parse-only p99={p99 * 1000:.1f}ms exceeds the 100 ms threshold"
-                            f" (HTTP stripped; HTTP p50={p50_http * 1000:.1f}ms).\n"
-                            f"chunk_size is too large: the parse/validate pass per chunk"
-                            f" exceeds what ~300–500 MB/s CPython json throughput implies"
-                            f" for a well-sized payload.  Lower chunk_size to reduce memory"
-                            f" footprint and per-chunk latency."
+                            f"Parse-only p99={p99 * 1000:.1f}ms exceeds the 100ms threshold (HTTP time"
+                            f" stripped out; HTTP p50={p50_http * 1000:.1f}ms).\n"
+                            f"chunk_size is too large: each chunk now takes real, measurable time to parse"
+                            f" and validate instead of finishing almost instantly. Lower chunk_size to reduce"
+                            f" memory footprint and per-chunk latency."
                         ),
                         sample_size=n,
                     )
@@ -1192,12 +1194,14 @@ def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
                         scope=scope,
                         current_value=None,
                         recommended_value="raise from current (target ~50 ms p50)",
-                        signal=f"p50={p50 * 1000:.1f}ms, p99={p99 * 1000:.1f}ms — chunks finishing too fast",
+                        signal=f"p50={p50 * 1000:.1f}ms, p99={p99 * 1000:.1f}ms - chunks finishing too fast",
                         rationale=(
                             f"p50={p50 * 1000:.1f}ms and p99={p99 * 1000:.1f}ms are both well below the"
-                            f" 50ms target.\n"
-                            "Current chunk_size is not recoverable from Wave records alone"
-                            " — check the Stream/incorp call.\n"
+                            f" 50ms target, so each chunk is mostly paying for round-trip overhead rather"
+                            f" than doing real work.\n"
+                            "The current chunk_size value is not recoverable from Wave records alone -"
+                            " look at the chunk_size= argument on your Stream/incorp() call to find and"
+                            " raise it.\n"
                             "Raising chunk_size reduces per-chunk overhead and improves throughput."
                         ),
                         sample_size=n,
@@ -1211,7 +1215,7 @@ def _tune_chunk_size(waves: list[Wave]) -> list[TuningHint]:
                         scope=scope,
                         current_value=None,
                         recommended_value="lower from current (memory pressure)",
-                        signal=f"p99={p99 * 1000:.1f}ms — chunks taking too long, possible memory pressure",
+                        signal=f"p99={p99 * 1000:.1f}ms - chunks taking too long, possible memory pressure",
                         rationale=(
                             f"p99={p99 * 1000:.1f}ms exceeds 500ms, suggesting chunk_size is too large.\n"
                             f"p50={p50 * 1000:.1f}ms. Lower chunk_size to reduce memory footprint per chunk."
@@ -1319,8 +1323,10 @@ def _tune_penstock_rate(
                     signal=f"{len(group)} PenstockLimited rejects on edge {edge_label}",
                     rationale=(
                         f"{len(group)} rejects on edge {edge_label}.\n"
-                        f"Median cooldown_sec={median_cooldown:.3f}s "
-                        f"→ recommended rate_per_sec={recommended} (1 req per cooldown period)."
+                        f"Median cooldown_sec={median_cooldown:.3f}s"
+                        f" -> recommended rate_per_sec={recommended} (1 request per cooldown period).\n"
+                        "Spacing requests to one per cooldown period keeps you just under the host's"
+                        " rate limit so requests stop getting throttled."
                     ),
                     sample_size=len(group),
                 )
@@ -1335,8 +1341,11 @@ def _tune_penstock_rate(
                     recommended_value=None,
                     signal=f"{len(group)} PenstockLimited rejects on edge {edge_label}; no cooldown_sec data",
                     rationale=(
-                        f"{len(group)} rejects on edge {edge_label}, but no cooldown_sec values were recorded.\n"
-                        "Raise rate; cooldown_sec data unavailable for precise recommendation."
+                        f"{len(group)} rejects on edge {edge_label}, but no cooldown_sec values were recorded,"
+                        f" so a precise rate cannot be derived.\n"
+                        "Raise the penstock rate limit for this edge; spacing requests to one per cooldown"
+                        " period keeps you just under the host's rate limit so requests stop getting"
+                        " throttled. cooldown_sec data unavailable for a precise recommendation."
                     ),
                     sample_size=len(group),
                 )
@@ -1356,7 +1365,7 @@ def _tune_penstock_rate(
         # Augment rationale with measured byte-rate when waves supplied for this host.
         bps = host_bytes_per_sec.get(host)
         bps_note = (
-            f"\nMeasured throughput: {bps / 1024:.1f} KB/s ({bps:.0f} bytes/sec) — bandwidth-limited." if bps else ""
+            f"\nMeasured throughput: {bps / 1024:.1f} KB/s ({bps:.0f} bytes/sec) - bandwidth-limited." if bps else ""
         )
         if cooldowns:
             median_cooldown = statistics.median(cooldowns)
@@ -1371,8 +1380,10 @@ def _tune_penstock_rate(
                     signal=f"{len(group)} HTTP 429 rejects for host {host!r}",
                     rationale=(
                         f"{len(group)} HTTPStatusError(429) rejects for host {host!r}.\n"
-                        f"Median cooldown_sec={median_cooldown:.3f}s "
-                        f"→ recommended rate_per_sec={recommended} (1 req per cooldown period).{bps_note}"
+                        f"Median cooldown_sec={median_cooldown:.3f}s"
+                        f" -> recommended rate_per_sec={recommended} (1 request per cooldown period).\n"
+                        "Spacing requests to one per cooldown period keeps you just under the host's"
+                        f" rate limit so requests stop getting throttled.{bps_note}"
                     ),
                     sample_size=len(group),
                 )
@@ -1392,7 +1403,7 @@ def _tune_penstock_rate(
                         f"Register a SustainedPenstock with a LOWER rate_per_sec than the 429-triggering rate "
                         f"for this host (e.g. register_host_penstock({host!r}, "
                         f"SustainedPenstock(rate_per_sec=...))). Retry-After is extracted into rejects but "
-                        f"NOT auto-applied to penstocks — a lower configured rate is the mechanism that "
+                        f"NOT auto-applied to penstocks - a lower configured rate is the mechanism that "
                         f"actually reduces 429s.{bps_note}"
                     ),
                     sample_size=len(group),
@@ -1451,7 +1462,7 @@ def _tune_surge_threshold(rejects: list[RejectEntry], tides: list[Tide]) -> list
                     rationale=(
                         f"{len(group)} surge rejects on edge {edge_label}, but no in_flight_sec data "
                         "was found in the tide records for the upstream current.\n"
-                        "Insufficient in_flight_sec data for edge — cannot derive threshold recommendation."
+                        "Insufficient in_flight_sec data for this edge to derive a threshold recommendation."
                     ),
                     sample_size=len(group),
                 )
@@ -1468,9 +1479,11 @@ def _tune_surge_threshold(rejects: list[RejectEntry], tides: list[Tide]) -> list
                 recommended_value=None,
                 signal=f"{len(group)} surge rejects on edge {edge_label}; median in_flight_sec={median_in_flight:.2f}s",
                 rationale=(
-                    f"{len(group)} rejects; median in_flight_sec={median_in_flight:.2f}s; "
-                    "compare against the from_name current's configured interval — "
-                    "raise threshold_multiple if median > 2.0 × interval."
+                    f"{len(group)} surge rejects on edge {edge_label}; the upstream current's requests are"
+                    f" taking a median of {median_in_flight:.2f}s to complete.\n"
+                    "Check that against the from_name current's configured interval=: if the median"
+                    " in-flight time is more than 2x that interval, raise threshold_multiple so the"
+                    " surge_barrier stops flagging normal, slower-than-usual runs as overlapping."
                 ),
                 sample_size=len(group),
             )
@@ -1543,7 +1556,8 @@ def _tune_pass_interval(tides: list[Tide], current_pass_interval: float) -> list
             )
         )
 
-    # Rule B: heap-empty fallback degeneracy (independent of Rule A).
+    # Rule B: currents are not re-scheduling themselves, so the scheduler keeps
+    # falling back to its backup timer instead of waking on a due current.
     if fallback_fraction > 0.30:
         hints.append(
             TuningHint.model_construct(
@@ -1554,10 +1568,11 @@ def _tune_pass_interval(tides: list[Tide], current_pass_interval: float) -> list
                 recommended_value=None,
                 signal=f"{fallback_fraction:.0%} of passes woke via pass_interval fallback (heap empty)",
                 rationale=(
-                    f"{fallback_count}/{n} passes ({fallback_fraction:.1%}) woke because the due-heap "
-                    "was empty (wake_reason='pass_interval').\n"
-                    "This indicates heap-empty fallback degeneracy — currents are not re-scheduling "
-                    "themselves on the adaptive heap. Review current intervals and gate conditions."
+                    f"{fallback_count}/{n} passes ({fallback_fraction:.1%}) woke because the scheduler had"
+                    " nothing due (wake_reason='pass_interval').\n"
+                    "The scheduler kept waking on its backup timer because no current was actually due;"
+                    " your currents are not re-scheduling themselves. Check their interval= and gate"
+                    " conditions."
                 ),
                 sample_size=n,
             )
@@ -1667,13 +1682,15 @@ def _tune_retry_policy(rejects: list[RejectEntry]) -> list[TuningHint]:
                         current_value=None,
                         recommended_value=None,
                         signal=(
-                            f"median duration ({median_duration:.2f}s) ≈ median cooldown"
+                            f"median duration ({median_duration:.2f}s) ~= median cooldown"
                             f" ({median_cooldown:.2f}s) for {group_key!r}"
                         ),
                         rationale=(
                             f"median duration_sec={median_duration:.2f}s is within 50% of "
-                            f"median cooldown_sec={median_cooldown:.2f}s for {group_key!r}.\n"
-                            f"tune {wait_knob}(max≈{median_cooldown:.2f})"
+                            f"median cooldown_sec={median_cooldown:.2f}s for {group_key!r}, so the retry"
+                            f" wait is close to the actual cooldown the server needs.\n"
+                            f"Set {wait_knob}'s max around {median_cooldown:.2f}s so retries wait roughly"
+                            f" as long as the server's cooldown, instead of guessing."
                         ),
                         sample_size=len(with_timing),
                     )
@@ -1704,25 +1721,30 @@ def _tune_compound_budget(pass_interval: float | None) -> list[TuningHint]:
         return []
     return [
         TuningHint.model_construct(
-            severity="high",
+            severity="info",
             knob="compound_retry_budget",
             scope={"global": "tideweaver"},
             current_value=_COMPOUND_RETRY_BUDGET_SEC,  # 1200.0
             recommended_value=None,
             signal=(
-                f"{_CANAL_OUTER_STOP} × {_HTTP_INNER_STOP} × {_HTTP_INNER_WAIT_MAX:.0f}s"
-                f" = {_COMPOUND_RETRY_BUDGET_SEC:.0f}s exceeds pass_interval={pass_interval:.1f}s"
+                f"{_CANAL_OUTER_STOP} x {_HTTP_INNER_STOP} x {_HTTP_INNER_WAIT_MAX:.0f}s"
+                f" = {_COMPOUND_RETRY_BUDGET_SEC:.0f}s theoretical ceiling exceeds pass_interval={pass_interval:.1f}s"
             ),
             rationale=(
-                f"Worst-case compound retry budget ({_CANAL_OUTER_STOP} outer × "
-                f"{_HTTP_INNER_STOP} inner × {_HTTP_INNER_WAIT_MAX:.0f}s max wait = "
-                f"{_COMPOUND_RETRY_BUDGET_SEC:.0f}s) exceeds the configured "
-                f"pass_interval={pass_interval:.1f}s. A single stalled tick may block "
-                f"the scheduler for up to {_COMPOUND_RETRY_BUDGET_SEC / pass_interval:.1f}× "
-                f"the intended pass window.\n"
-                "To remediate: lower pass_interval (if ticks complete well within "
-                "budget) OR lower stop_after_attempt / wait max on the HTTP inner "
-                "retry and/or the canal outer retry in on_error='restart' currents."
+                f"This is a theoretical worst case, not something observed in this run: it assumes a"
+                f" current retries at both layers -- the two retry layers are per-request HTTP retries and"
+                f" whole-current restart retries (on_error='restart') -- stacking all the way to their"
+                f" ceilings.\n"
+                f"{_CANAL_OUTER_STOP} outer restarts x {_HTTP_INNER_STOP} inner HTTP retries x"
+                f" {_HTTP_INNER_WAIT_MAX:.0f}s max wait = {_COMPOUND_RETRY_BUDGET_SEC:.0f}s, which exceeds"
+                f" the configured pass_interval={pass_interval:.1f}s"
+                f" ({_COMPOUND_RETRY_BUDGET_SEC / pass_interval:.1f}x over).\n"
+                f"If no current in your Watershed uses on_error='restart', this ceiling does not apply --"
+                f" the real worst case is the HTTP-only figure: {_HTTP_INNER_STOP} x"
+                f" {_HTTP_INNER_WAIT_MAX:.0f}s = {_HTTP_INNER_STOP * _HTTP_INNER_WAIT_MAX:.0f}s.\n"
+                "If it does apply and you want a tighter bound: lower pass_interval (if ticks normally"
+                " complete well within budget) OR lower stop_after_attempt / wait max on the HTTP retry"
+                " and/or the on_error='restart' current."
             ),
             sample_size=0,  # static rule — no records consumed
         )
@@ -1777,8 +1799,9 @@ def _tune_parent_child(
                 recommended_value=None,
                 signal=f"{zero_snap_count} waves with parent_snapshot_size=0",
                 rationale=(
-                    "Upstream snapshot was empty; confirm the parent current is firing "
-                    "and producing rows before the child tick runs."
+                    f"{zero_snap_count} waves ran against an empty upstream snapshot -- their parent"
+                    " current had no rows ready yet.\n"
+                    "Confirm the parent current is firing and producing rows before the child tick runs."
                 ),
                 sample_size=zero_snap_count,
             )
@@ -1803,9 +1826,11 @@ def _tune_parent_child(
                         recommended_value=None,
                         signal=f"{name} fired {count} tides but 0 waves recorded",
                         rationale=(
-                            f"Current {name!r} fired {count} times but produced no waves — "
-                            f"possible parent-child silent-skip; check parent_current is firing "
-                            f"and the parent's source-side filter is not too restrictive."
+                            f"Current {name!r} fired {count} times but produced no waves. The child current"
+                            f" had no parent rows to work from; either the parent has not produced rows"
+                            f" yet, or its URL filter is too narrow.\n"
+                            f"Check that the parent_current is firing and that the parent's source-side"
+                            f" filter is not too restrictive."
                         ),
                         sample_size=count,
                     )
@@ -1960,13 +1985,13 @@ def _tune_http_timeout(waves: list[Wave], *, timeout: float | None = None) -> li
                     recommended_value=round(p99 * (1.0 / _TIMEOUT_PROXIMITY_FACTOR), 3),
                     signal=(
                         f"p99_latency={p99 * 1000:.1f}ms is {p99 / timeout_proxy:.0%} of"
-                        f" the {timeout_proxy}s {timeout_label} — near the cliff"
+                        f" the {timeout_proxy}s {timeout_label} - near the cliff"
                     ),
                     rationale=(
                         f"p99 HTTP latency={p99 * 1000:.1f}ms is {p99 / timeout_proxy:.1%} of the"
-                        f" {timeout_proxy}s {timeout_label}.\n"
-                        f"SRE headroom rule: p99 at ≥{_TIMEOUT_PROXIMITY_FACTOR:.0%} of timeout"
-                        f" leaves <15% margin — raise timeout to at least p99 ÷ {_TIMEOUT_PROXIMITY_FACTOR}"
+                        f" {timeout_proxy}s {timeout_label}, so real requests are frequently landing close"
+                        f" to the timeout and risk being cut off before they finish.\n"
+                        f"Leave some headroom: raise timeout to at least p99 / {_TIMEOUT_PROXIMITY_FACTOR}"
                         f" = {round(p99 / _TIMEOUT_PROXIMITY_FACTOR, 3):.3f}s."
                     ),
                     sample_size=n,
@@ -1983,17 +2008,18 @@ def _tune_http_timeout(waves: list[Wave], *, timeout: float | None = None) -> li
                     recommended_value=round(p99 * _TIMEOUT_HEADROOM_FACTOR, 3),
                     signal=(
                         f"{timeout_label} ({timeout_proxy}s) is"
-                        f" {timeout_proxy / p99:.1f}× p99_latency={p99 * 1000:.1f}ms"
-                        f" — fail-fast budget wasted"
+                        f" {timeout_proxy / p99:.1f}x p99_latency={p99 * 1000:.1f}ms"
+                        f" - fail-fast budget wasted"
                     ),
                     rationale=(
-                        f"The {timeout_proxy}s {timeout_label} is {timeout_proxy / p99:.1f}× p99 HTTP"
+                        f"The {timeout_proxy}s {timeout_label} is {timeout_proxy / p99:.1f}x p99 HTTP"
                         f" latency={p99 * 1000:.1f}ms.\n"
-                        f"Every failed request waits >{timeout_proxy / p99:.1f}× the p99 latency before"
-                        f" the error propagates, wasting fail-fast budget.\n"
-                        f"Circuit-breaker literature recommends ≤{_TIMEOUT_HEADROOM_FACTOR:.0f}× p99"
-                        f" headroom; consider lowering timeout to"
-                        f" ≈{round(p99 * _TIMEOUT_HEADROOM_FACTOR, 3):.3f}s."
+                        f"Failed requests sit waiting far longer than a healthy request takes, so errors"
+                        f" surface slowly: every failed request waits over {timeout_proxy / p99:.1f}x the"
+                        f" p99 latency before the error propagates.\n"
+                        f"A good rule of thumb is a timeout no more than {_TIMEOUT_HEADROOM_FACTOR:.0f}x"
+                        f" your p99; consider lowering timeout to"
+                        f" ~{round(p99 * _TIMEOUT_HEADROOM_FACTOR, 3):.3f}s."
                     ),
                     sample_size=n,
                 )
@@ -2009,13 +2035,13 @@ def _tune_http_timeout(waves: list[Wave], *, timeout: float | None = None) -> li
                     signal=(
                         f"timeout well-sized. p99_latency={p99 * 1000:.1f}ms,"
                         f" {timeout_label}={timeout_proxy}s"
-                        f" ({p99 / timeout_proxy:.0%} utilisation)"
+                        f" ({p99 / timeout_proxy:.0%} share of the time budget used)"
                     ),
                     rationale=(
                         f"p99 HTTP latency={p99 * 1000:.1f}ms is in the healthy band"
                         f" [{_TIMEOUT_PROXIMITY_FACTOR * 100:.0f}% threshold ="
                         f" {timeout_proxy * _TIMEOUT_PROXIMITY_FACTOR * 1000:.0f}ms;"
-                        f" {_TIMEOUT_HEADROOM_FACTOR:.0f}× ceiling ="
+                        f" {_TIMEOUT_HEADROOM_FACTOR:.0f}x ceiling ="
                         f" {p99 * _TIMEOUT_HEADROOM_FACTOR * 1000:.0f}ms].\n"
                         "No timeout change recommended."
                     ),

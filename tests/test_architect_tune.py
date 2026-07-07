@@ -362,9 +362,9 @@ def test_tune_chunk_size_negative_parse_time_clamped_to_zero() -> None:
     # median renders as exactly 0.00ms (without the clamp it would be -10.00ms).
     assert "p50_parse=0.00ms" in h.signal
     # And no negative millisecond value survives anywhere in the signal (strip the
-    # em-dash separator first so only a real minus sign could match).
-    assert "-" not in h.signal.replace("—", "")
-    # p50 in the noise floor → HIGH.
+    # ASCII " - " section separator first so only a real minus sign could match).
+    assert "-" not in h.signal.replace(" - ", "")
+    # p50 in the noise floor -> HIGH.
     assert h.severity == "high"
 
 
@@ -799,17 +799,65 @@ def test_tuning_report_render_format() -> None:
     assert "total_chunks" in rendered
 
 
+def test_tuning_report_render_static_hint_shows_basis_line() -> None:
+    """render() prints a 'Basis:' line for sample_size=0 hints and 'Sample size:' otherwise.
+
+    Static config-ceiling checks (e.g. compound_retry_budget) don't consume
+    run records, so a bare "Sample size: 0" would misleadingly read as
+    untrustworthy/no-data. render() should instead print a basis line
+    explaining the hint doesn't need run data, while observed hints keep the
+    "Sample size: N" line unchanged.
+    """
+    hints = [
+        TuningHint.model_construct(
+            severity="info",
+            knob="compound_retry_budget",
+            scope={"global": "tideweaver"},
+            current_value=1200.0,
+            recommended_value=None,
+            signal="static ceiling exceeds pass_interval",
+            rationale="Theoretical worst case only.",
+            sample_size=0,
+        ),
+        TuningHint.model_construct(
+            severity="high",
+            knob="chunk_size",
+            scope={"source": "https://api.example.com"},
+            current_value=None,
+            recommended_value="raise from current",
+            signal="p50=5.0ms - chunks finishing too fast",
+            rationale="p50 and p99 are both well below the 50ms target.",
+            sample_size=30,
+        ),
+    ]
+    report = TuningReport.model_construct(
+        hints=hints,
+        summary={},
+        analyzed_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=_UTC),
+    )
+    rendered = report.render()
+
+    assert "Basis: configuration check (no run data needed)" in rendered
+    assert "Sample size: 30" in rendered
+    # The static hint's block must not also print a "Sample size: 0" line.
+    assert "Sample size: 0" not in rendered
+
+
 # ---------------------------------------------------------------------------
 # _tune_compound_budget
 # ---------------------------------------------------------------------------
 
 
 def test_tune_compound_budget_fires_when_budget_exceeds_interval() -> None:
-    """_tune_compound_budget emits a HIGH hint when compound budget (1200s) >= pass_interval."""
+    """_tune_compound_budget emits an INFO hint when compound budget (1200s) >= pass_interval.
+
+    Severity is INFO, not HIGH, because this is a static theoretical-ceiling
+    check (sample_size=0), not an observed problem.
+    """
     hints = _tune_compound_budget(60.0)
     assert len(hints) == 1
     h = hints[0]
-    assert h.severity == "high"
+    assert h.severity == "info"
     assert h.knob == "compound_retry_budget"
     assert h.scope == {"global": "tideweaver"}
     assert h.current_value == pytest.approx(1200.0)
@@ -826,7 +874,7 @@ def test_tune_compound_budget_fires_on_exact_equality() -> None:
     """_tune_compound_budget fires (>=) when pass_interval exactly equals the budget (1200s)."""
     hints = _tune_compound_budget(1200.0)
     assert len(hints) == 1
-    assert hints[0].severity == "high"
+    assert hints[0].severity == "info"
 
 
 def test_tune_compound_budget_skipped_via_tune_no_pass_interval() -> None:
