@@ -241,6 +241,13 @@ async def test_fanout_one_stream_to_three_heterogeneous_fjords(tmp_path: Any, mo
             "inc_page": NextUrlPaginator("info", "next"),
             "call_lim": 1,
             "conv_dict": {"is_alive": calc("Alive".__eq__, "status", default=False, target_type=bool)},
+            # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain
+            # load (ssl.create_default_context()), which costs real time per
+            # tick even though execute_request is mocked below — otherwise
+            # this starves the real-clock window. Pre-existing, fully-plumbed
+            # incorp_params key (see incorporator/io/fetch.py's
+            # HTTPClientBuilder.build_client).
+            "ignore_ssl": True,
         },
     )
     alive_count = Fjord(
@@ -368,6 +375,13 @@ async def test_fanout_two_fjords_plus_one_export_share_upstream(tmp_path: Any, m
             "inc_url": "https://jsonplaceholder.typicode.com/albums",
             "inc_code": "id",
             "conv_dict": {"title_upper": calc(str.upper, "title", default="", target_type=str)},
+            # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain
+            # load (ssl.create_default_context()), which costs real time per
+            # tick even though execute_request is mocked below — otherwise
+            # this starves the real-clock window. Pre-existing, fully-plumbed
+            # incorp_params key (see incorporator/io/fetch.py's
+            # HTTPClientBuilder.build_client).
+            "ignore_ssl": True,
         },
     )
     per_user = Fjord(
@@ -544,6 +558,13 @@ async def test_fanout_thesportsdb_epl_top_lists(tmp_path: Any, monkeypatch: pyte
                 "intGoals": inc(int, default=0),
                 "intAssists": inc(int, default=0),
             },
+            # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain
+            # load (ssl.create_default_context()), which costs real time per
+            # tick even though execute_request is mocked below — otherwise
+            # this starves the real-clock window. Pre-existing, fully-plumbed
+            # incorp_params key (see incorporator/io/fetch.py's
+            # HTTPClientBuilder.build_client).
+            "ignore_ssl": True,
         },
     )
     top_scorers = Fjord(

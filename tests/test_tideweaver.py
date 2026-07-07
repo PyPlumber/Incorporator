@@ -3667,12 +3667,17 @@ async def test_tick_stream_parks_snapshot_through_real_path(
 
     monkeypatch.setattr(fetch, "execute_request", _mock)
 
+    # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain load
+    # (ssl.create_default_context()), which costs real time per tick even
+    # though execute_request is mocked above — otherwise this starves the
+    # real-clock window. Pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client).
     posts = Stream(
         name="posts",
         cls=StreamedPost,
         interval=0.2,
         on_error="isolate",
-        incorp_params={"inc_url": "https://x/posts", "inc_code": "id"},
+        incorp_params={"inc_url": "https://x/posts", "inc_code": "id", "ignore_ssl": True},
     )
     ws = Watershed.parallel(window=_short_window(0.6), currents=[posts])
     tw = Tideweaver(ws, pass_interval=0.05)
@@ -3738,12 +3743,17 @@ async def test_real_stream_to_fjord_chain_sees_upstream_snapshot(
     # overhead.  Pick a Stream interval >> tick duration so a real gap opens
     # between Stream ticks; the edge's loose SurgeBarrier ensures the Fjord
     # keeps firing inside that gap.
+    # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain load
+    # (ssl.create_default_context()), which costs real time per tick even
+    # though execute_request is mocked above — otherwise this starves the
+    # real-clock window. Pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client).
     posts = Stream(
         name="posts",
         cls=ChainedPost,
         interval=3.0,
         on_error="fail_watershed",
-        incorp_params={"inc_url": "https://x/posts", "inc_code": "id"},
+        incorp_params={"inc_url": "https://x/posts", "inc_code": "id", "ignore_ssl": True},
     )
     fjord = Fjord(
         name="state",
@@ -3833,12 +3843,17 @@ async def test_fjord_flush_parks_tideweaver_snapshot_on_output_class(
 
     out_file = tmp_path / "derived_state.ndjson"
 
+    # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain load
+    # (ssl.create_default_context()), which costs real time per tick even
+    # though execute_request is mocked above — otherwise this starves the
+    # real-clock window. Pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client).
     posts = Stream(
         name="posts",
         cls=SrcPost,
         interval=3.0,
         on_error="fail_watershed",
-        incorp_params={"inc_url": "https://x/posts", "inc_code": "id"},
+        incorp_params={"inc_url": "https://x/posts", "inc_code": "id", "ignore_ssl": True},
     )
     fjord = Fjord(
         name="state",

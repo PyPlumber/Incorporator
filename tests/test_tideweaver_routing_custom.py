@@ -217,6 +217,13 @@ async def test_custom_mlb_leaderboard_three_hop_fjord_cascade(tmp_path: Any, mon
         incorp_params={
             "inc_url": "https://statsapi.mlb.com/api/v1/people/stats?group=hitting",
             "inc_code": "id",
+            # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain
+            # load (ssl.create_default_context()), which costs real time per
+            # tick even though execute_request is mocked below — otherwise
+            # this starves the real-clock window. Pre-existing, fully-plumbed
+            # incorp_params key (see incorporator/io/fetch.py's
+            # HTTPClientBuilder.build_client).
+            "ignore_ssl": True,
         },
     )
     normalize = Fjord(
@@ -338,19 +345,24 @@ async def test_custom_mixed_modes_with_drain_timeout(tmp_path: Any, monkeypatch:
         encoding="utf-8",
     )
 
+    # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain load
+    # (ssl.create_default_context()), which costs real time per tick even
+    # though execute_request is mocked below — otherwise this starves the
+    # real-clock window. Pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client).
     s_a = Stream(
         name="s_a",
         cls=EchoA,
         interval=1.5,
         on_error="isolate",
-        incorp_params={"inc_url": "https://httpbin.org/anything/a", "inc_code": "id"},
+        incorp_params={"inc_url": "https://httpbin.org/anything/a", "inc_code": "id", "ignore_ssl": True},
     )
     s_b = Stream(
         name="s_b",
         cls=EchoB,
         interval=1.5,
         on_error="isolate",
-        incorp_params={"inc_url": "https://httpbin.org/anything/b", "inc_code": "id"},
+        incorp_params={"inc_url": "https://httpbin.org/anything/b", "inc_code": "id", "ignore_ssl": True},
     )
     tail = Fjord(
         name="tail",

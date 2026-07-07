@@ -212,12 +212,17 @@ async def test_diamond_mlb_teams_plus_players_fjord_join(tmp_path: Any, monkeypa
     )
     out_file = tmp_path / "roster.ndjson"
 
+    # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain load
+    # (ssl.create_default_context()), which costs real time per tick even
+    # though execute_request is mocked above — otherwise this starves the
+    # real-clock window. Pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client).
     trigger = Stream(
         name="trigger",
         cls=Trigger,
         interval=0.8,
         on_error="isolate",
-        incorp_params={"inc_url": "https://statsapi.mlb.com/trigger", "inc_code": "id"},
+        incorp_params={"inc_url": "https://statsapi.mlb.com/trigger", "inc_code": "id", "ignore_ssl": True},
     )
     teams = Stream(
         name="teams",
@@ -230,6 +235,7 @@ async def test_diamond_mlb_teams_plus_players_fjord_join(tmp_path: Any, monkeypa
             "conv_dict": {
                 "abbr_lower": calc(str.lower, "abbreviation", default="", target_type=str),
             },
+            "ignore_ssl": True,
         },
     )
     players = Stream(
@@ -241,6 +247,7 @@ async def test_diamond_mlb_teams_plus_players_fjord_join(tmp_path: Any, monkeypa
             "inc_url": "https://statsapi.mlb.com/api/v1/people/660271/stats?stats=career&group=hitting",
             "inc_code": "id",
             "conv_dict": {"battingAverage": inc(float, default=0.0)},
+            "ignore_ssl": True,
         },
     )
     roster = Fjord(
@@ -371,6 +378,11 @@ async def test_diamond_open_library_two_middle_fjords_to_catalog_tail(
         encoding="utf-8",
     )
 
+    # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain load
+    # (ssl.create_default_context()), which costs real time per tick even
+    # though execute_request is mocked above — otherwise this starves the
+    # real-clock window. Pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client).
     books_stream = Stream(
         name="books",
         cls=OLBook,
@@ -383,6 +395,7 @@ async def test_diamond_open_library_two_middle_fjords_to_catalog_tail(
             "conv_dict": {
                 "title_clean": calc(str.strip, "title", default="", target_type=str),
             },
+            "ignore_ssl": True,
         },
     )
     authors_fjord = Fjord(

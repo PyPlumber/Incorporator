@@ -137,6 +137,11 @@ async def test_chain_three_streams_apply_conv_dict_in_order(tmp_path: Any, monke
     monkeypatch.setattr(fetch, "execute_request", _mock_jsonplaceholder_chain)
     _reset_registries(ChainUser, ChainPost, ChainComment)
 
+    # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain load
+    # (ssl.create_default_context()), which costs real time per tick even
+    # though execute_request is mocked above — otherwise this starves the
+    # real-clock window. Pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client).
     users = Stream(
         name="users",
         cls=ChainUser,
@@ -146,6 +151,7 @@ async def test_chain_three_streams_apply_conv_dict_in_order(tmp_path: Any, monke
             "inc_url": "https://jsonplaceholder.typicode.com/users",
             "inc_code": "id",
             "conv_dict": {"name_lower": calc(str.lower, "name", default="")},
+            "ignore_ssl": True,
         },
     )
     posts = Stream(
@@ -157,6 +163,7 @@ async def test_chain_three_streams_apply_conv_dict_in_order(tmp_path: Any, monke
             "inc_url": "https://jsonplaceholder.typicode.com/posts",
             "inc_code": "id",
             "conv_dict": {"title_words": calc(lambda t: len(t.split()), "title", default=0, target_type=int)},
+            "ignore_ssl": True,
         },
     )
     comments = Stream(
@@ -168,6 +175,7 @@ async def test_chain_three_streams_apply_conv_dict_in_order(tmp_path: Any, monke
             "inc_url": "https://jsonplaceholder.typicode.com/comments",
             "inc_code": "id",
             "conv_dict": {"body_length": calc(len, "body", default=0, target_type=int)},
+            "ignore_ssl": True,
         },
     )
 
@@ -297,6 +305,11 @@ async def test_chain_streams_into_fjord_tail_reads_both_upstream_snapshots(
     )
     out_file = tmp_path / "joined.ndjson"
 
+    # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain load
+    # (ssl.create_default_context()), which costs real time per tick even
+    # though execute_request is mocked above — otherwise this starves the
+    # real-clock window. Pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client).
     chars = Stream(
         name="chars",
         cls=RMChar,
@@ -308,6 +321,7 @@ async def test_chain_streams_into_fjord_tail_reads_both_upstream_snapshots(
             "rec_path": "results",
             "inc_page": NextUrlPaginator("info", "next"),
             "conv_dict": {"episode_count": calc(len, "episode", default=0, target_type=int)},
+            "ignore_ssl": True,
         },
     )
     eps = Stream(
@@ -321,6 +335,7 @@ async def test_chain_streams_into_fjord_tail_reads_both_upstream_snapshots(
             "rec_path": "results",
             "inc_page": NextUrlPaginator("info", "next"),
             "conv_dict": {"air_date": inc(datetime)},
+            "ignore_ssl": True,
         },
     )
     tail = Fjord(

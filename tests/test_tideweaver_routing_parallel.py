@@ -145,6 +145,11 @@ async def test_parallel_four_independent_streams_apply_conv_dict(
     monkeypatch.setattr(fetch, "execute_request", _mock_jsonplaceholder)
     _reset_registries(Post, Comment, Album, Photo)
 
+    # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain load
+    # (ssl.create_default_context()), which costs real time per tick even
+    # though execute_request is mocked above — otherwise this starves the
+    # real-clock window. Pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client).
     posts = Stream(
         name="posts",
         cls=Post,
@@ -156,6 +161,7 @@ async def test_parallel_four_independent_streams_apply_conv_dict(
             "conv_dict": {
                 "title_length": calc(len, "title", default=0, target_type=int),
             },
+            "ignore_ssl": True,
         },
     )
     comments = Stream(
@@ -169,6 +175,7 @@ async def test_parallel_four_independent_streams_apply_conv_dict(
             "conv_dict": {
                 "body_length": calc(len, "body", default=0, target_type=int),
             },
+            "ignore_ssl": True,
         },
     )
     albums = Stream(
@@ -182,6 +189,7 @@ async def test_parallel_four_independent_streams_apply_conv_dict(
             "conv_dict": {
                 "title_upper": calc(str.upper, "title", default="", target_type=str),
             },
+            "ignore_ssl": True,
         },
     )
     photos = Stream(
@@ -195,6 +203,7 @@ async def test_parallel_four_independent_streams_apply_conv_dict(
             "conv_dict": {
                 "album_id_int": inc(int, default=0),
             },
+            "ignore_ssl": True,
         },
     )
 
@@ -266,6 +275,11 @@ async def test_parallel_isolate_on_error_keeps_siblings_firing(tmp_path: Any, mo
     monkeypatch.setattr(fetch, "execute_request", _mock_jsonplaceholder_with_one_500)
     _reset_registries(Post, Album, User)
 
+    # ignore_ssl=True skips httpx.AsyncClient's real TLS cert-chain load
+    # (ssl.create_default_context()), which costs real time per tick even
+    # though execute_request is mocked above — otherwise this starves the
+    # real-clock window. Pre-existing, fully-plumbed incorp_params key (see
+    # incorporator/io/fetch.py's HTTPClientBuilder.build_client).
     posts = Stream(
         name="posts",
         cls=Post,
@@ -275,6 +289,7 @@ async def test_parallel_isolate_on_error_keeps_siblings_firing(tmp_path: Any, mo
             "inc_url": "https://jsonplaceholder.typicode.com/posts",
             "inc_code": "id",
             "conv_dict": {"title_length": calc(len, "title", default=0, target_type=int)},
+            "ignore_ssl": True,
         },
     )
     albums = Stream(
@@ -286,6 +301,7 @@ async def test_parallel_isolate_on_error_keeps_siblings_firing(tmp_path: Any, mo
             "inc_url": "https://jsonplaceholder.typicode.com/albums",
             "inc_code": "id",
             "conv_dict": {"title_upper": calc(str.upper, "title", default="", target_type=str)},
+            "ignore_ssl": True,
         },
     )
     users = Stream(
@@ -297,6 +313,7 @@ async def test_parallel_isolate_on_error_keeps_siblings_firing(tmp_path: Any, mo
             "inc_url": "https://jsonplaceholder.typicode.com/users",
             "inc_code": "id",
             "conv_dict": {"name_lower": calc(str.lower, "name", default="")},
+            "ignore_ssl": True,
         },
     )
 
