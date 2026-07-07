@@ -44,7 +44,7 @@ if str(HERE) not in sys.path:
 
 # Reuse the same class definitions + outflow() that watershed.json loads,
 # so the Python and JSON entry points stay in lockstep.
-from outflow import DriverState, FlagEvents, LapData, PitStops  # noqa: E402
+from outflow import LAPDATA_CONV_DICT, DriverState, FlagEvents, LapData, PitStops  # noqa: E402
 
 
 async def main() -> None:
@@ -62,7 +62,11 @@ async def main() -> None:
             name="laps",
             cls=LapData,
             interval=3.0,
-            incorp_params={"inc_file": str(FIXTURES / "laps.json"), "inc_code": "driver"},
+            incorp_params={
+                "inc_file": str(FIXTURES / "laps.json"),
+                "inc_code": "driver",
+                "conv_dict": LAPDATA_CONV_DICT,
+            },
         ),
         middle=[
             Stream(

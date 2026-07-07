@@ -31,7 +31,10 @@
     "interval": 30,
     "incorp_params": {
       "inc_file": "fixtures/laps.json",
-      "inc_code": "driver"
+      "inc_code": "driver",
+      "conv_dict": {
+        "lap_number": "inc(int, default=0)"
+      }
     }
   },
 

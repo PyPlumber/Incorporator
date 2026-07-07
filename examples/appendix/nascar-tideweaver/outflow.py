@@ -23,10 +23,25 @@ config file's directory, so these commands work from any directory.
 from typing import Any
 
 from incorporator import Incorporator
+from incorporator.schema.converters import inc
 
 
 class LapData(Incorporator):
     """Head source — per-driver lap data."""
+
+
+# Build-time coercion: the fixture already carries a native int, but a real
+# telemetry feed may not — coercing here means outflow() reads ``lap.lap_number``
+# as a plain int with no read-time int()/or-0 defensiveness. Source key ==
+# output key, so ``inc`` (not ``calc``) is the shortest-correct primitive.
+#
+# ``inc`` is a base framework token always resolvable by watershed.json's
+# string-form conv_dict, so no sidecar-allow-list plumbing is needed for the
+# CLI form (unlike a user-defined helper such as mlb-pulse's
+# ``flatten_team_records``).
+LAPDATA_CONV_DICT = {
+    "lap_number": inc(int, default=0),
+}
 
 
 class PitStops(Incorporator):
@@ -55,6 +70,13 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     populated by the upstream ``Stream`` currents' chunking drains and
     held alive between ticks via the strong-ref ``_tideweaver_snapshot``
     attribute the scheduler parks on each upstream class.
+
+    The driver-or-inc_code fallback below (``getattr(lap, "driver", None) or
+    getattr(lap, "inc_code", None)``) is field SELECTION, not coercion, and it
+    stays read-time on purpose: ``inc_code`` is the framework-assigned PK
+    bound from ``incorp_params={"inc_code": "driver"}`` AFTER conv_dict
+    resolution, so no earlier build-time hook can read "what inc_code will
+    resolve to" — see the README's honest-boundary note.
     """
     laps = state.get("LapData", [])
     pits = state.get("PitStops", [])
@@ -69,7 +91,7 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
             driver,
             {"driver": driver, "laps": 0, "pits": 0, "flag": None},
         )
-        row["laps"] = max(row["laps"], int(getattr(lap, "lap_number", 0) or 0))
+        row["laps"] = max(row["laps"], lap.lap_number)
 
     for pit in pits:
         driver = getattr(pit, "driver", None) or getattr(pit, "inc_code", None)

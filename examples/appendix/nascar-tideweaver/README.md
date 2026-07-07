@@ -51,7 +51,7 @@ OUT.mkdir(exist_ok=True)
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from outflow import DriverState, FlagEvents, LapData, PitStops  # noqa: E402
+from outflow import LAPDATA_CONV_DICT, DriverState, FlagEvents, LapData, PitStops  # noqa: E402
 
 
 async def main() -> None:
@@ -65,7 +65,11 @@ async def main() -> None:
             name="laps",
             cls=LapData,
             interval=3.0,
-            incorp_params={"inc_file": str(FIXTURES / "laps.json"), "inc_code": "driver"},
+            incorp_params={
+                "inc_file": str(FIXTURES / "laps.json"),
+                "inc_code": "driver",
+                "conv_dict": LAPDATA_CONV_DICT,
+            },
         ),
         middle=[
             Stream(
@@ -124,7 +128,7 @@ def outflow(state):
         if d is None:
             continue
         row = by_driver.setdefault(d, {"driver": d, "laps": 0, "pits": 0, "flag": None})
-        row["laps"] = max(row["laps"], int(getattr(lap, "lap_number", 0) or 0))
+        row["laps"] = max(row["laps"], lap.lap_number)
 
     for pit in pits:
         d = getattr(pit, "driver", None) or getattr(pit, "inc_code", None)
@@ -142,6 +146,20 @@ def outflow(state):
 ```
 
 > **Guard against missing keys.** `outflow(state)` is called every Fjord tick — the first tick may fire before pits or flags have populated. Every `state.get(...)` defaults to `[]`, and every per-record read uses `getattr(..., None)` with an explicit fallback. Reading `state["PitStops"]` directly would `KeyError` on the first tide.
+
+> **Build-time coercion, read-time selection.** `lap.lap_number` reads as a plain
+> `int` above because the `laps` Stream's own `conv_dict` — `LAPDATA_CONV_DICT =
+> {"lap_number": inc(int, default=0)}` in `outflow.py` — coerces it at build
+> time; `outflow()` no longer needs `int(getattr(lap, "lap_number", 0) or 0)`.
+>
+> **Why the driver-or-inc_code fallback stays read-time.** `getattr(lap,
+> "driver", None) or getattr(lap, "inc_code", None)` is field SELECTION, not
+> coercion — there's no earlier point at which a conv_dict callable could read
+> "what `inc_code` will resolve to," because `inc_code` is the framework-assigned
+> PK bound from `incorp_params={"inc_code": "driver"}` *after* conv_dict
+> resolution runs. This is a genuine framework boundary (same shape as
+> mlb-pulse's honest-boundary note on its cross-current join), not a missed DX
+> opportunity — so it stays a plain read-time expression.
 
 Same structure as Tutorial 11's `outflow.outflow()` — snapshot upstream registries, build a per-key composite, return as a list of dicts.
 
