@@ -216,7 +216,7 @@ async def test_schema_union_concurrent_gather_safety(tmp_path: Path) -> None:
             # reader actually iterates instead of short-circuiting.
             seed_file = tmp_path / f"seed_{round_idx}.json"
             seed_file.write_text(
-                json.dumps([{f"seed_{round_idx}_{i}": i for i in range(40)}] * 2),
+                json.dumps([{f"seed_{round_idx}_{i}": i for i in range(40)}]),
                 encoding="utf-8",
             )
             await ConcurrentModel.incorp(inc_file=str(seed_file))
@@ -227,9 +227,12 @@ async def test_schema_union_concurrent_gather_safety(tmp_path: Path) -> None:
             for w in range(n_workers):
                 fields = {f"field_{round_idx}_{w}_{i}": i for i in range(40)}
                 worker_field_sets.append(fields)
-                # 2+ items required: single-item files trigger the is_single path which skips _schema_union
+                # A single-item list is sufficient: build_instances() always
+                # populates _schema_union for list-shaped parsed_data, regardless
+                # of item count (the old is_single collapse that skipped this for
+                # length-1 payloads has been removed).
                 fp = tmp_path / f"w_{round_idx}_{w}.json"
-                fp.write_text(json.dumps([fields, fields]), encoding="utf-8")
+                fp.write_text(json.dumps([fields]), encoding="utf-8")
                 worker_files.append(fp)
 
             await asyncio.gather(*[ConcurrentModel.incorp(inc_file=str(fp)) for fp in worker_files])
@@ -350,9 +353,10 @@ async def test_schema_union_sibling_class_isolation(tmp_path: Path) -> None:
     """Sibling subclasses must not share _schema_union state."""
     json_a = tmp_path / "a.json"
     json_b = tmp_path / "b.json"
-    # 2+ items required: single-item files trigger the is_single path which skips _schema_union
-    json_a.write_text(json.dumps([{"field_only_in_a": 1}, {"field_only_in_a": 2}]), encoding="utf-8")
-    json_b.write_text(json.dumps([{"field_only_in_b": 3}, {"field_only_in_b": 4}]), encoding="utf-8")
+    # Single-item lists are sufficient: build_instances() always populates
+    # _schema_union for list-shaped parsed_data, even a length-1 payload.
+    json_a.write_text(json.dumps([{"field_only_in_a": 1}]), encoding="utf-8")
+    json_b.write_text(json.dumps([{"field_only_in_b": 3}]), encoding="utf-8")
 
     class SiblingA(Incorporator):
         pass
@@ -506,11 +510,11 @@ async def test_effective_conv_cache_invalidates_on_schema_union_growth(tmp_path:
     """
     json_v1 = tmp_path / "v1.json"
     json_v2 = tmp_path / "v2.json"
-    # Both files have ≥ 2 rows so the schema_union path runs (single-row
-    # files take the is_single fast path that skips _schema_union).
-    json_v1.write_text(json.dumps([{"id": 1, "name": "x"}, {"id": 2, "name": "y"}]), encoding="utf-8")
+    # A single row per file is sufficient: build_instances() always populates
+    # _schema_union for list-shaped parsed_data, even a length-1 payload.
+    json_v1.write_text(json.dumps([{"id": 1, "name": "x"}]), encoding="utf-8")
     json_v2.write_text(
-        json.dumps([{"id": 3, "name": "z", "extra": 42}, {"id": 4, "name": "w", "extra": 43}]),
+        json.dumps([{"id": 3, "name": "z", "extra": 42}]),
         encoding="utf-8",
     )
 

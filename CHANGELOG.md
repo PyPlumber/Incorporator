@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: `incorp()` and `refresh()` always return an
+  `IncorporatorList`, even for a single-record result**
+  (`incorporator/base.py`, `incorporator/schema/factory.py::build_instances`).
+  Previously, a source that resolved to exactly one record (a single-item
+  payload, or a top-level JSON object) was silently unwrapped into a bare
+  `Incorporator` instance instead of a length-1 `IncorporatorList`. Callers
+  that relied on this collapse (`result.field` instead of
+  `result[0].field` / `result.inc_dict[...]`) must update to always treat
+  the return value as a list. The `is_single` parameter has been removed
+  from `build_instances()` entirely — there is no opt-in/opt-out.
+  **Secondary effect:** because single-record payloads now flow through
+  `build_instances()`'s list branch unconditionally, they also populate
+  `cls._schema_union` on the first call — previously this only happened
+  for multi-record payloads. This makes CSV/TSV/PSV round-trip
+  auto-coercion (via `_expand_conv_dict_with_schema_union`) behave
+  consistently regardless of whether a class's first `incorp()` call
+  happens to return one row or many.
+
 ## [1.3.6] - 2026-07-07
 
 ### Fixed

@@ -1082,7 +1082,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
     @classmethod
     async def incorp(
         cls: type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
-    ) -> TLoggedIncorporator | IncorporatorList[TLoggedIncorporator]:
+    ) -> IncorporatorList[TLoggedIncorporator]:
         """Production-observable variant of :meth:`Incorporator.incorp`.
 
         Fetch + parse + register, with an ``enable_logging=True`` opt-in for
@@ -1114,9 +1114,8 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             **kwargs: Forwarded to :meth:`Incorporator.incorp`.
 
         Returns:
-            Same return shape as :meth:`Incorporator.incorp` — a single
-            instance for a single record, or an :class:`IncorporatorList`
-            for multi-record sources.
+            Same return shape as :meth:`Incorporator.incorp` — always an
+            :class:`IncorporatorList`, even for a single-record source.
         """
 
         if enable_logging:
@@ -1128,17 +1127,15 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             if isinstance(result, IncorporatorList) and result.rejects:
                 for reject in result.rejects:
                     _route_reject_to_log(cls.__name__, reject)
-            if isinstance(result, list) and result:
+            if result:
                 setup_class_logger(result[0].__class__)
-            elif not isinstance(result, list):
-                setup_class_logger(result.__class__)
 
         return result
 
     @classmethod
     async def refresh(
         cls: type[TLoggedIncorporator], *args: Any, enable_logging: bool = False, **kwargs: Any
-    ) -> TLoggedIncorporator | IncorporatorList[TLoggedIncorporator]:
+    ) -> IncorporatorList[TLoggedIncorporator]:
         """Production-observable variant of :meth:`Incorporator.refresh`.
 
         Re-fetch live data into existing instances, with an
@@ -1163,7 +1160,7 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             **kwargs: Forwarded to :meth:`Incorporator.refresh`.
 
         Returns:
-            Same as :meth:`Incorporator.refresh` — a single instance or an
+            Same as :meth:`Incorporator.refresh` — always an
             :class:`IncorporatorList`.
         """
         if enable_logging:
@@ -1175,11 +1172,8 @@ class LoggedIncorporator(LoggingMixin, Incorporator):
             if isinstance(result, IncorporatorList) and result.rejects:
                 for reject in result.rejects:
                     _route_reject_to_log(cls.__name__, reject)
-            if isinstance(result, list):
-                if result:
-                    setup_class_logger(result[0].__class__)
-            else:
-                setup_class_logger(result.__class__)
+            if result:
+                setup_class_logger(result[0].__class__)
 
         return result
 

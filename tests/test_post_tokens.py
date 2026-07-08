@@ -69,14 +69,16 @@ async def test_live_post_tokens() -> None:
         rec_path="json",  # Drill into the mirror's response to get our payload back
     )
 
-    # Because it was 1 Bulk request, the framework returns a single Object (not a list)!
-    assert not isinstance(echo_response, list)
+    # It was 1 Bulk request — incorp() still returns an IncorporatorList of length 1.
+    assert isinstance(echo_response, list)
+    assert len(echo_response) == 1
+    echo_result = echo_response[0]
 
     # Verify the server mirrored our exact framework name
-    assert echo_response.framework == "Incorporator v1.0.0"
+    assert echo_result.framework == "Incorporator v1.0.0"
 
     # Verify the server mirrored a single array containing all 10 IDs!
-    mirrored_array = echo_response.batch_ids
+    mirrored_array = echo_result.batch_ids
     assert isinstance(mirrored_array, list)
     assert len(mirrored_array) == 10
     assert mirrored_array == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
