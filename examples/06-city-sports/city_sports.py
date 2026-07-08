@@ -48,6 +48,15 @@ CITY_STATE = {
     "Boston": "MA",
 }
 
+# ESPN sometimes brands a team's `location` with the metro's short form --
+# the Clippers are literally location="LA" (displayName "LA Clippers"), the
+# ONLY abbreviated location across all four leagues (verified live).  Map
+# the city you type to every label ESPN uses for it; unlisted cities fall
+# back to an exact match.
+CITY_ALIASES = {
+    "Los Angeles": {"Los Angeles", "LA"},
+}
+
 # Metro birthplace-city aliases for the hometown-heroes board.  Only the
 # default city gets a hand-tuned metro set; every other city falls back to
 # an exact city-name match against CITY_STATE.  Note "Glendale": a real
@@ -94,6 +103,7 @@ class Player(Incorporator):
 
 async def discover_city_teams(city: str) -> list[tuple[str, str, Team]]:
     """Fetch every league's team list, filter to `city`, report unreachable leagues."""
+    labels = CITY_ALIASES.get(city, {city})
     city_teams: list[tuple[str, str, Team]] = []
 
     for league, sport in SPORTS:
@@ -118,7 +128,7 @@ async def discover_city_teams(city: str) -> list[tuple[str, str, Team]]:
         # Note: `conv_dict` above ADDS location/team_id/abbreviation, it doesn't
         # drop the raw `team` envelope -- drill_roster()'s `inc_child="team.id"`
         # depends on that envelope still being present on the built instance.
-        city_teams.extend((league, sport, team) for team in teams if team.location == city)
+        city_teams.extend((league, sport, team) for team in teams if team.location in labels)
 
     return city_teams
 

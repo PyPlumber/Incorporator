@@ -67,6 +67,18 @@ TEAM_LIST_PAYLOADS: dict[str, dict[str, Any]] = {
                     "abbreviation": "LAL",
                 }
             },
+            {
+                # ESPN's one abbreviated location label across all four
+                # leagues -- CITY_ALIASES must map "Los Angeles" to it or
+                # this team silently vanishes from the city (verified live).
+                "team": {
+                    "id": "12",
+                    "uid": "s:40~l:46~t:12",
+                    "location": "LA",
+                    "displayName": "LA Clippers",
+                    "abbreviation": "LAC",
+                }
+            },
             # A real ESPN league lists 30+ teams; a single-team fixture would
             # trip incorp()'s len(source_list) <= 1 single-record mode and
             # hand back a bare instance instead of an IncorporatorList.
@@ -183,6 +195,32 @@ ROSTER_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
             ]
         }
     },
+    ("basketball/nba", "12"): {
+        "team": {
+            "athletes": [
+                {
+                    "id": "p7",
+                    "fullName": "Clipper Guard",
+                    "active": True,
+                    "position": {"abbreviation": "G"},
+                    "contract": {"salary": 20000000},
+                    "experience": {"years": 4},
+                    "age": 26,
+                    "birthPlace": {"city": "Toronto", "state": "ON"},
+                },
+                {
+                    "id": "p7b",
+                    "fullName": "Clipper Wing",
+                    "active": True,
+                    "position": {"abbreviation": "F"},
+                    "contract": {},
+                    "experience": {"years": 1},
+                    "age": 21,
+                    "birthPlace": {"city": "Phoenix", "state": "AZ"},
+                },
+            ]
+        }
+    },
     ("baseball/mlb", "3"): {
         "team": {
             # Whole-org quirk: one active roster player, one inactive
@@ -267,10 +305,15 @@ async def test_city_sports_discover_drill_and_filter(
 
     city_teams = await city_sports.discover_city_teams("Los Angeles")
 
-    # City filter picked all four LA teams; Dallas (NFL) was correctly dropped.
-    assert len(city_teams) == 4
+    # City filter picked all five LA teams -- including the Clippers, whose
+    # ESPN location is the abbreviated "LA" and only matches via CITY_ALIASES.
+    # Dallas (NFL) and the Boston teams were correctly dropped.
+    assert len(city_teams) == 5
     leagues_found = {league for league, _sport, _team in city_teams}
     assert leagues_found == {"NFL", "NBA", "MLB", "NHL"}
+    clippers = Team.inc_dict["s:40~l:46~t:12"]
+    assert clippers.inc_name == "LA Clippers"
+    assert clippers.location == "LA"
 
     # uid disambiguates the NFL/NBA numeric id=13 collision -- both teams
     # registered distinctly in Team.inc_dict under their own uid.
@@ -291,7 +334,7 @@ async def test_city_sports_discover_drill_and_filter(
 
     # Inactive MLB org player is excluded (whole-org roster quirk).
     assert "Minor Leaguer" not in [p.inc_name for p in all_players]
-    assert len(all_players) == 7  # 8 fetched across 4 rosters, 1 inactive dropped
+    assert len(all_players) == 9  # 10 fetched across 5 rosters, 1 inactive dropped
 
     by_name = {p.inc_name: p for p in all_players}
 

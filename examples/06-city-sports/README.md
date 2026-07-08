@@ -156,13 +156,15 @@ native type when the inputs are real, and a clean `None` when they aren't.
 ## The city-string caveat
 
 ESPN's `team.location` is its own metro label, not necessarily what you'd type.
-A plain `t.location == city` comprehension is the whole filter — there's no
-city/location query parameter on `/teams` to push this server-side, so an app-level
-comprehension over the already-built list is the correct (and only) option here, not
-a framework primitive.
+A plain `t.location in labels` comprehension is the whole filter (where `labels`
+comes from the script's small `CITY_ALIASES` table, defaulting to the exact city
+string) — there's no city/location query parameter on `/teams` to push this
+server-side, so an app-level comprehension over the already-built list is the
+correct (and only) option here, not a framework primitive.
 
 | You type | ESPN's team plays as |
 |---|---|
+| `"Los Angeles"` | Clippers are `"LA"` (displayName `"LA Clippers"`) — the only abbreviated location in all four leagues; the script's `CITY_ALIASES` table maps it, or the city's second NBA team silently vanishes |
 | `"Brooklyn"` | Nets are `"Brooklyn"`, not `"New York"` |
 | `"New Jersey"` | Devils are `"New Jersey"`, a different metro string from the Giants/Jets' `"New York"` |
 | `"New England"`, `"Golden State"`, `"Vegas"` | State/region names, not the city you'd guess |
@@ -177,13 +179,13 @@ city with a different team count than the default.
 
 ```text
 Discovering Los Angeles's teams across NFL / NBA / MLB / NHL (ESPN site API)...
-OK: Found 6 Los Angeles team(s): NFL Los Angeles Chargers, NFL Los Angeles Rams, NBA Los Angeles Lakers, MLB Los Angeles Angels, MLB Los Angeles Dodgers, NHL Los Angeles Kings
-OK: Loaded 282 active players across 6 teams.
+OK: Found 7 Los Angeles team(s): NFL Los Angeles Chargers, NFL Los Angeles Rams, NBA LA Clippers, NBA Los Angeles Lakers, MLB Los Angeles Angels, MLB Los Angeles Dodgers, NHL Los Angeles Kings
+OK: Loaded 302 active players across 7 teams.
 
 Los Angeles across NFL / NBA / MLB / NHL
 ======================================================================
 NFL   2 team(s), 177 active players, salary known 93/177, payroll $494,301,100
-NBA   1 team(s), 20 active players, salary known 17/20, payroll $155,080,847
+NBA   2 team(s), 40 active players, salary known 33/40, payroll $301,647,381
 MLB   2 team(s), 52 active players, salary known 0/52
 NHL   1 team(s), 33 active players, salary known 0/33
 
@@ -192,6 +194,7 @@ RANK PLAYER                  LG   TEAM                  POS   TENURE        SALA
 ------------------------------------------------------------------------------------------------
 1    Luka Doncic             NBA  Los Angeles Lakers    G          7   $54,126,450    $7,732,350
 2    Matthew Stafford        NFL  Los Angeles Rams      QB        18   $40,000,000    $2,222,222
+3    Darius Garland          NBA  LA Clippers           G          6   $39,446,090    $6,574,348
 ...
 
 VETERANS BOARD (all four leagues)
