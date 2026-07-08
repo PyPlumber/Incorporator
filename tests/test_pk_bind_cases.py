@@ -17,6 +17,7 @@ import httpx
 import pytest
 
 from incorporator import Incorporator
+from incorporator.base import IncorporatorList
 from incorporator.io import fetch
 
 
@@ -52,13 +53,14 @@ async def test_pk_bind_case_a_rename_source_away(monkeypatch: pytest.MonkeyPatch
         name_chg=[("teamid", "tid")],
     )
 
-    # Auto-unwrap: single-element list → single instance.
-    assert not isinstance(result, list)
-    assert result.inc_code is not None, "inc_code must not be None after Case A rename"
-    assert not str(result.inc_code).isdigit(), (
-        f"inc_code must not be the auto-counter fallback; got {result.inc_code!r}"
+    # incorp() always returns an IncorporatorList, even for a single record.
+    assert isinstance(result, IncorporatorList)
+    assert len(result) == 1
+    assert result[0].inc_code is not None, "inc_code must not be None after Case A rename"
+    assert not str(result[0].inc_code).isdigit(), (
+        f"inc_code must not be the auto-counter fallback; got {result[0].inc_code!r}"
     )
-    assert result.inc_code == "BOS", f"inc_code must equal the source field value 'BOS'; got {result.inc_code!r}"
+    assert result[0].inc_code == "BOS", f"inc_code must equal the source field value 'BOS'; got {result[0].inc_code!r}"
 
 
 @pytest.mark.asyncio
@@ -89,15 +91,14 @@ async def test_pk_rewrite_through_nested_name_chg(monkeypatch: pytest.MonkeyPatc
         name_chg=[("user.email", "contact.email")],
     )
 
-    # Auto-unwrap: single-element list → single instance.
-    assert not isinstance(result, list)
-    assert result.inc_code is not None, "inc_code must not be None after nested-path rename"
-    assert not str(result.inc_code).isdigit(), (
-        f"inc_code must not be the auto-counter fallback; got {result.inc_code!r}"
+    # incorp() always returns an IncorporatorList, even for a single record.
+    assert isinstance(result, IncorporatorList)
+    assert len(result) == 1
+    assert result[0].inc_code is not None, "inc_code must not be None after nested-path rename"
+    assert not str(result[0].inc_code).isdigit(), (
+        f"inc_code must not be the auto-counter fallback; got {result[0].inc_code!r}"
     )
-    assert result.inc_code == "alice@example.com", (
-        f"inc_code must equal the email value; got {result.inc_code!r}"
-    )
+    assert result[0].inc_code == "alice@example.com", f"inc_code must equal the email value; got {result[0].inc_code!r}"
 
 
 @pytest.mark.asyncio
@@ -132,12 +133,13 @@ async def test_pk_bind_case_b_rename_creates_target(monkeypatch: pytest.MonkeyPa
         name_chg=[("user_id", "id")],
     )
 
-    # Auto-unwrap: single-element list → single instance.
-    assert not isinstance(result, list)
-    assert result.inc_code is not None, "inc_code must not be None after Case B rename"
-    assert not str(result.inc_code).isdigit(), (
-        f"inc_code must not be the auto-counter fallback; got {result.inc_code!r}"
+    # incorp() always returns an IncorporatorList, even for a single record.
+    assert isinstance(result, IncorporatorList)
+    assert len(result) == 1
+    assert result[0].inc_code is not None, "inc_code must not be None after Case B rename"
+    assert not str(result[0].inc_code).isdigit(), (
+        f"inc_code must not be the auto-counter fallback; got {result[0].inc_code!r}"
     )
-    assert result.inc_code == "abc123", (
-        f"inc_code must equal 'abc123' (the value renamed into the target); got {result.inc_code!r}"
+    assert result[0].inc_code == "abc123", (
+        f"inc_code must equal 'abc123' (the value renamed into the target); got {result[0].inc_code!r}"
     )

@@ -393,7 +393,7 @@ class Incorporator(BaseModel):
         inc_page: AsyncPaginator | None = None,
         inflow: str | Path | None = None,
         **kwargs: Any,
-    ) -> TIncorporator | IncorporatorList[TIncorporator]:
+    ) -> IncorporatorList[TIncorporator]:
         """The entry-point verb every pipeline starts with — fetch a source into typed objects.
 
         Reach for ``incorp()`` once you know the URL or file path, the
@@ -402,8 +402,9 @@ class Incorporator(BaseModel):
         :meth:`test` first to print suggested kwargs.  Builds a dynamic
         Pydantic V2 model from the raw payload, coerces every field
         through the ``conv_dict`` converter pipeline, registers each
-        instance in ``cls.inc_dict`` for O(1) lookups, and returns
-        either a single instance or an :class:`IncorporatorList`.
+        instance in ``cls.inc_dict`` for O(1) lookups, and always
+        returns an :class:`IncorporatorList` — even a single-record
+        result is wrapped, never a bare instance.
 
         Example::
 
@@ -458,7 +459,9 @@ class Incorporator(BaseModel):
                 Parent-Child routing pattern: child URLs are extracted from
                 ``inc_parent`` via ``inc_child`` (dot-notation JSONPath),
                 deduplicated, and fanned out concurrently. Fully abstracts
-                the HATEOAS "Discovery & Enrichment" workflow.
+                the HATEOAS "Discovery & Enrichment" workflow. This path
+                delegates to ``incorp()`` itself and inherits the same
+                always-``IncorporatorList`` return contract.
             inc_child: Dot-notation path on parent objects to extract child
                 IDs or URLs (e.g. ``"results.url"`` or ``"Vehicle.VIN"``).
                 Only meaningful with ``inc_parent``.
@@ -518,13 +521,13 @@ class Incorporator(BaseModel):
                 verification — use with care).
 
         Returns:
-            ``TIncorporator``: A single instance when the source resolved
-            to exactly one record and ``inc_page`` was not used.
-
-            ``IncorporatorList[TIncorporator]``: A list wrapper for multiple
-            records. The list also carries ``.failed_sources`` containing
-            URLs/paths that hit permanent 429 / network errors — the structured
-            rejects surface for programmatic retry — see :attr:`IncorporatorList.rejects`.
+            ``IncorporatorList[TIncorporator]``: Always — even when the
+            source (or ``rec_path``-extracted payload) resolves to exactly
+            one record, it is wrapped in a length-1 :class:`IncorporatorList`,
+            never returned as a bare instance. The list also carries
+            ``.failed_sources`` containing URLs/paths that hit permanent
+            429 / network errors — the structured rejects surface for
+            programmatic retry — see :attr:`IncorporatorList.rejects`.
 
         Raises:
             ValueError: When no source is provided (no ``inc_url``,
@@ -620,7 +623,7 @@ class Incorporator(BaseModel):
                 }
             )
             return cast(
-                TIncorporator | IncorporatorList[TIncorporator],
+                IncorporatorList[TIncorporator],
                 await _factory.child_incorp(cls, inc_parent=inc_parent, **kwargs),
             )
 
@@ -636,9 +639,12 @@ class Incorporator(BaseModel):
         is_file_mode = bool(inc_file)
         source_list: list[str] = network._normalize_source_list(source, kwargs.get("payload_list"))
 
-        is_single = not isinstance(source, list) and inc_page is None
+        # NOT the build_instances collapse flag (removed) — this is only used
+        # below to decide whether to memoize a single string source onto
+        # cls.inc_url / cls.inc_file for refresh()'s in-state fallback.
+        is_single_source = not isinstance(source, list) and inc_page is None
 
-        if is_single and isinstance(source, str):
+        if is_single_source and isinstance(source, str):
             if is_file_mode:
                 cls.inc_file = source
             else:
@@ -717,7 +723,6 @@ class Incorporator(BaseModel):
             cls,
             parsed_data,
             rejects,
-            is_single,
             inc_code=inc_code,
             inc_name=inc_name,
             excl_lst=excl_lst,
@@ -733,7 +738,7 @@ class Incorporator(BaseModel):
         if inc_child is not None and isinstance(result, IncorporatorList):
             result.inc_child_path = inc_child
 
-        return cast(TIncorporator | IncorporatorList[TIncorporator], result)
+        return cast(IncorporatorList[TIncorporator], result)
 
     @classmethod
     async def refresh(
@@ -750,7 +755,7 @@ class Incorporator(BaseModel):
         inc_page: AsyncPaginator | None = None,
         inflow: str | Path | None = None,
         **kwargs: Any,
-    ) -> TIncorporator | IncorporatorList[TIncorporator]:
+    ) -> IncorporatorList[TIncorporator]:
         """One-shot live mark-to-market re-fetch into the instances you already hold.
 
         Reach for ``refresh()`` from a REPL, a notebook, or your own
@@ -820,11 +825,12 @@ class Incorporator(BaseModel):
                 (see :meth:`incorp` for the full kwarg list).
 
         Returns:
-            A single ``TIncorporator`` instance when the source resolves
-            to exactly one record, or an ``IncorporatorList[TIncorporator]``
-            for multi-record sources.  Existing Python references are
-            mutated in-place via Pydantic field updates, so callers holding
-            the old list will see updated values without reassigning.
+            Always an ``IncorporatorList[TIncorporator]`` — even a
+            single-record refresh (e.g. one in-state instance) is wrapped
+            in a length-1 list, never returned as a bare instance.  Existing
+            Python references are mutated in-place via Pydantic field
+            updates, so callers holding the old list will see updated
+            values without reassigning.
 
         Raises:
             ValueError: When neither a new source nor stored origin URLs
@@ -979,7 +985,6 @@ class Incorporator(BaseModel):
             cls,
             parsed_data,
             rejects,
-            is_single=(len(source_list) <= 1 and inc_page is None),
             target_class=TargetClass,
             inc_code=inc_code,
             inc_name=inc_name,
@@ -995,7 +1000,7 @@ class Incorporator(BaseModel):
         if inc_child is not None and isinstance(result, IncorporatorList):
             result.inc_child_path = inc_child
 
-        return cast(TIncorporator | IncorporatorList[TIncorporator], result)
+        return cast(IncorporatorList[TIncorporator], result)
 
     @classmethod
     async def export(

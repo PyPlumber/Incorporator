@@ -195,7 +195,7 @@ async def child_incorp(
     cls: type[Incorporator],
     inc_parent: Any,
     **kwargs: Any,
-) -> Incorporator | IncorporatorList[Any]:
+) -> IncorporatorList[Any]:
     """Drive a parent-to-child ``incorp()`` call for deeply nested RESTful graphs.
 
     Resolves ``inc_child`` paths via BFS drill-down on the parent dataset,
@@ -210,7 +210,7 @@ async def child_incorp(
             ``http_method``, ``json_payload``, ``form_payload``, etc.
 
     Returns:
-        A single instance or an :class:`IncorporatorList` of child instances.
+        Always an :class:`IncorporatorList` of child instances.
     """
     child_path = kwargs.get("inc_child") or getattr(inc_parent, "inc_child_path", None)
     if not child_path and inc_parent:
@@ -250,7 +250,6 @@ def build_instances(
     cls: type[Incorporator],
     parsed_data: list[Any],
     rejects: list[RejectEntry],
-    is_single: bool,
     target_class: type[Incorporator] | None = None,
     inc_code: str | None = None,
     inc_name: str | None = None,
@@ -279,8 +278,6 @@ def build_instances(
             (surfaced as a ``UserWarning`` and forwarded to
             :class:`IncorporatorList`).  See
             :class:`incorporator.RejectEntry`.
-        is_single: When ``True`` and ``parsed_data`` has exactly one item,
-            returns a single instance rather than a list.
         target_class: Override the compiled model class (e.g. for
             ``refresh()``).
         inc_code: Field name used as the ``IncorporatorList`` primary key.
@@ -294,8 +291,13 @@ def build_instances(
             reverse-projected from the container by that function's shim.
 
     Returns:
-        A single :class:`Incorporator` instance or an
-        :class:`IncorporatorList`.
+        Always an :class:`IncorporatorList` for the list-shaped ``parsed_data``
+        every ``incorp()`` / ``refresh()`` call produces — even a single-record
+        result is wrapped in a length-1 list, never returned as a bare
+        instance. A bare :class:`Incorporator` instance is only possible if
+        ``parsed_data`` is passed as a bare dict directly (not via
+        ``incorp()``/``refresh()``, which never do this) — kept as a
+        defensive fallback, not part of the public contract.
     """
     if not parsed_data:
         # Generate a safe empty class if an API returns 200 OK but 0 records
@@ -304,9 +306,6 @@ def build_instances(
             schema_builder.infer_dynamic_schema("DynamicModel", [{}], cls),
         )
         return IncorporatorList(EmptyClass, [], rejects=rejects)
-
-    if is_single and len(parsed_data) == 1:
-        parsed_data = parsed_data[0]
 
     # Auto-coerce based on observed types.  ``_schema_union``
     # carries the JSON-Schema type per field from prior incorps; the helper

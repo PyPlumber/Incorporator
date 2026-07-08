@@ -68,29 +68,32 @@ async def test_stateful_refresh_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
         conv_dict={"current_price": calc(float, default=0.0, target_type=float)},
     )
 
-    # Framework auto-unwraps single arrays!
-    assert not isinstance(stock_a, list)
+    # incorp() always returns an IncorporatorList, even for a single record.
+    assert isinstance(stock_a, IncorporatorList)
+    assert len(stock_a) == 1
 
-    assert stock_a.inc_code == "AAPL"
-    assert stock_a.status == "Market Open"
-    assert stock_a.current_price == 150.0  # Converted to float perfectly
+    assert stock_a[0].inc_code == "AAPL"
+    assert stock_a[0].status == "Market Open"
+    assert stock_a[0].current_price == 150.0  # Converted to float perfectly
 
     # ==========================================
     # PHASE 2: THE REFRESH (State B)
     # ==========================================
     # refresh() auto-replays the original incorp() kwargs via cls._incorp_kwargs.
-    stock_b = await LiveStock.refresh(instance=stock_a)
+    stock_b = await LiveStock.refresh(instance=stock_a[0])
 
-    assert not isinstance(stock_b, list)
+    # refresh() always returns an IncorporatorList too, even for one instance.
+    assert isinstance(stock_b, IncorporatorList)
+    assert len(stock_b) == 1
 
     # PROVE THE IDENTITY IS MAINTAINED
-    assert stock_b.inc_code == "AAPL"
+    assert stock_b[0].inc_code == "AAPL"
 
     # PROVE THE DATA UPDATED
-    assert stock_b.status == "Market Active"
+    assert stock_b[0].status == "Market Active"
 
     # PROVE THE ETL PIPELINE FIRED AGAIN (It parsed the new string into a float)
-    assert stock_b.current_price == 165.5
+    assert stock_b[0].current_price == 165.5
 
 
 @pytest.mark.asyncio
@@ -260,11 +263,13 @@ async def test_refresh_replays_nested_name_chg(monkeypatch: pytest.MonkeyPatch, 
         name_chg=[("user.email", "contact.email")],
     )
 
-    assert not isinstance(first, list)
+    # incorp() always returns an IncorporatorList, even for a single record.
+    assert isinstance(first, IncorporatorList)
+    assert len(first) == 1
     # The value should have moved from user.email to contact.email.
-    assert hasattr(first, "contact") or first.__dict__.get("contact") is not None or True
+    assert hasattr(first[0], "contact") or first[0].__dict__.get("contact") is not None or True
     # Primary contract: inc_code resolved from the non-renamed field.
-    assert first.inc_code == 7
+    assert first[0].inc_code == 7
 
     # Verify that _incorp_kwargs holds the nested Nm correctly.
     stored = getattr(NestedRenameModel, "_incorp_kwargs", {})
@@ -277,9 +282,10 @@ async def test_refresh_replays_nested_name_chg(monkeypatch: pytest.MonkeyPatch, 
     # refresh() with no kwargs must replay the nested rename correctly.
     second = await NestedRenameModel.refresh()
     assert second is not None
-    assert not isinstance(second, list)
+    assert isinstance(second, IncorporatorList)
+    assert len(second) == 1
     # inc_code must remain consistent across both calls.
-    assert second.inc_code == first.inc_code
+    assert second[0].inc_code == first[0].inc_code
 
 
 @pytest.mark.asyncio
@@ -317,3 +323,74 @@ async def test_refresh_overrides_normalized_state(monkeypatch: pytest.MonkeyPatc
     stored_after = getattr(OverrideStock, "_incorp_kwargs", {})
     # The original incorp did NOT supply excl_lst, so the stored value is None.
     assert stored_after.get("excl_lst") is None
+
+
+@pytest.mark.asyncio
+async def test_incorp_single_record_always_returns_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """incorp() on a single-record source returns a length-1 IncorporatorList, never a bare instance.
+
+    Regression for the removed ``is_single`` collapse (factory.build_instances):
+    incorp() must ALWAYS return an IncorporatorList, even when exactly one
+    record is fetched, with working iteration and ``.failed_sources`` access.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class SoloRecord(Incorporator):
+        pass
+
+    payload = {"id": "solo", "value": 42}
+
+    async def mock_fn(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        req = httpx.Request("GET", url)
+        return httpx.Response(200, text=json.dumps(payload), request=req)
+
+    monkeypatch.setattr(fetch, "execute_request", mock_fn)
+
+    result = await SoloRecord.incorp(inc_url="https://example.com/solo", inc_code="id")
+
+    assert isinstance(result, IncorporatorList)
+    assert len(result) == 1
+
+    # Iteration works.
+    items = list(result)
+    assert len(items) == 1
+    assert items[0].inc_code == "solo"
+
+    # .failed_sources is accessible on a clean single-record result.
+    assert result.failed_sources == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_single_record_always_returns_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """refresh() on an in-state single instance returns a length-1 IncorporatorList, never a bare instance.
+
+    Regression for the removed ``is_single`` collapse in the refresh() path
+    (factory.build_instances): a single stored instance refreshed in-state
+    must still come back wrapped, with working iteration and
+    ``.failed_sources`` access.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class SoloRefresh(Incorporator):
+        pass
+
+    payload = {"id": "solo", "value": 1}
+
+    async def mock_fn(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        req = httpx.Request("GET", url)
+        return httpx.Response(200, text=json.dumps(payload), request=req)
+
+    monkeypatch.setattr(fetch, "execute_request", mock_fn)
+
+    await SoloRefresh.incorp(inc_url="https://example.com/solo", inc_code="id")
+
+    result = await SoloRefresh.refresh()
+
+    assert isinstance(result, IncorporatorList)
+    assert len(result) == 1
+
+    items = list(result)
+    assert len(items) == 1
+    assert items[0].inc_code == "solo"
+
+    assert result.failed_sources == []

@@ -210,7 +210,7 @@ async def incorp(
 3. Normalise `inc_url` / `inc_file` into a source list; remember the seed kwargs on the class so `refresh()` can replay them.
 4. Fan out the source list concurrently through the network engine (sliding window of 50, rate-limited, exponential-backoff retries).
 5. Hand the parsed payload to the schema factory; build a dynamic Pydantic model and instantiate one record per row.
-6. Register every instance into `cls.inc_dict`; return a single instance for one record, or an `IncorporatorList` (carrying `.failed_sources`) otherwise.
+6. Register every instance into `cls.inc_dict`; always return an `IncorporatorList` (carrying `.failed_sources`) — even a single-record result is wrapped in a length-1 list, never a bare instance.
 
 **When to reach for it**
 This is the cold-start verb — the one you call when a new endpoint hits your radar and you want a working object graph in three lines. Backtest data prep, one-shot CSV-to-Pydantic conversions, the seed call before any daemon takes over. **Memory note (v1.2.1+):** `incorp()` validates each chunk as a whole via `TypeAdapter(list[Cls]).validate_python(rows)` — peak memory scales with the source row count, not streaming row-by-row. For large pulls reach for `stream()` (chunking mode) instead so each chunk releases before the next is fetched.
@@ -333,7 +333,7 @@ The one-shot re-fetch verb — call it from a REPL or wrap it in your own schedu
 - `**kwargs` — anything `incorp()` accepts; user-supplied keys win on conflict with persisted seed kwargs.
 
 **Yields / returns**
-Same as `incorp()` — a single instance or an `IncorporatorList[TIncorporator]`. Existing references are mutated in-place.
+Same as `incorp()` — always an `IncorporatorList[TIncorporator]`, even for a single-record refresh. Existing references are mutated in-place.
 
 **See also**
 [Tutorial 7 — Stateful Refresh](../examples/07-stateful-refresh/README.md) ·

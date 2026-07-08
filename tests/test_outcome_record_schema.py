@@ -440,7 +440,7 @@ class TestSchemaCacheHitFlag:
         # Use a uuid-keyed field name to guarantee a novel registry miss.
         unique_key = f"field_{uuid.uuid4().hex}"
         data = [{unique_key: 42, "other_field": "hello"}]
-        build_instances(_CacheMissTest, data, [], is_single=False)
+        build_instances(_CacheMissTest, data, [])
         # A new class was compiled → cache miss.
         assert _CacheMissTest._last_schema_cache_hit is False
 
@@ -457,10 +457,10 @@ class TestSchemaCacheHitFlag:
         unique_key = f"field_{uuid.uuid4().hex}"
         data = [{unique_key: 1, "stable": "a"}]
         # First call: builds new schema → miss.
-        build_instances(_CacheHitTest, data, [], is_single=False)
+        build_instances(_CacheHitTest, data, [])
         assert _CacheHitTest._last_schema_cache_hit is False
         # Second call: same shape → registry hit.
-        build_instances(_CacheHitTest, data, [], is_single=False)
+        build_instances(_CacheHitTest, data, [])
         assert _CacheHitTest._last_schema_cache_hit is True
 
     def test_cache_hit_when_target_class_supplied(self) -> None:
@@ -472,7 +472,7 @@ class TestSchemaCacheHitFlag:
             pass
 
         data = [{"some_field": "value"}]
-        build_instances(_RefreshPathTest, data, [], is_single=False, target_class=_RefreshPathTest)
+        build_instances(_RefreshPathTest, data, [], target_class=_RefreshPathTest)
         # target_class bypasses registry → treated as cache hit.
         assert _RefreshPathTest._last_schema_cache_hit is True
 

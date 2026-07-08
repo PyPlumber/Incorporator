@@ -1098,10 +1098,11 @@ async def test_rec_path_terminal_index(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """rec_path="a.0" selects the first element of a list and returns it as a single instance.
+    """rec_path="a.0" selects the first element of a list and returns it wrapped in an IncorporatorList.
 
     The drill leaves a dict (not a list) in parsed_chunk, so the single dict is
-    accumulated and the framework returns one instance (not an IncorporatorList).
+    accumulated into a length-1 list — incorp() always returns an
+    IncorporatorList, even for this single-record result.
     """
     from incorporator.io import fetch
 
@@ -1114,8 +1115,8 @@ async def test_rec_path_terminal_index(
     monkeypatch.setattr(fetch, "execute_request", _mock_json_response(payload))
 
     result = await _Item.incorp(inc_url="https://api.example.com/items", rec_path="a.0")
-    # Single-record path: incorp() returns the instance directly, not an IncorporatorList.
-    assert result.x == 10  # type: ignore[union-attr]
+    assert len(result) == 1
+    assert result[0].x == 10
 
 
 @pytest.mark.asyncio
@@ -2765,9 +2766,9 @@ async def test_refresh_after_closed_injected_client_builds_fresh_client(
     # its own fresh client (via the monkeypatched build_client above) since
     # "_client" was excluded from persistence.  If the fix regressed, this
     # would raise httpx's "client has been closed" RuntimeError instead.
-    # A single in-state instance collapses refresh()'s return to the bare
-    # instance rather than a list — the assertion below just needs the call
-    # to succeed without the closed-client error.
+    # refresh() always returns an IncorporatorList (even for this single
+    # in-state instance) — the assertion below just needs the call to
+    # succeed without the closed-client error.
     refreshed = await _Widget.refresh()
     assert refreshed is not None
     assert "_client" not in _Widget._incorp_kwargs
