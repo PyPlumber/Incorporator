@@ -134,6 +134,22 @@ def test_apply_etl_calc_none_return_with_target_type_emits_no_warning(caplog: py
     assert "type coercion failed" not in caplog.text
 
 
+def test_apply_etl_calc_all_none_return_with_target_type_emits_no_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """A calc_all() func that legitimately returns None for a row must not trigger target_type
+    coercion or a 'type coercion failed' warning for that row; None lands cleanly for the key."""
+    data: List[Dict[str, Any]] = [{"a": "no-salary-published"}, {"a": "42"}]
+
+    def maybe_none(xs: List[Any]) -> List[Any]:
+        return [None if x == "no-salary-published" else float(x) for x in xs]
+
+    op = calc_all(maybe_none, "a", target_type=float)
+    with caplog.at_level(logging.WARNING):
+        result = apply_etl_transformations(data, conv_dict={"b": op})
+    assert result[0]["b"] is None
+    assert result[1]["b"] == pytest.approx(42.0)
+    assert "type coercion failed" not in caplog.text
+
+
 def test_apply_etl_conv_dict_standard_exception_skips_key() -> None:
     """A conv_dict callable that raises must be caught; key is left as-is."""
     data: List[Dict[str, Any]] = [{"id": "abc"}]

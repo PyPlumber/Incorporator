@@ -250,18 +250,22 @@ def apply_etl_transformations(
                 # Symmetric to CalcOp's pre-check, applied across the full
                 # column matrix: if every cell of every input column is
                 # garbage, skip the func call and default every output row.
+                func_returned_clean = False
                 if all(is_garbage_value(v) for col in col_args for v in col):
                     results = [default] * len(dict_items)
                 else:
                     try:
                         results = func(*col_args)
+                        func_returned_clean = True
                     except Exception as e:
                         logger.warning("calc_all failed for key '%s': %s", key, e)
                         results = [default] * len(dict_items)
 
                 for idx, d in enumerate(dict_items):
+                    from_results = False
                     try:
                         val = results[idx]
+                        from_results = True
                     except IndexError:
                         logger.warning(
                             "calc_all returned fewer results than expected for key '%s' (needed index %d)",
@@ -270,7 +274,22 @@ def apply_etl_transformations(
                         )
                         val = default
 
-                    if target_type is not None:
+                    # Symmetric to CalcOp's post-func None guard, but CalcAllOp
+                    # needs a second, per-row flag: func_returned_clean is
+                    # batch-wide (True whenever `func` itself ran without
+                    # raising), while from_results is row-wide (True only when
+                    # this row's value actually came from results[idx] rather
+                    # than the IndexError fallback above). A None can reach
+                    # this point via that fallback even when the batch func
+                    # ran cleanly (e.g. func returned a too-short list) — that
+                    # None is not a func result, so it must still be coerced.
+                    # Skip target_type() only when both flags agree the value
+                    # is a genuine func-returned None; every other None (the
+                    # garbage short-circuit, the func-exception fallback, or
+                    # the IndexError fallback) is still coerced so an
+                    # incompatible declared default still surfaces its
+                    # "type coercion failed" warning (D2-01).
+                    if target_type is not None and not (func_returned_clean and from_results and val is None):
                         try:
                             val = target_type(val)
                         except Exception as e:
