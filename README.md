@@ -315,7 +315,7 @@ The eleven-tutorial curriculum.  Each slot introduces one new verb or technique,
 3. [📦 **Snapshot Warehouse — Universal Formats**](./examples/03-universal-formats/README.md) — fan CoinGecko top-100 snapshots into NDJSON / CSV / SQLite / Parquet, then round-trip every artifact.
 4. [🛡️ **XML Post Audit**](./examples/04-xml-post-audit/README.md) — federal-VIN fraud audit: XML invoice ledger enriched via one batched POST.
 5. [🚀 **Parent → Child Drilling**](./examples/05-parent-child-drilling/README.md) — CoinGecko `/coins/markets` → `/coins/{id}` fan-out — the canonical backtest-data-prep pattern.
-6. [🏙️ **City Sports**](./examples/06-city-sports/README.md) — city → teams → rosters across NFL/NBA/MLB/NHL: single-instance `inc_parent` drill, dotted-PK collision fix, `calc()` derived salary/tenure metrics.
+6. [🗺️ **State Sports**](./examples/06-state-sports/README.md) — state/province → teams → rosters across NFL/NBA/MLB/NHL: whole-list + single-instance `inc_parent` drills, `pluck(key, chain=fn)` venue-state normalization, `calc()` derived salary/tenure metrics.
 7. [🔄 **Stateful Refresh**](./examples/07-stateful-refresh/README.md) — `refresh()` three ways against Binance's live ticker.
 8. [🌊 **Streaming Daemon — Paginated Bulk Export at O(1) Memory**](./examples/08-streaming-daemon/README.md) — `stream()`'s canonical job: chunking-mode drain of a paginated source. Plus a single-source `stateful_polling=True` compatibility shim with a pointer to T10 for the multi-source live-daemon path.
 9. [🏁 **NASCAR Fantasy Fjord**](./examples/09-nascar-fantasy-fjord/README.md) — fantasy-sports scoring fjord across Cup, Xfinity, Truck series; previews T10's abstraction.

@@ -284,7 +284,7 @@ And the discovery loop you ran *before* that:
 | Snapshot CoinGecko into a Parquet/SQLite/NDJSON warehouse | [Tutorial 3 — Universal Formats](../03-universal-formats/README.md) |
 | Audit a warehouse against a federal source (XML + POST) | [Tutorial 4 — XML Post Audit](../04-xml-post-audit/README.md) |
 | Drill into nested API graphs (parent → child) for backtest data | [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md) |
-| Apply parent-child to a single-instance drill (city sports rosters) | [Tutorial 6 — City Sports](../06-city-sports/README.md) |
+| Apply parent-child to a single-instance drill (state sports rosters) | [Tutorial 6 — State Sports](../06-state-sports/README.md) |
 | Keep a live registry fresh with `refresh()` | [Tutorial 7 — Stateful Refresh](../07-stateful-refresh/README.md) |
 | Run as a long-lived streaming daemon | [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md) |
 | Coordinate multi-source extracts (fantasy NASCAR) | [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md) |
