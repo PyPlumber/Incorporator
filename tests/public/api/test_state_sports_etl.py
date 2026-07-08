@@ -2,18 +2,23 @@
 
 Loads the actual tutorial entry script via `load_sidecar` (unique importlib
 key) rather than duplicating its conv_dict logic, so this test exercises the
-exact shipped code path: the T5-style whole-list `inc_parent` detail
-fan-out that reads `franchise.venue.address.state`, `to_state_code`'s
-full-name -> 2-letter normalization (MLB reports "California" / Canadian
-MLB reports "Ontario" where NHL/NBA already say "CA" / "ON"), the
-no-venue-address exclusion path, the join back to the original `Team`
-instance for the roster drill, the `salary_per_year` / `turned_pro_at`
-derived metrics with no `target_type=` warning spam, the MLB active-roster
-filter, and the `birth_state` homegrown-board equality filter.
+exact shipped code path: the live CountriesNow reference-map fetch (and its
+fail-fast path), the T5-style whole-list `inc_parent` detail fan-out that
+reads `franchise.venue.address.state`, `to_state_code`'s full-name ->
+2-letter normalization (MLB reports "California" / Canadian MLB reports
+"Ontario" where NHL/NBA already say "CA" / "ON"), the no-venue-address
+exclusion path, the join back to the original `Team` instance for the
+roster drill, the `salary_per_year` / `turned_pro_at` derived metrics with
+no `target_type=` warning spam, the MLB active-roster filter, the
+`birth_state` homegrown-board equality filter, and the single-pass
+`RosterDrill` (CustomCurrent) -> `Roster` (Fjord) Watershed that tags and
+exports active players.
 """
 
 import asyncio
+import functools
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +35,17 @@ state_sports = load_sidecar(_EXAMPLE_DIR / "state_sports.py", "state_sports_targ
 Team = state_sports.Team
 TeamDetail = state_sports.TeamDetail
 Player = state_sports.Player
+
+# A small literal map -- exercises the same normalization the live
+# CountriesNow fetch would produce, without a network call. Phase 1's tests
+# below thread this through `discover_state_teams` directly rather than
+# going through `fetch_state_code_map()`.
+TEST_STATE_CODE_MAP: dict[str, str] = {
+    "California": "CA",
+    "Massachusetts": "MA",
+    "District of Columbia": "DC",
+    "Ontario": "ON",
+}
 
 
 def _teams_envelope(teams: list[dict[str, Any]]) -> dict[str, Any]:
@@ -258,10 +274,30 @@ ROSTER_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
     },
 }
 
+# CountriesNow's real payload shape: {"error": bool, "data": {"states": [...]}}.
+# `rec_path="data.states"` drills straight into this.
+COUNTRIESNOW_PAYLOADS: dict[str, dict[str, Any]] = {
+    "United%20States": {
+        "error": False,
+        "data": {"states": [{"name": "California", "state_code": "CA"}, {"name": "Massachusetts", "state_code": "MA"}]},
+    },
+    "Canada": {
+        "error": False,
+        "data": {"states": [{"name": "Ontario", "state_code": "ON"}]},
+    },
+}
+
 
 async def mock_espn_execute_request(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
-    """Serves the four team-list feeds, per-(sport, id) detail drills, then roster drills."""
+    """Serves CountriesNow reference data, the four team-list feeds, per-(sport, id) detail
+    drills, then roster drills."""
     req = httpx.Request("GET", url)
+
+    if "countriesnow.space" in url:
+        for key, payload in COUNTRIESNOW_PAYLOADS.items():
+            if f"country={key}" in url:
+                return httpx.Response(200, text=json.dumps(payload), request=req)
+        return httpx.Response(200, text=json.dumps({"error": True, "data": {}}), request=req)
 
     if "enable=roster" in url:
         for (sport, team_id), payload in ROSTER_PAYLOADS.items():
@@ -280,13 +316,50 @@ async def mock_espn_execute_request(url: str, *args: Any, **kwargs: Any) -> http
     return httpx.Response(200, text=json.dumps({"team": {}}), request=req)
 
 
+async def mock_countriesnow_unreachable(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+    """Every CountriesNow call comes back with an empty `states` list -- the fail-fast path."""
+    req = httpx.Request("GET", url)
+    return httpx.Response(200, text=json.dumps({"error": True, "data": {}}), request=req)
+
+
+def _reset_registries(*classes: Any) -> None:
+    """Wipe per-class inc_dict + parked snapshot between tests."""
+    for cls in classes:
+        cls.inc_dict.clear()
+        if "_tideweaver_snapshot" in cls.__dict__:
+            try:
+                delattr(cls, "_tideweaver_snapshot")
+            except AttributeError:
+                pass
+
+
 def test_to_state_code_normalizes_full_names_and_passes_through_codes() -> None:
-    """MLB-style full names normalize; already-abbreviated codes pass through unchanged."""
-    assert state_sports.to_state_code("California") == "CA"
-    assert state_sports.to_state_code("District of Columbia") == "DC"
-    assert state_sports.to_state_code("Ontario") == "ON"
-    assert state_sports.to_state_code("CA") == "CA"
-    assert state_sports.to_state_code("ON") == "ON"
+    """MLB-style full names normalize via a literal mapping; already-abbreviated codes pass through."""
+    test_map = {"California": "CA", "District of Columbia": "DC", "Ontario": "ON"}
+    assert state_sports.to_state_code(test_map, "California") == "CA"
+    assert state_sports.to_state_code(test_map, "District of Columbia") == "DC"
+    assert state_sports.to_state_code(test_map, "Ontario") == "ON"
+    assert state_sports.to_state_code(test_map, "CA") == "CA"
+    assert state_sports.to_state_code(test_map, "ON") == "ON"
+
+
+@pytest.mark.asyncio
+async def test_reference_api_failure_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unreachable/empty CountriesNow response prints one ASCII error line and exits non-zero."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fetch, "execute_request", mock_countriesnow_unreachable)
+    _reset_registries(state_sports.StateRef)
+
+    with pytest.raises(SystemExit) as exc_info:
+        await state_sports.fetch_state_code_map()
+
+    assert exc_info.value.code != 0
+
+    captured = capsys.readouterr()
+    assert state_sports.REFERENCE_API_ERROR in captured.out
+    assert captured.out.strip().isascii()
 
 
 @pytest.mark.asyncio
@@ -297,7 +370,7 @@ async def test_state_sports_discover_drill_and_filter(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
 
-    state_teams, no_venue_total = await state_sports.discover_state_teams("CA")
+    state_teams, no_venue_total = await state_sports.discover_state_teams("CA", TEST_STATE_CODE_MAP)
 
     # State filter picked all five CA teams -- including the Clippers (whose
     # venue address is CA regardless of the deleted city-brand string), and
@@ -390,6 +463,7 @@ async def test_team_detail_whole_list_fan_out_normalizes_venue_state(
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
+    to_code = functools.partial(state_sports.to_state_code, TEST_STATE_CODE_MAP)
 
     nba_teams = await Team.incorp(
         inc_url="https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams",
@@ -407,7 +481,7 @@ async def test_team_detail_whole_list_fan_out_normalizes_venue_state(
         inc_name="displayName",
         conv_dict={
             "venue_city": state_sports.pluck("franchise.venue.address.city"),
-            "venue_state": state_sports.pluck("franchise.venue.address.state", chain=state_sports.to_state_code),
+            "venue_state": state_sports.pluck("franchise.venue.address.state", chain=to_code),
         },
         timeout=8,
     )
@@ -436,7 +510,7 @@ async def test_team_detail_whole_list_fan_out_normalizes_venue_state(
         inc_code="uid",
         inc_name="displayName",
         conv_dict={
-            "venue_state": state_sports.pluck("franchise.venue.address.state", chain=state_sports.to_state_code),
+            "venue_state": state_sports.pluck("franchise.venue.address.state", chain=to_code),
         },
         timeout=8,
     )
@@ -452,7 +526,7 @@ async def test_state_sports_excludes_no_venue_team(monkeypatch: pytest.MonkeyPat
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
 
-    state_teams, no_venue_total = await state_sports.discover_state_teams("CA")
+    state_teams, no_venue_total = await state_sports.discover_state_teams("CA", TEST_STATE_CODE_MAP)
 
     ghost_present = any(team.inc_name == "Ghost Team" for _league, _sport, team in state_teams)
     assert ghost_present is False
@@ -476,3 +550,78 @@ async def test_team_detail_incorp_returns_incorporator_list_for_single_row_leagu
     )
     assert isinstance(teams, IncorporatorList)
     assert len(teams) == 1
+
+
+@pytest.mark.asyncio
+async def test_roster_watershed_produces_tagged_ndjson_rows(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """The 2-current roster Watershed (`RosterDrill` CustomCurrent -> `boards` Fjord)
+    tags every active player with league/team_name and exports them to NDJSON.
+
+    Mirrors `tests/test_tideweaver_routing_chain.py` Test 2's chain shape: a head
+    current whose interval is set longer than the window so it fires exactly once,
+    a Fjord tail under `gate_mode="weir"` reading the head's parked upstream
+    snapshot and exporting joined rows. Asserts against the exported NDJSON file,
+    not `Roster._tideweaver_snapshot` -- the Fjord flush parks that snapshot on the
+    `Roster` class object its OWN `outflow.py` load resolves (a distinct Python
+    class from the one imported into this test's `state_sports` module), so the
+    file is the only cross-module-safe read point (same pattern
+    `examples/11-tideweaver/arb_scanner.py` uses).
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INCORPORATOR_RATE_LIMIT_BYPASS", "1")
+    monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
+    _reset_registries(Team, TeamDetail, Player)
+
+    state_teams, _no_venue_total = await state_sports.discover_state_teams("CA", TEST_STATE_CODE_MAP)
+    assert len(state_teams) == 5
+
+    out_file = tmp_path / "roster.ndjson"
+    roster_drill = state_sports.RosterDrill(
+        name="roster_drill",
+        cls=Player,
+        interval=60.0,
+        on_error="isolate",
+        matched_teams=state_teams,
+    )
+    boards = state_sports.Fjord(
+        name="boards",
+        cls=state_sports.Roster,
+        interval=60.0,
+        on_error="isolate",
+        export_params={"file_path": str(out_file), "format": "ndjson", "if_exists": "replace"},
+    )
+
+    now = datetime.now(timezone.utc)
+    window = (now, now + timedelta(seconds=8.0))
+    ws = state_sports.Watershed.chain(
+        window=window,
+        currents=[roster_drill, boards],
+        gate_mode="weir",
+        outflow=str(state_sports.OUTFLOW_PATH),
+        drain_timeout=8.0,
+    )
+    tw = state_sports.Tideweaver(ws, pass_interval=0.05)
+    tides = [tide async for tide in tw.run()]
+
+    fired_names = {name for tide in tides for name in tide.fired}
+    assert fired_names == {"roster_drill", "boards"}, f"both currents must fire, got {fired_names}"
+
+    assert out_file.exists(), "boards Fjord must have written the NDJSON export"
+    lines = [ln for ln in out_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    rows = [json.loads(ln) for ln in lines]
+    assert len(rows) == 9  # 10 fetched across 5 rosters, 1 inactive MLB org player dropped
+
+    by_name = {r["inc_name"]: r for r in rows}
+    assert "Minor Leaguer" not in by_name
+
+    joe_alt = by_name["Joe Alt"]
+    assert joe_alt["league"] == "NFL"
+    assert joe_alt["team_name"] == "Los Angeles Chargers"
+    assert joe_alt["salary"] == 3809632
+    assert joe_alt["inc_code"] == "NFL:p1"  # league-qualified inc_code
+
+    doncic = by_name["Luka Doncic"]
+    assert doncic["league"] == "NBA"
+    assert doncic["team_name"] == "Los Angeles Lakers"
+
+    assert all(":" in r["inc_code"] for r in rows)

@@ -40,8 +40,10 @@ kwargs you already know from Tutorial 1: schema-free, no class definitions requi
 >   one source, live registry, compatibility path over fjord's engine.
 > - **multi-source stateful daemon** ([`fjord()`](../10-multi-source-fjord/README.md), T10) —
 >   N sources, fused `outflow(state)`, the canonical live-registry pattern.
-> - **fjord flush** (Tideweaver `Fjord` current, T11) — the per-tick flush
->   variant of the daemon, scheduled inside a windowed graph.
+> - **fjord flush** (Tideweaver `Fjord` current, first seen in
+>   [T6](../06-state-sports/README.md)'s single-pass Watershed, full vocabulary at
+>   T11) — the per-tick flush variant of the daemon, scheduled inside a windowed
+>   graph.
 
 ---
 
@@ -263,8 +265,10 @@ instead.
 > [Tutorial 10 — Multi-Source Fjord](../10-multi-source-fjord/README.md) is the
 > canonical stateful-daemon pattern.  For windowed orchestration of multiple feeds
 > on independent cadences reach for
-> [Tideweaver (Tutorial 11)](../11-tideweaver/README.md).  T8 itself stays focused
-> on chunking — that's `stream()`'s real job.
+> [Tideweaver (Tutorial 11)](../11-tideweaver/README.md), the capstone that walks
+> the full vocabulary (diamonds, penstocks, spillways) — [Tutorial 6](../06-state-sports/README.md)
+> already gave you an early, narrower taste (a single-pass 2-current chain) if you
+> want a preview.  T8 itself stays focused on chunking — that's `stream()`'s real job.
 
 ---
 

@@ -5,15 +5,20 @@ Companion script for `examples/06-state-sports/README.md`.
 
 Pick a US state (or Canadian province) code, discover every team whose venue
 sits there across NFL / NBA / MLB / NHL via ESPN's public site API, drill
-each roster concurrently, and rank players by salary and tenure.  Builds on
-Tutorial 5's `inc_parent` / `inc_child` shape twice over in one script: a
-whole-list fan-out (T5's own signature shape) drills every league's team
-detail records to read their venue state, then a single-instance fan-out
-(today's T6 shape) drills each matching team's own roster.
+each roster through a single-pass Tideweaver Watershed, and rank players by
+salary and tenure. Two phases:
 
-One-shot script, same shape as T5 -- no Watershed, no daemon.  The old
-streaming-daemon half of this tutorial slot moved to T8 (`stream()`) and
-T10 (`fjord()`), which own recurring-refresh ground.
+Phase 1 (plain async, T5's own shape) -- fetch a live state/province
+name -> code reference map from CountriesNow, discover every league's team
+list, drill each team's venue detail (T5's whole-list `inc_parent` fan-out),
+and filter to `region` by attribute equality.
+
+Phase 2 (this tutorial's new ground) -- a 2-current Tideweaver `Watershed`:
+a `CustomCurrent` (`roster_drill`) drills every matched team's roster and
+tags league/team-name context, feeding a `Fjord` (`boards`) that joins the
+active-player rows into a `Roster` output class and exports NDJSON. This is
+the curriculum's first Watershed exposure -- T11 remains the capstone that
+covers the full vocabulary (diamonds, penstocks, spillways).
 
 Run with:
     python examples/06-state-sports/state_sports.py            # defaults to "CA"
@@ -22,9 +27,31 @@ Run with:
 """
 
 import asyncio
+import functools
+import json
 import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+from pydantic import Field
 
 from incorporator import Incorporator, calc, pluck
+from incorporator.tideweaver import CustomCurrent, Fjord, Tideweaver, Watershed
+
+HERE = Path(__file__).resolve().parent
+OUTFLOW_PATH = HERE / "outflow.py"
+OUT = HERE / "out"
+OUT.mkdir(exist_ok=True)
+
+# Make the sidecar importable when this script is run via `python -m` or from
+# a working directory other than HERE. Python only auto-adds the script's own
+# directory to sys.path for `python <script>` invocations.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from outflow import Roster  # noqa: E402
 
 SPORTS = [
     ("NFL", "football/nfl"),
@@ -38,88 +65,26 @@ SPORTS = [
 # is scoped to those two leagues rather than pad the rest with "-" rows.
 SALARY_LEAGUES = ("NFL", "NBA")
 
-# ESPN's `franchise.venue.address.state` is NOT normalized across leagues:
-# NFL/NBA/NHL already report 2-letter codes ("CA", "ON"), but MLB reports
-# full names -- the US state name ("California"), DC as "District of
-# Columbia" (where the Wizards' NBA record already says "DC"), and -- a
-# fact beyond the original live probe -- the Blue Jays' province as
-# "Ontario" where every NHL/NBA Canadian team already reports "ON".
-# Verified live 2026-07-08.  50 US states + DC + the 13 Canadian
-# provinces/territories, closed vocabulary.
-STATE_NAME_TO_CODE = {
-    "Alabama": "AL",
-    "Alaska": "AK",
-    "Arizona": "AZ",
-    "Arkansas": "AR",
-    "California": "CA",
-    "Colorado": "CO",
-    "Connecticut": "CT",
-    "Delaware": "DE",
-    "District of Columbia": "DC",
-    "Florida": "FL",
-    "Georgia": "GA",
-    "Hawaii": "HI",
-    "Idaho": "ID",
-    "Illinois": "IL",
-    "Indiana": "IN",
-    "Iowa": "IA",
-    "Kansas": "KS",
-    "Kentucky": "KY",
-    "Louisiana": "LA",
-    "Maine": "ME",
-    "Maryland": "MD",
-    "Massachusetts": "MA",
-    "Michigan": "MI",
-    "Minnesota": "MN",
-    "Mississippi": "MS",
-    "Missouri": "MO",
-    "Montana": "MT",
-    "Nebraska": "NE",
-    "Nevada": "NV",
-    "New Hampshire": "NH",
-    "New Jersey": "NJ",
-    "New Mexico": "NM",
-    "New York": "NY",
-    "North Carolina": "NC",
-    "North Dakota": "ND",
-    "Ohio": "OH",
-    "Oklahoma": "OK",
-    "Oregon": "OR",
-    "Pennsylvania": "PA",
-    "Rhode Island": "RI",
-    "South Carolina": "SC",
-    "South Dakota": "SD",
-    "Tennessee": "TN",
-    "Texas": "TX",
-    "Utah": "UT",
-    "Vermont": "VT",
-    "Virginia": "VA",
-    "Washington": "WA",
-    "West Virginia": "WV",
-    "Wisconsin": "WI",
-    "Wyoming": "WY",
-    "Alberta": "AB",
-    "British Columbia": "BC",
-    "Manitoba": "MB",
-    "New Brunswick": "NB",
-    "Newfoundland and Labrador": "NL",
-    "Northwest Territories": "NT",
-    "Nova Scotia": "NS",
-    "Nunavut": "NU",
-    "Ontario": "ON",
-    "Prince Edward Island": "PE",
-    "Quebec": "QC",
-    "Saskatchewan": "SK",
-    "Yukon": "YT",
-}
+# CountriesNow's US-states feed has no District of Columbia entry (verified
+# live 2026-07-08), but MLB's venue feed reports "District of Columbia" for
+# the Nationals -- a one-entry supplement closes that one gap. Even a live
+# reference API needs a hygiene check.
+DC_SUPPLEMENT = {"District of Columbia": "DC"}
+
+COUNTRIESNOW_URLS = [
+    "https://countriesnow.space/api/v0.1/countries/states/q?country=United%20States",
+    "https://countriesnow.space/api/v0.1/countries/states/q?country=Canada",
+]
+
+REFERENCE_API_ERROR = "ERROR: reference API unreachable - cannot normalize state names."
 
 
-def to_state_code(value: str) -> str:
-    """Full state/DC name -> 2-letter code; already-abbreviated values (incl.
-    Canadian provinces, which ESPN already reports as 2-letter: ON, QC, ...)
-    pass through unchanged.  `pluck()`'s null-handling already skips this
-    call on garbage input, so no `None`-guard belongs here."""
-    return STATE_NAME_TO_CODE.get(value, value)
+def to_state_code(mapping: dict[str, str], value: str) -> str:
+    """Full state/DC/province name -> 2-letter code; already-abbreviated
+    values pass through the dict.get(..., value) fallback unchanged.
+    `pluck()`'s null-handling already skips this call on garbage input, so
+    no `None`-guard belongs here."""
+    return mapping.get(value, value)
 
 
 def salary_per_year(salary: int | None, tenure: int | None) -> float | None:
@@ -136,6 +101,10 @@ def turned_pro_at(age: int | None, tenure: int | None) -> int | None:
     return age - (tenure or 0)
 
 
+class StateRef(Incorporator):
+    pass
+
+
 class Team(Incorporator):
     pass
 
@@ -148,7 +117,32 @@ class Player(Incorporator):
     pass
 
 
-async def discover_state_teams(region: str) -> tuple[list[tuple[str, str, Team]], int]:
+async def fetch_state_code_map() -> dict[str, str]:
+    """Build the full-name -> 2-letter-code map from CountriesNow (US + Canada).
+
+    This reference map must exist before any venue-state normalization can
+    run -- a silent empty map would produce a filter that matches nothing
+    with no explanation why. Fail fast instead: one ASCII error line, exit
+    non-zero.
+    """
+    mapping: dict[str, str] = dict(DC_SUPPLEMENT)
+    for url in COUNTRIESNOW_URLS:
+        states = await StateRef.incorp(
+            inc_url=url,
+            rec_path="data.states",
+            inc_code="state_code",
+            inc_name="name",
+            timeout=8,
+        )
+        if not states:
+            print(REFERENCE_API_ERROR)
+            sys.exit(1)
+        for state in states:
+            mapping[state.inc_name] = state.inc_code
+    return mapping
+
+
+async def discover_state_teams(region: str, state_code_map: dict[str, str]) -> tuple[list[tuple[str, str, Team]], int]:
     """Fetch every league's team list, drill venue detail, filter to `region`.
 
     Returns the matched teams alongside the total no-venue count across all
@@ -156,6 +150,7 @@ async def discover_state_teams(region: str) -> tuple[list[tuple[str, str, Team]]
     """
     matched: list[tuple[str, str, Team]] = []
     no_venue_total = 0
+    to_code = functools.partial(to_state_code, state_code_map)
 
     for league, sport in SPORTS:
         teams = await Team.incorp(
@@ -188,7 +183,7 @@ async def discover_state_teams(region: str) -> tuple[list[tuple[str, str, Team]]
             inc_name="displayName",
             conv_dict={
                 "venue_city": pluck("franchise.venue.address.city"),
-                "venue_state": pluck("franchise.venue.address.state", chain=to_state_code),
+                "venue_state": pluck("franchise.venue.address.state", chain=to_code),
                 "venue_zip": pluck("franchise.venue.address.zipCode"),
             },
             timeout=8,
@@ -196,7 +191,7 @@ async def discover_state_teams(region: str) -> tuple[list[tuple[str, str, Team]]
 
         # Note: `conv_dict` above ADDS location/team_id/abbreviation to `Team`
         # and venue_city/venue_state/venue_zip to `TeamDetail` -- it doesn't
-        # drop either raw envelope.  drill_roster()'s `inc_child="team.id"`
+        # drop either raw envelope. drill_roster()'s `inc_child="team.id"`
         # depends on the *original* `Team` instance's envelope, which is why
         # the join below recovers `Team.inc_dict[...]` rather than reusing
         # the `TeamDetail` instance directly (its `rec_path="team"` means it
@@ -232,7 +227,7 @@ async def drill_roster(league: str, sport: str, team: Team) -> tuple[str, Team, 
             "birth_state": pluck("birthPlace.state"),
             # Read raw dotted paths, not the flattened salary/tenure fields
             # above -- keeps the derived fields independent of conv_dict
-            # insertion order.  No target_type=: the funcs already return
+            # insertion order. No target_type=: the funcs already return
             # native float/int, and a bare `target_type=float` would try to
             # coerce their intentional `None` and log a spurious warning on
             # every no-salary row (~half of all players in this feed).
@@ -250,7 +245,41 @@ async def drill_roster(league: str, sport: str, team: Team) -> tuple[str, Team, 
     return league, team, active, players.failed_sources
 
 
-def print_league_summary(region: str, all_players: list[Player]) -> None:
+class RosterDrill(CustomCurrent):
+    """Drills every matched team's roster and tags league/team-name context.
+
+    ESPN's `team.athletes[i]` carries no back-reference to the parent
+    team's `displayName`/`location` (confirmed live 2026-07-08) -- there is
+    no declarative way to flatten a roster array while retaining a sibling
+    field of the object being flattened, so a per-team `incorp()` call plus
+    a post-hoc tagging loop is the genuine `CustomCurrent` escape hatch
+    here, not a shortcut around a `Stream(parent_current=...)` whole-list
+    fan-out (which would silently lose team attribution -- see the
+    README's "Suspected framework gaps" note).
+    """
+
+    matched_teams: list[tuple[str, str, Any]] = Field(default_factory=list)
+    roster_rejects: list[tuple[str, list[str]]] = Field(default_factory=list)
+
+    async def tick(self, scheduler: Any) -> None:
+        rosters = await asyncio.gather(
+            *(drill_roster(league, sport, team) for league, sport, team in self.matched_teams)
+        )
+        active_players: list[Player] = []
+        rejects: list[tuple[str, list[str]]] = []
+        for _league, team, active, failed_sources in rosters:
+            active_players.extend(active)
+            if failed_sources:
+                rejects.append((team.inc_name, failed_sources))
+        self.roster_rejects = rejects
+        # A NEW list object -- defeats CustomCurrent._run_tick's auto-park
+        # identity check, which would otherwise snapshot the whole raw
+        # Player.inc_dict (including MLB's ~250-player org roster this
+        # active filter has already excluded).
+        Player._tideweaver_snapshot = active_players
+
+
+def print_league_summary(region: str, all_players: list[Any]) -> None:
     print(f"\n{region} across NFL / NBA / MLB / NHL")
     print("=" * 70)
     for league, _ in SPORTS:
@@ -267,7 +296,7 @@ def print_league_summary(region: str, all_players: list[Player]) -> None:
         )
 
 
-def print_paycheck_board(all_players: list[Player]) -> None:
+def print_paycheck_board(all_players: list[Any]) -> None:
     pool = [p for p in all_players if p.league in SALARY_LEAGUES and p.salary is not None]
     pool.sort(key=lambda p: p.salary, reverse=True)
 
@@ -284,7 +313,7 @@ def print_paycheck_board(all_players: list[Player]) -> None:
         )
 
 
-def print_veterans_board(all_players: list[Player]) -> None:
+def print_veterans_board(all_players: list[Any]) -> None:
     pool = [p for p in all_players if p.tenure is not None]
     pool.sort(key=lambda p: p.tenure, reverse=True)
 
@@ -297,7 +326,7 @@ def print_veterans_board(all_players: list[Player]) -> None:
         print(f"{i:<5}{p.inc_name[:23]:<24}{p.league:<5}{p.team_name[:21]:<22}{p.tenure:>7}{turned_pro!s:>14}")
 
 
-def print_homegrown_board(region: str, all_players: list[Player]) -> None:
+def print_homegrown_board(region: str, all_players: list[Any]) -> None:
     # Pure attribute equality -- no brand-string tables. `birthPlace.state` on
     # players uses 2-letter codes already (verified live), so it compares
     # directly against the normalized `region`.
@@ -316,10 +345,14 @@ def print_homegrown_board(region: str, all_players: list[Player]) -> None:
 
 
 async def main() -> None:
-    region = to_state_code(sys.argv[1]) if len(sys.argv) > 1 else "CA"
+    print("Fetching state/province reference data (CountriesNow)...")
+    state_code_map = await fetch_state_code_map()
+
+    region_arg = sys.argv[1] if len(sys.argv) > 1 else "CA"
+    region = to_state_code(state_code_map, region_arg)
     print(f"Discovering {region}'s teams across NFL / NBA / MLB / NHL (ESPN site API)...")
 
-    state_teams, no_venue_total = await discover_state_teams(region)
+    state_teams, no_venue_total = await discover_state_teams(region, state_code_map)
     if no_venue_total:
         print(f"WARN: {no_venue_total} team(s) had no reachable venue address - excluded from the region filter.")
     if not state_teams:
@@ -330,32 +363,79 @@ async def main() -> None:
     names = ", ".join(f"{league} {team.inc_name}" for league, _, team in state_teams)
     print(f"OK: Found {len(state_teams)} {region} team(s): {names}")
 
-    rosters = await asyncio.gather(*(drill_roster(league, sport, team) for league, sport, team in state_teams))
+    out_file = OUT / "state_sports_roster.ndjson"
+    roster_drill = RosterDrill(
+        name="roster_drill",
+        cls=Player,
+        interval=60.0,
+        on_error="isolate",
+        matched_teams=state_teams,
+    )
+    boards = Fjord(
+        name="boards",
+        cls=Roster,
+        interval=60.0,
+        on_error="isolate",
+        export_params={
+            "file_path": str(out_file),
+            "format": "ndjson",
+            # "replace", not "append": this is a fresh snapshot every run,
+            # not an accumulating log -- board-printing below reads this
+            # same file back, so a stale prior run's rows must not linger.
+            "if_exists": "replace",
+        },
+    )
 
-    all_players: list[Player] = []
-    roster_rejects: list[tuple[str, list[str]]] = []
-    for _league, team, active, failed_sources in rosters:
-        all_players.extend(active)
-        if failed_sources:
-            roster_rejects.append((team.inc_name, failed_sources))
-    print(f"OK: Loaded {len(all_players)} active players across {len(state_teams)} teams.")
+    now = datetime.now(timezone.utc)
+    window = (now, now + timedelta(seconds=15))
+    watershed = Watershed.chain(
+        window=window,
+        currents=[roster_drill, boards],
+        gate_mode="weir",
+        outflow=str(OUTFLOW_PATH),
+        drain_timeout=15.0,
+    )
 
-    print_league_summary(region, all_players)
-    print_paycheck_board(all_players)
-    print_veterans_board(all_players)
-    print_homegrown_board(region, all_players)
+    print(f"\nRunning single-pass roster watershed for {region} ({len(state_teams)} teams)...")
+    async for tide in Tideweaver(watershed).run():
+        print(
+            f"Tide {tide.tide_number:3d} | fired: {','.join(tide.fired) or '-':<24} | skipped: {len(tide.skipped):2d}"
+        )
+
+    # Read the exported NDJSON back, not `Roster._tideweaver_snapshot` --
+    # the Fjord flush parks that snapshot on the `Roster` class object its
+    # OWN outflow.py load resolves (`load_user_module`'s hashed
+    # sys.modules cache key), which is a DIFFERENT Python class object
+    # than the one this script imported above via a plain `sys.path`
+    # import. Re-reading the just-written export file (the same pattern
+    # `examples/11-tideweaver/arb_scanner.py` uses) sidesteps that
+    # cross-module identity split entirely.
+    roster_rows: list[Any] = []
+    if out_file.exists():
+        for line in out_file.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                roster_rows.append(SimpleNamespace(**json.loads(line)))
+    print(f"OK: Loaded {len(roster_rows)} active players across {len(state_teams)} teams.")
+
+    print_league_summary(region, roster_rows)
+    print_paycheck_board(roster_rows)
+    print_veterans_board(roster_rows)
+    print_homegrown_board(region, roster_rows)
 
     # Structured-rejects walkthrough (mirrors T5/T6-precedent): each roster
-    # drill returns its own `failed_sources` view even when other teams in
+    # drill returns its own failed_sources view even when other teams in
     # the same asyncio.gather() succeeded -- one team's rate-limit or
     # timeout doesn't sink the whole region.
-    if roster_rejects:
+    if roster_drill.roster_rejects:
         print("\nWARN: Some roster drills failed:")
-        for team_name, failed_sources in roster_rejects:
+        for team_name, failed_sources in roster_drill.roster_rejects:
             print(f"   - {team_name}: {failed_sources}")
 
-    print("\nGoing further: cross-sport tallest/heaviest splits, calc_all() dense-rank")
-    print("leaderboards, and exporting these boards to NDJSON/CSV all live in the README.")
+    if roster_rows:
+        print(f"\nWrote {len(roster_rows)} roster row(s) to {out_file}")
+
+    print("\nGoing further: cross-sport tallest/heaviest splits and calc_all() dense-rank")
+    print("leaderboards both live in the README.")
 
 
 if __name__ == "__main__":

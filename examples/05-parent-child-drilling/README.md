@@ -250,7 +250,7 @@ flattening.
 
 ## Where to Go Next
 
-> 👉 **Up next: [Tutorial 6 — State Sports](../06-state-sports/README.md).**  The parent-child pattern you just learned on CoinGecko powers a different kind of fan-out too — twice over.  T6 discovers a state's teams across NFL/NBA/MLB/NHL, drills a whole-list `inc_parent` detail fan-out (T5's own shape) to normalize each team's venue state, then drills each matching team's own roster with a single-instance `inc_parent` — same verb, two different fan-out widths in one script.  Lands in ~5-10 s and gives CoinGecko's window a long-overdue breather after T5's 11-drill burst.
+> 👉 **Up next: [Tutorial 6 — State Sports](../06-state-sports/README.md).**  The parent-child pattern you just learned on CoinGecko powers a different kind of fan-out too — twice over.  T6 discovers a state's teams across NFL/NBA/MLB/NHL, drills a whole-list `inc_parent` detail fan-out (T5's own shape) to normalize each team's venue state, then hands the roster drill off to this curriculum's **first Tideweaver `Watershed`** — a single-pass, 2-current chain (`CustomCurrent` roster drill → `Fjord` board) that's your first taste of Tideweaver's vocabulary well ahead of the T11 capstone.  Lands in ~10-30 s of discovery plus a fixed ~15 s Watershed window.
 
 | Goal | Read |
 |---|---|
