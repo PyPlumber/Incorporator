@@ -250,13 +250,13 @@ flattening.
 
 ## Where to Go Next
 
-> 👉 **Up next: [Tutorial 6 — SpaceX Launches](../06-spacex-launches/README.md).**  The parent-child pattern you just learned on CoinGecko powers operational dashboards too.  T6 pulls SpaceX's upcoming-launches list and drills each launch concurrently for full rocket specs and launchpad coordinates — same `inc_parent` / `inc_child` shape, different vertical, unlimited API.  Lands in ~5 s and gives CoinGecko's window a long-overdue breather after T5's 11-drill burst.
+> 👉 **Up next: [Tutorial 6 — City Sports](../06-city-sports/README.md).**  The parent-child pattern you just learned on CoinGecko powers a different kind of fan-out too.  T6 discovers a city's teams across NFL/NBA/MLB/NHL and drills each team's own roster concurrently — same `inc_parent` / `inc_child` shape, but the parent is a single instance this time, not a whole list.  Lands in ~5 s and gives CoinGecko's window a long-overdue breather after T5's 11-drill burst.
 
 | Goal | Read |
 |---|---|
 | Profile the parent endpoint before drilling | [Tutorial 1 — First Steps + DX Inspector](../01-first-steps/README.md) |
 | Land the drilled results in a warehouse | [Tutorial 3 — Universal Formats](../03-universal-formats/README.md) |
-| Apply parent-child to an ops dashboard (different vertical) | [Tutorial 6 — SpaceX Launches](../06-spacex-launches/README.md) |
+| Apply parent-child to a single-instance drill (different vertical) | [Tutorial 6 — City Sports](../06-city-sports/README.md) |
 | Keep both registries live with `refresh()` | [Tutorial 7 — Stateful Refresh](../07-stateful-refresh/README.md) |
 | Fuse parent + child into one composite record | [Tutorial 10 — Multi-Source Fjord](../10-multi-source-fjord/README.md) |
 | Paginated HATEOAS drill with `calc()` reductions | [Appendix — PokéAPI ETL](../appendix/pokeapi-etl/README.md) |

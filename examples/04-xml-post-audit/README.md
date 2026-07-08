@@ -254,7 +254,7 @@ incorporator fjord pipeline.json
 | Goal | Read |
 |---|---|
 | Canonical parent-child fan-out intro | [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md) |
-| Apply parent-child to operational dashboards | [Tutorial 6 — SpaceX Launches](../06-spacex-launches/README.md) |
+| Apply parent-child to a single-instance drill (different vertical) | [Tutorial 6 — City Sports](../06-city-sports/README.md) |
 | Fuse audit output into a multi-source pipeline | [Tutorial 10 — Multi-Source Fjord](../10-multi-source-fjord/README.md) |
 | Stream a giant XML feed with chunking | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |
 | Ship the bulk-POST workflow as a daemon | [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md) |
