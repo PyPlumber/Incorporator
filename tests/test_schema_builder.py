@@ -1,6 +1,7 @@
 """Unit tests for schema/builder.py — sanitize, ETL engine, and infer_dynamic_schema edge cases."""
 
 import concurrent.futures
+import logging
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -116,6 +117,21 @@ def test_apply_etl_calc_target_type_coercion_failure_uses_default() -> None:
     result = apply_etl_transformations(data, conv_dict={"val": op})
     assert isinstance(result, list)
     assert result[0]["val"] == 0.0
+
+
+def test_apply_etl_calc_none_return_with_target_type_emits_no_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """A calc() func that legitimately returns None must not trigger target_type coercion
+    or a 'type coercion failed' warning; None lands cleanly for the key."""
+    data: List[Dict[str, Any]] = [{"a": "no-salary-published"}]
+
+    def maybe_none(x: Any) -> Any:
+        return None if x == "no-salary-published" else float(x)
+
+    op = calc(maybe_none, "a", target_type=float)
+    with caplog.at_level(logging.WARNING):
+        result = apply_etl_transformations(data, conv_dict={"b": op})
+    assert result[0]["b"] is None
+    assert "type coercion failed" not in caplog.text
 
 
 def test_apply_etl_conv_dict_standard_exception_skips_key() -> None:

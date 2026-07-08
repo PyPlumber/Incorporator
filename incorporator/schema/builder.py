@@ -198,11 +198,13 @@ def apply_etl_transformations(
                     # + one logger.warning call per garbage row — the per-
                     # row pre-check is ~50ns, the exception path it replaces
                     # is ~30µs.  Material on garbage-heavy datasets.  See H3 reshape's efficiency analysis.
+                    func_returned_clean = False
                     if all(is_garbage_value(a) for a in args):
                         val = default
                     else:
                         try:
                             val = func(*args)
+                            func_returned_clean = True
                         except TypeError:
                             # TypeError sources here: (1) lru_cache rejecting an unhashable
                             # arg (list/dict/etc); (2) the func body itself raising TypeError
@@ -214,6 +216,7 @@ def apply_etl_transformations(
                             raw_func = getattr(func, "__wrapped__", func)
                             try:
                                 val = raw_func(*args)
+                                func_returned_clean = True
                             except Exception as e:
                                 logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
                                 val = default
@@ -221,7 +224,16 @@ def apply_etl_transformations(
                             logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
                             val = default
 
-                    if target_type is not None:
+                    # Symmetric to the is_garbage_value pre-check above, but applied
+                    # post-func: a clean None func output is a legitimate "no value"
+                    # result and must land as None, not get run through target_type()
+                    # (which would raise, warn, and swallow to default on every row).
+                    # Scoped to func_returned_clean only — a None that came from the
+                    # garbage short-circuit or the exception fallback is still coerced,
+                    # so an incompatible default still surfaces its "type coercion
+                    # failed" warning (D2-01: that warning is the only signal a
+                    # declared default is incompatible with target_type).
+                    if target_type is not None and not (func_returned_clean and val is None):
                         try:
                             val = target_type(val)
                         except Exception as e:
