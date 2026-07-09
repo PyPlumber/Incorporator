@@ -1,55 +1,64 @@
 """
-Tutorial 6 -- State Sports: Per-League Drills, Then a Third In-Memory `incorp()` (ESPN)
+Tutorial 6 -- State Sports: Two Chained Parent-Child Drills, Gated Not Filtered (ESPN)
 ----------------------------------------------------------------------------------------
 Companion script for `examples/06-state-sports/README.md`.
 
 Pick a US state (or Canadian province) code, discover every team whose
 venue sits there across NFL / NBA / MLB / NHL via ESPN's public site API,
-drill every matched team's roster, then hand the active-player rows off to
-a THIRD `incorp()` call -- `Player.incorp(payload_list=...)`, a network-free
-passthrough over data that's already sitting in memory. A pure one-shot
-script: no time-windowed orchestration, no files read or written at
-runtime, ASCII-only stdout. Modeled directly on
+then drill every matched team's roster **directly into `Player` rows** --
+one `Player.incorp(inc_parent=team, rec_path="team.athletes", ...)` call
+per team, no intermediate roster class, no in-memory hand-off. A pure
+one-shot script: no time-windowed orchestration, no files read or written
+at runtime, ASCII-only stdout. Modeled directly on
 `examples/appendix/pokeapi-etl/pokeapi_etl_calc.py`'s inline shape --
 discovery -> `inc_parent` drill -> another drill -> print tables reading
 precomputed attributes, all in one linear `main()`.
 
-**Per-league drills, T5's shape reused once per vertical.** ESPN's team
-detail/roster payloads only ever live at a fixed `{sport}/{league}/teams/{id}`
-URL, and that `{sport}/{league}` pair can't be recovered from a fetched row
--- `conv_dict` only ever sees the response, never the request that produced
-it. Rather than build a composite path string per team (a `calc()` reducer
-working around a whole-list drill), this tutorial drills `Team.incorp()`
-**once per `League` row**, in a plain loop, reading `lg.slug` /
-`lg.leagues[0].slug` straight off that single parent to build the `inc_url`
-f-string template. `inc_parent` accepts a single `Incorporator` instance
-just as readily as a whole `IncorporatorList` (see
-`incorporator/base.py`'s `incorp()` signature) -- this is the *same*
-primitive T5 introduced, applied to one parent at a time instead of a whole
-list, and it structurally sidesteps the BFS-fanout quirk a single-parent,
-list-valued leaf would otherwise hit (see the README's "full dotted
-`inc_child` path" section).
+**Per-parent drills, T5's shape reused once per vertical, now concurrent.**
+ESPN's team detail/roster payloads only ever live at a fixed
+`{sport}/{league}/teams/{id}` URL, and that `{sport}/{league}` pair can't
+be recovered from a fetched row -- `conv_dict` only ever sees the response,
+never the request that produced it. Rather than build a composite path
+string per team (a `calc()` reducer working around a whole-list drill),
+this tutorial drills `Team.incorp()` **once per `League` row** (Drill 1)
+and `Player.incorp()` **once per matched `Team` row** (Drill 2), reading
+each parent's own attributes straight into an `inc_url` f-string template.
+`inc_parent` accepts a single `Incorporator` instance just as readily as a
+whole `IncorporatorList` (see `incorporator/base.py`'s `incorp()`
+signature) -- this is the *same* primitive T5 introduced, applied to one
+parent at a time instead of a whole list. Both drills run their per-parent
+calls concurrently via `asyncio.gather`, `zip`-pairing each result back to
+its parent for a one-line post-drill context stamp (`t.league = ...` /
+`p.league, p.team_name = ...`).
 
-`conv_dict` still exercises all four converters across the three calls:
-  * `pluck()`    -- nested lifts (`franchise.venue.address.*`, `displayName`).
-  * `calc()`     -- the reference-map normalization, the roster-join
-                    read-through, and every per-player field on the
-                    in-memory `Player` passthrough.
-  * `inc()`      -- not used in this revision; every remaining coercion is a
-                    dotted/renamed path, which is `calc(TYPE, ...)` territory
-                    (`pluck()` has no `default=`, and `inc()` can't drill a
-                    nested key -- see `docs/api_atlas.md`'s converter table).
-  * `link_to()`  -- a build-time join from every roster row back to its own
-                    `Team` instance (`team_ref`), wrapped in `calc()` so the
-                    output key differs from the join's source key (`"uid"`).
+**No row filter anywhere in this file.** `rec_path="team.athletes"` drills
+straight past ESPN's roster envelope into every athlete row -- active AND
+inactive -- and `players` holds all of them. Inactive rows can never
+surface on a board because the board-facing fields are gated, not
+filtered: three `conv_dict` entries (`active_tenure`, `active_salary`,
+`active_birth_state`) multiply the real value by the `active` flag
+(`bool` is an `int` subtype, so `operator.mul` zeroes a number and
+empty-strings a string in one primitive). A row with `active=False`
+structurally cannot win a `sorted(..., reverse=True)[:10]` slice or an
+equality filter against its gated field, without a single `if ...active`
+conditional anywhere in the pipeline.
 
-Player rows are built via `Player.incorp(payload_list=roster_payload)` --
-the "Build rows from memory" recipe in `docs/api_atlas.md`. `roster_payload`
-is a plain Python comprehension: active-only filter, parent (`league`/
-`team_name`) stamp, and `athlete.model_dump()` to flatten each re-inferred
-Pydantic sub-model back to a dict, all in one pass. Every board below reads
-`Player` attributes directly -- zero missing-data conditionals; every
-printed field carries a build-time `calc(..., default=...)`.
+`conv_dict` exercises three converters across the two calls:
+  * `pluck()`  -- nested lifts (`franchise.venue.address.*`) and the
+                  reference-map normalization.
+  * `calc()`   -- every per-player derived/gated field.
+  * `inc()`    -- `"active": inc(bool, default=False)` -- the one case in
+                  this tutorial where the output key equals the source key,
+                  so a plain TYPE coercion is the right primitive.
+
+There's no build-time join in this revision -- Drill 2 already iterates
+`matched` and its own roster result in lockstep via `zip()`, so the
+`league`/`team_name` context stamp is a plain post-drill attribute set, not
+a resolved-instance lookup.
+
+Every board below reads `Player` attributes directly -- zero missing-data
+conditionals; every printed field carries a build-time `calc(...,
+default=...)`.
 
 Run with:
     python examples/06-state-sports/state_sports.py      # defaults to "CA" -- edit main("CA") in the
@@ -61,7 +70,7 @@ import functools
 import operator
 import sys
 
-from incorporator import Incorporator, calc, link_to, pluck
+from incorporator import Incorporator, calc, inc, pluck
 
 BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
@@ -105,10 +114,6 @@ class Team(Incorporator):
     pass
 
 
-class TeamRoster(Incorporator):
-    pass
-
-
 class Player(Incorporator):
     pass
 
@@ -143,25 +148,31 @@ async def main(region: str = "CA") -> None:
     league_urls = [f"{BASE}/{sport}/teams" for _, sport in SPORTS]
     leagues = await League.incorp(inc_url=league_urls, rec_path="sports.0", timeout=8)
 
-    # Drill 1: T5's `inc_parent`/`inc_child` shape, reused once per league --
-    # `lg` is a single `League` instance per call, so the `{sport}/{league}`
-    # URL segments come straight off its own attributes as an f-string
-    # template instead of a build-time composite-path reducer.
-    teams: list[Team] = []
-    for lg in leagues:
-        part = await Team.incorp(
-            inc_parent=lg,
-            inc_child="leagues.teams.team.id",
-            inc_url=f"{BASE}/{lg.slug}/{lg.leagues[0].slug}/teams/{{}}",
-            rec_path="team",
-            inc_code="uid",  # globally unique ("s:20~l:28~t:24") -- team.id collides across leagues
-            inc_name="displayName",
-            conv_dict={
-                "venue_city": pluck("franchise.venue.address.city"),
-                "venue_state": pluck("franchise.venue.address.state", chain=state_code_map.get),
-            },
-            timeout=8,
+    # Drill 1: T5's `inc_parent`/`inc_child` shape, reused once per league,
+    # all four leagues concurrent via `asyncio.gather` -- `lg` is a single
+    # `League` instance per call, so the `{sport}/{league}` URL segments come
+    # straight off its own attributes as an f-string template instead of a
+    # build-time composite-path reducer.
+    team_parts = await asyncio.gather(
+        *(
+            Team.incorp(
+                inc_parent=lg,
+                inc_child="leagues.teams.team.id",
+                inc_url=f"{BASE}/{lg.slug}/{lg.leagues[0].slug}/teams/{{}}",
+                rec_path="team",
+                inc_code="uid",  # globally unique ("s:20~l:28~t:24") -- team.id collides across leagues
+                inc_name="displayName",
+                conv_dict={
+                    "venue_city": pluck("franchise.venue.address.city"),
+                    "venue_state": pluck("franchise.venue.address.state", chain=state_code_map.get),
+                },
+                timeout=8,
+            )
+            for lg in leagues
         )
+    )
+    teams: list[Team] = []
+    for lg, part in zip(leagues, team_parts, strict=True):
         for t in part:
             t.league = lg.leagues[0].abbreviation
         teams.extend(part)
@@ -174,77 +185,64 @@ async def main(region: str = "CA") -> None:
     names = ", ".join(f"{t.league} {t.inc_name}" for t in matched)
     print(f"OK: Found {len(matched)} {region} team(s): {names}")
 
-    # Drill 2: T5's shape again, once per league-GROUP of matched teams --
-    # `league_slugs` is a small runtime dict built from the `League` rows
-    # themselves (never hardcoded), keyed by the abbreviation each `Team`
-    # was stamped with in Drill 1.
-    league_slugs = {lg.leagues[0].abbreviation: (lg.slug, lg.leagues[0].slug) for lg in leagues}
-    groups: dict[str, list[Team]] = {}
-    for t in matched:
-        groups.setdefault(t.league, []).append(t)
+    # Drill 2: T5's shape again, once per matched TEAM (not per league-group
+    # anymore) -- every matched team's roster drills straight into `Player`
+    # rows, all concurrent via `asyncio.gather`. `slugs` is a small runtime
+    # dict built from the `League` rows themselves (never hardcoded), keyed
+    # by the abbreviation each `Team` was stamped with in Drill 1, combined
+    # into the single `"{sport}/{league}"` path segment the URL template needs.
+    slugs: dict[str, str] = {lg.leagues[0].abbreviation: f"{lg.slug}/{lg.leagues[0].slug}" for lg in leagues}
 
-    # `matched` must stay a strong local reference through this whole loop --
-    # `link_to(matched)` builds its registry off `matched`'s items' own
-    # `inc_code`, and `Team.inc_dict` is a `WeakValueDictionary`.
-    rosters: list[TeamRoster] = []
-    for lg_abbr, group in groups.items():
-        sport_slug, league_slug = league_slugs[lg_abbr]
-        part = await TeamRoster.incorp(
-            inc_parent=group,
-            inc_child="id",
-            inc_url=f"{BASE}/{sport_slug}/{league_slug}/teams/{{}}?enable=roster",
-            rec_path="team",
-            inc_code="uid",
-            inc_name="displayName",
-            conv_dict={
-                # link_to(): build-time join back to Drill 1's `Team`
-                # instances on the shared "uid" field, wrapped in calc() so
-                # the output key ("team_ref") differs from the join's
-                # source key ("uid").
-                "team_ref": calc(link_to(matched), "uid"),
-                # calc(): reads "league" off the already-linked Team
-                # instance -- the entire payoff of the join above.
-                "league": calc(operator.attrgetter("league"), "team_ref", default=None, target_type=str),
-                "team_name": pluck("displayName"),
-            },
-            excl_lst=["record", "logos", "nextEvent", "standingSummary"],
-            timeout=10,
+    rosters = await asyncio.gather(
+        *(
+            Player.incorp(
+                inc_parent=team,
+                inc_child="id",
+                inc_url=f"{BASE}/{slugs[team.league]}/teams/{{}}?enable=roster",
+                rec_path="team.athletes",
+                inc_code="uid",  # globally unique across leagues (verified live)
+                inc_name="fullName",
+                conv_dict={
+                    # "active" must come first -- every "active_*" gated
+                    # field below reads it. Output key == source key, so
+                    # `inc(bool, ...)` -- a TYPE coercion, not a `calc()`
+                    # transform -- is the right primitive here.
+                    "active": inc(bool, default=False),
+                    "salary": calc(int, "contract.salary", default=0, target_type=int),
+                    "tenure": calc(functools.partial(max, 1), "experience.years", default=1, target_type=int),
+                    "age": calc(int, "age", default=0, target_type=int),
+                    "pos": calc(str, "position.abbreviation", default="-", target_type=str),
+                    "birth_city": calc(str, "birthPlace.city", default="-", target_type=str),
+                    "birth_state": calc(str, "birthPlace.state", default="-", target_type=str),
+                    # Derived from the pre-coerced fields above (insertion
+                    # order). "turned_pro_at" reads "age"/"tenure"; "salary_per_year"
+                    # reads "salary"/"tenure" and is zero-safe since tenure >= 1.
+                    "turned_pro_at": calc(operator.sub, "age", "tenure", default=0, target_type=int),
+                    "salary_per_year": calc(operator.truediv, "salary", "tenure", default=0.0, target_type=float),
+                    # Gated fields -- NO row filter anywhere in this file.
+                    # `bool` is an `int` subtype, so `operator.mul` floors an
+                    # inactive row's contribution to 0 (numbers) or "" (the
+                    # string-repetition protocol: `False * "CA" == ""`),
+                    # while an active row passes its real value through
+                    # unchanged (`True * x == x`). Must run last -- each
+                    # reads "active" plus its own already-coerced sibling.
+                    "active_tenure": calc(operator.mul, "active", "tenure", default=0, target_type=int),
+                    "active_salary": calc(operator.mul, "active", "salary", default=0, target_type=int),
+                    "active_birth_state": calc(operator.mul, "active", "birth_state", default="", target_type=str),
+                },
+                timeout=10,
+            )
+            for team in matched
         )
-        rosters.extend(part)
-
-    # Flatten each roster's active athletes, stamping team context, for the
-    # in-memory build below.
-    roster_payload = [
-        {**athlete.model_dump(), "league": team.league, "team_name": team.team_name}
-        for team in rosters
-        for athlete in team.athletes
-        if athlete.active  # MLB's `athletes` array is the whole organization, not the active roster
-    ]
-    players = await Player.incorp(
-        payload_list=roster_payload,
-        inc_code="uid",  # globally unique across leagues (verified live) -- no league-qualifying calc needed
-        inc_name="fullName",
-        conv_dict={
-            # Coercions first -- every derived field below reads these
-            # already-mutated, never-None values (insertion order). "tenure"
-            # floors both a missing value and a genuine zero to 1 -- a player
-            # who's on a roster has been there at least one year.
-            "salary": calc(int, "contract.salary", default=0, target_type=int),
-            "tenure": calc(functools.partial(max, 1), "experience.years", default=1, target_type=int),
-            "age": calc(int, "age", default=0, target_type=int),
-            "pos": calc(str, "position.abbreviation", default="-", target_type=str),
-            "birth_city": calc(str, "birthPlace.city", default="-", target_type=str),
-            "birth_state": calc(str, "birthPlace.state", default="-", target_type=str),
-            # Derived from the pre-coerced fields above. "turned_pro_at" reads
-            # "age"/"tenure" (a missing age now surfaces as a negative sentinel,
-            # since tenure is never zero); "salary_per_year" reads "salary"/
-            # "tenure" and is zero-safe by construction since tenure >= 1.
-            "turned_pro_at": calc(operator.sub, "age", "tenure", default=0, target_type=int),
-            "salary_per_year": calc(operator.truediv, "salary", "tenure", default=0.0, target_type=float),
-        },
     )
+    players: list[Player] = []
+    for team, roster in zip(matched, rosters, strict=True):
+        for p in roster:
+            p.league, p.team_name = team.league, team.inc_name
+        players.extend(roster)  # ALL rows -- active and inactive, no filtering
 
-    print(f"OK: Loaded {len(players)} active players across {len(rosters)} teams.")
+    active_count = sum(1 for p in players if p.active)
+    print(f"OK: Loaded {len(players)} players ({active_count} active) across {len(matched)} teams.")
 
     print(f"\n{region} across NFL / NBA / MLB / NHL")
     print("=" * 70)
@@ -253,18 +251,26 @@ async def main(region: str = "CA") -> None:
         if not league_players:
             continue
         team_count = len({p.team_name for p in league_players})
-        salary_known_total = sum(1 for p in league_players if p.salary > 0)
-        payroll_total = sum(p.salary for p in league_players)
+        league_active_count = sum(1 for p in league_players if p.active)
+        salary_known_total = sum(1 for p in league_players if p.active_salary > 0)
+        payroll_total = sum(p.active_salary for p in league_players)
         # Data-semantics branch (does this league publish salaries at all),
         # not a per-row missing-value guard -- kept.
         payroll_note = f", payroll ${payroll_total:,.0f}" if salary_known_total else ""
         print(
-            f"{league:<5} {team_count} team(s), {len(league_players)} active players, "
-            f"salary known {salary_known_total}/{len(league_players)}{payroll_note}"
+            f"{league:<5} {team_count} team(s), {len(league_players)} players ({league_active_count} active), "
+            f"salary known {salary_known_total}/{league_active_count}{payroll_note}"
         )
 
+    # Sort/filter on the GATED fields -- an inactive row's contribution is
+    # always the sentinel (0 / ""), so it structurally cannot win a slice or
+    # an equality check. Display columns below still read the raw fields
+    # (p.salary, p.tenure, ...): any row that survives a gated sort/filter is
+    # active by construction, so raw == gated there.
     pool = sorted(
-        (p for p in players if p.league in SALARY_LEAGUES and p.salary > 0), key=lambda p: p.salary, reverse=True
+        (p for p in players if p.league in SALARY_LEAGUES and p.active_salary > 0),
+        key=lambda p: p.active_salary,
+        reverse=True,
     )
     print("\nPAYCHECK BOARD (NFL / NBA only -- ESPN publishes no MLB/NHL salaries in this feed)")
     header = f"{'RANK':<5}{'PLAYER':<24}{'LG':<5}{'TEAM':<22}{'POS':<5}{'TENURE':>7}{'SALARY':>14}{'$/YR-TENURE':>14}"
@@ -276,7 +282,7 @@ async def main(region: str = "CA") -> None:
             f"{p.tenure!s:>7}{f'${p.salary:,.0f}':>14}{f'${p.salary_per_year:,.0f}':>14}"
         )
 
-    pool = sorted(players, key=lambda p: p.tenure, reverse=True)
+    pool = sorted(players, key=lambda p: p.active_tenure, reverse=True)
     print("\nVETERANS BOARD (all four leagues)")
     header = f"{'RANK':<5}{'PLAYER':<24}{'LG':<5}{'TEAM':<22}{'TENURE':>7}{'TURNED-PRO-AT':>14}"
     print(header)
@@ -284,10 +290,10 @@ async def main(region: str = "CA") -> None:
     for i, p in enumerate(pool[:10], start=1):
         print(f"{i:<5}{p.inc_name[:23]:<24}{p.league:<5}{p.team_name[:21]:<22}{p.tenure:>7}{p.turned_pro_at:>14}")
 
-    # Pure attribute equality -- no brand-string tables. `birthPlace.state` on
-    # players uses 2-letter codes already (verified live), so it compares
+    # Gated attribute equality -- no brand-string tables. `birthPlace.state`
+    # on players uses 2-letter codes already (verified live), so it compares
     # directly against the normalized `region`.
-    heroes = [p for p in players if p.birth_state == region]
+    heroes = [p for p in players if p.active_birth_state == region]
     print(f"\nHOMEGROWN BOARD ({region}-born players on a {region} team)")
     if not heroes:
         print(f"   (none found -- no player in this pool was born in {region})")

@@ -252,7 +252,7 @@ players = await Player.incorp(
 )
 ```
 
-This is the antidote to hand-rolled dict-building reducers inside `conv_dict`: if a `calc()` helper is walking a nested array and emitting a list of dicts with derived per-element fields, that data wants to be its own class built through this passthrough instead. Live example: [Tutorial 6 — State Sports](../examples/06-state-sports/README.md).
+This is the antidote to hand-rolled dict-building reducers inside `conv_dict`: if a `calc()` helper is walking a nested array and emitting a list of dicts with derived per-element fields, that data wants to be its own class built through this passthrough instead.
 
 **Ordering gotcha:** the build pipeline runs `excl_lst` (Ex) BEFORE `conv_dict` (Ex -> conv_dict -> Nm -> Pk) — a field cannot be both read by a converter and excluded in the same call. To consume-and-rename, use an in-place `calc` (output key == source key) followed by `name_chg`.
 
