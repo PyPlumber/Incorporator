@@ -6,25 +6,31 @@ shipped code path: the live CountriesNow reference-map fetch (one multi-URL
 `incorp()` call, its fail-fast path, and the PARTIAL-failure fail-fast
 check), Drill 1 (`League.incorp()` -> `Team.incorp(inc_parent=leagues,
 inc_child="team_paths.path", ...)`, T5's whole-list `inc_parent`/`inc_child`
-fan-out), the no-venue-address exclusion path, and Drill 2
-(`TeamRoster.incorp(inc_parent=matched, ...)`) whose `conv_dict` showcases
-all four converters -- `link_to` (the build-time join back to Drill 1's
-`Team` instances), `inc` (pure type coercion), `calc` (array reductions +
-league derivation), and `pluck` (nested venue lifts).
+fan-out), the no-venue-address exclusion path, Drill 2
+(`TeamRoster.incorp(inc_parent=matched, ...)`), and the THIRD, in-memory
+`Player.incorp(payload_list=roster_payload)` passthrough -- the
+"Build rows from memory" recipe in `docs/api_atlas.md`.
 
 There is no Watershed, no `Fjord`, no exported file anywhere in this
 tutorial -- every assertion below reads the `IncorporatorList` /
-`Incorporator` instances `incorp()` returns directly.
+`Incorporator` instances `incorp()` returns directly, or the printed board
+output captured via `capsys`.
+
+`main()` is now fully inline (no `fetch_state_code_map` / `discover_teams`
+phase functions to call directly) -- the full-pipeline tests below drive it
+through `sys.argv` + `capsys`, mirroring how a user actually runs the
+script.
 """
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from incorporator import IncorporatorList, calc, inc, link_to, pluck
+from incorporator import IncorporatorList, calc
 from incorporator.io import fetch
 from tests.helpers import load_sidecar
 
@@ -35,6 +41,7 @@ StateRef = state_sports.StateRef
 League = state_sports.League
 Team = state_sports.Team
 TeamRoster = state_sports.TeamRoster
+Player = state_sports.Player
 
 # A small literal map -- exercises the same normalization the live
 # CountriesNow fetch would produce, without a network call.
@@ -122,6 +129,32 @@ TEAM_DETAIL_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
 }
 
 
+def _athlete(
+    uid: str,
+    full_name: str,
+    active: bool,
+    pos: str,
+    salary: int | None,
+    tenure: int,
+    age: int | None,
+    birth_city: str,
+    birth_state: str,
+) -> dict[str, Any]:
+    """One ESPN-shaped athlete row -- `uid` is globally unique across leagues
+    (verified live 2026-07-09), the collision-safe PK `Player.incorp` binds
+    directly with no league-qualifying calc needed."""
+    return {
+        "uid": uid,
+        "fullName": full_name,
+        "active": active,
+        "position": {"abbreviation": pos},
+        "contract": {"salary": salary} if salary is not None else {},
+        "experience": {"years": tenure},
+        "age": age,
+        "birthPlace": {"city": birth_city, "state": birth_state},
+    }
+
+
 def _roster_team(league_slug: str, uid: str, display_name: str, athletes: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "team": {
@@ -142,61 +175,23 @@ ROSTER_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
         "s:20~l:28~t:13",
         "Los Angeles Chargers",
         [
-            {
-                "id": "p1",
-                "fullName": "Ridge Falcone",
-                "active": True,
-                "position": {"abbreviation": "OT"},
-                "contract": {"salary": 3809632},
-                "experience": {"years": 3},
-                "age": 23,
-                "birthPlace": {"city": "North Oaks", "state": "MN"},
-            },
-            {
-                # No salary, no age -- proves both stay None without raising.
-                "id": "p2",
-                "fullName": "Wyatt Kessler",
-                "active": True,
-                "position": {"abbreviation": "WR"},
-                "contract": {},
-                "experience": {"years": 0},
-                "birthPlace": {"city": "Somewhere", "state": "TX"},
-            },
+            _athlete("s:20~l:28~a:p1", "Ridge Falcone", True, "OT", 3809632, 3, 23, "North Oaks", "MN"),
+            # No salary, no age -- proves both stay build-time-defaulted
+            # ("-") without raising.
+            _athlete("s:20~l:28~a:p2", "Wyatt Kessler", True, "WR", None, 0, None, "Somewhere", "TX"),
         ],
     ),
     ("basketball/nba", "13"): _roster_team(
         "nba",
         "s:40~l:46~t:13",
         "Los Angeles Lakers",
-        [
-            {
-                "id": "p3",
-                "fullName": "Teo Marsh",
-                "active": True,
-                "position": {"abbreviation": "G"},
-                "contract": {"salary": 54126450},
-                "experience": {"years": 7},
-                "age": 26,
-                "birthPlace": {"city": "Los Angeles", "state": "CA"},
-            }
-        ],
+        [_athlete("s:40~l:46~a:p3", "Teo Marsh", True, "G", 54126450, 7, 26, "Los Angeles", "CA")],
     ),
     ("basketball/nba", "12"): _roster_team(
         "nba",
         "s:40~l:46~t:12",
         "LA Clippers",
-        [
-            {
-                "id": "p7",
-                "fullName": "Rio Delgado",
-                "active": True,
-                "position": {"abbreviation": "G"},
-                "contract": {"salary": 20000000},
-                "experience": {"years": 4},
-                "age": 26,
-                "birthPlace": {"city": "Toronto", "state": "ON"},
-            }
-        ],
+        [_athlete("s:40~l:46~a:p7", "Rio Delgado", True, "G", 20000000, 4, 26, "Toronto", "ON")],
     ),
     ("baseball/mlb", "3"): _roster_team(
         "mlb",
@@ -205,44 +200,21 @@ ROSTER_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
         [
             # Whole-org quirk: one active roster player, one inactive
             # minor-leaguer that must not survive the active filter.
-            {
-                "id": "p4",
-                "fullName": "Wells Bramante",
-                "active": True,
-                "position": {"abbreviation": "OF"},
-                "contract": {},
-                "experience": {"years": 5},
-                "age": 28,
-                "birthPlace": {"city": "Long Beach", "state": "NY"},
-            },
-            {
-                "id": "p5",
-                "fullName": "Reed Calloway",
-                "active": False,
-                "position": {"abbreviation": "1B"},
-                "contract": {},
-                "experience": {"years": 1},
-                "age": 22,
-                "birthPlace": {"city": "Nowhere", "state": "TX"},
-            },
+            _athlete("s:1~l:10~a:p4", "Wells Bramante", True, "OF", None, 5, 28, "Long Beach", "NY"),
+            _athlete("s:1~l:10~a:p5", "Reed Calloway", False, "1B", None, 1, 22, "Nowhere", "TX"),
         ],
     ),
     ("hockey/nhl", "8"): _roster_team(
         "nhl",
         "s:70~l:90~t:8",
         "Los Angeles Kings",
-        [
-            {
-                "id": "p6",
-                "fullName": "Otto Kwan",
-                "active": True,
-                "position": {"abbreviation": "D"},
-                "contract": {},
-                "experience": {"years": 15},
-                "age": 33,
-                "birthPlace": {"city": "Northridge", "state": "CA"},
-            }
-        ],
+        [_athlete("s:70~l:90~a:p6", "Otto Kwan", True, "D", None, 15, 33, "Northridge", "CA")],
+    ),
+    ("football/nfl", "99"): _roster_team(
+        "nfl",
+        "s:20~l:28~t:99",
+        "Dallas Cowboys",
+        [_athlete("s:20~l:28~a:p8", "Marcus Fielding", True, "LB", 1200000, 2, 24, "Waco", "TX")],
     ),
 }
 
@@ -321,60 +293,16 @@ def test_to_state_code_normalizes_full_names_and_passes_through_codes() -> None:
     assert state_sports.to_state_code(test_map, "ON") == "ON"
 
 
-@pytest.mark.asyncio
-async def test_reference_api_failure_exits_nonzero(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """An unreachable/empty CountriesNow response prints one ASCII error line and exits non-zero."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(fetch, "execute_request", mock_countriesnow_unreachable)
-    _reset_registries(StateRef)
-
-    with pytest.raises(SystemExit) as exc_info:
-        await state_sports.fetch_state_code_map()
-
-    assert exc_info.value.code != 0
-
-    captured = capsys.readouterr()
-    assert state_sports.REFERENCE_API_ERROR in captured.out
-    assert captured.out.strip().isascii()
-
-
-@pytest.mark.asyncio
-async def test_reference_api_partial_failure_exits_nonzero(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """One of the two countries in the single multi-URL `incorp()` call resolves; the
-    other comes back empty. The fail-fast check must still catch the missing
-    country rather than treat a non-empty combined `states` list as full success."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(fetch, "execute_request", mock_countriesnow_partial_failure)
-    _reset_registries(StateRef)
-
-    with pytest.raises(SystemExit) as exc_info:
-        await state_sports.fetch_state_code_map()
-
-    assert exc_info.value.code != 0
-
-    captured = capsys.readouterr()
-    assert state_sports.REFERENCE_API_ERROR in captured.out
-    assert captured.out.strip().isascii()
-
-
 def test_build_team_paths_produces_dict_per_team_not_bare_strings() -> None:
     """`build_team_paths` must return `list[dict]`, not `list[str]` -- a
     bare-string leaf silently collapses into a list-of-lists under
     `extract_parent_data`'s BFS (a list-valued leaf read directly off a
-    non-list parent node doesn't fan out on its own segment)."""
+    non-list parent node doesn't fan out on its own segment). The bare
+    comprehension has no isinstance ladder -- malformed input is `calc()`'s
+    exception-fallback's job (`default=[]`), not this function's."""
     leagues_array = [{"slug": "nfl", "teams": [{"team": {"id": "13"}}, {"team": {"id": "99"}}]}]
     paths = state_sports.build_team_paths("football", leagues_array)
     assert paths == [{"path": "football/nfl/teams/13"}, {"path": "football/nfl/teams/99"}]
-
-    # Array-shape safety, not a defensive None-guard: garbage input degrades
-    # to an empty list rather than raising.
-    assert state_sports.build_team_paths("football", None) == []
-    assert state_sports.build_team_paths("football", []) == []
-    assert state_sports.build_team_paths("football", [{"slug": "nfl", "teams": "not-a-list"}]) == []
 
 
 def test_league_from_links_derives_label_across_all_four_leagues() -> None:
@@ -384,8 +312,6 @@ def test_league_from_links_derives_label_across_all_four_leagues() -> None:
     assert state_sports.league_from_links([{"href": "https://www.espn.com/nba/team/_/name/xx"}]) == "NBA"
     assert state_sports.league_from_links([{"href": "https://www.espn.com/mlb/team/_/name/xx"}]) == "MLB"
     assert state_sports.league_from_links([{"href": "https://www.espn.com/nhl/team/_/name/xx"}]) == "NHL"
-    assert state_sports.league_from_links(None) is None
-    assert state_sports.league_from_links([]) is None
 
 
 def test_build_roster_path_resolves_the_closed_sport_slug_map() -> None:
@@ -398,221 +324,215 @@ def test_build_roster_path_resolves_the_closed_sport_slug_map() -> None:
     assert state_sports.build_roster_path("NHL", "8") == "hockey/nhl/teams/8?enable=roster"
 
 
-def test_extract_active_players_filters_inactive_and_derives_fields() -> None:
-    """The array-reduction workhorse: active-only filter, embedded league/team_name,
-    and the salary_per_year / turned_pro_at derivations -- with no crash on missing
-    salary or age."""
-    athletes = [
+def test_salary_per_year_formats_display_string_and_guards_missing_salary() -> None:
+    """`salary_per_year` is a preformatted display string (never sorted or
+    aggregated) -- 3809632/3 = 1269877.33 -> `,.0f` -> "$1,269,877",
+    matching the acceptance spot-check. A missing salary returns "-" via
+    the function's own guard, not `calc()`'s exception-fallback (tenure is
+    real, non-garbage data, so `calc()` would otherwise invoke the function
+    and log a warning on every MLB/NHL row -- verified against a live run)."""
+    assert state_sports.salary_per_year(3809632, 3) == "$1,269,877"
+    assert state_sports.salary_per_year(None, 5) == "-"
+    assert state_sports.salary_per_year(1000000, 0) == "$1,000,000"  # tenure=0 -> "or 1" fallback
+
+
+def test_turned_pro_at_formats_display_string_and_guards_missing_age() -> None:
+    """age=23, tenure=3 -> "20", matching the acceptance spot-check. A
+    missing age returns "-" via the function's own guard."""
+    assert state_sports.turned_pro_at(23, 3) == "20"
+    assert state_sports.turned_pro_at(None, 5) == "-"
+
+
+@pytest.mark.asyncio
+async def test_player_payload_passthrough_conv_dict(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """`Player.incorp(payload_list=...)` -- the network-free in-memory
+    passthrough -- exercises every conv_dict entry: `calc(TYPE, "nested.path",
+    default=..., target_type=TYPE)` for salary/tenure/pos/birth_city/
+    birth_state, and the two named-callable `calc()` entries for the
+    preformatted display strings. `pluck()` has no `default=` (verified
+    `incorporator/schema/extractors.py:308`), so every one of these fields
+    uses `calc(TYPE, ...)` instead -- never a bare `pluck()`."""
+    monkeypatch.chdir(tmp_path)
+    _reset_registries(Player)
+
+    payload = [
         {
-            "id": "p1",
+            "uid": "s:20~l:28~a:p1",
             "fullName": "Ridge Falcone",
-            "active": True,
-            "position": {"abbreviation": "OT"},
-            "contract": {"salary": 3000000},
+            "league": "NFL",
+            "team_name": "Los Angeles Chargers",
+            "contract": {"salary": 3809632},
             "experience": {"years": 3},
-            "age": 23,
+            "position": {"abbreviation": "OT"},
             "birthPlace": {"city": "North Oaks", "state": "MN"},
+            "age": 23,
         },
         {
-            "id": "p2",
-            "fullName": "Bench Warmer",
-            "active": False,  # inactive -- must be dropped
-            "position": {"abbreviation": "QB"},
-            "contract": {"salary": 999999},
-            "experience": {"years": 1},
-            "age": 25,
-            "birthPlace": {"city": "Nowhere", "state": "TX"},
-        },
-        {
-            "id": "p3",
-            "fullName": "No Salary No Age",
-            "active": True,
-            "position": {"abbreviation": "WR"},
+            # No salary, no age, no position, no birthplace -- every field
+            # must resolve to its build-time default, not crash.
+            "uid": "s:20~l:28~a:p2",
+            "fullName": "Wyatt Kessler",
+            "league": "NFL",
+            "team_name": "Los Angeles Chargers",
             "contract": {},
             "experience": {"years": 0},
-            "birthPlace": {"city": "Somewhere", "state": "TX"},
+            "position": {},
+            "birthPlace": {},
+            "age": None,
         },
     ]
-    players = state_sports.extract_active_players(athletes, "NFL", "Los Angeles Chargers")
-
-    assert len(players) == 2  # inactive player dropped
-    assert all(p["team_name"] == "Los Angeles Chargers" for p in players)
-    assert all(p["league"] == "NFL" for p in players)
-
-    ridge = next(p for p in players if p["name"] == "Ridge Falcone")
-    assert ridge["salary"] == 3000000
-    assert ridge["tenure"] == 3
-    assert ridge["salary_per_year"] == pytest.approx(3000000 / 3)
-    assert ridge["turned_pro_at"] == 20
-
-    no_salary = next(p for p in players if p["name"] == "No Salary No Age")
-    assert no_salary["salary"] is None
-    assert no_salary["salary_per_year"] is None
-    assert no_salary["turned_pro_at"] is None
-
-    # Garbage input degrades to an empty list, no crash.
-    assert state_sports.extract_active_players(None, "NFL", "X") == []
-
-
-def test_team_summary_reducers_cover_active_only() -> None:
-    """`team_payroll` / `team_salary_known_count` / `team_active_count` all
-    ignore inactive players (MLB's org-roster quirk)."""
-    athletes = [
-        {"active": True, "contract": {"salary": 1000000}},
-        {"active": True, "contract": {}},
-        {"active": False, "contract": {"salary": 9999999}},  # inactive -- excluded from every reducer
-    ]
-    assert state_sports.team_payroll(athletes) == 1000000.0
-    assert state_sports.team_salary_known_count(athletes) == 1
-    assert state_sports.team_active_count(athletes) == 2
-    assert state_sports.team_payroll(None) == 0.0
-    assert state_sports.team_salary_known_count(None) == 0
-    assert state_sports.team_active_count(None) == 0
-
-
-@pytest.mark.asyncio
-async def test_discover_teams_whole_list_drill_normalizes_venue_state(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-) -> None:
-    """Drill 1 -- `League.incorp()` -> `Team.incorp(inc_parent=leagues,
-    inc_child="team_paths.path", ...)` -- fans out across all four leagues in
-    one whole-list `inc_parent` call and normalizes `venue_state` via the
-    fetched CountriesNow map."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
-    _reset_registries(League, Team)
-
-    teams = await state_sports.discover_teams(TEST_STATE_CODE_MAP)
-
-    assert isinstance(teams, IncorporatorList)
-    assert len(teams) == 9  # 3 + 3 + 2 + 1 across the four leagues
-
-    by_uid = {t.inc_code: t for t in teams}
-
-    # Regression: the Clippers, the team that started this pivot away from
-    # brand-string matching -- a data attribute, not "location": "LA".
-    clippers = by_uid["s:40~l:46~t:12"]
-    assert clippers.venue_state == "CA"
-    assert clippers.venue_city == "Los Angeles"
-    assert clippers.league == "NBA"
-    assert clippers.roster_path == "basketball/nba/teams/12?enable=roster"
-
-    # uid disambiguates the NFL/NBA numeric id=13 collision.
-    chargers = by_uid["s:20~l:28~t:13"]
-    lakers = by_uid["s:40~l:46~t:13"]
-    assert chargers.inc_name == "Los Angeles Chargers"
-    assert lakers.inc_name == "Los Angeles Lakers"
-    assert chargers.league == "NFL"
-    assert lakers.league == "NBA"
-
-    # MLB's raw feed says "California" -- proves to_state_code's full-name
-    # normalization fires, not just pass-through of an already-short code.
-    angels = by_uid["s:1~l:10~t:3"]
-    assert angels.venue_state == "CA"
-
-    # No `franchise` key at all -- excluded via `venue_state is None`, not a crash.
-    ghost = by_uid["s:20~l:28~t:50"]
-    assert ghost.venue_state is None
-
-    no_venue_total = sum(1 for t in teams if t.venue_state is None)
-    assert no_venue_total == 1
-
-    matched = [t for t in teams if t.venue_state == "CA"]
-    assert len(matched) == 5
-    leagues_found = {t.league for t in matched}
-    assert leagues_found == {"NFL", "NBA", "MLB", "NHL"}
-
-
-@pytest.mark.asyncio
-async def test_roster_drill_links_back_to_matched_team_and_flattens_active_players(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-) -> None:
-    """Drill 2 -- `TeamRoster.incorp(inc_parent=matched, ...)` -- showcases all
-    four `conv_dict` converters: `link_to` (build-time join back to Drill 1's
-    `Team` instances), `calc` (league-through-the-join + array reductions),
-    `inc` (pure type coercion on `id`), and `pluck` (the nested venue name).
-    """
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
-    _reset_registries(StateRef, League, Team, TeamRoster)
-
-    teams = await state_sports.discover_teams(TEST_STATE_CODE_MAP)
-    matched = [t for t in teams if t.venue_state == "CA"]
-    assert len(matched) == 5
-
-    rosters = await TeamRoster.incorp(
-        inc_parent=matched,
-        inc_child="roster_path",
-        inc_url="https://site.api.espn.com/apis/site/v2/sports/{}",
-        rec_path="team",
+    players = await Player.incorp(
+        payload_list=payload,
         inc_code="uid",
-        inc_name="displayName",
+        inc_name="fullName",
         conv_dict={
-            "team_ref": calc(link_to(matched), "uid"),
-            "league": calc(state_sports.league_from_team_ref, "team_ref", default=None, target_type=str),
-            "venue_name": pluck("franchise.venue.fullName"),
-            "id": inc(int, default=0),
-            "payroll": calc(state_sports.team_payroll, "athletes", default=0.0, target_type=float),
-            "salary_known": calc(state_sports.team_salary_known_count, "athletes", default=0, target_type=int),
-            "active_count": calc(state_sports.team_active_count, "athletes", default=0, target_type=int),
-            "athletes": calc(state_sports.extract_active_players, "athletes", "league", "displayName", default=[]),
+            "salary": calc(float, "contract.salary", default=0.0, target_type=float),
+            "tenure": calc(int, "experience.years", default=0, target_type=int),
+            "pos": calc(str, "position.abbreviation", default="-", target_type=str),
+            "birth_city": calc(str, "birthPlace.city", default="-", target_type=str),
+            "birth_state": calc(str, "birthPlace.state", default="-", target_type=str),
+            "salary_per_year": calc(
+                state_sports.salary_per_year, "contract.salary", "experience.years", default="-", target_type=str
+            ),
+            "turned_pro_at": calc(state_sports.turned_pro_at, "age", "experience.years", default="-", target_type=str),
         },
-        name_chg=[("athletes", "players")],
-        excl_lst=["record", "logos", "nextEvent", "standingSummary"],
-        timeout=10,
     )
 
-    assert isinstance(rosters, IncorporatorList)
-    assert len(rosters) == 5
+    assert isinstance(players, IncorporatorList)
+    assert len(players) == 2
 
-    by_uid = {r.inc_code: r for r in rosters}
-
-    # link_to(): the Chargers' TeamRoster row's team_ref resolves to the
-    # SAME Team instance discover_teams() built -- not a re-fetch, not a
-    # re-derivation.
-    chargers_roster = by_uid["s:20~l:28~t:13"]
-    chargers_team = next(t for t in matched if t.inc_code == "s:20~l:28~t:13")
-    assert chargers_roster.team_ref is chargers_team
-    assert chargers_roster.team_ref.venue_state == "CA"
-
-    # calc() reading THROUGH team_ref: league lands correctly without a
-    # second league_from_links derivation against the roster payload.
-    assert chargers_roster.league == "NFL"
-
-    # inc(): id coerced to a real int, not a JSON string.
-    assert isinstance(chargers_roster.id, int)
-
-    # pluck(): venue_name is a genuinely new nested field.
-    assert chargers_roster.venue_name == "Los Angeles Chargers Arena"
-
-    # calc() array reductions: payroll/salary_known/active_count read the
-    # RAW athletes array (computed before "athletes" is overwritten in
-    # place by the final conv_dict entry -- insertion order).
-    assert chargers_roster.payroll == 3809632.0
-    assert chargers_roster.salary_known == 1
-    assert chargers_roster.active_count == 2
-
-    # name_chg renames the in-place-computed "athletes" to "players" -- a
-    # re-inferred nested Pydantic sub-model list, attribute access only.
-    assert len(chargers_roster.players) == 2
-    ridge = next(p for p in chargers_roster.players if p.name == "Ridge Falcone")
-    assert ridge.salary == 3809632
+    ridge = next(p for p in players if p.inc_name == "Ridge Falcone")
+    assert ridge.salary == 3809632.0
     assert ridge.tenure == 3
-    assert ridge.turned_pro_at == 20
-    assert ridge.salary_per_year == pytest.approx(3809632 / 3)
-    assert ridge.league == "NFL"
-    assert ridge.team_name == "Los Angeles Chargers"
+    assert ridge.pos == "OT"
+    assert ridge.birth_city == "North Oaks"
+    assert ridge.birth_state == "MN"
+    assert ridge.salary_per_year == "$1,269,877"  # 3809632 / 3 -> ",.0f"
+    assert ridge.turned_pro_at == "20"  # 23 - 3
 
-    # MLB's whole-org quirk: the inactive minor-leaguer never reaches `players`.
-    angels_roster = by_uid["s:1~l:10~t:3"]
-    assert len(angels_roster.players) == 1
-    assert angels_roster.players[0].name == "Wells Bramante"
+    wyatt = next(p for p in players if p.inc_name == "Wyatt Kessler")
+    assert wyatt.salary == 0.0
+    assert wyatt.tenure == 0
+    assert wyatt.pos == "-"
+    assert wyatt.birth_city == "-"
+    assert wyatt.birth_state == "-"
+    assert wyatt.salary_per_year == "-"
+    assert wyatt.turned_pro_at == "-"
 
-    all_players = [p for team in rosters for p in team.players]
-    assert len(all_players) == 6  # 2 + 1 + 1 + 1 + 1 across the five CA teams
 
-    # Homegrown board precondition: birth_state is embedded per player,
-    # comparable directly against the region with zero brand-string tables.
-    heroes = {p.name for p in all_players if p.birth_state == "CA"}
-    assert heroes == {"Teo Marsh", "Otto Kwan"}
-    assert "Wells Bramante" not in heroes  # Long Beach, but state="NY" -- wrong state
+@pytest.mark.asyncio
+async def test_reference_api_failure_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unreachable/empty CountriesNow response calls `sys.exit(REFERENCE_API_ERROR)`.
+    `sys.exit(str)` only prints to stderr when it propagates uncaught to the
+    real interpreter top-level (verified empirically) -- inside a
+    `pytest.raises(SystemExit)` block nothing is written to stderr by the
+    exception itself, so the load-bearing assertion is on `exc_info.value.code`."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fetch, "execute_request", mock_countriesnow_unreachable)
+    monkeypatch.setattr(sys, "argv", ["state_sports.py"])
+    _reset_registries(StateRef)
+
+    with pytest.raises(SystemExit) as exc_info:
+        await state_sports.main()
+
+    assert exc_info.value.code == state_sports.REFERENCE_API_ERROR
+
+    captured = capsys.readouterr()
+    assert captured.out.strip().isascii()
+
+
+@pytest.mark.asyncio
+async def test_reference_api_partial_failure_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One of the two countries in the single multi-URL `incorp()` call resolves; the
+    other comes back empty. The fail-fast check must still catch the missing
+    country rather than treat a non-empty combined `states` list as full success."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fetch, "execute_request", mock_countriesnow_partial_failure)
+    monkeypatch.setattr(sys, "argv", ["state_sports.py"])
+    _reset_registries(StateRef)
+
+    with pytest.raises(SystemExit) as exc_info:
+        await state_sports.main()
+
+    assert exc_info.value.code == state_sports.REFERENCE_API_ERROR
+
+    captured = capsys.readouterr()
+    assert captured.out.strip().isascii()
+
+
+@pytest.mark.asyncio
+async def test_full_run_ca_default_prints_all_boards(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """End-to-end: default argv ("CA") drives the whole inline `main()` --
+    reference fetch, Drill 1, the no-venue exclusion, Drill 2, and the
+    THIRD in-memory `Player.incorp(payload_list=...)` call -- with zero
+    stderr and ASCII-only stdout, exactly like the live acceptance run."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
+    monkeypatch.setattr(sys, "argv", ["state_sports.py"])
+    _reset_registries(StateRef, League, Team, TeamRoster, Player)
+
+    await state_sports.main()
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.isascii()
+
+    assert "WARN: 1 team(s) had no reachable venue address" in captured.out
+    assert "OK: Found 5 CA team(s)" in captured.out
+    assert "OK: Loaded 6 active players across 5 teams." in captured.out
+    assert "PAYCHECK BOARD" in captured.out
+    assert "VETERANS BOARD" in captured.out
+    assert "HOMEGROWN BOARD (CA-born players on a CA team)" in captured.out
+
+    # Teo Marsh (Lakers, CA-born) and Otto Kwan (Kings, CA-born) surface;
+    # Wells Bramante (Angels, born in NY) must not.
+    assert "Teo Marsh" in captured.out
+    assert "Otto Kwan" in captured.out
+    assert "Wells Bramante" not in captured.out.split("HOMEGROWN BOARD")[1]
+
+
+@pytest.mark.asyncio
+async def test_full_run_single_team_region(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A region matching exactly one fixture team (TX -> Dallas Cowboys)
+    still runs the whole pipeline, including the third in-memory
+    `Player.incorp(payload_list=...)` call, off a single-team roster."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
+    monkeypatch.setattr(sys, "argv", ["state_sports.py", "TX"])
+    _reset_registries(StateRef, League, Team, TeamRoster, Player)
+
+    await state_sports.main()
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "OK: Found 1 TX team(s): NFL Dallas Cowboys" in captured.out
+    assert "OK: Loaded 1 active players across 1 teams." in captured.out
+    assert "Marcus Fielding" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_full_run_no_matching_region_returns_gracefully(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A region with no matching fixture team prints the "no teams found"
+    guidance and returns -- no `SystemExit`, no crash, no roster/player
+    calls attempted."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
+    monkeypatch.setattr(sys, "argv", ["state_sports.py", "ON"])
+    _reset_registries(StateRef, League, Team, TeamRoster, Player)
+
+    await state_sports.main()
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "No ON teams found" in captured.out
+    assert "OK: Loaded" not in captured.out
