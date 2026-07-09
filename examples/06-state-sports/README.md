@@ -30,10 +30,13 @@ built against — no named helper functions of any kind). `link_to`, `calc`, and
 ~145 HTTP requests total, ~15-20s wall-clock.
 
 ```bash
-python examples/06-state-sports/state_sports.py               # defaults to "CA"
-python examples/06-state-sports/state_sports.py ON
-python examples/06-state-sports/state_sports.py "California"
+python examples/06-state-sports/state_sports.py      # defaults to "CA"
 ```
+
+`main()` takes `region: str = "CA"` as a plain parameter — there's no CLI-arg
+parsing to look up. To try another region, edit the `asyncio.run(main("CA"))`
+call in the entry block at the bottom of the script (`main("ON")`,
+`main("California")`, `main("NJ")`, ...).
 
 ---
 
@@ -288,11 +291,9 @@ per-league loop makes the reducer structurally unnecessary, not just optional.)
 ## The filter: attribute equality, zero brand strings
 
 ```python
-no_venue_total = sum(1 for t in teams if t.venue_state is None)
-if no_venue_total:
-    print(f"WARN: {no_venue_total} team(s) had no reachable venue address - excluded from the region filter.")
-
 matched = [t for t in teams if t.venue_state == region]
+if not matched:
+    sys.exit(f"No {region} teams found - try 'NY', 'TX', or 'ON'.")
 ```
 
 There's no `state=` query parameter on ESPN's detail endpoint, and no bulk "every
@@ -301,9 +302,13 @@ be pushed server-side, so an app-level comprehension over the already-built `Tea
 list is the correct (and only) option here, not a framework primitive.
 
 A handful of teams have no reachable venue address at all (one NBA team in the
-sample run, no `franchise` key present in the detail response) — those are excluded
-and counted, not treated as errors; the script prints a single summary WARN line
-rather than one per team.
+sample run, no `franchise` key present in the detail response) — `venue_state` is
+simply `None` for those rows via `pluck`'s missing-path handling, so they fall out
+of the equality filter above without a crash.
+
+**An empty `matched` hard-exits.** A region with no matching team would otherwise
+feed an empty `payload_list` into the third `incorp()` call — `sys.exit(...)` stops
+the run with one ASCII line instead.
 
 `matched` stays a strong local reference for Drill 2's entire per-league-group loop
 below — `link_to(matched)` builds its registry off `matched`'s own `inc_code`, and
@@ -396,8 +401,8 @@ below for where those athlete rows actually get built into something.
 
 ## Build rows from memory: the third `incorp()` call
 
-The hand-off is a plain Python comprehension — active-only filter, parent stamp, and
-flattening each re-inferred `athletes` sub-model back to a dict, all in one pass:
+The hand-off flattens each roster's active athletes and stamps team context, all in
+one plain Python comprehension:
 
 ```python
 roster_payload = [
@@ -425,16 +430,15 @@ players = await Player.incorp(
     inc_name="fullName",
     conv_dict={
         "salary": calc(int, "contract.salary", default=0, target_type=int),
-        "tenure": calc(int, "experience.years", default=0, target_type=int),
+        "tenure": calc(functools.partial(max, 1), "experience.years", default=1, target_type=int),
         "age": calc(int, "age", default=0, target_type=int),
         "pos": calc(str, "position.abbreviation", default="-", target_type=str),
         "birth_city": calc(str, "birthPlace.city", default="-", target_type=str),
         "birth_state": calc(str, "birthPlace.state", default="-", target_type=str),
         "turned_pro_at": calc(operator.sub, "age", "tenure", default=0, target_type=int),
+        "salary_per_year": calc(operator.truediv, "salary", "tenure", default=0.0, target_type=float),
     },
 )
-for p in players:
-    p.salary_per_year = p.salary / max(p.tenure, 1)
 ```
 
 ### Why `calc(TYPE, "nested.path", default=..., target_type=TYPE)`, not `pluck()`
@@ -448,46 +452,60 @@ default. `inc(TYPE, default=...)` can't fill that gap either, since it reads
 [`examples/11-tideweaver/arb_scanner.py`](../11-tideweaver/arb_scanner.py) uses for
 `calc(float, "bidPrice", default=0.0, target_type=float)`.
 
-**Insertion order is load-bearing.** `salary`/`tenure`/`age`/`pos`/`birth_city`/
-`birth_state` all coerce independent raw paths (their order among themselves doesn't
-matter); `turned_pro_at` is declared **last**, because it's the only entry that reads
-another entry's *output* (`age`, `tenure`) instead of a raw input path — by the time
-it runs, both are guaranteed real, non-garbage ints.
+**Insertion order is load-bearing.** `salary`/`age`/`pos`/`birth_city`/`birth_state`
+all coerce independent raw paths (their order among themselves doesn't matter);
+`tenure` is a floor-1 coercion (below); `turned_pro_at` and `salary_per_year` are
+declared **last**, because both read another entry's *output* (`age`/`tenure`,
+`salary`/`tenure`) instead of a raw input path — by the time they run, every input
+they read is guaranteed a real, non-garbage value.
 
-### Why `salary_per_year` is a post-build `max()` stamp, not a `calc()` entry or a helper
+### Why `tenure` floors to 1, not 0
 
-`calc()`'s `default=` only fires on missing/garbage input (per `is_garbage_value`) —
-never on a genuine `tenure=0`, so there's no `calc(...)`-only route to a zero-safe
-divisor. A fake constant input key (`calc(operator.truediv, "salary", "one")`)
-doesn't work either — `calc()`'s `*input_keys` are drilled field paths only, and a
-nonexistent `"one"` key drills to `None`, which raises inside the division and warns
-on every single row (verified against a live run). The clean route is a one-line
-post-`incorp()` loop using the bare `max()` builtin — same tier as Drill 1's
-league-stamp pattern (a plain attribute set on an already-built instance, backed by
-`extra='allow'`), zero conditionals, zero named functions, zero lambdas:
+Saying a player has been on the roster for "0 years" doesn't describe anyone who
+actually has a roster spot — the minimum meaningful tenure is one year.
+`calc(functools.partial(max, 1), "experience.years", default=1, target_type=int)`
+floors **both** cases to 1:
 
-```python
-for p in players:
-    p.salary_per_year = p.salary / max(p.tenure, 1)
-```
+* **Missing `experience.years`** — `is_garbage_value(None)` is `True`, so `calc()`'s
+  all-inputs-garbage short-circuit fires and the entry resolves straight to
+  `default=1`, never calling `func` at all.
+* **A genuine `experience.years: 0`** — `0` is not a garbage value (`is_garbage_value(0)`
+  is `False`), so `func(0)` actually runs: `functools.partial(max, 1)(0) == max(1, 0) ==
+  1`.
 
-The paycheck board's pool is already filtered to `p.salary > 0`, so a `salary=0`
-row's `salary_per_year=0.0` never reaches the board — no display-time guard is
-needed at all. (Real rookies with `tenure=0` and a real salary do exist in the full
-player pool; the zero-safe divisor exercises real data, it just doesn't happen to
-rank in the top 10 of any single live run.)
+Either way, `tenure` is a real int `>= 1` by the time any later entry reads it.
+
+### Why `salary_per_year` is a plain `calc()` entry now, zero-safe by construction
+
+`calc()`'s `default=` only fires on missing/garbage input (per `is_garbage_value`),
+never on a genuine `tenure=0` — that used to rule out a `calc(operator.truediv, ...)`
+entry entirely (an unfloored `tenure=0` would raise a `ZeroDivisionError` inside the
+division). Now that `tenure` is floored to `>= 1` by the entry immediately above it in
+the same `conv_dict`, `calc(operator.truediv, "salary", "tenure", default=0.0,
+target_type=float)` can never divide by zero — insertion order guarantees `tenure` is
+already coerced-and-clamped by the time `salary_per_year` reads it. The `default=0.0`
+only fires if both `salary` and `tenure` were simultaneously garbage, which can't
+happen post-coercion since `tenure` is always a real int by then — a defensive floor,
+not a load-bearing path.
 
 ### Why `turned_pro_at` surfaces a sentinel, not `"-"`
 
 With `age` pre-defaulted to `0` (a real, non-garbage value — `calc()`'s all-inputs-
 garbage short-circuit only fires when *every* input is missing), a row with a
-genuinely missing age and a real `tenure > 0` computes `turned_pro_at = 0 - tenure`
-— a visibly **negative** integer, an honestly impossible age-turned-pro. That's the
+genuinely missing age and a real `tenure` computes `turned_pro_at = 0 - tenure` — a
+visibly **negative** integer, an honestly impossible age-turned-pro. That's the
 deliberate choice here: an impossible sentinel that a reader immediately recognizes
 as "this data point is missing," rather than a fabricated plausible-looking number,
 and without a display-time `"-"` guard duplicating what `calc()`'s own
-`default=`/pre-coercion already handles. For the case where *both* age and tenure are
-missing, the result is `0 - 0 = 0` — a `0`-sentinel, printed as-is.
+`default=`/pre-coercion already handles.
+
+**The sentinel's exact value shifted with the `tenure` floor above, its meaning
+didn't.** A rookie with a real age and no/zero prior experience now computes
+`turned_pro_at = age - 1` (was `age - 0`) — a visible off-by-one from the player's
+literal age, expected once "tenure" means "at least one year" rather than "zero or
+more." For the case where *both* age and tenure are missing, the result is now
+`0 - 1 = -1` (was `0 - 0 = 0`) — the missing-age sentinel moved from `0` to `-1`,
+still an honestly-impossible number, not a fabricated plausible one.
 
 **This is disclosed, not display-verified, in the current dataset.** The CA dataset
 this tutorial ships against has zero players with a missing age (confirmed by
@@ -509,9 +527,9 @@ rule consistent. NFL/NBA/NHL are all-active already, so the filter is a no-op th
 player pool; there's no `[p for team in rosters for p in team.players]` step anymore,
 because the flattening already happened in the hand-off comprehension above.
 
-Every board reads fields that were already computed inside `conv_dict` (or the
-one-line post-build stamp) — `p.salary`, `p.tenure`, `p.league`, `p.team_name`,
-`p.birth_state`, `p.salary_per_year`, `p.turned_pro_at`. No `isinstance()` checks, no
+Every board reads fields that were already computed inside `conv_dict` — `p.salary`,
+`p.tenure`, `p.league`, `p.team_name`, `p.birth_state`, `p.salary_per_year`,
+`p.turned_pro_at`. No `isinstance()` checks, no
 `None`-guard ladders, no per-row derivation. The league-summary block reads
 `p.salary`/`p.league`/`p.team_name` straight off each `Player` row, grouped by
 `league`, with plain `sum()`/`len()` comprehensions — no roster-level aggregates to
@@ -538,8 +556,8 @@ filters players, with zero brand-string bookkeeping either way.
 **NY/NJ semantics, stated plainly.** The Giants and Jets play at MetLife Stadium in
 East Rutherford — their venue's `state` is `"NJ"`, so they land under `NJ`, not `NY`,
 under this filter's physically-plays-in semantic. The Knicks and Nets both play in
-the five boroughs, so they stay under `NY`. Run `state_sports.py NJ` if you want to
-see the Giants/Jets show up there instead.
+the five boroughs, so they stay under `NY`. Call `main("NJ")` (edit the entry block's
+`asyncio.run(...)` line) if you want to see the Giants/Jets show up there instead.
 
 ---
 
@@ -548,7 +566,6 @@ see the Giants/Jets show up there instead.
 ```text
 Fetching state/province reference data (CountriesNow)...
 Discovering CA's teams across NFL / NBA / MLB / NHL (ESPN site API)...
-WARN: 1 team(s) had no reachable venue address - excluded from the region filter.
 OK: Found 15 CA team(s): NFL Los Angeles Chargers, NFL Los Angeles Rams, NFL San Francisco 49ers, NBA Golden State Warriors, NBA LA Clippers, NBA Los Angeles Lakers, NBA Sacramento Kings, MLB Athletics, MLB Los Angeles Angels, MLB Los Angeles Dodgers, MLB San Diego Padres, MLB San Francisco Giants, NHL Anaheim Ducks, NHL Los Angeles Kings, NHL San Jose Sharks
 OK: Loaded 580 active players across 15 teams.
 
@@ -597,19 +614,16 @@ Daiyan Henley           NFL  Los Angeles Chargers  Los Angeles, CA
 Cole Guttman            NHL  Los Angeles Kings     Northridge, CA
 Trevor Moore            NHL  Los Angeles Kings     Thousand Oaks, CA
 Andre Gasseau           NHL  San Jose Sharks       Garden Grove, CA
-
-Going further: cross-sport tallest/heaviest splits and calc_all() dense-rank
-leaderboards both live in the README.
 ```
 
-(Regenerated live 2026-07-09 against the per-league-drill revision — boards are
-byte-for-byte identical to the whole-list-drill version's output; the salary-known
-counts shift slightly run to run as ESPN's roster feed updates.)
+(Regenerated live 2026-07-09 against the parameterized-`main()` revision — boards are
+byte-for-byte identical to the prior revision's output; the salary-known counts shift
+slightly run to run as ESPN's roster feed updates.)
 
-`state_sports.py ON` finds 4 teams (Toronto Raptors, Toronto Blue Jays, Ottawa
-Senators, Toronto Maple Leafs — the Blue Jays prove the *fetched* Canada map covers
-the full name `"Ontario"`); `state_sports.py "California"` normalizes the full name
-to `"CA"` through the same fetched map and produces the identical result above.
+`main("ON")` finds 4 teams (Toronto Raptors, Toronto Blue Jays, Ottawa Senators,
+Toronto Maple Leafs — the Blue Jays prove the *fetched* Canada map covers the full
+name `"Ontario"`); `main("California")` normalizes the full name to `"CA"` through
+the same fetched map and produces the identical result above.
 
 **If the reference API is unreachable**, the run stops immediately with one line —
 `ERROR: reference API unreachable - cannot normalize state names.` — and a non-zero

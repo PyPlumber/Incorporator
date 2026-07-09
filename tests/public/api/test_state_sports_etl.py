@@ -18,15 +18,15 @@ tutorial -- every assertion below reads the `IncorporatorList` /
 output captured via `capsys`.
 
 `main()` is now fully inline (no `fetch_state_code_map` / `discover_teams`
-phase functions to call directly) -- the full-pipeline tests below drive it
-through `sys.argv` + `capsys`, mirroring how a user actually runs the
-script.
+phase functions to call directly) -- the full-pipeline tests below call it
+directly with a `region` argument + `capsys`, mirroring how a user actually
+runs the script (`main("CA")`, `main("TX")`, ...).
 """
 
+import functools
 import json
 import logging
 import operator
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -298,11 +298,12 @@ async def test_player_payload_passthrough_conv_dict(monkeypatch: pytest.MonkeyPa
     """`Player.incorp(payload_list=...)` -- the network-free in-memory
     passthrough -- exercises every primitive-only conv_dict entry:
     `calc(TYPE, "nested.path", default=..., target_type=TYPE)` for
-    salary/tenure/age/pos/birth_city/birth_state, then `calc(operator.sub,
-    "age", "tenure", ...)` for `turned_pro_at`, reading the already-mutated,
-    pre-coerced (never-None) `age`/`tenure` entries (insertion order).
-    `salary_per_year` is no longer a conv_dict entry at all -- it's a
-    one-line post-build `max()`-guarded stamp, exercised separately below."""
+    salary/age/pos/birth_city/birth_state, `calc(functools.partial(max, 1),
+    "experience.years", default=1, target_type=int)` for `tenure` (floors
+    both a missing value and a genuine zero to 1), then `calc(operator.sub,
+    "age", "tenure", ...)` for `turned_pro_at` and `calc(operator.truediv,
+    "salary", "tenure", ...)` for `salary_per_year`, both reading the
+    already-mutated, pre-coerced `age`/`tenure` entries (insertion order)."""
     monkeypatch.chdir(tmp_path)
     _reset_registries(Player)
 
@@ -338,16 +339,15 @@ async def test_player_payload_passthrough_conv_dict(monkeypatch: pytest.MonkeyPa
         inc_name="fullName",
         conv_dict={
             "salary": calc(int, "contract.salary", default=0, target_type=int),
-            "tenure": calc(int, "experience.years", default=0, target_type=int),
+            "tenure": calc(functools.partial(max, 1), "experience.years", default=1, target_type=int),
             "age": calc(int, "age", default=0, target_type=int),
             "pos": calc(str, "position.abbreviation", default="-", target_type=str),
             "birth_city": calc(str, "birthPlace.city", default="-", target_type=str),
             "birth_state": calc(str, "birthPlace.state", default="-", target_type=str),
             "turned_pro_at": calc(operator.sub, "age", "tenure", default=0, target_type=int),
+            "salary_per_year": calc(operator.truediv, "salary", "tenure", default=0.0, target_type=float),
         },
     )
-    for p in players:
-        p.salary_per_year = p.salary / max(p.tenure, 1)
 
     assert isinstance(players, IncorporatorList)
     assert len(players) == 2
@@ -363,12 +363,12 @@ async def test_player_payload_passthrough_conv_dict(monkeypatch: pytest.MonkeyPa
 
     wyatt = next(p for p in players if p.inc_name == "Wyatt Kessler")
     assert wyatt.salary == 0
-    assert wyatt.tenure == 0
+    assert wyatt.tenure == 1  # genuine experience.years=0 floors to 1 via functools.partial(max, 1)
     assert wyatt.pos == "-"
     assert wyatt.birth_city == "-"
     assert wyatt.birth_state == "-"
-    assert wyatt.salary_per_year == 0.0  # 0 / max(0, 1)
-    assert wyatt.turned_pro_at == 0  # missing age defaults to 0; 0 - 0 = 0 sentinel
+    assert wyatt.salary_per_year == 0.0  # 0 / 1
+    assert wyatt.turned_pro_at == -1  # missing age defaults to 0; 0 - 1 = -1 sentinel (was 0 pre-floor)
 
 
 @pytest.mark.asyncio
@@ -382,7 +382,6 @@ async def test_reference_api_failure_exits_nonzero(
     exception itself, so the load-bearing assertion is on `exc_info.value.code`."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_countriesnow_unreachable)
-    monkeypatch.setattr(sys, "argv", ["state_sports.py"])
     _reset_registries(StateRef)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -403,7 +402,6 @@ async def test_reference_api_partial_failure_exits_nonzero(
     country rather than treat a non-empty combined `states` list as full success."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_countriesnow_partial_failure)
-    monkeypatch.setattr(sys, "argv", ["state_sports.py"])
     _reset_registries(StateRef)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -422,9 +420,10 @@ async def test_full_run_ca_default_prints_all_boards(
     capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """End-to-end: default argv ("CA") drives the whole inline `main()` --
-    reference fetch, Drill 1 (per-league loop), the no-venue exclusion,
-    Drill 2 (per-league-group loop), and the THIRD in-memory
+    """End-to-end: `main()`'s default `region="CA"` drives the whole inline
+    pipeline -- reference fetch, Drill 1 (per-league loop, including the
+    Ghost Team's no-venue exclusion from the filter), Drill 2
+    (per-league-group loop), and the THIRD in-memory
     `Player.incorp(payload_list=...)` call -- with zero stderr and
     ASCII-only stdout, exactly like the live acceptance run. Also asserts
     zero coercion-warning spam: every derived field reads a pre-coerced,
@@ -433,7 +432,6 @@ async def test_full_run_ca_default_prints_all_boards(
     logging-handler check performed against the real 580-player pipeline."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
-    monkeypatch.setattr(sys, "argv", ["state_sports.py"])
     _reset_registries(StateRef, League, Team, TeamRoster, Player)
 
     with caplog.at_level(logging.WARNING):
@@ -443,7 +441,6 @@ async def test_full_run_ca_default_prints_all_boards(
     assert captured.err == ""
     assert captured.out.isascii()
 
-    assert "WARN: 1 team(s) had no reachable venue address" in captured.out
     assert "OK: Found 5 CA team(s)" in captured.out
     assert "OK: Loaded 6 active players across 5 teams." in captured.out
     assert "PAYCHECK BOARD" in captured.out
@@ -469,10 +466,9 @@ async def test_full_run_single_team_region(
     `Player.incorp(payload_list=...)` call, off a single-team roster."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
-    monkeypatch.setattr(sys, "argv", ["state_sports.py", "TX"])
     _reset_registries(StateRef, League, Team, TeamRoster, Player)
 
-    await state_sports.main()
+    await state_sports.main("TX")
 
     captured = capsys.readouterr()
     assert captured.err == ""
@@ -482,20 +478,22 @@ async def test_full_run_single_team_region(
 
 
 @pytest.mark.asyncio
-async def test_full_run_no_matching_region_returns_gracefully(
+async def test_full_run_no_matching_region_exits(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A region with no matching fixture team prints the "no teams found"
-    guidance and returns -- no `SystemExit`, no crash, no roster/player
-    calls attempted."""
+    """A region with no matching fixture team hard-exits via
+    `sys.exit(f"No {region} teams found - ...")` -- an empty `matched` would
+    otherwise feed an empty `payload_list` downstream, which raises. No
+    roster/player calls are attempted first."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
-    monkeypatch.setattr(sys, "argv", ["state_sports.py", "ON"])
     _reset_registries(StateRef, League, Team, TeamRoster, Player)
 
-    await state_sports.main()
+    with pytest.raises(SystemExit) as exc_info:
+        await state_sports.main("ON")
+
+    assert "No ON teams found" in str(exc_info.value.code)
 
     captured = capsys.readouterr()
     assert captured.err == ""
-    assert "No ON teams found" in captured.out
     assert "OK: Loaded" not in captured.out

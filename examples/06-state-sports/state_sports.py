@@ -52,12 +52,12 @@ Pydantic sub-model back to a dict, all in one pass. Every board below reads
 printed field carries a build-time `calc(..., default=...)`.
 
 Run with:
-    python examples/06-state-sports/state_sports.py            # defaults to "CA"
-    python examples/06-state-sports/state_sports.py ON
-    python examples/06-state-sports/state_sports.py "California"
+    python examples/06-state-sports/state_sports.py      # defaults to "CA" -- edit main("CA") in the
+                                                           # entry block below to try another region
 """
 
 import asyncio
+import functools
 import operator
 import sys
 
@@ -113,7 +113,7 @@ class Player(Incorporator):
     pass
 
 
-async def main() -> None:
+async def main(region: str = "CA") -> None:
     print("Fetching state/province reference data (CountriesNow)...")
     states = await StateRef.incorp(
         inc_url=COUNTRIESNOW_URLS,
@@ -137,8 +137,7 @@ async def main() -> None:
     if "California" not in state_code_map or "Ontario" not in state_code_map:
         sys.exit(REFERENCE_API_ERROR)
 
-    region_arg = sys.argv[1] if len(sys.argv) > 1 else "CA"
-    region = state_code_map.get(region_arg, region_arg)
+    region = state_code_map.get(region, region)
     print(f"Discovering {region}'s teams across NFL / NBA / MLB / NHL (ESPN site API)...")
 
     league_urls = [f"{BASE}/{sport}/teams" for _, sport in SPORTS]
@@ -167,20 +166,10 @@ async def main() -> None:
             t.league = lg.leagues[0].abbreviation
         teams.extend(part)
 
-    no_venue_total = sum(1 for t in teams if t.venue_state is None)
-    if no_venue_total:
-        print(f"WARN: {no_venue_total} team(s) had no reachable venue address - excluded from the region filter.")
-
-    # The filter: attribute equality, zero brand strings. There is no
-    # `state=` query parameter on ESPN's detail endpoint and no bulk
-    # "every team whose venue is in state X" endpoint -- this genuinely
-    # can't be pushed server-side, so an app-level comprehension over the
-    # already-built `Team` list is the correct (and only) option here.
+    # Attribute equality, zero brand strings -- ESPN has no server-side filter for this.
     matched = [t for t in teams if t.venue_state == region]
     if not matched:
-        print(f"\nNo {region} teams found. Try a 2-letter US state/DC code ('NY', 'TX') or a Canadian province ('ON').")
-        print("See the README's 'brand labels vs data attributes' section for how this filter works.")
-        return
+        sys.exit(f"No {region} teams found - try 'NY', 'TX', or 'ON'.")
 
     names = ", ".join(f"{t.league} {t.inc_name}" for t in matched)
     print(f"OK: Found {len(matched)} {region} team(s): {names}")
@@ -223,11 +212,8 @@ async def main() -> None:
         )
         rosters.extend(part)
 
-    # Third incorp() call: rows already sit in memory (each roster's own
-    # `athletes` array), so no network call belongs here. `rosters` stays a
-    # strong local reference until this comprehension finishes reading
-    # `team.athletes` off each row -- same WeakValueDictionary lifetime rule
-    # `matched` needed for `link_to(matched)` above.
+    # Flatten each roster's active athletes, stamping team context, for the
+    # in-memory build below.
     roster_payload = [
         {**athlete.model_dump(), "league": team.league, "team_name": team.team_name}
         for team in rosters
@@ -240,27 +226,23 @@ async def main() -> None:
         inc_name="fullName",
         conv_dict={
             # Coercions first -- every derived field below reads these
-            # already-mutated, never-None values (insertion order).
+            # already-mutated, never-None values (insertion order). "tenure"
+            # floors both a missing value and a genuine zero to 1 -- a player
+            # who's on a roster has been there at least one year.
             "salary": calc(int, "contract.salary", default=0, target_type=int),
-            "tenure": calc(int, "experience.years", default=0, target_type=int),
+            "tenure": calc(functools.partial(max, 1), "experience.years", default=1, target_type=int),
             "age": calc(int, "age", default=0, target_type=int),
             "pos": calc(str, "position.abbreviation", default="-", target_type=str),
             "birth_city": calc(str, "birthPlace.city", default="-", target_type=str),
             "birth_state": calc(str, "birthPlace.state", default="-", target_type=str),
-            # Derived last -- reads the pre-coerced "age"/"tenure" above, so
-            # a missing age surfaces as an honest impossible sentinel
-            # (0 - tenure, a visible negative) rather than a fabricated
-            # plausible number or a per-row calc() exception-fallback warn.
+            # Derived from the pre-coerced fields above. "turned_pro_at" reads
+            # "age"/"tenure" (a missing age now surfaces as a negative sentinel,
+            # since tenure is never zero); "salary_per_year" reads "salary"/
+            # "tenure" and is zero-safe by construction since tenure >= 1.
             "turned_pro_at": calc(operator.sub, "age", "tenure", default=0, target_type=int),
+            "salary_per_year": calc(operator.truediv, "salary", "tenure", default=0.0, target_type=float),
         },
     )
-    # calc() has no zero-safe-division route (default= only fires on
-    # missing/garbage input, never on a genuine tenure=0) -- a one-line
-    # post-build stamp using the bare max() builtin is the clean route.
-    # The paycheck board's pool below is already filtered to salary > 0, so
-    # a salary=0 row's salary_per_year=0.0 never reaches the board.
-    for p in players:
-        p.salary_per_year = p.salary / max(p.tenure, 1)
 
     print(f"OK: Loaded {len(players)} active players across {len(rosters)} teams.")
 
@@ -317,9 +299,6 @@ async def main() -> None:
             born = f"{p.birth_city}, {p.birth_state}"
             print(f"{p.inc_name[:23]:<24}{p.league:<5}{p.team_name[:21]:<22}{born[:27]:<28}")
 
-    print("\nGoing further: cross-sport tallest/heaviest splits and calc_all() dense-rank")
-    print("leaderboards both live in the README.")
-
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main("CA"))  # change the region here -- e.g. "NY", "TX", "ON", "California"
