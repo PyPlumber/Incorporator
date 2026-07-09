@@ -4,10 +4,11 @@ Loads the actual tutorial entry script via `load_sidecar` (unique importlib
 key) rather than duplicating its logic, so this test exercises the exact
 shipped code path: the live CountriesNow reference-map fetch (one multi-URL
 `incorp()` call, its fail-fast path, and the PARTIAL-failure fail-fast
-check), Drill 1 (`League.incorp()` -> `Team.incorp(inc_parent=leagues,
-inc_child="team_paths.path", ...)`, T5's whole-list `inc_parent`/`inc_child`
-fan-out), the no-venue-address exclusion path, Drill 2
-(`TeamRoster.incorp(inc_parent=matched, ...)`), and the THIRD, in-memory
+check), Drill 1 (`League.incorp()` -> a per-league loop of
+`Team.incorp(inc_parent=lg, inc_child="leagues.teams.team.id", ...)`, T5's
+`inc_parent`/`inc_child` shape reused once per league), the no-venue-address
+exclusion path, Drill 2 (a per-league-group loop of
+`TeamRoster.incorp(inc_parent=group, ...)`), and the THIRD, in-memory
 `Player.incorp(payload_list=roster_payload)` passthrough -- the
 "Build rows from memory" recipe in `docs/api_atlas.md`.
 
@@ -23,6 +24,8 @@ script.
 """
 
 import json
+import logging
+import operator
 import sys
 from pathlib import Path
 from typing import Any
@@ -42,15 +45,6 @@ League = state_sports.League
 Team = state_sports.Team
 TeamRoster = state_sports.TeamRoster
 Player = state_sports.Player
-
-# A small literal map -- exercises the same normalization the live
-# CountriesNow fetch would produce, without a network call.
-TEST_STATE_CODE_MAP: dict[str, str] = {
-    "California": "CA",
-    "Massachusetts": "MA",
-    "District of Columbia": "DC",
-    "Ontario": "ON",
-}
 
 
 def _league_envelope(sport_slug: str, league_slug: str, abbreviation: str, team_ids: list[str]) -> dict[str, Any]:
@@ -87,8 +81,11 @@ def _detail_team(
         "id": team_id,
         "uid": uid,
         "displayName": display_name,
-        # `league_from_links` reads links[0]["href"]'s 4th path segment --
-        # stable across every league (verified live 2026-07-08).
+        # Vestigial: the per-league loop stamps `league` off the loop
+        # variable itself now (see state_sports.py's Drill 1), not off a
+        # row's own `links` array -- kept here only because it's harmless
+        # shape-fidelity with the real ESPN payload, not because anything
+        # still reads it.
         "links": [{"href": f"https://www.espn.com/{league_slug}/team/_/name/xx/team"}],
     }
     if address is not None:
@@ -115,8 +112,8 @@ TEAM_DETAIL_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
     ("basketball/nba", "88"): _detail_team(
         "nba", "88", "s:40~l:46~t:88", "Boston Celtics", {"city": "Boston", "state": "MA"}
     ),
-    # MLB reports the full US state name, not "CA" -- proves `to_state_code`'s
-    # normalization fires.
+    # MLB reports the full US state name, not "CA" -- proves the
+    # identity-augmented `state_code_map` normalization fires.
     ("baseball/mlb", "3"): _detail_team(
         "mlb", "3", "s:1~l:10~t:3", "Los Angeles Angels", {"city": "Anaheim", "state": "California", "zipCode": "92806"}
     ),
@@ -223,7 +220,20 @@ ROSTER_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
 COUNTRIESNOW_PAYLOADS: dict[str, dict[str, Any]] = {
     "United%20States": {
         "error": False,
-        "data": {"states": [{"name": "California", "state_code": "CA"}, {"name": "Massachusetts", "state_code": "MA"}]},
+        "data": {
+            "states": [
+                {"name": "California", "state_code": "CA"},
+                {"name": "Massachusetts", "state_code": "MA"},
+                # Dallas Cowboys' venue reports the already-abbreviated "TX"
+                # directly (no full-name normalization needed) -- Texas
+                # still needs its own identity entry in the fetched map,
+                # same as the real CountriesNow feed (which lists all 50
+                # states): `chain=state_code_map.get` has no
+                # `mapping.get(value, value)` passthrough fallback, so an
+                # omitted-but-valid code would resolve to `None`, not itself.
+                {"name": "Texas", "state_code": "TX"},
+            ]
+        },
     },
     "Canada": {
         "error": False,
@@ -283,75 +293,16 @@ def _reset_registries(*classes: Any) -> None:
         cls.inc_dict.clear()
 
 
-def test_to_state_code_normalizes_full_names_and_passes_through_codes() -> None:
-    """MLB-style full names normalize via a literal mapping; already-abbreviated codes pass through."""
-    test_map = {"California": "CA", "District of Columbia": "DC", "Ontario": "ON"}
-    assert state_sports.to_state_code(test_map, "California") == "CA"
-    assert state_sports.to_state_code(test_map, "District of Columbia") == "DC"
-    assert state_sports.to_state_code(test_map, "Ontario") == "ON"
-    assert state_sports.to_state_code(test_map, "CA") == "CA"
-    assert state_sports.to_state_code(test_map, "ON") == "ON"
-
-
-def test_build_team_paths_produces_dict_per_team_not_bare_strings() -> None:
-    """`build_team_paths` must return `list[dict]`, not `list[str]` -- a
-    bare-string leaf silently collapses into a list-of-lists under
-    `extract_parent_data`'s BFS (a list-valued leaf read directly off a
-    non-list parent node doesn't fan out on its own segment). The bare
-    comprehension has no isinstance ladder -- malformed input is `calc()`'s
-    exception-fallback's job (`default=[]`), not this function's."""
-    leagues_array = [{"slug": "nfl", "teams": [{"team": {"id": "13"}}, {"team": {"id": "99"}}]}]
-    paths = state_sports.build_team_paths("football", leagues_array)
-    assert paths == [{"path": "football/nfl/teams/13"}, {"path": "football/nfl/teams/99"}]
-
-
-def test_league_from_links_derives_label_across_all_four_leagues() -> None:
-    """Every league's own `links[0]['href']` embeds the league slug at the
-    same path position -- no lookup table needed."""
-    assert state_sports.league_from_links([{"href": "https://www.espn.com/nfl/team/_/name/xx"}]) == "NFL"
-    assert state_sports.league_from_links([{"href": "https://www.espn.com/nba/team/_/name/xx"}]) == "NBA"
-    assert state_sports.league_from_links([{"href": "https://www.espn.com/mlb/team/_/name/xx"}]) == "MLB"
-    assert state_sports.league_from_links([{"href": "https://www.espn.com/nhl/team/_/name/xx"}]) == "NHL"
-
-
-def test_build_roster_path_resolves_the_closed_sport_slug_map() -> None:
-    """`build_roster_path` reads the row's OWN already-computed `league` value
-    (conv_dict insertion order) and resolves it to ESPN's fixed URL sport
-    segment -- URL-taxonomy plumbing, not a brand/location alias table."""
-    assert state_sports.build_roster_path("NFL", "13") == "football/nfl/teams/13?enable=roster"
-    assert state_sports.build_roster_path("NBA", "12") == "basketball/nba/teams/12?enable=roster"
-    assert state_sports.build_roster_path("MLB", "3") == "baseball/mlb/teams/3?enable=roster"
-    assert state_sports.build_roster_path("NHL", "8") == "hockey/nhl/teams/8?enable=roster"
-
-
-def test_salary_per_year_formats_display_string_and_guards_missing_salary() -> None:
-    """`salary_per_year` is a preformatted display string (never sorted or
-    aggregated) -- 3809632/3 = 1269877.33 -> `,.0f` -> "$1,269,877",
-    matching the acceptance spot-check. A missing salary returns "-" via
-    the function's own guard, not `calc()`'s exception-fallback (tenure is
-    real, non-garbage data, so `calc()` would otherwise invoke the function
-    and log a warning on every MLB/NHL row -- verified against a live run)."""
-    assert state_sports.salary_per_year(3809632, 3) == "$1,269,877"
-    assert state_sports.salary_per_year(None, 5) == "-"
-    assert state_sports.salary_per_year(1000000, 0) == "$1,000,000"  # tenure=0 -> "or 1" fallback
-
-
-def test_turned_pro_at_formats_display_string_and_guards_missing_age() -> None:
-    """age=23, tenure=3 -> "20", matching the acceptance spot-check. A
-    missing age returns "-" via the function's own guard."""
-    assert state_sports.turned_pro_at(23, 3) == "20"
-    assert state_sports.turned_pro_at(None, 5) == "-"
-
-
 @pytest.mark.asyncio
 async def test_player_payload_passthrough_conv_dict(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """`Player.incorp(payload_list=...)` -- the network-free in-memory
-    passthrough -- exercises every conv_dict entry: `calc(TYPE, "nested.path",
-    default=..., target_type=TYPE)` for salary/tenure/pos/birth_city/
-    birth_state, and the two named-callable `calc()` entries for the
-    preformatted display strings. `pluck()` has no `default=` (verified
-    `incorporator/schema/extractors.py:308`), so every one of these fields
-    uses `calc(TYPE, ...)` instead -- never a bare `pluck()`."""
+    passthrough -- exercises every primitive-only conv_dict entry:
+    `calc(TYPE, "nested.path", default=..., target_type=TYPE)` for
+    salary/tenure/age/pos/birth_city/birth_state, then `calc(operator.sub,
+    "age", "tenure", ...)` for `turned_pro_at`, reading the already-mutated,
+    pre-coerced (never-None) `age`/`tenure` entries (insertion order).
+    `salary_per_year` is no longer a conv_dict entry at all -- it's a
+    one-line post-build `max()`-guarded stamp, exercised separately below."""
     monkeypatch.chdir(tmp_path)
     _reset_registries(Player)
 
@@ -386,38 +337,38 @@ async def test_player_payload_passthrough_conv_dict(monkeypatch: pytest.MonkeyPa
         inc_code="uid",
         inc_name="fullName",
         conv_dict={
-            "salary": calc(float, "contract.salary", default=0.0, target_type=float),
+            "salary": calc(int, "contract.salary", default=0, target_type=int),
             "tenure": calc(int, "experience.years", default=0, target_type=int),
+            "age": calc(int, "age", default=0, target_type=int),
             "pos": calc(str, "position.abbreviation", default="-", target_type=str),
             "birth_city": calc(str, "birthPlace.city", default="-", target_type=str),
             "birth_state": calc(str, "birthPlace.state", default="-", target_type=str),
-            "salary_per_year": calc(
-                state_sports.salary_per_year, "contract.salary", "experience.years", default="-", target_type=str
-            ),
-            "turned_pro_at": calc(state_sports.turned_pro_at, "age", "experience.years", default="-", target_type=str),
+            "turned_pro_at": calc(operator.sub, "age", "tenure", default=0, target_type=int),
         },
     )
+    for p in players:
+        p.salary_per_year = p.salary / max(p.tenure, 1)
 
     assert isinstance(players, IncorporatorList)
     assert len(players) == 2
 
     ridge = next(p for p in players if p.inc_name == "Ridge Falcone")
-    assert ridge.salary == 3809632.0
+    assert ridge.salary == 3809632
     assert ridge.tenure == 3
     assert ridge.pos == "OT"
     assert ridge.birth_city == "North Oaks"
     assert ridge.birth_state == "MN"
-    assert ridge.salary_per_year == "$1,269,877"  # 3809632 / 3 -> ",.0f"
-    assert ridge.turned_pro_at == "20"  # 23 - 3
+    assert ridge.salary_per_year == 3809632 / 3  # 1269877.33...
+    assert ridge.turned_pro_at == 20  # 23 - 3
 
     wyatt = next(p for p in players if p.inc_name == "Wyatt Kessler")
-    assert wyatt.salary == 0.0
+    assert wyatt.salary == 0
     assert wyatt.tenure == 0
     assert wyatt.pos == "-"
     assert wyatt.birth_city == "-"
     assert wyatt.birth_state == "-"
-    assert wyatt.salary_per_year == "-"
-    assert wyatt.turned_pro_at == "-"
+    assert wyatt.salary_per_year == 0.0  # 0 / max(0, 1)
+    assert wyatt.turned_pro_at == 0  # missing age defaults to 0; 0 - 0 = 0 sentinel
 
 
 @pytest.mark.asyncio
@@ -466,18 +417,27 @@ async def test_reference_api_partial_failure_exits_nonzero(
 
 @pytest.mark.asyncio
 async def test_full_run_ca_default_prints_all_boards(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """End-to-end: default argv ("CA") drives the whole inline `main()` --
-    reference fetch, Drill 1, the no-venue exclusion, Drill 2, and the
-    THIRD in-memory `Player.incorp(payload_list=...)` call -- with zero
-    stderr and ASCII-only stdout, exactly like the live acceptance run."""
+    reference fetch, Drill 1 (per-league loop), the no-venue exclusion,
+    Drill 2 (per-league-group loop), and the THIRD in-memory
+    `Player.incorp(payload_list=...)` call -- with zero stderr and
+    ASCII-only stdout, exactly like the live acceptance run. Also asserts
+    zero coercion-warning spam: every derived field reads a pre-coerced,
+    never-garbage input (age/tenure default to real ints before
+    `turned_pro_at`'s `calc(operator.sub, ...)` runs), mirroring the live
+    logging-handler check performed against the real 580-player pipeline."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
     monkeypatch.setattr(sys, "argv", ["state_sports.py"])
     _reset_registries(StateRef, League, Team, TeamRoster, Player)
 
-    await state_sports.main()
+    with caplog.at_level(logging.WARNING):
+        await state_sports.main()
 
     captured = capsys.readouterr()
     assert captured.err == ""
@@ -495,6 +455,9 @@ async def test_full_run_ca_default_prints_all_boards(
     assert "Teo Marsh" in captured.out
     assert "Otto Kwan" in captured.out
     assert "Wells Bramante" not in captured.out.split("HOMEGROWN BOARD")[1]
+
+    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warning_records == []
 
 
 @pytest.mark.asyncio
