@@ -228,9 +228,33 @@ This is the cold-start verb — the one you call when a new endpoint hits your r
 - `concurrency_limit`, `requests_per_second`, `timeout`, `headers` — network knobs.
 
 **Yields / returns**
-Returns a single `TIncorporator` for one-record sources, otherwise an `IncorporatorList[TIncorporator]` whose `.failed_sources: list[str]` is the legacy flat reject-list view.  For structured access — exception type, `is_url_traffic_error` flag, `Retry-After` hints, wave index — read `.rejects: list[RejectEntry]` (fields: `source`, `error_kind`, `is_url_traffic_error`, `message`, `retry_after`, `wave_index`).
+Always returns an `IncorporatorList[TIncorporator]` — a one-record source yields a length-1 list, never a bare instance (breaking change, `is_single` removal). `.failed_sources: list[str]` is the legacy flat reject-list view.  For structured access — exception type, `is_url_traffic_error` flag, `Retry-After` hints, wave index — read `.rejects: list[RejectEntry]` (fields: `source`, `error_kind`, `is_url_traffic_error`, `message`, `retry_after`, `wave_index`).
 
 **Parent-child short-circuit (v1.3.3 correctness).** When `inc_parent` is supplied and the parent snapshot is empty, `incorp()` returns an empty `IncorporatorList` without making a network request. This prevents malformed ``.../{}`` requests on endpoints that interpolate parent IDs into the URL. Existing code that checks `len(result) == 0` or `result.failed_sources` is unaffected.
+
+#### Build rows from memory — the payload-only passthrough
+
+**Reach for `incorp(payload_list=[...])` with no `inc_url`/`inc_file` whenever the rows you want already sit in memory** — a nested array inside an already-fetched row (e.g. a roster row's `athletes` list), a reshape between two calls, or fixture data. One dict entry = one row; every entry flows through the FULL build pipeline (`conv_dict` converters, `excl_lst`, `name_chg`, PK-binding, schema inference) with zero network, no HTTP client, no rate limiting:
+
+```python
+payload = [
+    {**athlete.model_dump(), "team_name": team.inc_name}   # stamp parent context
+    for team in rosters for athlete in team.athletes
+    if athlete.active                                       # row filter = plain comprehension
+]
+players = await Player.incorp(
+    payload_list=payload,
+    inc_code="id", inc_name="fullName",
+    conv_dict={
+        "salary": pluck("contract.salary"),
+        "salary_per_year": calc(salary_per_year, "contract.salary", "experience.years"),
+    },
+)
+```
+
+This is the antidote to hand-rolled dict-building reducers inside `conv_dict`: if a `calc()` helper is walking a nested array and emitting a list of dicts with derived per-element fields, that data wants to be its own class built through this passthrough instead. Live example: [Tutorial 6 — State Sports](../examples/06-state-sports/README.md).
+
+**Ordering gotcha:** the build pipeline runs `excl_lst` (Ex) BEFORE `conv_dict` (Ex -> conv_dict -> Nm -> Pk) — a field cannot be both read by a converter and excluded in the same call. To consume-and-rename, use an in-place `calc` (output key == source key) followed by `name_chg`.
 
 **See also**
 [Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md) ·
