@@ -1,27 +1,55 @@
 """
-Tutorial 6 -- State Sports: Multi-League Team & Roster Drill (ESPN)
+Tutorial 6 -- State Sports: Two Chained Parent-Child Drills (ESPN)
 -------------------------------------------------------------------
 Companion script for `examples/06-state-sports/README.md`.
 
-Pick a US state (or Canadian province) code, discover every team whose venue
-sits there across NFL / NBA / MLB / NHL via ESPN's public site API, drill
-each roster through a single-pass Tideweaver Watershed, and rank players by
-salary and tenure. Two phases:
+Pick a US state (or Canadian province) code, discover every team whose
+venue sits there across NFL / NBA / MLB / NHL via ESPN's public site API,
+then drill every matched team's roster -- two chained whole-list
+`inc_parent` drills (league -> team, team -> roster), the exact shape
+Tutorial 5 introduced, reused twice over. A pure one-shot script: no
+time-windowed orchestration, no files read or written at runtime,
+ASCII-only stdout.
+Modeled directly on `examples/appendix/pokeapi-etl/pokeapi_etl_calc.py`'s
+shape -- shallow discovery -> `inc_parent` deep enrichment -> `calc()`
+array reductions -> `name_chg` hygiene -> plain print tables reading
+precomputed attributes.
 
-Phase 1 (plain async, T5's own shape) -- fetch a live state/province
-name -> code reference map from CountriesNow (one multi-URL `incorp()`
-call), discover every league's team list, drill each team's venue detail
-(T5's whole-list `inc_parent` fan-out), filter to `region`, and write the
-matched teams to a small JSON file.
+`conv_dict` exercises all four converters:
+  * `pluck()`    -- nested lifts (`franchise.venue.address.*`,
+                    `franchise.venue.fullName`).
+  * `calc()`     -- URL-path array reductions (`build_team_paths`), league
+                    derivation (`league_from_links`), per-team roster
+                    reductions (`extract_active_players`, `team_payroll`,
+                    ...).
+  * `inc()`      -- pure type coercion (`id` -> `int`), no transform.
+  * `link_to()`  -- a build-time join from every roster row back to its
+                    own `Team` instance (`team_ref`), wrapped in `calc()`
+                    so the output key differs from the join's source key
+                    (`"uid"`, which the PK bind still needs untouched).
 
-Phase 2 (this tutorial's Watershed) -- a 3-current, linear
-`Watershed.chain()`: a file-mode `Stream` loads the matched-team rows, a
-`Stream(parent_current=...)` drills every matched team's roster in one
-whole-list fan-out (drilled at `rec_path="team"` so team attribution --
-`uid` / `displayName` -- travels with the roster array instead of being
-lost one level down at `"team.athletes"`), and a `Fjord` joins the two
-snapshots and exports NDJSON. Zero `CustomCurrent`s -- every fetch is a
-declarative framework verb.
+**A list-valued `inc_child` leaf does not auto-flatten across parents in
+one BFS segment.** `extract_parent_data(leagues, "team_paths")` where
+`team_paths` is `list[str]` returns a list-of-lists (one list per league),
+which would corrupt the `{}`-template URL step. `build_team_paths` returns
+`list[dict]` (`[{"path": ...}, ...]`) instead of bare strings so the drill
+can use a SECOND dotted segment (`inc_child="team_paths.path"`) -- that
+second segment's list-of-lists intermediate DOES fan out correctly.
+
+**A conv_dict-computed nested list is re-inferred into Pydantic
+sub-models, same as a raw one.** `extract_active_players`'s returned
+list-of-dicts becomes `roster.players[0].salary` (attribute access), never
+`roster.players[0]["salary"]` -- the framework's own dynamic-schema
+inference runs on every conv_dict output, not just raw API fields.
+
+**URL taxonomy (which of ESPN's 4 fixed `sport`/`league` path segments to
+hit) cannot be recovered from a fetched row** -- `conv_dict` only ever
+sees the response, never the request that produced it.
+`LEAGUE_SPORT_SLUGS` is a small, honest, closed-vocabulary constant for
+ESPN's own fixed URL scheme -- not a reintroduction of the
+brand-string/city-alias tables an earlier version of this tutorial
+deleted (those were about team *identity/location* labels; this is only
+about which of 4 fixed URL path segments to request).
 
 Run with:
     python examples/06-state-sports/state_sports.py            # defaults to "CA"
@@ -31,28 +59,10 @@ Run with:
 
 import asyncio
 import functools
-import json
 import sys
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
-from incorporator import Incorporator, pluck
-from incorporator.tideweaver import Fjord, Stream, Tideweaver, Watershed
-
-HERE = Path(__file__).resolve().parent
-OUTFLOW_PATH = HERE / "outflow.py"
-OUT = HERE / "out"
-OUT.mkdir(exist_ok=True)
-
-# Make the sidecar importable when this script is run via `python -m` or from
-# a working directory other than HERE. Python only auto-adds the script's own
-# directory to sys.path for `python <script>` invocations.
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-
-from outflow import Roster  # noqa: E402
+from incorporator import Incorporator, calc, inc, link_to, pluck
 
 SPORTS = [
     ("NFL", "football/nfl"),
@@ -60,6 +70,13 @@ SPORTS = [
     ("MLB", "baseball/mlb"),
     ("NHL", "hockey/nhl"),
 ]
+
+# ESPN's team detail/roster payloads only ever live at a fixed
+# {sport}/{league}/teams/{id} path -- a row's own `links` array reveals the
+# LEAGUE label (`league_from_links`) but has no inverse back to the SPORT
+# path segment ESPN's URL scheme demands. Four entries, one per fixed
+# league -- URL-taxonomy plumbing, not a brand/location alias table.
+LEAGUE_SPORT_SLUGS = {"NFL": "football", "NBA": "basketball", "MLB": "baseball", "NHL": "hockey"}
 
 # ESPN's `?enable=roster` feed publishes salaries for NFL/NBA only (verified
 # live: MLB/NHL coverage is 0/N across every CA team) -- the paycheck board
@@ -92,15 +109,11 @@ class StateRef(Incorporator):
     pass
 
 
+class League(Incorporator):
+    pass
+
+
 class Team(Incorporator):
-    pass
-
-
-class TeamDetail(Incorporator):
-    pass
-
-
-class MatchedTeam(Incorporator):
     pass
 
 
@@ -108,12 +121,149 @@ class TeamRoster(Incorporator):
     pass
 
 
+# ==========================================
+# DECLARATIVE ETL FUNCTIONS
+# ==========================================
+def build_team_paths(sport_slug: Any, leagues_array: Any) -> list[dict[str, str]]:
+    """Reduce a league row's own nested `leagues[0].teams` array into a list
+    of single-key `{"path": ...}` dicts -- see the module docstring's
+    BFS-flatten note for why a list of bare strings would silently corrupt
+    the next drill's URL-templating step."""
+    if not isinstance(leagues_array, list) or not leagues_array:
+        return []
+    league = leagues_array[0]
+    if not isinstance(league, dict):
+        return []
+    league_slug = league.get("slug", "")
+    teams = league.get("teams", [])
+    if not isinstance(teams, list):
+        return []
+    paths = []
+    for entry in teams:
+        team = entry.get("team") if isinstance(entry, dict) else None
+        team_id = team.get("id") if isinstance(team, dict) else None
+        if team_id is None:
+            continue
+        paths.append({"path": f"{sport_slug}/{league_slug}/teams/{team_id}"})
+    return paths
+
+
+def league_from_links(links: Any) -> str | None:
+    """Every team detail/roster row's own `links[0]['href']` embeds the
+    league slug (`espn.com/{slug}/team/...`), stable across all four
+    leagues (verified live) -- derived from the row's own data, no lookup
+    table."""
+    if not isinstance(links, list) or not links:
+        return None
+    href = links[0].get("href") if isinstance(links[0], dict) else None
+    if not isinstance(href, str):
+        return None
+    parts = href.split("/")
+    return parts[3].upper() if len(parts) > 3 else None
+
+
+def build_roster_path(league: Any, team_id: Any) -> str:
+    """`league` is THIS row's own, already-mutated `league` conv_dict entry
+    -- insertion order guarantees it ran first -- resolved back to ESPN's
+    fixed URL sport segment via the closed `LEAGUE_SPORT_SLUGS` map."""
+    sport = LEAGUE_SPORT_SLUGS.get(league, "")
+    return f"{sport}/{str(league).lower()}/teams/{team_id}?enable=roster"
+
+
+def league_from_team_ref(team_ref: Any) -> str | None:
+    """Reads `league` off the already-built `Team` instance the `team_ref`
+    join landed on -- avoiding a second `league_from_links` derivation
+    against the roster payload; this is the entire payoff of the
+    `link_to(matched)` join."""
+    return getattr(team_ref, "league", None)
+
+
+def team_payroll(athletes: Any) -> float:
+    """Sum published salaries across active players -- MLB/NHL contribute
+    0.0 (no published salaries in this feed), not a crash."""
+    if not isinstance(athletes, list):
+        return 0.0
+    total = 0.0
+    for athlete in athletes:
+        if not isinstance(athlete, dict) or not athlete.get("active"):
+            continue
+        salary = (athlete.get("contract") or {}).get("salary")
+        if salary is not None:
+            total += salary
+    return total
+
+
+def team_salary_known_count(athletes: Any) -> int:
+    """Count active players whose salary is published -- pairs with
+    `team_payroll` for the league-summary board's coverage fraction."""
+    if not isinstance(athletes, list):
+        return 0
+    count = 0
+    for athlete in athletes:
+        if not isinstance(athlete, dict) or not athlete.get("active"):
+            continue
+        if (athlete.get("contract") or {}).get("salary") is not None:
+            count += 1
+    return count
+
+
+def team_active_count(athletes: Any) -> int:
+    """Count active roster players -- MLB's `athletes` array is the whole
+    ~250-person organization, not the 26-man active roster; `active_count`
+    already reflects the active-only filter this board needs."""
+    if not isinstance(athletes, list):
+        return 0
+    return sum(1 for athlete in athletes if isinstance(athlete, dict) and athlete.get("active"))
+
+
+def extract_active_players(athletes: Any, league: Any, team_name: Any) -> list[dict[str, Any]]:
+    """Array-reduction workhorse: one precomputed dict per ACTIVE athlete,
+    filtering MLB's whole-organization roster quirk down to the active
+    roster in the same pass. `league` / `team_name` are this row's OWN
+    already-computed conv_dict values (read via insertion order, single-
+    segment keys), embedded per player so the boards below need zero
+    further derivation or team-level join."""
+    if not isinstance(athletes, list):
+        return []
+    players: list[dict[str, Any]] = []
+    for athlete in athletes:
+        if not isinstance(athlete, dict) or not athlete.get("active"):
+            continue
+        contract = athlete.get("contract") or {}
+        salary = contract.get("salary")
+        experience = athlete.get("experience") or {}
+        tenure = experience.get("years")
+        position = athlete.get("position") or {}
+        birth_place = athlete.get("birthPlace") or {}
+        age = athlete.get("age")
+        salary_per_year = salary / max(tenure or 1, 1) if salary is not None else None
+        turned_pro_at = age - (tenure or 0) if age is not None else None
+        birth_city = birth_place.get("city")
+        birth_state = birth_place.get("state")
+        players.append(
+            {
+                "id": athlete.get("id"),
+                "name": athlete.get("fullName"),
+                "league": league,
+                "team_name": team_name,
+                "pos": position.get("abbreviation"),
+                "salary": salary,
+                "tenure": tenure,
+                "birth_city": birth_city,
+                "birth_state": birth_state,
+                "salary_per_year": salary_per_year,
+                "turned_pro_at": turned_pro_at,
+            }
+        )
+    return players
+
+
 async def fetch_state_code_map() -> dict[str, str]:
     """Build the full-name -> 2-letter-code map from CountriesNow (US + Canada).
 
-    One multi-URL `incorp()` call replaces the old per-country loop --
-    `inc_url` accepts `str | list[str]` and fans both requests out under a
-    single `IncorporatorList`. This reference map must exist before any
+    One multi-URL `incorp()` call replaces a per-country loop -- `inc_url`
+    accepts `str | list[str]` and fans both requests out under a single
+    `IncorporatorList`. This reference map must exist before any
     venue-state normalization can run -- a silent empty map would produce a
     filter that matches nothing with no explanation why. Fail fast instead:
     one ASCII error line, exit non-zero. A single multi-URL call also means
@@ -137,85 +287,73 @@ async def fetch_state_code_map() -> dict[str, str]:
     return mapping
 
 
-async def discover_state_teams(region: str, state_code_map: dict[str, str]) -> tuple[list[dict[str, Any]], int]:
-    """Fetch every league's team list, drill venue detail, filter to `region`.
+async def discover_teams(state_code_map: dict[str, str]) -> Any:
+    """Drill 1: league discovery -> whole-list team-detail fan-out.
 
-    Returns plain matched-team dicts (`uid` / `team_name` / `league` /
-    `roster_path`) -- Phase 2's file-mode head `Stream` loads exactly this
-    shape back off disk -- alongside the total no-venue count across all
-    four leagues (teams with no reachable `franchise.venue.address`).
+    One multi-URL `League.incorp()` call fetches all four leagues' team
+    lists in a single request set; `Team.incorp(inc_parent=leagues, ...)`
+    is T5's canonical whole-list `inc_parent`/`inc_child` fan-out, reused
+    verbatim, drilling every team across all four leagues concurrently in
+    one call. Returns the built `Team` `IncorporatorList`, unfiltered --
+    the region filter runs in `main()`, a plain Python comprehension, since
+    ESPN's detail endpoint has no server-side `state=` filter to push it
+    into.
     """
-    matched: list[dict[str, Any]] = []
-    no_venue_total = 0
     to_code = functools.partial(to_state_code, state_code_map)
+    league_urls = [f"https://site.api.espn.com/apis/site/v2/sports/{sport}/teams" for _, sport in SPORTS]
 
-    for league, sport in SPORTS:
-        teams = await Team.incorp(
-            inc_url=f"https://site.api.espn.com/apis/site/v2/sports/{sport}/teams",
-            rec_path="sports.0.leagues.0.teams",
-            inc_code="team.uid",  # globally unique ("s:20~l:28~t:24") -- team.id collides across leagues
-            inc_name="team.displayName",
-            timeout=8,
-        )
-        if not teams:
-            print(f"WARN: {league} team list unreachable - skipping.")
-            for entry in teams.rejects:
-                print(f"   - {entry}")
-            continue
+    leagues = await League.incorp(
+        inc_url=league_urls,
+        rec_path="sports.0",
+        conv_dict={"team_paths": calc(build_team_paths, "slug", "leagues", default=[])},
+        timeout=8,
+    )
+    if not leagues:
+        print("ERROR: no league team-lists reachable - aborting.")
+        for entry in leagues.rejects:
+            print(f"   - {entry}")
+        sys.exit(1)
+    if leagues.rejects:
+        print(f"WARN: {len(leagues.rejects)} league team-list request(s) failed:")
+        for entry in leagues.rejects:
+            print(f"   - {entry}")
 
-        # T5's signature whole-list `inc_parent` fan-out: `teams` is the
-        # whole IncorporatorList just built above, not a single instance --
-        # every team in this league gets its own concurrent detail request.
-        details = await TeamDetail.incorp(
-            inc_url=f"https://site.api.espn.com/apis/site/v2/sports/{sport}/teams/{{}}",
-            inc_parent=teams,
-            inc_child="team.id",
-            rec_path="team",
-            inc_code="uid",  # top-level post-rec_path -- same string as Team's dotted "team.uid"
-            inc_name="displayName",
-            conv_dict={
-                "venue_city": pluck("franchise.venue.address.city"),
-                "venue_state": pluck("franchise.venue.address.state", chain=to_code),
-                "venue_zip": pluck("franchise.venue.address.zipCode"),
-            },
-            timeout=8,
-        )
-
-        # `rec_path="team"` leaves every unclaimed top-level key of the
-        # team envelope (including `id`) directly on `detail` -- no join
-        # back through `Team.inc_dict` is needed to recover it.
-        for detail in details:
-            if detail.venue_state is None:
-                no_venue_total += 1
-                continue
-            if detail.venue_state != region:
-                continue
-            matched.append(
-                {
-                    "uid": detail.inc_code,
-                    "team_name": detail.inc_name,
-                    "league": league,
-                    "roster_path": f"{sport}/teams/{detail.id}?enable=roster",
-                }
-            )
-
-    return matched, no_venue_total
+    teams = await Team.incorp(
+        inc_parent=leagues,
+        inc_child="team_paths.path",
+        inc_url="https://site.api.espn.com/apis/site/v2/sports/{}",
+        rec_path="team",
+        inc_code="uid",  # globally unique ("s:20~l:28~t:24") -- team.id collides across leagues
+        inc_name="displayName",
+        conv_dict={
+            "venue_city": pluck("franchise.venue.address.city"),
+            "venue_state": pluck("franchise.venue.address.state", chain=to_code),
+            "league": calc(league_from_links, "links", default=None, target_type=str),
+            "roster_path": calc(build_roster_path, "league", "id", default="", target_type=str),
+        },
+        timeout=8,
+    )
+    if teams.rejects:
+        print(f"WARN: {len(teams.rejects)} team-detail request(s) failed:")
+        for entry in teams.rejects:
+            print(f"   - {entry}")
+    return teams
 
 
-def print_league_summary(region: str, all_players: list[Any]) -> None:
+def print_league_summary(region: str, rosters: list[Any]) -> None:
     print(f"\n{region} across NFL / NBA / MLB / NHL")
     print("=" * 70)
     for league, _ in SPORTS:
-        league_players = [p for p in all_players if p.league == league]
-        if not league_players:
+        league_rosters = [r for r in rosters if r.league == league]
+        if not league_rosters:
             continue
-        teams_in_league = {p.team_name for p in league_players}
-        with_salary = [p for p in league_players if p.salary is not None]
-        payroll = sum(p.salary for p in with_salary)
-        payroll_note = f", payroll ${payroll:,.0f}" if with_salary else ""
+        active_total = sum(r.active_count for r in league_rosters)
+        salary_known_total = sum(r.salary_known for r in league_rosters)
+        payroll_total = sum(r.payroll for r in league_rosters)
+        payroll_note = f", payroll ${payroll_total:,.0f}" if salary_known_total else ""
         print(
-            f"{league:<5} {len(teams_in_league)} team(s), {len(league_players)} active players, "
-            f"salary known {len(with_salary)}/{len(league_players)}{payroll_note}"
+            f"{league:<5} {len(league_rosters)} team(s), {active_total} active players, "
+            f"salary known {salary_known_total}/{active_total}{payroll_note}"
         )
 
 
@@ -231,7 +369,7 @@ def print_paycheck_board(all_players: list[Any]) -> None:
         spy = f"${p.salary_per_year:,.0f}" if p.salary_per_year is not None else "-"
         tenure = p.tenure if p.tenure is not None else "-"
         print(
-            f"{i:<5}{p.inc_name[:23]:<24}{p.league:<5}{p.team_name[:21]:<22}{(p.pos or '-'):<5}"
+            f"{i:<5}{p.name[:23]:<24}{p.league:<5}{p.team_name[:21]:<22}{(p.pos or '-'):<5}"
             f"{tenure!s:>7}{f'${p.salary:,.0f}':>14}{spy:>14}"
         )
 
@@ -246,7 +384,7 @@ def print_veterans_board(all_players: list[Any]) -> None:
     print("-" * len(header))
     for i, p in enumerate(pool[:10], start=1):
         turned_pro = p.turned_pro_at if p.turned_pro_at is not None else "-"
-        print(f"{i:<5}{p.inc_name[:23]:<24}{p.league:<5}{p.team_name[:21]:<22}{p.tenure:>7}{turned_pro!s:>14}")
+        print(f"{i:<5}{p.name[:23]:<24}{p.league:<5}{p.team_name[:21]:<22}{p.tenure:>7}{turned_pro!s:>14}")
 
 
 def print_homegrown_board(region: str, all_players: list[Any]) -> None:
@@ -264,7 +402,7 @@ def print_homegrown_board(region: str, all_players: list[Any]) -> None:
     print("-" * len(header))
     for p in heroes:
         born = f"{p.birth_city}, {p.birth_state}"
-        print(f"{p.inc_name[:23]:<24}{p.league:<5}{p.team_name[:21]:<22}{born[:27]:<28}")
+        print(f"{p.name[:23]:<24}{p.league:<5}{p.team_name[:21]:<22}{born[:27]:<28}")
 
 
 async def main() -> None:
@@ -275,97 +413,85 @@ async def main() -> None:
     region = to_state_code(state_code_map, region_arg)
     print(f"Discovering {region}'s teams across NFL / NBA / MLB / NHL (ESPN site API)...")
 
-    matched_teams, no_venue_total = await discover_state_teams(region, state_code_map)
+    teams = await discover_teams(state_code_map)
+
+    no_venue_total = sum(1 for t in teams if t.venue_state is None)
     if no_venue_total:
         print(f"WARN: {no_venue_total} team(s) had no reachable venue address - excluded from the region filter.")
-    if not matched_teams:
+
+    # The filter: attribute equality, zero brand strings. There is no
+    # `state=` query parameter on ESPN's detail endpoint and no bulk
+    # "every team whose venue is in state X" endpoint -- this genuinely
+    # can't be pushed server-side, so an app-level comprehension over the
+    # already-built `Team` list is the correct (and only) option here.
+    matched = [t for t in teams if t.venue_state == region]
+    if not matched:
         print(f"\nNo {region} teams found. Try a 2-letter US state/DC code ('NY', 'TX') or a Canadian province ('ON').")
         print("See the README's 'brand labels vs data attributes' section for how this filter works.")
         return
 
-    names = ", ".join(f"{team['league']} {team['team_name']}" for team in matched_teams)
-    print(f"OK: Found {len(matched_teams)} {region} team(s): {names}")
+    names = ", ".join(f"{t.league} {t.inc_name}" for t in matched)
+    print(f"OK: Found {len(matched)} {region} team(s): {names}")
 
-    matched_teams_file = OUT / "matched_teams.json"
-    matched_teams_file.write_text(json.dumps(matched_teams), encoding="utf-8")
-
-    out_file = OUT / "state_sports_roster.ndjson"
-    matched_teams_current = Stream(
-        name="matched_teams",
-        cls=MatchedTeam,
-        interval=60.0,
-        on_error="isolate",
-        incorp_params={"inc_file": str(matched_teams_file), "inc_code": "uid"},
-    )
-    rosters = Stream(
-        name="rosters",
-        cls=TeamRoster,
-        interval=60.0,
-        on_error="isolate",
-        parent_current="matched_teams",
-        incorp_params={
-            "inc_url": "https://site.api.espn.com/apis/site/v2/sports/{}",
-            "inc_child": "roster_path",
-            "rec_path": "team",
-            "inc_code": "uid",
-            "conv_dict": {
-                "team_name": pluck("displayName"),
-                "athletes": pluck("athletes"),
-            },
-            "timeout": 10,
+    # Drill 2: team -> roster, T5's whole-list `inc_parent` fan-out reused
+    # a second time. `matched` must stay a strong local reference for the
+    # entire call below -- `link_to(matched)` builds its registry off
+    # `matched`'s own `inc_dict`, and `inc_dict` is a `WeakValueDictionary`.
+    rosters = await TeamRoster.incorp(
+        inc_parent=matched,
+        inc_child="roster_path",
+        inc_url="https://site.api.espn.com/apis/site/v2/sports/{}",
+        rec_path="team",
+        inc_code="uid",
+        inc_name="displayName",
+        conv_dict={
+            # link_to(): build-time join back to Drill 1's `Team` instances
+            # on the SHARED "uid" field. Wrapped in calc() so the output key
+            # ("team_ref") differs from the join's SOURCE key ("uid") --
+            # calc() reads via DataPath, not d.get(output_key), so the raw
+            # "uid" field PK-binding (inc_code="uid") still needs stays
+            # untouched.
+            "team_ref": calc(link_to(matched), "uid"),
+            # calc(): reads "league" off the already-linked Team instance --
+            # the entire payoff of the join above.
+            "league": calc(league_from_team_ref, "team_ref", default=None, target_type=str),
+            # pluck(): a genuinely nested lift, distinct from anything
+            # `team_ref` already carries -- the venue's own display name.
+            "venue_name": pluck("franchise.venue.fullName"),
+            # inc(): pure type coercion, no transform -- ESPN's numeric "id"
+            # arrives as a JSON string; coerce it to a real int at build
+            # time so nothing downstream ever isinstance()-checks it.
+            "id": inc(int, default=0),
+            # calc(): per-team summary aggregates the league-summary board
+            # reads directly -- computed BEFORE "athletes" is overwritten
+            # in place below (insertion order).
+            "payroll": calc(team_payroll, "athletes", default=0.0, target_type=float),
+            "salary_known": calc(team_salary_known_count, "athletes", default=0, target_type=int),
+            "active_count": calc(team_active_count, "athletes", default=0, target_type=int),
+            # calc(): the array-reduction workhorse, computed in place under
+            # the original "athletes" key (pokeapi's own "stats" precedent),
+            # then renamed via name_chg below -- avoids ever needing to
+            # excl_lst "athletes" (excl_lst runs BEFORE conv_dict, so it
+            # can't drop a key this same pass still needs to read).
+            "athletes": calc(extract_active_players, "athletes", "league", "displayName", default=[]),
         },
+        name_chg=[("athletes", "players")],
+        excl_lst=["record", "logos", "nextEvent", "standingSummary"],
+        timeout=10,
     )
-    boards = Fjord(
-        name="boards",
-        cls=Roster,
-        parent_currents=["rosters"],
-        interval=60.0,
-        on_error="isolate",
-        export_params={
-            "file_path": str(out_file),
-            "format": "ndjson",
-            # "replace", not "append": this is a fresh snapshot every run,
-            # not an accumulating log -- board-printing below reads this
-            # same file back, so a stale prior run's rows must not linger.
-            "if_exists": "replace",
-        },
-    )
+    if rosters.rejects:
+        print(f"WARN: {len(rosters.rejects)} roster request(s) failed:")
+        for entry in rosters.rejects:
+            print(f"   - {entry}")
 
-    now = datetime.now(timezone.utc)
-    window = (now, now + timedelta(seconds=15))
-    watershed = Watershed.chain(
-        window=window,
-        currents=[matched_teams_current, rosters, boards],
-        gate_mode="weir",
-        outflow=str(OUTFLOW_PATH),
-        drain_timeout=15.0,
-    )
+    total_players = sum(len(r.players) for r in rosters)
+    print(f"OK: Loaded {total_players} active players across {len(rosters)} teams.")
 
-    print(f"\nRunning single-pass roster watershed for {region} ({len(matched_teams)} teams)...")
-    async for tide in Tideweaver(watershed).run():
-        print(
-            f"Tide {tide.tide_number:3d} | fired: {','.join(tide.fired) or '-':<24} | skipped: {len(tide.skipped):2d}"
-        )
-
-    # Read the exported NDJSON back, not `Roster._tideweaver_snapshot` -- the
-    # Fjord flush parks that snapshot on the class object its OWN outflow.py
-    # load resolves, a different Python class than the one this script
-    # imported via a plain `sys.path` import (see `examples/11-tideweaver/
-    # arb_scanner.py` for the same pattern).
-    roster_rows: list[Any] = []
-    if out_file.exists():
-        for line in out_file.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                roster_rows.append(SimpleNamespace(**json.loads(line)))
-    print(f"OK: Loaded {len(roster_rows)} active players across {len(matched_teams)} teams.")
-
-    print_league_summary(region, roster_rows)
-    print_paycheck_board(roster_rows)
-    print_veterans_board(roster_rows)
-    print_homegrown_board(region, roster_rows)
-
-    if roster_rows:
-        print(f"\nWrote {len(roster_rows)} roster row(s) to {out_file}")
+    print_league_summary(region, rosters)
+    all_players = [p for team in rosters for p in team.players]
+    print_paycheck_board(all_players)
+    print_veterans_board(all_players)
+    print_homegrown_board(region, all_players)
 
     print("\nGoing further: cross-sport tallest/heaviest splits and calc_all() dense-rank")
     print("leaderboards both live in the README.")

@@ -13,7 +13,7 @@ The curriculum alternates CoinGecko-heavy steps with non-CoinGecko domain exampl
 | **T3** | [`03-universal-formats/`](./03-universal-formats/) | CoinGecko (1) | ~5 s | 📦 Fan a CoinGecko snapshot into NDJSON / CSV / SQLite / Parquet and round-trip each. |
 | **T4** | [`04-xml-post-audit/`](./04-xml-post-audit/) | NHTSA POST (1) | ~3 s | 🛡️ Federal-VIN fraud audit: XML invoice ledger enriched via one batched POST. |
 | **T5** | [`05-parent-child-drilling/`](./05-parent-child-drilling/) | CoinGecko (11) | ~50 s | 🚀 `inc_parent` / `inc_child` — parent → child fan-out with O(1) dedup. |
-| **T6** | [`06-state-sports/`](./06-state-sports/) | CountriesNow (2) + ESPN (~143) | ~10-30 s + ~15 s window | 🗺️ State/province → teams → rosters: a live CountriesNow reference-data fetch, whole-list `inc_parent` drills, and this curriculum's first Tideweaver `Watershed` (a 3-current `Stream`→`Stream`→`Fjord` chain, single-pass). |
+| **T6** | [`06-state-sports/`](./06-state-sports/) | CountriesNow (2) + ESPN (~143) | ~15-25 s | 🗺️ State/province → teams → rosters: a live CountriesNow reference-data fetch, two chained whole-list `inc_parent` drills (league → team, team → roster), and a `conv_dict` showcasing `link_to`/`inc`/`calc`/`pluck` — pure one-shot, no Watershed. |
 | **T7** | [`07-stateful-refresh/`](./07-stateful-refresh/) | Binance.us (4) | ~10 s | 🔄 `refresh()` three ways against a live ticker. |
 | **T8** | [`08-streaming-daemon/`](./08-streaming-daemon/) | CoinGecko + Binance.us | ~30 s | 🌊 `stream()` for paginated bulk export at O(1) memory — plus the `stateful_polling=True` single-source shim. |
 | **T9** | [`09-nascar-fantasy-fjord/`](./09-nascar-fantasy-fjord/) | NASCAR (7) | ~8 s | 🏁 Fantasy-sports scoring fjord across Cup, Busch, Truck series. |
