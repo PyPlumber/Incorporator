@@ -1,6 +1,6 @@
 ***
 
-# Tutorial 6 — State Sports: Two Chained Parent-Child Drills, Gated Not Filtered
+# Tutorial 6 — State Sports: Two Chained Parent-Child Drills
 
 **Prerequisites:** [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md).
 
@@ -11,31 +11,32 @@ salary and by tenure. Find the ones who made it home.
 T5 introduced `inc_parent` / `inc_child` fan-out on CoinGecko — a top-N market list
 drilling into per-coin detail, with `inc_parent` bound to a *whole list* of parents.
 This tutorial reruns that exact primitive on ESPN's public site API **twice,
-chained** — but this time, once **per parent**, all parents concurrent via
-`asyncio.gather`: league discovery drills into team detail, once per league (Drill
-1), then every region-filtered team drills straight into its own roster's `Player`
-rows, once per team (Drill 2). `inc_parent` accepts a single `Incorporator` instance
-just as readily as a whole `IncorporatorList` — this tutorial is the curriculum's
-first canonical example of that shape, and it's what lets ESPN's fixed
-`{sport}/{league}/teams/{id}` URL taxonomy live in a plain f-string template read off
-each parent row's own attributes, instead of a build-time composite-path reducer.
+chained**, as a plain series of `incorp()` calls: league discovery drills into team
+detail once **per league** in a `for` loop (Drill 1), then every region-filtered team
+drills straight into its own roster's `Player` rows once **per team** (Drill 2).
+`inc_parent` accepts a single `Incorporator` instance just as readily as a whole
+`IncorporatorList` — this tutorial is the curriculum's first canonical example of
+that shape, and it's what lets ESPN's fixed `{sport}/{league}/teams/{id}` URL taxonomy
+live in a plain f-string template read off each parent row's own attributes, instead
+of a build-time composite-path reducer. (ESPN's *site* API team objects carry only
+web-page links, no API self-href, so a single whole-list drill can't span the four
+different `{sport}/{league}` prefixes — the per-parent loop is what keeps the URL
+composition out of the data pipeline.)
 
 **Drill 2 builds `Player` rows directly** — `Player.incorp(inc_parent=team,
 rec_path="team.athletes", ...)` reads straight past the roster envelope into every
-athlete row, active and inactive alike. There's no intermediate roster class, no
-in-memory hand-off, no active-only filter anywhere in the file. Instead, three
-`conv_dict` entries (`active_tenure`, `active_salary`, `active_birth_state`) gate the
-corresponding real field to a zero/empty sentinel whenever a row's `active` flag is
-`False` — `bool` is an `int` subtype, so `operator.mul` zeroes a number and
-empty-strings a string with the same primitive. Every board reads the *gated* field
-for its sort key or filter predicate, so an inactive row structurally cannot win a
-`sorted(..., reverse=True)[:10]` slice or an equality check, without a single
-`if ...active` conditional in the pipeline. A pure one-shot script — no Watershed, no
-files read or written at runtime, no `CustomCurrent`s, and `main()` is fully inline
-(pokéapi-style: read top-to-bottom in dependency order, no phase-function
-decomposition, and no named helper functions of any kind). `calc`, `inc`, and `pluck`
-all make an appearance across the two calls. No auth, no API key, ~145 HTTP requests
-total, ~14-15s wall-clock (both drills' per-parent calls run concurrently).
+athlete row, active and inactive alike (MLB's `athletes` array is the whole
+organization, not the 26-man roster). There's no intermediate roster class and no
+in-memory hand-off; `players` holds every row, and each board filters `if p.active`
+before it sorts or compares, so inactive org players — who carry real
+tenure/birthplace data but no current-roster relevance — never surface in a top-10.
+A pure one-shot script — no Watershed, no files read or written at runtime, no
+`CustomCurrent`s, and `main()` is fully inline (pokéapi-style: read top-to-bottom in
+dependency order, no phase-function decomposition, no named helper functions of any
+kind). `calc`, `inc`, and `pluck` all make an appearance across the two calls. No
+auth, no API key, ~145 HTTP requests total, ~20-25s wall-clock (each drill's
+per-parent calls run in a plain sequential loop; each single drill still fans its own
+child requests out concurrently underneath).
 
 ```bash
 python examples/06-state-sports/state_sports.py      # defaults to "CA"
@@ -48,25 +49,23 @@ call in the entry block at the bottom of the script (`main("ON")`,
 
 ---
 
-## Two chained drills, gating instead of filtering
+## Two chained drills, a plain series of `incorp()` calls
 
 Unlike a Watershed (a fixed graph of nodes wired at construction time), this
-tutorial's shape is two ordinary `await`ed `incorp()` calls (each fanned out
-concurrently across its own parents), threaded through a plain Python filter step
-and a plain Python post-drill stamp:
+tutorial's shape is two ordinary `await`ed `incorp()` calls in plain `for` loops,
+threaded through a plain Python filter step and a plain Python post-drill stamp:
 
 | Step | What runs | Shape |
 |---|---|---|
-| **1. Discover** | Fetch the state/province reference map, list every league's teams, drill venue detail | Drill 1: T5's `inc_parent`/`inc_child` fan-out, reused once **per league**, all four leagues concurrent (`asyncio.gather`) |
+| **1. Discover** | Fetch the state/province reference map, list every league's teams, drill venue detail | Drill 1: T5's `inc_parent`/`inc_child` fan-out, reused once **per league** in a `for` loop |
 | **Filter** | Keep only teams whose venue sits in `region` | Plain Python comprehension — no server-side filter exists |
-| **2. Roster → Player rows** | Drill every matched team's roster straight into `Player` rows, gating (not filtering) inactive rows' contribution to three derived fields | Drill 2: the *same* T5 shape, reused once **per matched team**, all teams concurrent |
-| **Stamp** | `zip()` each drill result back to its parent for a one-line `league`/`team_name` context stamp | Plain Python loop over an already-built pair |
+| **2. Roster → Player rows** | Drill every matched team's roster straight into `Player` rows | Drill 2: the *same* T5 shape, reused once **per matched team** in a `for` loop |
+| **Stamp** | After each drill, set `league`/`team_name` on the freshly built children from the loop's own parent | Plain Python loop over the just-returned rows |
 
 The two drills are the identical primitive — `cls.incorp(inc_parent=..., inc_child=...)`
 — applied to two different verticals of the same domain, each one parent at a time
-instead of a whole list at once, and each one's per-parent calls run concurrently
-rather than sequentially. No Watershed is needed here because nothing in this script
-requires a *time window*; it runs once and exits. (T11 is this curriculum's
+instead of a whole list at once. No Watershed is needed here because nothing in this
+script requires a *time window*; it runs once and exits. (T11 is this curriculum's
 Watershed capstone.)
 
 ---
@@ -75,12 +74,12 @@ Watershed capstone.)
 
 | T5 gave you | T6 adds |
 |---|---|
-| `inc_parent` / `inc_child` fan-out from a *list* of parents | The exact same primitive, reused **per-parent** — once per `League` row (Drill 1), once per matched `Team` row (Drill 2) — with every per-parent call in a drill running **concurrently** via `asyncio.gather`, `zip`-paired back to its parent afterward |
+| `inc_parent` / `inc_child` fan-out from a *list* of parents | The exact same primitive, reused **per-parent** in a plain `for` loop — once per `League` row (Drill 1), once per matched `Team` row (Drill 2) — stamping the parent's context onto the freshly built children after each call |
 | Flat parent rows | A deep `rec_path` envelope (`sports.0`, each team/roster row wrapped in `{"team": {...}}`, roster rows one hop deeper still at `team.athletes`) |
 | `inc_code="id"` | Top-level `inc_code="uid"` after `rec_path="team"` digs into the envelope (both drills) — and the reason it can't be the numeric `id` |
 | `pluck()` for a nested lift | `pluck(key, chain=fn)` for a nested lift **plus build-time normalization** of an inconsistent source attribute — backed by a **live, identity-augmented reference-data fetch**, not a hardcoded table |
 | One vertical (CoinGecko) | Four leagues drilled once each, each with its own coverage gaps |
-| A single `incorp()` call per node | A row filter (`if athlete.active`) replaced by **gated `conv_dict` fields** — `operator.mul` on a `bool` zeroes a number and empty-strings a string, so an inactive row's contribution to a sort/filter key is always the sentinel, never excluded from the dataset itself |
+| A single `incorp()` call per node | An in-memory dataset (`players`) holding **every** roster row, active and inactive; each board applies a `if p.active` filter at report time, so inactive org players build cleanly but never surface in a top-10 |
 | Composite child-value URLs built by a `calc()` reducer | The `{sport}/{league}` URL segments come straight off each parent row's own attributes, in an f-string **template**, read at loop time — no reducer needed at all |
 
 ---
@@ -203,29 +202,24 @@ generalizes to all 50 states, DC, and every Canadian province for free.
 
 ---
 
-## Drill 1b: the venue drill, T5's shape reused once per league, concurrent
+## Drill 1b: the venue drill, T5's shape reused once per league
 
 ```python
-team_parts = await asyncio.gather(
-    *(
-        Team.incorp(
-            inc_parent=lg,
-            inc_child="leagues.teams.team.id",
-            inc_url=f"{BASE}/{lg.slug}/{lg.leagues[0].slug}/teams/{{}}",
-            rec_path="team",
-            inc_code="uid",            # top-level post-rec_path -- same string as League's "team.uid"
-            inc_name="displayName",
-            conv_dict={
-                "venue_city": pluck("franchise.venue.address.city"),
-                "venue_state": pluck("franchise.venue.address.state", chain=state_code_map.get),
-            },
-            timeout=8,
-        )
-        for lg in leagues
-    )
-)
 teams: list[Team] = []
-for lg, part in zip(leagues, team_parts, strict=True):
+for lg in leagues:
+    part = await Team.incorp(
+        inc_parent=lg,
+        inc_child="leagues.teams.team.id",
+        inc_url=f"{BASE}/{lg.slug}/{lg.leagues[0].slug}/teams/{{}}",
+        rec_path="team",
+        inc_code="uid",            # top-level post-rec_path -- same string as League's "team.uid"
+        inc_name="displayName",
+        conv_dict={
+            "venue_city": pluck("franchise.venue.address.city"),
+            "venue_state": pluck("franchise.venue.address.state", chain=state_code_map.get),
+        },
+        timeout=8,
+    )
     for t in part:
         t.league = lg.leagues[0].abbreviation
     teams.extend(part)
@@ -234,30 +228,31 @@ for lg, part in zip(leagues, team_parts, strict=True):
 `inc_parent=lg` is a **single** `League` instance here, not a whole list — the same
 primitive T5's `CoinDetail.incorp(inc_parent=coins, inc_child="id", ...)`
 ([`examples/05-parent-child-drilling/parent_child_drilling.py`](../05-parent-child-drilling/parent_child_drilling.py))
-introduced, applied to one parent at a time. Four leagues means four calls, and
-`asyncio.gather` runs all four concurrently — each one still fanning its own teams
-out concurrently underneath — instead of the sequential `for ... await` a plain loop
-would need. The `{sport}/{league}` URL segments come straight off `lg`'s own
-attributes (`lg.slug`, `lg.leagues[0].slug`) as an f-string template, read fresh
-inside each generator-expression iteration. There's no composite-path reducer
+introduced, applied to one parent at a time. A plain `for lg in leagues:` loop reads
+as exactly what it is — a short series of `incorp()` calls, one per league. The
+`{sport}/{league}` URL segments come straight off `lg`'s own attributes (`lg.slug`,
+`lg.leagues[0].slug`) as an f-string template. There's no composite-path reducer
 anywhere in this tutorial: the URL taxonomy question ("which of ESPN's 4 fixed path
 segments do I hit next?") is answered by Python attribute access on the loop
-variable, not by a build-time `calc()` derivation.
+variable, not by a build-time `calc()` derivation. (A single whole-list
+`inc_parent=leagues` drill can't replace the loop here: ESPN's four leagues live at
+four different `{sport}/{league}` URL prefixes, and one `incorp()` call takes one
+`inc_url` template — the per-league loop is what lets each league bring its own
+prefix.)
 
 **`rec_path="team"` means every `conv_dict` path drills into *that team's own*
 sub-object.** `"franchise.venue.address.city"` is relative to the post-`rec_path`
 row — it does not need (and must not have) a `"team."` prefix, even though the raw
 response is itself wrapped in `{"team": {...}}`.
 
-**The one-line league stamp, now via `zip`.** `zip(leagues, team_parts)` pairs each
-league back with its own drill result **after** `asyncio.gather` resolves all four
-concurrently — `t.league = lg.leagues[0].abbreviation` still runs after the drill
-returns, reading the loop variable `lg`, not the row's own data at all. The league
-label was never something a `Team` row's own JSON could tell you (there's no reverse
-pointer from a team detail response back to "which league URL fetched me"); it's
-known for free from the `zip` pairing. This is the same tier of pattern as T5's own
-post-drill stamping — a plain attribute set on an already-built `Incorporator`
-instance, backed by Pydantic V2's `extra='allow'` on the base class.
+**The one-line league stamp.** Right after each league's drill returns,
+`t.league = lg.leagues[0].abbreviation` runs over the freshly built rows, reading the
+loop variable `lg`, not the row's own data at all. The league label was never
+something a `Team` row's own JSON could tell you (there's no reverse pointer from a
+team detail response back to "which league URL fetched me"); it's known for free from
+the loop. This is the same tier of pattern as T5's own post-drill stamping — a plain
+attribute set on an already-built `Incorporator` instance, backed by Pydantic V2's
+`extra='allow'` on the base class.
 
 **Why `inc_code="uid"` and not `id` — and why it isn't dotted.** Both drills set
 `rec_path="team"` (Drill 2's goes one hop deeper, at `"team.athletes"`), so every row
@@ -316,7 +311,7 @@ simply `None` for those rows via `pluck`'s missing-path handling, so they fall o
 of the equality filter above without a crash.
 
 **An empty `matched` hard-exits.** A region with no matching team would otherwise
-feed Drill 2's `asyncio.gather` an empty parent list — `sys.exit(...)` stops the run
+leave Drill 2's per-team loop with no parents to drill — `sys.exit(...)` stops the run
 with one ASCII line instead, before any roster request is made.
 
 ---
@@ -331,47 +326,38 @@ row on that team:
 ```python
 slugs: dict[str, str] = {lg.leagues[0].abbreviation: f"{lg.slug}/{lg.leagues[0].slug}" for lg in leagues}
 
-rosters = await asyncio.gather(
-    *(
-        Player.incorp(
-            inc_parent=team,
-            inc_child="id",
-            inc_url=f"{BASE}/{slugs[team.league]}/teams/{{}}?enable=roster",
-            rec_path="team.athletes",
-            inc_code="uid",  # globally unique across leagues (verified live)
-            inc_name="fullName",
-            conv_dict={
-                "active": inc(bool, default=False),
-                "salary": calc(int, "contract.salary", default=0, target_type=int),
-                "tenure": calc(functools.partial(max, 1), "experience.years", default=1, target_type=int),
-                "age": calc(int, "age", default=0, target_type=int),
-                "pos": calc(str, "position.abbreviation", default="-", target_type=str),
-                "birth_city": calc(str, "birthPlace.city", default="-", target_type=str),
-                "birth_state": calc(str, "birthPlace.state", default="-", target_type=str),
-                "turned_pro_at": calc(operator.sub, "age", "tenure", default=0, target_type=int),
-                "salary_per_year": calc(operator.truediv, "salary", "tenure", default=0.0, target_type=float),
-                "active_tenure": calc(operator.mul, "active", "tenure", default=0, target_type=int),
-                "active_salary": calc(operator.mul, "active", "salary", default=0, target_type=int),
-                "active_birth_state": calc(operator.mul, "active", "birth_state", default="", target_type=str),
-            },
-            timeout=10,
-        )
-        for team in matched
-    )
-)
 players: list[Player] = []
-for team, roster in zip(matched, rosters, strict=True):
+for team in matched:
+    roster = await Player.incorp(
+        inc_parent=team,
+        inc_child="id",
+        inc_url=f"{BASE}/{slugs[team.league]}/teams/{{}}?enable=roster",
+        rec_path="team.athletes",
+        inc_code="uid",  # globally unique across leagues (verified live)
+        inc_name="fullName",
+        conv_dict={
+            "active": inc(bool, default=False),
+            "salary": calc(int, "contract.salary", default=0, target_type=int),
+            "tenure": calc(functools.partial(max, 1), "experience.years", default=1, target_type=int),
+            "age": calc(int, "age", default=0, target_type=int),
+            "pos": calc(str, "position.abbreviation", default="-", target_type=str),
+            "birth_city": calc(str, "birthPlace.city", default="-", target_type=str),
+            "birth_state": calc(str, "birthPlace.state", default="-", target_type=str),
+            "turned_pro_at": calc(operator.sub, "age", "tenure", default=0, target_type=int),
+            "salary_per_year": calc(operator.truediv, "salary", "tenure", default=0.0, target_type=float),
+        },
+        timeout=10,
+    )
     for p in roster:
         p.league, p.team_name = team.league, team.inc_name
-    players.extend(roster)  # ALL rows -- active and inactive, no filtering
+    players.extend(roster)  # every row -- active and inactive; the boards filter later
 ```
 
 `slugs` is a small **runtime** dict built from the `League` rows themselves — never
 hardcoded — combining each league's `sport/league` pair into the single string the
 URL template's `{}` segment needs, keyed by the same abbreviation each `Team` was
-stamped with in Drill 1. There's no per-league-group bucketing step anymore: every
-matched team drills its own roster independently, and `asyncio.gather` runs all of
-them concurrently regardless of which league they belong to.
+stamped with in Drill 1. A plain `for team in matched:` loop reads as exactly what it
+is: one roster `incorp()` per matched team.
 
 **`rec_path="team.athletes"` drills two levels past the raw response.** Every
 `conv_dict` input path (`contract.salary`, `experience.years`, `age`,
@@ -387,56 +373,35 @@ this time — one `Team`, one `id`, one roster URL. Contrast with Drill 1's
 `inc_child="leagues.teams.team.id"` (a list-valued leaf off a single parent, fanning
 to N URLs).
 
-**The `league`/`team_name` stamp, via the same `zip` idiom as Drill 1.**
-`zip(matched, rosters)` pairs each team back with its own roster result after
-`asyncio.gather` resolves every team concurrently; `p.league, p.team_name = team.league,
-team.inc_name` runs on every player row in that roster, reading the loop variables —
-not anything the athlete's own JSON could tell you. There's no `link_to()` join here
-at all anymore: the old roster-to-team join it powered only existed because the
-prior revision's roster class was a separate `incorp()` hop from the player rows;
-now that `Player.incorp()` *is* the roster drill, the team it came from is already
-the loop variable, no re-linking needed.
+**The `league`/`team_name` stamp, right after each drill.** As soon as a team's
+roster drill returns, `p.league, p.team_name = team.league, team.inc_name` runs on
+every player row in it, reading the loop variable `team` — not anything the athlete's
+own JSON could tell you. There's no `link_to()` join here: because `Player.incorp()`
+*is* the roster drill, the team it came from is already the loop variable, no
+re-linking needed.
 
-### `active`, and the three gated fields that replace a row filter
+### One `active` flag, filtered in the reports
 
 ```python
 "active": inc(bool, default=False),
-...
-"active_tenure": calc(operator.mul, "active", "tenure", default=0, target_type=int),
-"active_salary": calc(operator.mul, "active", "salary", default=0, target_type=int),
-"active_birth_state": calc(operator.mul, "active", "birth_state", default="", target_type=str),
 ```
 
 `"active"` is `inc(bool, default=False)`, not `calc()` — the raw athlete field is
 literally `"active"` in ESPN's response, so the output key equals the source key,
 which is exactly the case `inc(TYPE, ...)` is built for: a plain type coercion, not a
-transform. It's declared **first** in the `conv_dict`, because every `active_*`
-gated field below reads it.
+transform.
 
-The three gated fields are declared **last**, after `tenure`/`salary`/`birth_state`
-have already been coerced by earlier entries in the same `conv_dict` — insertion
-order matters twice over here: `active` must run before them (they all read it), and
-`tenure`/`salary`/`birth_state` must run before them too (they read those
-already-coerced values, never the raw JSON). `bool` is an `int` subtype in Python, so
-`operator.mul` gates a number (`False * 13 == 0`, `True * 13 == 13`) and a string
-via the string-repetition protocol (`False * "CA" == ""`, `True * "CA" == "CA"`) with
-the *same* primitive — one `operator.*` reducer covering both cases, no
-`isinstance()` branch needed.
-
-**Why gating, not filtering.** `rec_path="team.athletes"` returns every athlete on
-the roster — active and inactive alike — and `players` (built below) holds all of
-them, with no `if athlete.active` anywhere in this file. MLB's roster feed in
-particular reports its **entire organization** (~250 players including
-minor-leaguers per team, verified live), not the 26-man active roster; those
-inactive rows genuinely carry real `experience.years` and `birthPlace` data (verified
-live: hundreds of inactive Dodgers organizational players have real tenure and
-birthplace figures, zero have salaries) — which is exactly why gating instead of
-filtering matters: the data is real, it's just not supposed to win a board. Because
-every board below sorts or filters on the *gated* field (`active_tenure`,
-`active_salary`, `active_birth_state`) rather than the raw one, an inactive row's
-contribution is always the sentinel (`0` or `""`) — it structurally cannot outrank a
-real active player's tenure, outrank a real salary, or match a birth-state equality
-check, without a single row ever being excluded from the dataset.
+**Every athlete builds; the boards filter.** `rec_path="team.athletes"` returns every
+athlete on the roster — active and inactive alike — and `players` holds all of them,
+built cleanly. MLB's roster feed in particular reports its **entire organization**
+(~250 players including minor-leaguers per team, verified live), not the 26-man active
+roster; those inactive rows genuinely carry real `experience.years` and `birthPlace`
+data (verified live: hundreds of inactive Dodgers organizational players have real
+tenure and birthplace figures, zero have salaries) — real data that simply isn't
+supposed to win a current-roster board. Each board below opens with a plain
+`if p.active` filter, so those inactive rows build without a hitch but never reach a
+sort or an equality check. One flag, coerced once, read at report time — no gated
+copies of every field, no `operator.mul` arithmetic, no per-row derivation.
 
 ### Why `calc(TYPE, "nested.path", default=..., target_type=TYPE)`, not `pluck()`
 
@@ -453,8 +418,7 @@ default. `inc(TYPE, default=...)` can't fill that gap either, since it reads
 all coerce independent raw paths (their order among themselves doesn't matter);
 `tenure` is a floor-1 coercion (below); `turned_pro_at` and `salary_per_year` read
 another entry's *output* (`age`/`tenure`, `salary`/`tenure`), so they run after those
-coercions; the three `active_*` gated fields run last of all, since they read
-`active` plus their own already-coerced sibling.
+coercions.
 
 ### Why `tenure` floors to 1, not 0
 
@@ -470,8 +434,8 @@ floors **both** cases to 1:
   is `False`), so `func(0)` actually runs: `functools.partial(max, 1)(0) == max(1, 0) ==
   1`.
 
-Either way, `tenure` is a real int `>= 1` by the time any later entry reads it —
-including `active_tenure`, whose `operator.mul` never multiplies against a raw `None`.
+Either way, `tenure` is a real int `>= 1` by the time any later entry reads it — so
+`salary_per_year`'s division below never hits a zero denominator.
 
 ### Why `salary_per_year` is a plain `calc()` entry now, zero-safe by construction
 
@@ -499,23 +463,22 @@ and without a display-time `"-"` guard duplicating what `calc()`'s own
 
 ---
 
-## The boards: sort/filter gated, display raw, zero derivation
+## The boards: filter active, then sort/compare, zero derivation
 
-`players` — the flat list built by the `zip(matched, rosters)` loop above — is every
-athlete row from every matched team, active and inactive. Every board reads fields
-that were already computed inside `conv_dict` — `p.salary`, `p.tenure`, `p.league`,
-`p.team_name`, `p.birth_state`, `p.salary_per_year`, `p.turned_pro_at`, and the three
-gated `active_*` fields. No `isinstance()` checks, no `None`-guard ladders, no
-per-row derivation.
+`players` — the flat list built by the per-team loop above — is every athlete row
+from every matched team, active and inactive. Every board reads fields that were
+already computed inside `conv_dict` — `p.salary`, `p.tenure`, `p.league`,
+`p.team_name`, `p.birth_state`, `p.salary_per_year`, `p.turned_pro_at`, plus the
+`p.active` flag. No `isinstance()` checks, no `None`-guard ladders, no per-row
+derivation.
 
-**Boards sort/filter on the gated field, but still display the raw one.** The
-veterans board sorts by `active_tenure`; the paycheck board gates and sorts by
-`active_salary`; the homegrown board filters by `active_birth_state == region` — but
-all three still **display** the raw `p.tenure` / `p.turned_pro_at`, `p.salary` /
-`p.salary_per_year`, `p.birth_city` / `p.birth_state` columns. This is safe by
-construction: any row that survives a gated sort/filter is active, so its raw value
-and its gated value are numerically identical there — only an inactive row (never
-present past that point) would show the difference.
+**Each board filters `if p.active` first, then sorts or compares on the raw field.**
+The veterans board filters to active players, then sorts by `p.tenure`; the paycheck
+board keeps `p.active and p.salary > 0`, then sorts by `p.salary`; the homegrown
+board keeps `p.active and p.birth_state == region`. The `active` flag is the single
+report-time gate — the inactive org rows that MLB's feed pulls in are already built
+into `players`, so filtering them here is a pool rule, exactly like the paycheck
+board's own `salary > 0` cut.
 
 **Two boards run across all four leagues on purpose.** Salary coverage in this feed
 is NFL/NBA only (verified live) — a salary-only leaderboard would silently erase
@@ -537,25 +500,24 @@ summary line follows the same split:
 
 ```python
 league_active_count = sum(1 for p in league_players if p.active)
-salary_known_total = sum(1 for p in league_players if p.active_salary > 0)
-payroll_total = sum(p.active_salary for p in league_players)
+salary_known_total = sum(1 for p in league_players if p.active and p.salary > 0)
+payroll_total = sum(p.salary for p in league_players if p.active)
 ```
 
-`salary_known_total` and `payroll_total` read `active_salary` rather than the raw
-`salary` — an inactive row's salary is always gated to `0` first, so this stays the
-semantically correct source even though, in this feed, no inactive MLB row happens to
-carry a real salary anyway (verified live).
+`salary_known_total` and `payroll_total` both open with the `if p.active` pool cut,
+then read the raw `salary` — inactive rows carry no current salary anyway (verified
+live), but the explicit filter keeps the intent legible.
 
-### The homegrown board: gated attribute equality
+### The homegrown board: active-player attribute equality
 
 ```python
-heroes = [p for p in players if p.active_birth_state == region]
+heroes = [p for p in players if p.active and p.birth_state == region]
 ```
 
 `birthPlace.state` on players uses 2-letter codes already (verified live), so
-`active_birth_state` compares directly against the normalized `region` — no
-metro-alias table, no city-name matching, and no inactive row can ever match, since
-its `active_birth_state` is unconditionally `""`.
+`birth_state` compares directly against the normalized `region` — no metro-alias
+table, no city-name matching. The leading `if p.active` keeps inactive org players
+(who carry a real birthplace) out of the board.
 
 **NY/NJ semantics, stated plainly.** The Giants and Jets play at MetLife Stadium in
 East Rutherford — their venue's `state` is `"NJ"`, so they land under `NJ`, not `NY`,
@@ -571,12 +533,12 @@ the five boroughs, so they stay under `NY`. Call `main("NJ")` (edit the entry bl
 Fetching state/province reference data (CountriesNow)...
 Discovering CA's teams across NFL / NBA / MLB / NHL (ESPN site API)...
 OK: Found 15 CA team(s): NFL Los Angeles Chargers, NFL Los Angeles Rams, NFL San Francisco 49ers, NBA Golden State Warriors, NBA LA Clippers, NBA Los Angeles Lakers, NBA Sacramento Kings, MLB Athletics, MLB Los Angeles Angels, MLB Los Angeles Dodgers, MLB San Diego Padres, MLB San Francisco Giants, NHL Anaheim Ducks, NHL Los Angeles Kings, NHL San Jose Sharks
-OK: Loaded 1731 players (581 active) across 15 teams.
+OK: Loaded 1730 players (580 active) across 15 teams.
 
 CA across NFL / NBA / MLB / NHL
 ======================================================================
 NFL   3 team(s), 272 players (272 active), salary known 145/272, payroll $789,114,970
-NBA   4 team(s), 78 players (78 active), salary known 53/78, payroll $714,147,833
+NBA   4 team(s), 77 players (77 active), salary known 52/77, payroll $712,212,456
 MLB   5 team(s), 1281 players (131 active), salary known 0/131
 NHL   3 team(s), 100 players (100 active), salary known 0/100
 
@@ -620,15 +582,13 @@ Trevor Moore            NHL  Los Angeles Kings     Thousand Oaks, CA
 Andre Gasseau           NHL  San Jose Sharks       Garden Grove, CA
 ```
 
-(Regenerated live 2026-07-09 against the gated-fields, `asyncio.gather` revision —
-the veterans and homegrown boards are byte-for-byte identical to the prior
-revision's output, proving the gating design: no inactive row surfaces anywhere. The
-paycheck board's #4 entry shifted (Kawhi Leonard's fixture-independent live salary
-changed since the prior sample) — an ESPN-side data drift, not a pipeline change.
-`len(players)` jumped from 580 to 1731 because MLB's roster feed's inactive
-organizational rows — always excluded by the old `if athlete.active` filter — are
-now part of the dataset, gated instead of dropped; `active_count` (581) matches the
-old "active players" figure within normal roster churn.)
+(Regenerated live 2026-07-09 against the sequential-loop, `if p.active`-filter
+revision — the three boards are identical in content to the prior gated-fields
+revision: whether inactive rows are gated to a losing sentinel or filtered out before
+the sort, the same active players surface. `len(players)` (1730) still counts every
+roster row MLB's org-list quirk pulls in; `active_count` (580) is the current-roster
+figure the boards actually draw from. Per-league totals drift a little run to run as
+minor-league rosters churn.)
 
 `main("ON")` finds 4 teams (Toronto Raptors, Toronto Blue Jays, Ottawa Senators,
 Toronto Maple Leafs — the Blue Jays prove the *fetched* Canada map covers the full
@@ -666,8 +626,8 @@ if part.rejects:
 
 * **Cross-sport physical extremes.** The same player pool that feeds the veterans
   board also makes for a fun tallest/heaviest split — NBA centers run ~7'2", NFL
-  linemen top 350 lbs. Sort the roster rows by `height` or `weight` (gated the same
-  way) and print the extremes per league.
+  linemen top 350 lbs. Filter to `p.active`, then sort the roster rows by `height` or
+  `weight` and print the extremes per league.
 * **`calc_all()` dense-rank.** `calc_all(func, *keys, ...)` computes a rank *within
   one `incorp()` call* — handy for a per-team salary rank, but the state-wide
   leaderboards in this script are cross-team, so they use a plain `sorted()`
@@ -683,11 +643,11 @@ if part.rejects:
 ## Where to Go Next
 
 > **Up next: [Tutorial 7 — Stateful Refresh](../07-stateful-refresh/README.md).**
-> T6 chained two `inc_parent` drills — each reused once per parent and run
-> concurrently via `asyncio.gather` — with the second drilling straight into
-> `Player` rows and gating inactive contributions instead of filtering them out;
-> `calc`, `inc`, and `pluck` all make an appearance along the way; T7 takes a single
-> live registry and keeps it fresh with `refresh()`, three different ways.
+> T6 chained two `inc_parent` drills — each a plain per-parent `for` loop, the second
+> drilling straight into `Player` rows and stamping each parent's context onto them —
+> and let the boards filter `if p.active` at report time; `calc`, `inc`, and `pluck`
+> all make an appearance along the way; T7 takes a single live registry and keeps it
+> fresh with `refresh()`, three different ways.
 
 | Goal | Read |
 |---|---|

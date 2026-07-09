@@ -4,24 +4,21 @@ Loads the actual tutorial entry script via `load_sidecar` (unique importlib
 key) rather than duplicating its logic, so this test exercises the exact
 shipped code path: the live CountriesNow reference-map fetch (one multi-URL
 `incorp()` call, its fail-fast path, and the PARTIAL-failure fail-fast
-check), Drill 1 (`League.incorp()` -> `asyncio.gather` over a per-league
-`Team.incorp(inc_parent=lg, inc_child="leagues.teams.team.id", ...)` call,
-T5's `inc_parent`/`inc_child` shape reused once per league, all leagues
-concurrent), the no-venue-address exclusion path, and Drill 2
-(`asyncio.gather` over a per-matched-team
-`Player.incorp(inc_parent=team, rec_path="team.athletes", ...)` call --
-`Player` rows built directly off the roster endpoint, no intermediate
-roster class, no in-memory hand-off).
+check), Drill 1 (a plain `for lg in leagues:` loop of
+`Team.incorp(inc_parent=lg, inc_child="leagues.teams.team.id", ...)` calls,
+T5's `inc_parent`/`inc_child` shape reused once per league), the
+no-venue-address exclusion path, and Drill 2 (a plain `for team in matched:`
+loop of `Player.incorp(inc_parent=team, rec_path="team.athletes", ...)`
+calls -- `Player` rows built directly off the roster endpoint, no
+intermediate roster class, no in-memory hand-off).
 
-`players` holds every roster row -- active and inactive -- with no
-`if athlete.active` filter anywhere in the pipeline; inactive rows are
-gated to a sentinel (`0` / `""`) via three `conv_dict` fields
-(`active_tenure`, `active_salary`, `active_birth_state`) instead. There is
-no Watershed, no `Fjord`, no exported file anywhere in this tutorial --
-every assertion below reads the printed board output captured via
-`capsys`, or a `Player.incorp(payload_list=...)` call made directly against
-a copy of the tutorial's own `conv_dict` to validate the gating semantics
-in isolation.
+`players` holds every roster row -- active and inactive -- and each board
+filters `if p.active` before it sorts or compares, so inactive org players
+never surface in a top-10. There is no Watershed, no `Fjord`, no exported
+file anywhere in this tutorial -- every assertion below reads the printed
+board output captured via `capsys`, or a `Player.incorp(payload_list=...)`
+call made directly against a copy of the tutorial's own `conv_dict` to
+validate its coercion semantics in isolation.
 
 `main()` is fully inline (no phase functions to call directly) -- the
 full-pipeline tests below call it directly with a `region` argument +
@@ -299,9 +296,7 @@ def _reset_registries(*classes: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_player_conv_dict_gates_inactive_rows_in_isolation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-) -> None:
+async def test_player_conv_dict_builds_every_row_in_isolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """Validates the tutorial's `Player` conv_dict shape in isolation, via
     `Player.incorp(payload_list=...)` -- a network-free way to exercise the
     exact same conv_dict entries Drill 2 uses, without a live/mocked HTTP
@@ -309,17 +304,15 @@ async def test_player_conv_dict_gates_inactive_rows_in_isolation(
     2 builds `Player` rows straight off `inc_parent=team,
     rec_path="team.athletes"` now, not a payload-list hand-off), but
     `payload_list` remains a legitimate general-purpose primitive for
-    validating a conv_dict's coercion/gating semantics against hand-built
+    validating a conv_dict's coercion semantics against hand-built
     rows. Covers every primitive-only entry -- `calc(TYPE, "nested.path",
     default=..., target_type=TYPE)` for salary/age/pos/birth_city/
     birth_state, `calc(functools.partial(max, 1), "experience.years", ...)`
     for tenure (floors both missing and genuine-zero to 1), `calc(operator.sub,
-    ...)`/`calc(operator.truediv, ...)` for turned_pro_at/salary_per_year --
-    plus the three NEW gated fields: `inc(bool, default=False)` for `active`,
-    then `calc(operator.mul, "active", <field>, ...)` for active_tenure/
-    active_salary/active_birth_state, proving an inactive row's gated
-    fields float to the zero/empty sentinel while an active row's pass
-    through unchanged."""
+    ...)`/`calc(operator.truediv, ...)` for turned_pro_at/salary_per_year, and
+    `inc(bool, default=False)` for the `active` flag. Also proves an inactive
+    row still BUILDS cleanly (its raw fields are untouched) -- the reports
+    filter it out at read time via `if p.active`, they don't gate its data."""
     monkeypatch.chdir(tmp_path)
     _reset_registries(Player)
 
@@ -351,8 +344,8 @@ async def test_player_conv_dict_gates_inactive_rows_in_isolation(
             "age": None,
         },
         {
-            # Inactive -- proves the three gated fields float to the
-            # zero/empty sentinel while the raw fields stay untouched.
+            # Inactive -- proves an inactive row still builds cleanly; the
+            # reports filter it out via `if p.active`, they don't gate it.
             "uid": "s:1~l:10~a:p5",
             "fullName": "Reed Calloway",
             "league": "MLB",
@@ -379,9 +372,6 @@ async def test_player_conv_dict_gates_inactive_rows_in_isolation(
             "birth_state": calc(str, "birthPlace.state", default="-", target_type=str),
             "turned_pro_at": calc(operator.sub, "age", "tenure", default=0, target_type=int),
             "salary_per_year": calc(operator.truediv, "salary", "tenure", default=0.0, target_type=float),
-            "active_tenure": calc(operator.mul, "active", "tenure", default=0, target_type=int),
-            "active_salary": calc(operator.mul, "active", "salary", default=0, target_type=int),
-            "active_birth_state": calc(operator.mul, "active", "birth_state", default="", target_type=str),
         },
     )
 
@@ -396,9 +386,7 @@ async def test_player_conv_dict_gates_inactive_rows_in_isolation(
     assert ridge.birth_state == "MN"
     assert ridge.salary_per_year == 3809632 / 3  # 1269877.33...
     assert ridge.turned_pro_at == 20  # 23 - 3
-    assert ridge.active_tenure == 3  # active -- passes through unchanged
-    assert ridge.active_salary == 3809632
-    assert ridge.active_birth_state == "MN"
+    assert ridge.active is True
 
     wyatt = next(p for p in players if p.inc_name == "Wyatt Kessler")
     assert wyatt.salary == 0
@@ -408,17 +396,13 @@ async def test_player_conv_dict_gates_inactive_rows_in_isolation(
     assert wyatt.birth_state == "-"
     assert wyatt.salary_per_year == 0.0  # 0 / 1
     assert wyatt.turned_pro_at == -1  # missing age defaults to 0; 0 - 1 = -1 sentinel (was 0 pre-floor)
-    assert wyatt.active_tenure == 1
-    assert wyatt.active_salary == 0
-    assert wyatt.active_birth_state == "-"
+    assert wyatt.active is True
 
     reed = next(p for p in players if p.inc_name == "Reed Calloway")
     assert reed.active is False
-    assert reed.tenure == 1  # raw field untouched by gating
-    assert reed.birth_state == "TX"  # raw field untouched by gating
-    assert reed.active_tenure == 0  # gated: False * 1 == 0
-    assert reed.active_salary == 0  # gated: False * 0 == 0
-    assert reed.active_birth_state == ""  # gated: False * "TX" == ""
+    assert reed.tenure == 1  # raw fields build fine -- the reports filter, not gate
+    assert reed.birth_state == "TX"
+    assert reed.salary == 0
 
 
 @pytest.mark.asyncio
@@ -471,20 +455,20 @@ async def test_full_run_ca_default_prints_all_boards(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """End-to-end: `main()`'s default `region="CA"` drives the whole inline
-    pipeline -- reference fetch, Drill 1 (`asyncio.gather` over a per-league
-    loop, including the Ghost Team's no-venue exclusion from the filter),
-    and Drill 2 (`asyncio.gather` over a per-matched-team loop building
-    `Player` rows straight off `rec_path="team.athletes"`) -- with zero
-    stderr and ASCII-only stdout, exactly like the live acceptance run.
-    Also asserts zero coercion-warning spam: every derived field reads a
-    pre-coerced, never-garbage input (age/tenure default to real ints
-    before `turned_pro_at`'s `calc(operator.sub, ...)` runs), mirroring the
-    live logging-handler check performed against the real pipeline.
+    pipeline -- reference fetch, Drill 1 (a plain per-league loop, including
+    the Ghost Team's no-venue exclusion from the filter), and Drill 2 (a
+    plain per-matched-team loop building `Player` rows straight off
+    `rec_path="team.athletes"`) -- with zero stderr and ASCII-only stdout,
+    exactly like the live acceptance run. Also asserts zero coercion-warning
+    spam: every derived field reads a pre-coerced, never-garbage input
+    (age/tenure default to real ints before `turned_pro_at`'s
+    `calc(operator.sub, ...)` runs), mirroring the live logging-handler check
+    performed against the real pipeline.
 
     The CA fixtures total 7 athlete rows across the 5 matched teams (6
-    active + Reed Calloway, inactive) -- `players` includes all 7 (no row
-    filter), and the gated fields keep Reed Calloway off both boards he'd
-    otherwise be eligible for by raw rank."""
+    active + Reed Calloway, inactive) -- `players` includes all 7 (built,
+    not filtered, at drill time), and each board's `if p.active` filter keeps
+    Reed Calloway off the boards he'd otherwise be eligible for by raw rank."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
     _reset_registries(StateRef, League, Team, Player)
@@ -509,17 +493,15 @@ async def test_full_run_ca_default_prints_all_boards(
     assert "Otto Kwan" in captured.out
     assert "Wells Bramante" not in homegrown_block
 
-    # Reed Calloway (inactive, TX-born) is in `players` but structurally
-    # cannot win either board: not CA-born, so absent from HOMEGROWN --
-    # and `active_tenure` gated to 0, so he ranks LAST in the tiny
-    # 7-row VETERANS pool despite every fixture row being displayable
-    # (pool size <= 10).
+    # Reed Calloway (inactive, TX-born) builds into `players` but is excluded
+    # from every report: not CA-born (absent from HOMEGROWN), and inactive, so
+    # the `if p.active` filter drops him from the VETERANS board entirely --
+    # the 6 visible rows are the fixture's 6 active players.
     assert "Reed Calloway" not in homegrown_block
     veterans_block = captured.out.split("VETERANS BOARD")[1].split("HOMEGROWN BOARD")[0]
     veterans_rows = [ln for ln in veterans_block.splitlines() if ln[:1].isdigit()]
-    assert len(veterans_rows) == 7
-    assert "Reed Calloway" in veterans_rows[-1]
-    assert veterans_rows[-1].split()[0] == "7"
+    assert len(veterans_rows) == 6
+    assert "Reed Calloway" not in veterans_block  # inactive -> filtered from the report
 
     warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warning_records == []
@@ -552,7 +534,7 @@ async def test_full_run_no_matching_region_exits(
 ) -> None:
     """A region with no matching fixture team hard-exits via
     `sys.exit(f"No {region} teams found - ...")` -- an empty `matched` would
-    otherwise feed Drill 2's `asyncio.gather` an empty parent list. No
+    otherwise leave Drill 2's per-team loop with no parents to drill. No
     roster/player calls are attempted first."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(fetch, "execute_request", mock_espn_execute_request)
