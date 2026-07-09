@@ -521,7 +521,7 @@ return = one file.
 
 ## Where to Go Next
 
-> 👉 **Up next: [Tutorial 11 — Tideweaver](../11-tideweaver/README.md).**  T11 is the capstone — a declarative diamond orchestration across three exchanges in a windowed graph, covering the full vocabulary (penstocks, spillways, gate modes).  [Tutorial 6](../06-state-sports/README.md) already gave you an early, narrower taste (a single-pass 2-current chain) if you skipped straight here. Runs entirely against local JSON fixtures, no APIs touched.
+> 👉 **Up next: [Tutorial 11 — Tideweaver](../11-tideweaver/README.md).**  T11 is the capstone — a declarative diamond orchestration across three exchanges in a windowed graph, covering the full vocabulary (penstocks, spillways, gate modes).  [Tutorial 6](../06-state-sports/README.md) already gave you an early, narrower taste (a single-pass 3-current chain) if you skipped straight here. Runs entirely against local JSON fixtures, no APIs touched.
 
 | Goal | Read |
 |---|---|

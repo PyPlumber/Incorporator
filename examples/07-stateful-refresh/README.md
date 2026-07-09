@@ -4,7 +4,7 @@
 
 **Prerequisites:** [Tutorial 1](../01-first-steps/README.md) (`incorp()`, `test()`, `inc_dict`),
 [Tutorial 5](../05-parent-child-drilling/README.md) (two-registries mental model),
-[Tutorial 6](../06-state-sports/README.md) (single-instance `inc_parent` drilling).
+[Tutorial 6](../06-state-sports/README.md) (whole-list `inc_parent` drilling).
 
 Your dashboard reads `Pair.inc_dict['BTCUSDT'].lastPrice` every render. You need that
 value to be no more than 30 seconds stale, without rebuilding the whole registry from

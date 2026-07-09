@@ -267,7 +267,7 @@ instead.
 > on independent cadences reach for
 > [Tideweaver (Tutorial 11)](../11-tideweaver/README.md), the capstone that walks
 > the full vocabulary (diamonds, penstocks, spillways) — [Tutorial 6](../06-state-sports/README.md)
-> already gave you an early, narrower taste (a single-pass 2-current chain) if you
+> already gave you an early, narrower taste (a single-pass 3-current chain) if you
 > want a preview.  T8 itself stays focused on chunking — that's `stream()`'s real job.
 
 ---
