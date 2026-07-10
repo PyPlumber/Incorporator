@@ -250,7 +250,7 @@ flattening.
 
 ## Where to Go Next
 
-> 👉 **Up next: [Tutorial 6 — State Sports](../06-state-sports/README.md).**  The parent-child pattern you just learned on CoinGecko powers a different kind of fan-out too — twice over.  T6 chains two whole-list `inc_parent` drills (T5's own shape, reused verbatim): league → team (normalizing each team's venue state), then team → roster, whose `conv_dict` showcases all four converters — `link_to` (a build-time join back to the first drill's teams), `inc`, `calc`, and `pluck`.  Still a pure one-shot script, no Watershed — that's T11's job.  Lands in ~15-25 s.
+> 👉 **Up next: [Tutorial 6 — State Sports](../06-state-sports/README.md).**  The parent-child pattern you just learned on CoinGecko powers a different kind of fan-out too — twice over.  T6 reuses T5's `inc_parent` shape bound to a **single** parent at a time, in a plain `for` loop, chained: league → team (normalizing each team's venue state), then team → roster, whose `conv_dict` shows `inc`, `calc`, and `pluck`.  Still a pure one-shot script, no Watershed — that's T11's job.  Lands in ~15-25 s.
 
 | Goal | Read |
 |---|---|
