@@ -143,6 +143,20 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 
+# pyarrow ships py.typed in some builds and not others; CI's floating
+# ``pyarrow>=14.0`` may resolve to an untyped build.  Treat it as untyped so the
+# gate is deterministic regardless of which build is installed.
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
+
+# columnar.py's ``# type: ignore`` comments for pyarrow.compute / orc are USED
+# when pyarrow is typed (local) and UNUSED when it is untyped (CI); tolerate both
+# rather than let strict's warn_unused_ignores flip on the installed build.
+[[tool.mypy.overrides]]
+module = ["incorporator.io.handlers.columnar"]
+warn_unused_ignores = false
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"
