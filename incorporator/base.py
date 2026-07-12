@@ -639,8 +639,7 @@ class Incorporator(BaseModel):
         is_file_mode = bool(inc_file)
         source_list: list[str] = network._normalize_source_list(source, kwargs.get("payload_list"))
 
-        # NOT the build_instances collapse flag (removed) — this is only used
-        # below to decide whether to memoize a single string source onto
+        # Decides whether to memoize a single string source onto
         # cls.inc_url / cls.inc_file for refresh()'s in-state fallback.
         is_single_source = not isinstance(source, list) and inc_page is None
 

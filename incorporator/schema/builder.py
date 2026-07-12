@@ -126,9 +126,19 @@ def apply_etl_transformations(
        callables.
     3. **Nm (rename)** — apply ``name_chg`` / ``nm_tuple`` renames.
     4. **Pk (PK-bind)** — resolve source paths and write ``inc_code`` /
-       ``inc_name``.  Runs LAST so renames applied in pass 3 are visible
-       (fixes Case A and Case B bugs where a pre-rename source or a
-       rename-created target was not yet present when PK binding ran).
+       ``inc_name``.  Runs LAST so renames applied in pass 3 are visible —
+       whether a rename moved the PK source away or created the PK target,
+       binding still sees the post-rename field.
+
+    Note:
+        Null-handling contract for ``CalcOp`` / ``CalcAllOp``: a clean
+        func-returned ``None`` (``CalcOp``: ``func_returned_clean``;
+        ``CalcAllOp``: ``func_returned_clean and from_results``) passes
+        through as ``None`` unconverted.  Every other ``None`` (the
+        garbage short-circuit, the func-exception fallback, or the
+        ``IndexError`` fallback) is still run through ``target_type()``,
+        so an incompatible declared default still surfaces its "type
+        coercion failed" warning.
 
     Args:
         parsed_data: A single record dict or a list of record dicts from the
@@ -191,13 +201,9 @@ def apply_etl_transformations(
                 raw_inputs: list[DataPath] = operation.input_list if operation.input_list else [DataPath.parse(key)]
                 for d in dict_items:
                     args = [dep.resolve(d) for dep in raw_inputs]
-                    # Align with inc()'s null-handling contract: when EVERY
-                    # input value is garbage (None/""/n-a/null/unknown/nan/
-                    # undefined), skip the user-supplied func and silently
-                    # fall back to default.  Saves one Python exception raise
-                    # + one logger.warning call per garbage row — the per-
-                    # row pre-check is ~50ns, the exception path it replaces
-                    # is ~30µs.  Material on garbage-heavy datasets.  See H3 reshape's efficiency analysis.
+                    # Skip func and coerce to default when every input is garbage
+                    # (None/""/n-a/null/unknown/nan/undefined) — mirrors inc()'s
+                    # null-handling contract.
                     func_returned_clean = False
                     if all(is_garbage_value(a) for a in args):
                         val = default
@@ -224,15 +230,9 @@ def apply_etl_transformations(
                             logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
                             val = default
 
-                    # Symmetric to the is_garbage_value pre-check above, but applied
-                    # post-func: a clean None func output is a legitimate "no value"
-                    # result and must land as None, not get run through target_type()
-                    # (which would raise, warn, and swallow to default on every row).
-                    # Scoped to func_returned_clean only — a None that came from the
-                    # garbage short-circuit or the exception fallback is still coerced,
-                    # so an incompatible default still surfaces its "type coercion
-                    # failed" warning (D2-01: that warning is the only signal a
-                    # declared default is incompatible with target_type).
+                    # A clean func-returned None is a legitimate "no value" result and
+                    # passes through unconverted; see the docstring's Note for the full
+                    # null-handling contract.
                     if target_type is not None and not (func_returned_clean and val is None):
                         try:
                             val = target_type(val)
@@ -247,9 +247,9 @@ def apply_etl_transformations(
                 target_type = operation.target_type if callable(operation.target_type) else None
                 all_inputs: list[DataPath] = operation.input_list if operation.input_list else [DataPath.parse(key)]
                 col_args = [[dep.resolve(d) for d in dict_items] for dep in all_inputs]
-                # Symmetric to CalcOp's pre-check, applied across the full
-                # column matrix: if every cell of every input column is
-                # garbage, skip the func call and default every output row.
+                # Same pre-check as CalcOp, applied across the full column matrix:
+                # if every cell of every input column is garbage, skip func and
+                # default every output row.
                 func_returned_clean = False
                 if all(is_garbage_value(v) for col in col_args for v in col):
                     results = [default] * len(dict_items)
@@ -274,21 +274,10 @@ def apply_etl_transformations(
                         )
                         val = default
 
-                    # Symmetric to CalcOp's post-func None guard, but CalcAllOp
-                    # needs a second, per-row flag: func_returned_clean is
-                    # batch-wide (True whenever `func` itself ran without
-                    # raising), while from_results is row-wide (True only when
-                    # this row's value actually came from results[idx] rather
-                    # than the IndexError fallback above). A None can reach
-                    # this point via that fallback even when the batch func
-                    # ran cleanly (e.g. func returned a too-short list) — that
-                    # None is not a func result, so it must still be coerced.
-                    # Skip target_type() only when both flags agree the value
-                    # is a genuine func-returned None; every other None (the
-                    # garbage short-circuit, the func-exception fallback, or
-                    # the IndexError fallback) is still coerced so an
-                    # incompatible declared default still surfaces its
-                    # "type coercion failed" warning (D2-01).
+                    # Skip coercion only for a genuine func-returned None (both
+                    # func_returned_clean, batch-wide, and from_results, row-wide,
+                    # true) — see the docstring's Note for the full null-handling
+                    # contract.
                     if target_type is not None and not (func_returned_clean and from_results and val is None):
                         try:
                             val = target_type(val)
@@ -317,8 +306,8 @@ def apply_etl_transformations(
             for nm in normalized.nm_tuple:
                 nm.apply_rename(d)
 
-    # Pass 4 — Pk (PK-bind): runs LAST so pass-3 renames are visible.
-    # This fixes Case A (source renamed away) and Case B (rename creates target).
+    # Pass 4 — Pk (PK-bind): runs LAST so pass-3 renames are visible, whether
+    # the rename moved the PK source away or created the PK target.
     if normalized.pk_tuple:
         for d in dict_items:
             for pk in normalized.pk_tuple:
@@ -332,10 +321,15 @@ def infer_dynamic_schema(
 ) -> type[BaseModel]:
     """Recursively build a Pydantic V2 model class from a raw data sample.
 
-    Samples up to 100 records from ``data`` (Python's native list slicing
-    won't raise on shorter inputs), merges every observed key into a
-    composite ``sample_dict``, and recursively invokes itself on nested
-    dicts and lists so deeply nested schemas are fully typed.
+    Samples up to 100 records from ``data`` via stratified indices (never
+    silently drops the tail), merges every observed key into a composite
+    ``sample_dict``, and recursively invokes itself on nested dicts and
+    lists so deeply nested schemas are fully typed.
+
+    Note:
+        Cached models are held in :data:`SCHEMA_REGISTRY`, an LRU registry
+        that evicts the oldest entry once :data:`MAX_REGISTRY_SIZE` is
+        reached.
 
     Args:
         model_name: Name to assign the generated class (e.g. ``"DynamicModel"``).
@@ -468,10 +462,9 @@ def infer_dynamic_schema(
             **fields,
         )
 
-        # Mirror per-subclass mutable-container state from the base.
-        # Replaces the older ``dir(base_class)`` scan (~200 names) with an
-        # explicit allow-list — see _PER_SUBCLASS_CONTAINERS.  ``getattr``
-        # walks the MRO, so user-defined intermediate subclasses (those that
+        # Mirror per-subclass mutable-container state from the base via the
+        # explicit allow-list in _PER_SUBCLASS_CONTAINERS.  ``getattr`` walks
+        # the MRO, so user-defined intermediate subclasses (those that
         # subclass Incorporator without overriding these attrs) still resolve
         # to the grandparent's seed.  Shallow copy for dict-typed entries
         # so the child owns its mapping but shares value references.
@@ -480,17 +473,12 @@ def infer_dynamic_schema(
             if seed is not _MISSING:
                 setattr(DynamicModel, attr_name, factory(seed))
 
-        # LRU cache insert: evict the least-recently-used entry when the
-        # registry is full.  OrderedDict.popitem(last=False) removes the
-        # oldest (front) entry in O(1) — guaranteed by CPython's dict impl.
-        # Two threads racing on the same still-uncached cache_key can both
-        # reach here and both build a DynamicModel outside the lock; whichever
-        # acquires the lock second simply overwrites the first's entry
-        # (last-writer-wins). Both models are functionally identical since
-        # cache_key already encodes the field-type frozenset, so this is a
-        # benign duplicate-construction race — the same idempotent-write
-        # tolerance documented for ``_cached_effective_conv`` in factory.py,
-        # just applied to the registry insert instead of a per-class cache.
+        # Evicts oldest on full registry (OrderedDict.popitem(last=False), O(1)).
+        # Two threads racing on the same still-uncached cache_key can both build
+        # a DynamicModel outside the lock; last-writer-wins is a benign race
+        # because cache_key already encodes the field-type frozenset, so both
+        # models are functionally identical — same idempotent-write tolerance
+        # as ``_cached_effective_conv`` in factory.py.
         with _SCHEMA_REGISTRY_LOCK:
             if len(SCHEMA_REGISTRY) >= MAX_REGISTRY_SIZE:
                 SCHEMA_REGISTRY.popitem(last=False)

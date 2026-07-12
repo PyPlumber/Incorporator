@@ -291,13 +291,13 @@ def build_instances(
             reverse-projected from the container by that function's shim.
 
     Returns:
-        Always an :class:`IncorporatorList` for the list-shaped ``parsed_data``
-        every ``incorp()`` / ``refresh()`` call produces — even a single-record
-        result is wrapped in a length-1 list, never returned as a bare
-        instance. A bare :class:`Incorporator` instance is only possible if
-        ``parsed_data`` is passed as a bare dict directly (not via
-        ``incorp()``/``refresh()``, which never do this) — kept as a
-        defensive fallback, not part of the public contract.
+        Always an :class:`IncorporatorList` — a single record is wrapped in
+        a length-1 list, never returned bare.
+
+    Note:
+        The schema-union expansion of ``conv_dict`` is cached per class in
+        ``_cached_effective_conv``, keyed via :func:`_effective_conv_cache_key`,
+        and is thread-safe for concurrent ``incorp()`` calls.
     """
     if not parsed_data:
         # Generate a safe empty class if an API returns 200 OK but 0 records
@@ -316,47 +316,25 @@ def build_instances(
     # overrides always win, and fields declared on the base class (e.g.
     # ``last_rcd: datetime`` on ``Incorporator``) are left to Pydantic.
     #
-    # Cache the expansion on the class.  Long-running daemons
-    # (chunked ``stream()``, ``fjord()``, Tideweaver) reuse the same
-    # ``conv_dict`` and the schema union stabilises after a few waves,
-    # so the cache hits every tick after warm-up.  Invalidates correctly
-    # when (a) schema_union grows (new field appears) or (b) caller
-    # passes a different ``conv_dict`` instance.  See
-    # ``_effective_conv_cache_key`` above for the key shape.
+    # Cache the expansion on the class.  Long-running daemons (chunked
+    # ``stream()``, ``fjord()``, Tideweaver) reuse the same ``conv_dict`` and
+    # the schema union stabilises after a few waves, so the cache hits every
+    # tick after warm-up.  See ``_effective_conv_cache_key`` above for the
+    # key shape and the hit-check's identity-not-equality hazard on the
+    # conv_dict slot (holding the object, not ``id()``, closes a false-hit
+    # window against address recycling — do not switch this to ``==``).
     #
-    # Identity, not equality, on the conv_dict slot: the stored key
-    # HOLDS the actual ``conv_dict`` object (not its ``id()``), and the
-    # hit-check below compares that slot with ``is``.  This keeps a
-    # strong reference alive for the cache entry's lifetime, so the
-    # object's address can never be recycled into a different dict
-    # while the entry is live — closing the false-hit window an
-    # ``id()``-keyed cache has.  A blanket ``==`` across the whole key
-    # tuple would invoke ``dict.__eq__`` on this slot and reintroduce a
-    # content-equality variant of the same bug (two distinct dicts with
-    # equal contents would compare equal), so the conv_dict slot is
-    # deliberately checked separately from the other two components.
-    #
-    # Thread-safety note: ``build_instances`` runs inside ``asyncio.to_thread``
-    # worker threads dispatched from ``incorp()`` and ``refresh()`` — real OS
-    # threads, not coroutines, so two concurrent same-class calls can execute
-    # this function on separate threads at once, with no event-loop ordering
-    # guarantee between them.  A sibling worker can insert new keys into
-    # ``cls._schema_union`` (the ``cls._schema_union[k] = ...`` write below)
-    # while this thread is expanding the conv_dict against that same dict.
-    # What prevents ``RuntimeError('dictionary changed size during
-    # iteration')`` is the ``list(schema_union.items())`` snapshot taken
-    # inside ``_expand_conv_dict_with_schema_union`` — not any single-threaded
-    # assumption about the event loop. The remaining unguarded per-class
-    # ``setattr`` caches on this path (``_cached_effective_conv`` below,
-    # ``_cached_json_properties`` and ``_cached_type_adapter`` further down)
-    # are tolerated races: every write for a given cache key is idempotent/
-    # deterministic, so at worst a sibling thread's redundant recomputation
-    # overwrites an identical value — never a wrong or partial value observed
-    # by a reader. No ``threading.Lock`` is used here by design.  The
-    # concurrent path is exercised by
-    # ``tests/test_validation.py::test_schema_union_concurrent_gather_safety``,
-    # which forces real thread interleaving via a lowered
-    # ``sys.setswitchinterval`` across repeated rounds.
+    # Thread-safety: ``build_instances`` runs inside ``asyncio.to_thread``
+    # worker threads (real OS threads, not coroutines) dispatched from
+    # ``incorp()`` / ``refresh()``, so concurrent same-class calls can
+    # interleave on ``cls._schema_union``.  ``_expand_conv_dict_with_schema_union``
+    # guards against ``RuntimeError('dictionary changed size during
+    # iteration')`` via a snapshot; the remaining unguarded per-class
+    # ``setattr`` caches on this path (``_cached_effective_conv``,
+    # ``_cached_json_properties``, ``_cached_type_adapter``) are tolerated
+    # races — every write is idempotent, so worst case is a redundant
+    # recompute, never a wrong value.  Exercised by
+    # ``tests/test_validation.py::test_schema_union_concurrent_gather_safety``.
     schema_union = getattr(cls, "_schema_union", {})
     declared_field_names = frozenset(cls.model_fields.keys())
     cache_key = _effective_conv_cache_key(conv_dict, schema_union, declared_field_names)
@@ -420,34 +398,21 @@ def build_instances(
                     cls._schema_union[k] = declared.get(k, {"type": "string"})
 
         # Batch-validate the full payload through a per-class-cached
-        # ``TypeAdapter(List[Cls])``.  Benchmarking (see
-        # ``tests/benchmarks/test_validate_batch_vs_per_row.py``) measured
-        # this at 1.3-2.0× faster than the per-row ``model_validate`` loop
-        # across realistic shapes (10k × 20 mixed: 1.34× worst-case).  The
-        # cache mirrors ``_cached_json_properties`` above — built once per
-        # dynamic-class lifetime so the schema-binding work doesn't repeat
-        # on every ``incorp()`` call.
+        # ``TypeAdapter(List[Cls])``, mirroring ``_cached_json_properties``
+        # above — built once per dynamic-class lifetime.  The adapter is
+        # bound to ``ActualClass``'s identity and invalidates automatically
+        # via ``infer_dynamic_schema``'s fresh-class-per-shape contract:
+        # the SCHEMA_REGISTRY key (see ``incorporator/schema/builder.py``)
+        # carries field-type info, so a structurally-different payload gets
+        # a fresh ``ActualClass`` with no ``_cached_type_adapter`` set. A
+        # future refactor that drops type info from that key would silently
+        # reuse a stale adapter — keep the field-type info in the key.
         #
-        # Cache-lifetime invariant: the adapter is bound to ``ActualClass``'s
-        # identity, and invalidation happens automatically via
-        # ``infer_dynamic_schema``'s fresh-class-per-shape contract.  The
-        # SCHEMA_REGISTRY key (currently
-        # ``(model_name, frozenset((field, type_name) pairs), id(base_class))``;
-        # see ``incorporator/schema/builder.py``) carries field-type info,
-        # so a structurally-different payload resolves to a fresh
-        # ``ActualClass`` with no ``_cached_type_adapter`` attribute set.
-        # A future refactor that drops type info from the registry key
-        # (e.g. to save memory) would silently reuse a stale adapter —
-        # this comment serves as the tripwire.
-        #
-        # Trade-off vs. the old per-row 1000-chunk loop: peak memory per
-        # ``incorp()`` call is now O(N) instead of O(1000).  High-row-count
+        # Peak memory per ``incorp()`` call is O(N) on the full payload;
         # callers who need O(chunk_size) memory should use chunking-mode
-        # ``stream(stateful_polling=False)`` which preserves the bound at
-        # the stream layer regardless of ``incorp()``'s internal shape.
-        # Error semantics changed too: validation errors now accumulate
-        # across all rows in a single ``ValidationError`` rather than
-        # raising on the first bad row.
+        # ``stream(stateful_polling=False)`` instead. Validation errors
+        # accumulate across all rows into a single ``ValidationError``
+        # rather than raising on the first bad row.
         adapter = getattr(ActualClass, "_cached_type_adapter", None)
         if adapter is None:
             adapter = TypeAdapter(list[ActualClass])  # type: ignore[valid-type]
