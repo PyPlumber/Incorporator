@@ -228,7 +228,7 @@ This is the cold-start verb — the one you call when a new endpoint hits your r
 - `concurrency_limit`, `requests_per_second`, `timeout`, `headers` — network knobs.
 
 **Yields / returns**
-Always returns an `IncorporatorList[TIncorporator]` — a one-record source yields a length-1 list, never a bare instance (breaking change, `is_single` removal). `.failed_sources: list[str]` is the legacy flat reject-list view.  For structured access — exception type, `is_url_traffic_error` flag, `Retry-After` hints, wave index — read `.rejects: list[RejectEntry]` (fields: `source`, `error_kind`, `is_url_traffic_error`, `message`, `retry_after`, `wave_index`).
+Always returns an `IncorporatorList[TIncorporator]` — a one-record source yields a length-1 list, never a bare instance (`is_single` removed). `.failed_sources: list[str]` is the legacy flat reject-list view.  For structured access — exception type, `is_url_traffic_error` flag, `Retry-After` hints, wave index — read `.rejects: list[RejectEntry]` (fields: `source`, `error_kind`, `is_url_traffic_error`, `message`, `retry_after`, `wave_index`).
 
 **Parent-child short-circuit (v1.3.3 correctness).** When `inc_parent` is supplied and the parent snapshot is empty, `incorp()` returns an empty `IncorporatorList` without making a network request. This prevents malformed ``.../{}`` requests on endpoints that interpolate parent IDs into the URL. Existing code that checks `len(result) == 0` or `result.failed_sources` is unaffected.
 
@@ -252,9 +252,9 @@ players = await Player.incorp(
 )
 ```
 
-This is the antidote to hand-rolled dict-building reducers inside `conv_dict`: if a `calc()` helper is walking a nested array and emitting a list of dicts with derived per-element fields, that data wants to be its own class built through this passthrough instead.
+Prefer this passthrough over a `calc()` helper that walks a nested array and emits a list of per-element dicts inside `conv_dict`.
 
-**Ordering gotcha:** the build pipeline runs `excl_lst` (Ex) BEFORE `conv_dict` (Ex -> conv_dict -> Nm -> Pk) — a field cannot be both read by a converter and excluded in the same call. To consume-and-rename, use an in-place `calc` (output key == source key) followed by `name_chg`.
+**Ordering:** the build pipeline runs `excl_lst` before `conv_dict` (`Ex -> conv_dict -> Nm -> Pk`) — a field cannot be both read by a converter and excluded in the same call. To consume-and-rename, use an in-place `calc` (output key == source key) followed by `name_chg`.
 
 **See also**
 [Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md) ·

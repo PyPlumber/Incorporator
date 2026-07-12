@@ -75,7 +75,7 @@ window*; it runs once and exits. (T11 is this curriculum's Watershed capstone.)
 | `inc_parent`/`inc_child` fan-out from a *list* of parents | The exact same primitive, reused **per-parent** in a plain `for` loop — once per `League` row (Drill 1), once per matched `Team` row (Drill 2) — stamping the parent's context onto the freshly built children after each call |
 | Flat parent rows | A deep `rec_path` envelope (`sports.0`, each team/roster row wrapped in `{"team": {...}}`, roster rows one hop deeper still at `team.athletes`) |
 | `inc_code="id"` | Top-level `inc_code="uid"` after `rec_path="team"` digs into the envelope — `id` collides across leagues, `uid` doesn't |
-| `pluck()` for a nested lift | `pluck(key, chain=fn)` for a nested lift, backed by a live, identity-augmented reference-data fetch, not a hardcoded table |
+| `pluck()` for a nested lift | `pluck(key, chain=fn)` for a nested lift, backed by a live reference-data fetch, not a hardcoded table |
 | One vertical (CoinGecko) | Four leagues drilled once each, each with its own coverage gaps |
 | A single `incorp()` call per node | An in-memory dataset (`players`) holding every roster row, active and inactive; each board applies `if p.active` at report time |
 | Composite child-value URLs built by a `calc()` reducer | The `{sport}/{league}` URL segments come straight off each parent row's own attributes, in an f-string template — no reducer needed |
@@ -115,37 +115,8 @@ One `incorp()` call — `inc_url` accepts `str | list[str]`, so both countries f
 out under a single `IncorporatorList` — builds the full 50-state-plus-13-province
 map at runtime, the same primitive every other fetch in this tutorial uses.
 
-**Identity-augmented, both directions.** `state_code_map` maps every fetched
-code to itself (`"CA": "CA"`) *and* every fetched full name to its code
-(`"California": "CA"`). That matters because the normalization step reads this
-map through `chain=state_code_map.get` — a bare bound method with no
-`mapping.get(value, value)` passthrough. An already-abbreviated code only
-survives because the map has an identity entry for it, not because of fallback
-logic at the call site.
-
-**A partial-failure check, not just an empty-map check.** If one country's
-request fails and the other succeeds, `state_code_map` is still non-empty —
-checking for a representative entry from *both* countries (`"California"`,
-`"Ontario"`) catches a partial failure the same way an empty-map check catches
-a total one.
-
-**The DC gap.** CountriesNow's US-states feed has no District of Columbia entry
-under either spelling, but the NBA Wizards' own venue record reports the
-already-abbreviated `"DC"` directly. Because `chain=state_code_map.get` has no
-passthrough, that gap needs an entry in **both** directions or `"DC"` resolves
-to `None` and falls out of the region filter entirely:
-
-```python
-DC_SUPPLEMENT = {"District of Columbia": "DC", "DC": "DC"}
-```
-
-The fix is the same size as the hole — two entries, one per direction.
-Canada's 13-province list has no equivalent gap.
-
-**Fail fast, to stderr.** If either CountriesNow call comes back empty (network
-down, API changed shape), a silent empty map would produce a state filter that
-matches nothing with no explanation why. `sys.exit(str)` prints that string to
-stderr and exits 1; the run stops before any ESPN request is made.
+`DC_SUPPLEMENT = {"District of Columbia": "DC", "DC": "DC"}` patches the one
+entry CountriesNow's feed omits, in both directions.
 
 ---
 
@@ -188,55 +159,11 @@ for lg in leagues:
 
 `inc_parent=lg` is a **single** `League` instance, not a whole list — the same
 primitive T5's `CoinDetail.incorp(inc_parent=coins, inc_child="id", ...)`
-applies to a whole list, applied here one parent at a time. The
-`{sport}/{league}` URL segments come straight off `lg`'s own attributes as an
-f-string template; there's no composite-path reducer anywhere in this
-tutorial. A single whole-list `inc_parent=leagues` call can't replace the loop:
-ESPN's four leagues sit at four different `{sport}/{league}` prefixes, and one
-`incorp()` call takes one `inc_url` template — the per-league loop is what lets
-each league bring its own prefix.
-
-**Why real addresses, not `team.location`.** ESPN's `/teams` list endpoint
-exposes `team.location`, a metro brand label (the Clippers report
-`location="LA"`, not "Los Angeles"; state-named teams like Arizona or Minnesota
-have no city string at all) — filtering on it needs alias tables that don't
-generalize. The real structured address, `franchise.venue.address`
-(`city`/`state`), only lives on the **per-team detail** endpoint;
-`?enable=franchise` and `?enable=venue` are both silently ignored on the list
-endpoint. That's the trade this tutorial makes: one detail request per team,
-in exchange for a filter that generalizes to all 50 states, DC, and every
-Canadian province for free.
+applies to a whole list, applied here one parent at a time.
 
 **`rec_path="team"` scopes every `conv_dict` path to that team's own
 sub-object** — `"franchise.venue.address.city"` has no `"team."` prefix, even
 though the raw response is itself wrapped in `{"team": {...}}`.
-
-**The league stamp.** Right after each league's drill returns,
-`t.league = lg.leagues[0].abbreviation` runs over the freshly built rows,
-reading the loop variable `lg` — a team detail response has no reverse pointer
-back to "which league URL fetched me," so the label comes from the loop, not
-the row's own data.
-
-**Why `inc_code="uid"`, not `id`.** ESPN's numeric `team.id` is only unique
-*within* a league; pooling four leagues' teams under one class with `id` as the
-key would let one league's registration silently overwrite another's. `uid`
-(`"s:20~l:28~t:24"`) bakes the sport and league into the string, so it's
-globally unique across every league fetched in this run.
-
----
-
-## Why the short `inc_child` path fails silently
-
-The natural first instinct is `inc_child="teams.team.id"` — after all, `lg`
-already *is* the league. That fails silently: `extract_parent_data` only
-auto-discovers a hop when it finds that attribute on the current node, and
-`League` has no top-level `teams` attribute — the array sits one level deeper,
-at `lg.leagues[0].teams`. The fix is the full dotted path,
-`inc_child="leagues.teams.team.id"`, walked one segment at a time off a single
-`League` parent: `"leagues"` → `"teams"` (fanned out through the prior segment)
-→ `"team"` → `"id"` (the leaf). Because the drill starts from a single parent
-object instead of a whole `IncorporatorList`, there's no list-of-lists edge
-case to flatten around.
 
 ---
 
@@ -308,57 +235,8 @@ player row from the loop variable — no `link_to()` join, because
 `Player.incorp()` *is* the roster drill and the team is already the loop
 variable.
 
-**One `active` flag, filtered in the reports.** `"active": inc(bool,
-default=False)` — a plain type coercion, since the source key is literally
-`"active"` already. `rec_path="team.athletes"` returns every athlete on the
-roster, active and inactive alike, and `players` holds all of them, built
-cleanly. MLB's roster feed reports its **entire organization** (~250 players
-including minor-leaguers per team), not the 26-man active roster — those
-inactive rows carry real `experience.years` and `birthPlace` data, but no
-salary, and aren't supposed to win a current-roster board. Each board below
-opens with a plain `if p.active` filter, so inactive rows build without a
-hitch but never reach a sort or comparison. One flag, coerced once, read at
-report time — no gated per-field copies.
-
-**Why `calc(TYPE, "nested.path", default=..., target_type=TYPE)`, not
-`pluck()`.** `pluck()` is the framework's nested-extraction primitive, but it
-has **no `default=` parameter** — a missing `contract.salary` resolves to raw
-`None`. `inc(TYPE, default=...)` can't fill the gap either, since it reads
-`d.get(key)` directly and can't drill a dotted path. Passing a bare type as
-`calc()`'s callable closes it — the same idiom
-[`examples/11-tideweaver/arb_scanner.py`](../11-tideweaver/arb_scanner.py)
-uses for `calc(float, "bidPrice", default=0.0, target_type=float)`.
-
-**Insertion order is load-bearing.** `salary`/`age`/`pos`/`birth_city`/
-`birth_state` each coerce an independent raw path (their order among
-themselves doesn't matter); `tenure` is a floor-1 coercion; `turned_pro_at` and
-`salary_per_year` read another entry's already-coerced *output*
-(`age`/`tenure`, `salary`/`tenure`) — so those two entries run last, after the
-values they depend on already exist.
-
-**`tenure` floors to 1, not 0.** "0 years" doesn't describe anyone who
-actually has a roster spot. `calc(functools.partial(max, 1),
-"experience.years", default=1, target_type=int)` floors both cases to 1: a
-**missing** `experience.years` is a garbage value, so `calc()`'s
-all-inputs-garbage short-circuit resolves straight to `default=1` without
-calling `func`; a genuine `experience.years: 0` is not garbage, so `func(0)`
-runs — `functools.partial(max, 1)(0) == 1`. Either way `tenure` is a real int
-`>= 1` by the time any later entry reads it.
-
-**`salary_per_year` is zero-safe by construction, not by a guard.**
-`calc(operator.truediv, "salary", "tenure", default=0.0, target_type=float)`
-divides by `tenure` after it's already been floored to `>= 1` earlier in the
-same `conv_dict` — insertion order guarantees no zero denominator.
-`default=0.0` only fires if both inputs were simultaneously garbage, which
-can't happen once `tenure` is coerced; it's a defensive floor, not a
-load-bearing path.
-
-**`turned_pro_at` surfaces a sentinel, not `"-"`.** `age` is pre-defaulted to
-`0` (a real, non-garbage value), so a row with a genuinely missing age and a
-real `tenure` computes `turned_pro_at = 0 - tenure` — a visibly negative
-integer. That impossible sentinel reads immediately as "this data point is
-missing," instead of a fabricated plausible number, with no display-time `"-"`
-guard duplicating what `calc()`'s own defaulting already handles.
+Every athlete builds, active and inactive; the boards filter `if p.active` at
+report time.
 
 ---
 
@@ -382,27 +260,13 @@ filters `if p.active` first, then sorts or compares on the raw field:
   compares directly against the normalized `region` — no metro-alias table, no
   city matching.
 
-**NY/NJ semantics.** The Giants and Jets play at MetLife Stadium in East
-Rutherford — their venue's `state` is `"NJ"`, so they land under `NJ`, not
-`NY`, under this filter's physically-plays-in semantic. The Knicks and Nets
-both play in the five boroughs and stay under `NY`. Call `main("NJ")` to see
-the Giants/Jets show up there instead.
+**NY/NJ semantics.** The Giants and Jets play at MetLife Stadium in New
+Jersey, so they land under `NJ`, not `NY`, under this filter's
+physically-plays-in semantic. Call `main("NJ")` to see them show up there
+instead.
 
-**The summary lines report total-vs-active, not just active.** `players`
-includes every roster row MLB's org-list quirk pulls in (hundreds of inactive
-minor-leaguers per team), so `len(players)` is large; the top-line summary and
-each per-league summary both report the raw total alongside the
-`active_count` (and, for salary, `salary_known_total`/`payroll_total` computed
-only over active rows):
-
-```python
-active_count = sum(1 for p in players if p.active)
-print(f"OK: Loaded {len(players)} players ({active_count} active) across {len(matched)} teams.")
-
-league_active_count = sum(1 for p in league_players if p.active)
-salary_known_total = sum(1 for p in league_players if p.active and p.salary > 0)
-payroll_total = sum(p.salary for p in league_players if p.active)
-```
+Summary lines report total vs. active counts (`len(players)`, `active_count`)
+— MLB's org-list quirk means the total runs far higher than active.
 
 ---
 
