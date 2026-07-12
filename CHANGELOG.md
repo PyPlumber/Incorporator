@@ -27,6 +27,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consistently regardless of whether a class's first `incorp()` call
   happens to return one row or many.
 
+### Fixed
+
+- **`calc()` no longer coerces a clean func-returned `None`**
+  (`incorporator/schema/builder.py::apply_etl_transformations`,
+  `incorporator/schema/converters.py::CalcOp`): previously every `None`
+  produced by a `calc()` callable was passed through `target_type()`,
+  which raised, logged a "type coercion failed" warning, and fell back to
+  `default` on every single row that legitimately computed to `None`. A
+  clean func-returned `None` now passes through unconverted. `None`
+  arising from the garbage-value short-circuit or the exception fallback
+  is still coerced, so an incompatible declared `default` still surfaces
+  its "type coercion failed" warning.
+- **`calc_all()` gets the same `None` treatment, with a per-row guard**
+  (`incorporator/schema/builder.py::apply_etl_transformations`,
+  `incorporator/schema/converters.py::CalcAllOp`): a genuine
+  batch-func-returned `None` now passes through uncoerced. A `None`
+  produced by the per-row `IndexError` fallback (when the batch func
+  returns fewer results than input rows) is still coerced through
+  `target_type()`, preserving the existing warning-and-default behavior
+  for that failure mode.
+
 ## [1.3.6] - 2026-07-07
 
 ### Fixed
