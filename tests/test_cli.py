@@ -11,6 +11,7 @@ pytest.importorskip("typer")
 from typer.testing import CliRunner
 
 from incorporator.cli import app
+from incorporator.cli._pipeline_config import FjordConfig, StreamConfig
 from incorporator.observability.logger import Wave
 
 runner = CliRunner()
@@ -705,3 +706,170 @@ def test_cli_fjord_resolves_cls_name_against_same_module_as_token_resolver(tmp_p
     resolved_cls = captured_kwargs["stream_params"][0]["cls"]
     conv_fn = captured_kwargs["stream_params"][0]["incorp_params"]["conv_dict"]["foo"]
     assert conv_fn.__globals__["Coin"] is resolved_cls
+
+
+# ==========================================
+# Structural regression guard — every StreamConfig / FjordConfig field must
+# reach the engine call, or be explicitly exempt.
+#
+# The recurring bug class (see AGENTS.md, commits 24b65bd + 25627d9): a
+# config schema accepts a key, but the runner that consumes it never
+# forwards the value — ``incorporator validate`` passes, the key is
+# silently dropped at runtime.  Two prior fixes were each hand-written
+# per-key regression tests (test_cli_stream_forwards_inflow_and_outflow_to_stream,
+# test_cli_fjord_forwards_inflow_to_fjord) that could only catch a
+# recurrence of the SAME field on the SAME verb.  These tests instead
+# derive their expectations from ``StreamConfig``/``FjordConfig.model_fields``,
+# so a newly added field is covered — forwarded or explicitly exempted — the
+# day it is added, not the day someone happens to hand-write a matching test.
+# ==========================================
+
+_STREAM_EXEMPT_FIELDS = {
+    "poll_interval": "driven by the --poll CLI flag (see docs/cli_and_configuration.md "
+    "'Daemon Execution'), never read from config",
+}
+
+_STREAM_FIELD_SENTINELS: dict[str, Any] = {
+    "incorp_params": {"inc_url": "https://x", "_sentinel": "stream_incorp"},
+    "refresh_params": {"_sentinel": "stream_refresh"},
+    "export_params": {"_sentinel": "stream_export"},
+    "refresh_interval": 111.5,
+    "export_interval": 222.5,
+    "stateful_polling": True,
+    "inflow": "inflow.py",
+    "outflow": "outflow.py",
+}
+
+
+def test_stream_config_field_coverage_is_exhaustive() -> None:
+    """Every StreamConfig field is either sentinel-covered or explicitly exempt.
+
+    Fails the day a new field is added to StreamConfig without a matching
+    decision here — the property that would have caught the inflow/outflow
+    forwarding bug the day it was introduced, rather than weeks later.
+    """
+    covered = set(_STREAM_FIELD_SENTINELS) | set(_STREAM_EXEMPT_FIELDS)
+    uncovered = set(StreamConfig.model_fields) - covered
+    assert not uncovered, (
+        f"StreamConfig field(s) {sorted(uncovered)} are neither sentinel-covered nor "
+        "explicitly exempt above — add a sentinel or a commented exemption."
+    )
+
+
+def test_stream_config_kitchen_sink_forwards_every_field(tmp_path: Path) -> None:
+    """Every non-exempt StreamConfig field's sentinel value reaches ``LoggedIncorporator.stream()``.
+
+    Builds one config declaring every non-exempt field with a recognisable
+    sentinel value, then asserts each sentinel arrives unchanged in the
+    captured kwargs. A field that ``_run_stream`` stops forwarding fails
+    here immediately, regardless of which field it is.
+    """
+    inflow_file = tmp_path / "inflow.py"
+    inflow_file.write_text("# inflow stub\n", encoding="utf-8")
+    outflow_file = tmp_path / "outflow.py"
+    outflow_file.write_text(
+        "from incorporator import Incorporator\nclass Out(Incorporator):\n    pass\n"
+        "def outflow(state):\n    return []\n",
+        encoding="utf-8",
+    )
+
+    cfg = tmp_path / "pipeline.json"
+    cfg.write_text(json.dumps(_STREAM_FIELD_SENTINELS), encoding="utf-8")
+
+    captured_kwargs: dict[str, Any] = {}
+
+    async def _capture_stream(**kwargs: Any) -> Any:  # type: ignore[return]
+        captured_kwargs.update(kwargs)
+        yield Wave(chunk_index=1, rows_processed=1, processing_time_sec=0.0)
+
+    with patch("incorporator.cli.LoggedIncorporator.stream", new=_capture_stream):
+        result = runner.invoke(app, ["stream", str(cfg)])
+
+    assert result.exit_code == 0, result.stdout
+    for field, sentinel in _STREAM_FIELD_SENTINELS.items():
+        assert field in captured_kwargs, f"{field!r} must be forwarded to stream()"
+        if field in ("inflow", "outflow"):
+            # After resolve_config_paths, inflow/outflow are config-dir-absolute.
+            expected: Any = str((tmp_path / sentinel).resolve())
+        else:
+            expected = sentinel
+        assert captured_kwargs[field] == expected, f"{field}: expected {expected!r}, got {captured_kwargs[field]!r}"
+
+
+_FJORD_EXEMPT_FIELDS = {
+    "stream_params": (
+        "restructured per-entry (cls_name resolved -> cls) before forwarding; "
+        "already covered by test_cli_fjord_success and "
+        "test_cli_fjord_resolves_cls_name_against_same_module_as_token_resolver"
+    ),
+}
+
+_FJORD_FIELD_SENTINELS: dict[str, Any] = {
+    "outflow": "coin_market.py",
+    "inflow": "inflow.py",
+    "export_params": {"file_path": "out.ndjson", "_sentinel": "fjord_export"},
+    "refresh_interval": 333.5,
+    "export_interval": 444.5,
+}
+
+
+def test_fjord_config_field_coverage_is_exhaustive() -> None:
+    """Every FjordConfig field is either sentinel-covered or explicitly exempt.
+
+    Same guard as ``test_stream_config_field_coverage_is_exhaustive``, for
+    the fjord verb — the sibling that stayed broken ~40 days after the
+    stream fix (commit 25627d9) precisely because no such structural
+    check existed.
+    """
+    covered = set(_FJORD_FIELD_SENTINELS) | set(_FJORD_EXEMPT_FIELDS)
+    uncovered = set(FjordConfig.model_fields) - covered
+    assert not uncovered, (
+        f"FjordConfig field(s) {sorted(uncovered)} are neither sentinel-covered nor "
+        "explicitly exempt above — add a sentinel or a commented exemption."
+    )
+
+
+def test_fjord_config_kitchen_sink_forwards_every_field(tmp_path: Path) -> None:
+    """Every non-exempt FjordConfig field's sentinel value reaches ``LoggedIncorporator.fjord()``.
+
+    Parallel to ``test_stream_config_kitchen_sink_forwards_every_field``.
+    ``stream_params`` is intentionally excluded from the loop (see
+    ``_FJORD_EXEMPT_FIELDS``) and supplied separately so the config
+    validates.
+    """
+    inflow_file = tmp_path / "inflow.py"
+    inflow_file.write_text("# inflow stub\n", encoding="utf-8")
+    outflow_file = tmp_path / "coin_market.py"
+    outflow_file.write_text(FJORD_USER_MODULE_SRC, encoding="utf-8")
+
+    config_dict: dict[str, Any] = dict(_FJORD_FIELD_SENTINELS)
+    config_dict["export_params"] = {
+        **_FJORD_FIELD_SENTINELS["export_params"],
+        "file_path": str(tmp_path / "out.ndjson"),
+    }
+    config_dict["stream_params"] = [{"cls_name": "Coin", "incorp_params": {"inc_url": "https://x"}}]
+
+    config = tmp_path / "fjord.json"
+    config.write_text(json.dumps(config_dict), encoding="utf-8")
+
+    captured_kwargs: dict[str, Any] = {}
+
+    async def _capture_fjord(**kwargs: Any) -> Any:  # type: ignore[return]
+        captured_kwargs.update(kwargs)
+        yield Wave(chunk_index=1, rows_processed=0, processing_time_sec=0.0)
+
+    with patch("incorporator.cli.LoggedIncorporator.fjord", new=_capture_fjord):
+        result = runner.invoke(app, ["fjord", str(config)])
+
+    assert result.exit_code == 0, result.stdout
+    for field, sentinel in _FJORD_FIELD_SENTINELS.items():
+        assert field in captured_kwargs, f"{field!r} must be forwarded to fjord()"
+        if field == "outflow":
+            expected: Any = outflow_file.resolve()
+        elif field == "inflow":
+            expected = str(inflow_file.resolve())
+        elif field == "export_params":
+            expected = {**sentinel, "file_path": str(tmp_path / "out.ndjson")}
+        else:
+            expected = sentinel
+        assert captured_kwargs[field] == expected, f"{field}: expected {expected!r}, got {captured_kwargs[field]!r}"
