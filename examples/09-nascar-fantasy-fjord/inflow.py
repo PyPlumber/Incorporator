@@ -11,9 +11,12 @@ registries, plus the conv_dict helpers and constants those wires depend on.
 * ``_speed_or_none`` — sentinel guard for NASCAR's ``0.0``-as-missing
   pattern on ``pole_winner_speed``; same shape as ``_driver_id_or_none``
   but for a float field consumed by ``calc()`` instead of ``link_to()``.
-* ``_mfg_from_logo_url`` — parses a NASCAR CDN logo URL into the make name
+* ``mfg_from_logo_url`` — parses a NASCAR CDN logo URL into the make name
   (``'Chevrolet'``, ``'Ford'``, ``'Toyota'``, ``'Ram'``); used as the
   ``calc()`` converter for the Driver source's ``Manufacturer`` field.
+  Public (no leading underscore) so the CLI-form ``pipeline.json`` can
+  reference it by bare name — ``usercode.py``'s ``extract_public_names``
+  skips ``_``-prefixed names.
 * ``inflow(state)`` — fjord seed hook called before each source refresh;
   emits Race conv_dict overrides once Track + Driver registries are live.
 
@@ -61,7 +64,7 @@ def _speed_or_none(raw: Any) -> float | None:
 # ── Helpers ────────────────────────────────────────────────────────
 
 
-def _mfg_from_logo_url(url: str) -> str:
+def mfg_from_logo_url(url: str) -> str:
     """Parse a NASCAR manufacturer logo URL into the make name.
 
     'https://www.nascar.com/.../Chevrolet_2025-330x140.png' -> 'Chevrolet'

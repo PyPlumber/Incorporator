@@ -1,0 +1,160 @@
+{
+  "_comment_": "8-source NASCAR fantasy fjord. Run from this directory: incorporator validate pipeline.json && incorporator fjord pipeline.json --logs",
+
+  "inflow": "inflow.py",
+  "outflow": "outflow.py",
+
+  "stream_params": [
+    {
+      "cls_name": "Track",
+      "incorp_params": {
+        "inc_url": "https://cf.nascar.com/cacher/tracks.json",
+        "rec_path": "items",
+        "inc_code": "track_id",
+        "inc_name": "track_name",
+        "conv_dict": {
+          "track_type": "inc(str, default='Unknown')",
+          "length": "inc(float, default=None)"
+        }
+      },
+      "refresh_params": null
+    },
+    {
+      "cls_name": "Driver",
+      "incorp_params": {
+        "inc_url": "https://cf.nascar.com/cacher/drivers.json",
+        "rec_path": "response",
+        "inc_code": "Nascar_Driver_ID",
+        "inc_name": "Full_Name",
+        "excl_lst": [
+          "Series_Logo", "Short_Name", "Description", "Hobbies", "Children",
+          "Residing_City", "Residing_State", "Residing_Country", "Image_Transparent",
+          "SecondaryImage", "Career_Stats", "Age", "Rank", "Points", "Points_Behind",
+          "No_Wins", "Poles", "Top5", "Top10", "Laps_Led", "Stage_Wins",
+          "Playoff_Points", "Playoff_Rank", "Integrated_Sponsor_Name",
+          "Integrated_Sponsor", "Integrated_Sponsor_URL", "Silly_Season_Change",
+          "Silly_Season_Change_Description", "Driver_Post_Status", "Driver_Part_Time"
+        ],
+        "conv_dict": {
+          "Manufacturer": "calc(mfg_from_logo_url, 'Manufacturer', default='Unknown', target_type=str)",
+          "Hometown_City": "inc(str, default='')",
+          "Hometown_State": "inc(str, default='')",
+          "Team": "inc(str, default='')",
+          "Badge": "inc(str, default='0')"
+        }
+      },
+      "refresh_params": null
+    },
+    {
+      "cls_name": "Race",
+      "incorp_params": {
+        "inc_url": "https://cf.nascar.com/cacher/2026/race_list_basic.json",
+        "rec_path": "series_1",
+        "inc_code": "race_id",
+        "inc_name": "race_name",
+        "excl_lst": ["schedule", "track_name"],
+        "name_chg": [["track_id", "track"]]
+      },
+      "depends_on": ["Track", "Driver"],
+      "refresh_params": null
+    },
+    {
+      "cls_name": "CupStanding",
+      "incorp_params": {
+        "inc_url": "https://cf.nascar.com/data/cacher/production/2026/1/racinginsights-points-feed.json",
+        "inc_code": "driver_id",
+        "inc_name": "driver_name",
+        "excl_lst": ["is_clinch", "driver_first_name", "driver_last_name", "driver_suffix", "playoff_stage_wins"],
+        "conv_dict": {
+          "points": "inc(int, default=0)",
+          "wins": "inc(int, default=0)",
+          "top_10": "inc(int, default=0)",
+          "top_5": "inc(int, default=0)",
+          "laps_led": "inc(int, default=0)",
+          "position": "inc(int, default=0)",
+          "delta_leader": "inc(int, default=0)",
+          "manufacturer": "inc(str, default='')",
+          "playoff_eligible": "inc(bool, default=False)"
+        }
+      },
+      "refresh_params": null
+    },
+    {
+      "cls_name": "BuschStanding",
+      "incorp_params": {
+        "inc_url": "https://cf.nascar.com/data/cacher/production/2026/2/racinginsights-points-feed.json",
+        "inc_code": "driver_id",
+        "inc_name": "driver_name",
+        "excl_lst": ["is_clinch", "driver_first_name", "driver_last_name", "driver_suffix", "playoff_stage_wins"],
+        "conv_dict": {
+          "points": "inc(int, default=0)",
+          "wins": "inc(int, default=0)",
+          "top_10": "inc(int, default=0)",
+          "top_5": "inc(int, default=0)",
+          "laps_led": "inc(int, default=0)",
+          "position": "inc(int, default=0)",
+          "delta_leader": "inc(int, default=0)",
+          "manufacturer": "inc(str, default='')",
+          "playoff_eligible": "inc(bool, default=False)"
+        }
+      },
+      "refresh_params": null
+    },
+    {
+      "cls_name": "TruckStanding",
+      "incorp_params": {
+        "inc_url": "https://cf.nascar.com/data/cacher/production/2026/3/racinginsights-points-feed.json",
+        "inc_code": "driver_id",
+        "inc_name": "driver_name",
+        "excl_lst": ["is_clinch", "driver_first_name", "driver_last_name", "driver_suffix", "playoff_stage_wins"],
+        "conv_dict": {
+          "points": "inc(int, default=0)",
+          "wins": "inc(int, default=0)",
+          "top_10": "inc(int, default=0)",
+          "top_5": "inc(int, default=0)",
+          "laps_led": "inc(int, default=0)",
+          "position": "inc(int, default=0)",
+          "delta_leader": "inc(int, default=0)",
+          "manufacturer": "inc(str, default='')",
+          "playoff_eligible": "inc(bool, default=False)"
+        }
+      },
+      "refresh_params": null
+    },
+    {
+      "cls_name": "CupOwnerStanding",
+      "incorp_params": {
+        "inc_url": "https://cf.nascar.com/cacher/2026/1/final/1-owners-points.json",
+        "inc_code": "vehicle_number",
+        "inc_name": "owner_name",
+        "excl_lst": ["owner_first_name", "owner_last_name", "owner_suffix"],
+        "conv_dict": {
+          "points": "inc(int, default=0)",
+          "wins": "inc(int, default=0)",
+          "top_5": "inc(int, default=0)",
+          "top_10": "inc(int, default=0)",
+          "starts": "inc(int, default=0)",
+          "position": "inc(int, default=0)",
+          "dnf": "inc(int, default=0)",
+          "winnings": "inc(float, default=0)"
+        }
+      },
+      "refresh_params": null
+    },
+    {
+      "cls_name": "LeagueRoster",
+      "incorp_params": {
+        "inc_file": "fixtures/league_teams.json",
+        "inc_code": "team_id",
+        "inc_name": "team_id"
+      },
+      "refresh_params": null
+    }
+  ],
+
+  "export_params": {
+    "MonthlyRaceSchedule": {"file_path": "out/nascar_monthly_schedule.ndjson"},
+    "FantasyTeam": {"file_path": "out/nascar_fantasy_scoreboard.ndjson"},
+    "ManufacturerLeaderboard": {"file_path": "out/nascar_manufacturer_leaderboard.ndjson"}
+  }
+}

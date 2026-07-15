@@ -216,37 +216,6 @@ true_spec = govt_specs.inc_dict.get(jimmy_vin)
 
 ---
 
-## Run it from the CLI
-
-`join_all(";")` is JSON-expressible — the CLI's token resolver converts the string `"join_all(\";\")"` into the real callable at load time. The two-step chain (invoices as `inc_parent` for the NHTSA call, then reconciliation across both registries) maps naturally onto a fjord config with an `outflow.py`:
-
-```json
-{
-  "outflow": "audit_jimmy.py",
-  "stream_params": [
-    {
-      "cls_name": "Invoice",
-      "incorp_params": {
-        "inc_file": "jimmy_ledger.xml",
-        "rec_path": "Dealership.AuditFile.Invoices.Invoice",
-        "inc_code": "id",
-        "inc_child": "Vehicle.VIN"
-      }
-    }
-  ],
-  "export_params": {"file_path": "data/jimmy_audit.ndjson"}
-}
-```
-
-```bash
-incorporator validate pipeline.json
-incorporator fjord pipeline.json
-```
-
-`audit_jimmy.py` defines the `Invoice` and `NHTSASpec` classes and the `outflow(state)` function that issues the bulk POST with `join_all(";")`, then reconciles each invoice VIN against the federal registry. See [`examples/cli-templates/outflow_example.py`](../cli-templates/outflow_example.py) for the outflow pattern and [the CLI guide](../../docs/cli_and_configuration.md) for the full config schema.
-
----
-
 ## Where to Go Next
 
 > **Up next: [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md).** T4 enriched a flat ledger via one batched POST; T5 introduces the canonical fan-out pattern — `inc_parent` + `inc_child` against a parent list with N children per row.
@@ -258,6 +227,71 @@ incorporator fjord pipeline.json
 | Fuse audit output into a multi-source pipeline | [Tutorial 10 — Multi-Source Fjord](../10-multi-source-fjord/README.md) |
 | Stream a giant XML feed with chunking | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |
 | Ship the bulk-POST workflow as a daemon | [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md) |
+
+---
+
+## Run It From the CLI (+ Docker)
+
+Reference material — three ways to run the exact same audit, in order.
+
+**1. Python entry** (what every section above walked through). This is
+the one example in the repo without a `main()` — `run_audit()` is
+called directly under `__main__`:
+
+```bash
+cd examples/04-xml-post-audit
+python nhtsa_post_audit.py
+```
+
+**2. CLI form** — [`pipeline.json`](pipeline.json) ships next to the entry
+script; no inline JSON duplicate here. It seeds `Invoice` from the XML
+ledger, then hands off to [`outflow.py`](outflow.py) — the CLI has no
+declarative way to express a second, dependent `incorp()` call (the NHTSA
+batch POST keyed on `inc_parent=invoices`), so `outflow.py` performs that
+whole second phase in plain Python and returns the reconciled rows. See
+[the CLI guide](../../docs/cli_and_configuration.md) for the token
+grammar (`"conv_dict": "@INVOICE_CONV_DICT"` — `pluck(chain=str.upper)`
+can't be written as call-grammar because `str.upper` is attribute access,
+rejected by the safe-eval walker).
+
+```bash
+cd examples/04-xml-post-audit
+incorporator validate pipeline.json
+incorporator fjord pipeline.json
+```
+
+> **One-shot, not a daemon.** `pipeline.json` omits `refresh_interval` /
+> `export_interval` and sets `"refresh_params": null` on the `Invoice`
+> entry, so the process seeds once, outflows once, and exits on its own
+> — no Ctrl+C needed.
+>
+> **Run from inside this directory.** `export_params.file_path`
+> (`"out/jimmy_audit.ndjson"`) is CWD-relative, not config-dir-relative.
+> Running `incorporator fjord examples/04-xml-post-audit/pipeline.json`
+> from the repo root writes to `<repo-root>/out/` instead.
+
+**3. Docker** — reasoned from the `Dockerfile`, **NOT run or verified**
+(no Docker available in this pass — confirm before relying on it):
+
+```bash
+# Reasoned, unverified.
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$(pwd)/examples/04-xml-post-audit:/app/config:ro" \
+  -v "$(pwd)/examples/04-xml-post-audit/out:/app/out" \
+  incorporator:latest \
+  fjord /app/config/pipeline.json
+```
+
+The image's `WORKDIR` is `/app`, and `export_params.file_path` is
+CWD-relative (never rebased against the config's directory) — so
+`pipeline.json`'s `"out/jimmy_audit.ndjson"` resolves to `/app/out/...`
+inside the container. The mount target must therefore be `/app/out`, not
+one of the three paths the `Dockerfile` prepares (`/app/config`,
+`/app/data`, `/app/logs`) — mounting the whole example directory
+read-only at `/app/config` carries `pipeline.json`, `outflow.py`, and
+`jimmy_ledger.xml` together in one mount, and `--user` lets the non-root
+`appuser` write to the separately-mounted `/app/out`.
 
 ---
 

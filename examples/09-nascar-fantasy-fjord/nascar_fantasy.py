@@ -45,7 +45,7 @@ DATA = HERE / "out"  # examples/09-nascar-fantasy-fjord/out/
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from inflow import _mfg_from_logo_url  # noqa: E402
+from inflow import mfg_from_logo_url  # noqa: E402
 from outflow import (  # noqa: E402
     BuschStanding,
     CupOwnerStanding,
@@ -150,7 +150,7 @@ async def main() -> None:
                         # fallback in outflow.py yields a clean text string.
                         # Empty Manufacturer fields are handled by is_garbage_value
                         # before the callable runs and land as default='Unknown'.
-                        "Manufacturer": calc(_mfg_from_logo_url, "Manufacturer", default="Unknown", target_type=str),
+                        "Manufacturer": calc(mfg_from_logo_url, "Manufacturer", default="Unknown", target_type=str),
                         "Hometown_City": inc(str, default=""),
                         "Hometown_State": inc(str, default=""),
                         "Team": inc(str, default=""),

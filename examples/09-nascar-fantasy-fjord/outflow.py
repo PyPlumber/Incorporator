@@ -19,7 +19,7 @@ contract.  No daemon plumbing, no lock acquisition, no per-class
 fanout — fjord handles all of it.
 
 Incoming-data manipulation (``_DATE_FIELDS``, ``_driver_id_or_none``,
-``_mfg_from_logo_url``, and the ``inflow(state)`` seed hook) lives in
+``mfg_from_logo_url``, and the ``inflow(state)`` seed hook) lives in
 the sibling ``inflow.py``.
 
 **Kyle Busch / owner-seat scoring.**  Kyle Busch (driver_id 454,
