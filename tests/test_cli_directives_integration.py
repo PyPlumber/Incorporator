@@ -64,76 +64,108 @@ def test_pk_positional_form() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Template regression — all in-repo templates must still validate
+# Template regression — every in-repo config must still validate
 # ---------------------------------------------------------------------------
 
-# Stream and fjord templates: validate structure from raw JSON (env-var strings
+# Stream and fjord configs: validate structure from raw JSON (env-var strings
 # in headers / params are valid string content for Pydantic; no env-expand needed).
-# Watershed templates: env-expand first so window timestamps parse as ISO 8601
+# Watershed configs: env-expand first so window timestamps parse as ISO 8601
 # (the :-default form resolves cleanly without any env vars set).
 
-_STREAM_TEMPLATES = [
-    "examples/cli-templates/stream-basic.json",
-    "examples/cli-templates/daemon-mode.json",
-    "examples/cli-templates/with-auth.json",
-]
+# These lists are DISCOVERED, not hardcoded.  They used to be three literal
+# lists, which made coverage opt-in: a config was only exercised if someone
+# remembered to add it here.  That is the same hand-maintained-list failure
+# mode that let `_run_fjord` drop `inflow` (fixed in 25627d9) survive ~40 days
+# after the identical `_run_stream` bug was fixed in 24b65bd.  Globbing means
+# every config a tutorial ships is covered the moment it lands.
+#
+# SCOPE — read before trusting this: these tests prove a config is STRUCTURALLY
+# VALID.  They do NOT prove it produces correct output.  The `_run_fjord`
+# `inflow` bug passed validation cleanly and still emitted zero rows.  A config
+# passing here means "the CLI will accept it", not "the pipeline works".
 
-_FJORD_TEMPLATES = [
-    "examples/cli-templates/fjord-basic.json",
-]
 
-_WATERSHED_TEMPLATES = [
-    "examples/11-tideweaver/watershed.json",
-    "examples/appendix/mlb-pulse/watershed.json",
-    "examples/appendix/nascar-tideweaver/watershed.json",
-]
+def _discover_configs() -> list[str]:
+    """Every CLI config under examples/, repo-root-relative and sorted.
+
+    Excludes ``fixtures/`` — those are sample DATA the tutorials read, not
+    configs, and would fail validation as though they were broken pipelines.
+    """
+    configs: list[str] = []
+    for path in sorted((_REPO_ROOT / "examples").rglob("*.json")):
+        rel = path.relative_to(_REPO_ROOT)
+        if "fixtures" in rel.parts:
+            continue
+        configs.append(rel.as_posix())
+    return configs
 
 
 def _load_raw(rel_path: str) -> tuple[dict[str, Any], Path]:
-    """Load a template JSON file; return (raw_dict, config_dir)."""
+    """Load a config JSON file; return (raw_dict, config_dir)."""
     path = _REPO_ROOT / rel_path
     raw: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     return raw, path.parent.resolve()
 
 
+def _configs_of_kind(kind: str) -> list[str]:
+    """Discovered configs whose autodetected type is ``kind``."""
+    return [p for p in _ALL_CONFIGS if autodetect_type(_load_raw(p)[0]) == kind]
+
+
+_ALL_CONFIGS = _discover_configs()
+_STREAM_TEMPLATES = _configs_of_kind("stream")
+_FJORD_TEMPLATES = _configs_of_kind("fjord")
+_WATERSHED_TEMPLATES = _configs_of_kind("tideweaver")
+
+
+def test_config_discovery_is_not_silently_empty() -> None:
+    """Guard the glob itself.
+
+    ``@pytest.mark.parametrize`` over an empty list PASSES silently, so a
+    broken glob would turn every regression below into a no-op that still
+    reports green.  Assert discovery actually found configs, that each one is
+    classified into exactly one kind, and that the known-good baseline is
+    present.
+    """
+    assert _ALL_CONFIGS, "config discovery found nothing — the glob is broken"
+    assert len(_STREAM_TEMPLATES) + len(_FJORD_TEMPLATES) + len(_WATERSHED_TEMPLATES) == len(_ALL_CONFIGS)
+    # Baseline that predates the glob; if these vanish, discovery regressed.
+    assert "examples/cli-templates/stream-basic.json" in _STREAM_TEMPLATES
+    assert "examples/cli-templates/fjord-basic.json" in _FJORD_TEMPLATES
+    assert "examples/11-tideweaver/watershed.json" in _WATERSHED_TEMPLATES
+
+
 @pytest.mark.parametrize("rel_path", _STREAM_TEMPLATES)
 def test_stream_template_validates(rel_path: str) -> None:
-    """All stream CLI templates pass structural validation after the Ex/Nm/Pk additions."""
+    """Every in-repo stream config — template or tutorial — passes structural validation."""
     raw, config_dir = _load_raw(rel_path)
     errors = validate_stream_config(raw, config_dir)
-    assert errors == [], f"Template {rel_path} failed: {errors}"
+    assert errors == [], f"Config {rel_path} failed: {errors}"
 
 
 @pytest.mark.parametrize("rel_path", _FJORD_TEMPLATES)
 def test_fjord_template_validates(rel_path: str) -> None:
-    """All fjord CLI templates pass structural + sidecar validation after the Ex/Nm/Pk additions."""
+    """Every in-repo fjord config passes structural + sidecar validation.
+
+    Sidecar validation is the load-bearing part for tutorials: it resolves
+    ``inflow`` / ``outflow`` against the config's own directory, so a config
+    carrying repo-root-relative sidecar paths (the bug T10's README shipped
+    for months) fails here instead of at a reader's terminal.
+    """
     raw, config_dir = _load_raw(rel_path)
     errors = validate_fjord_config(raw, config_dir)
-    assert errors == [], f"Template {rel_path} failed: {errors}"
+    assert errors == [], f"Config {rel_path} failed: {errors}"
 
 
 @pytest.mark.parametrize("rel_path", _WATERSHED_TEMPLATES)
 def test_watershed_template_validates(rel_path: str) -> None:
-    """All watershed templates pass full build_watershed validation after the Ex/Nm/Pk additions."""
+    """Every in-repo watershed config passes full build_watershed validation."""
     raw, config_dir = _load_raw(rel_path)
     # Watershed window timestamps are ISO-8601 strings with :-defaults; env-expand
     # resolves the ${VAR:-default} form without requiring any env vars to be set.
     expanded: dict[str, Any] = expand_env(raw)
     errors = validate_watershed_config(expanded, config_dir)
-    assert errors == [], f"Template {rel_path} failed: {errors}"
-
-
-def test_existing_templates_autodetect_correctly() -> None:
-    """autodetect_type() correctly classifies every in-repo template file."""
-    for rel_path in _STREAM_TEMPLATES:
-        raw, _ = _load_raw(rel_path)
-        assert autodetect_type(raw) == "stream", f"{rel_path} should be detected as stream"
-    for rel_path in _FJORD_TEMPLATES:
-        raw, _ = _load_raw(rel_path)
-        assert autodetect_type(raw) == "fjord", f"{rel_path} should be detected as fjord"
-    for rel_path in _WATERSHED_TEMPLATES:
-        raw, _ = _load_raw(rel_path)
-        assert autodetect_type(raw) == "tideweaver", f"{rel_path} should be detected as tideweaver"
+    assert errors == [], f"Config {rel_path} failed: {errors}"
 
 
 # ---------------------------------------------------------------------------
