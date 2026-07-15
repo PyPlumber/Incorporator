@@ -25,7 +25,7 @@ class User(Incorporator):
     pass
 
 
-async def main():
+async def main() -> None:
     print("🌐 1. Fetching Nested JSON from Public API...")
     # The JSONPlaceholder API contains heavily nested 'address' and 'company' dicts.
     users = await User.incorp(

@@ -27,6 +27,7 @@ Run with:
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 
 from incorporator import LoggedIncorporator, register_host_penstock
@@ -41,14 +42,20 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
 
+# Make the sidecar importable when this script is run via ``python -m`` /
+# pytest / any path other than ``python examples/08-streaming-daemon/streaming_daemon.py``
+# (Python only adds the script's directory to sys.path automatically in the
+# bare-script case).
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+# stream(stateful_polling=True) needs a fielded receiver class (see
+# outflow.py's module docstring for why a bare class crashes at export).
+from outflow import BinancePair  # noqa: E402
 
 # ----------------------------------------------------------------------
 # Part 1 — Stateful daemon: live Binance ticker dashboard
 # ----------------------------------------------------------------------
-
-
-class BinancePair(LoggedIncorporator):
-    """Live ticker registry — auto-keyed by trading symbol."""
 
 
 async def stateful_demo() -> None:

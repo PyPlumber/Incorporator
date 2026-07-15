@@ -1,0 +1,18 @@
+{
+  "_comment_": "pokeapi wiring demo: reducer resolves before format dispatch; base_stat_total=0 for every row by design (shallow list has no per-Pokemon stats). inc_code is 'name', not 'id' -- the shallow list has no id field, and 'id' would silently PK by auto-counter position instead. Run from this directory: incorporator validate pipeline.json && incorporator stream pipeline.json",
+
+  "inflow": "inflow.py",
+  "incorp_params": {
+    "inc_url": "https://pokeapi.co/api/v2/pokemon/?limit=50",
+    "rec_path": "results",
+    "inc_code": "name",
+    "inc_name": "name",
+    "excl_lst": ["sprites", "moves", "game_indices", "held_items"],
+    "conv_dict": {
+      "stats": "calc(calculate_bst, 'stats', default=0, target_type=int)"
+    },
+    "name_chg": [["stats", "base_stat_total"]]
+  },
+
+  "export_params": {"file_path": "out/pokemon.ndjson"}
+}

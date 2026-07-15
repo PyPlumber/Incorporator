@@ -1,0 +1,15 @@
+{
+  "_comment_": "T8 secondary path: single-source live-registry shim (compatibility path over fjord). Matches stateful_demo(), which imports its receiver class from this same outflow.py. Run from this directory: incorporator validate pipeline_stateful.json && incorporator stream pipeline_stateful.json --logs",
+
+  "incorp_params": {
+    "inc_url": "https://api.binance.us/api/v3/ticker/24hr",
+    "inc_code": "symbol",
+    "inc_name": "symbol"
+  },
+
+  "outflow": "outflow.py",
+  "export_params": {"file_path": "out/binance_ticker.ndjson"},
+  "stateful_polling": true,
+  "refresh_interval": 30.0,
+  "export_interval": 300.0
+}

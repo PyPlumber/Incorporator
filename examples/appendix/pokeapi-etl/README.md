@@ -215,42 +215,9 @@ You aren't just ingesting APIs — you are sculpting them. The explicit `inc_chi
 
 ---
 
-## 🐳 Run it from the CLI
+## Run it from the CLI
 
-The CLI handles user-defined reducers via an **`inflow.py` sidecar** — a single Python file containing the helper functions your pipeline.json references. No fjord wrapper, no outflow function, no second class. Just a vanilla `stream()` pipeline that uses your reducer.
-
-### `inflow.py` — the helpers
-
-```python
-def calculate_bst(stats_array):
-    """Same reducer from the Python example, exposed for the CLI."""
-    return sum(s.get("base_stat", 0) for s in stats_array if isinstance(s, dict))
-```
-
-### `pipeline.json` — zero escape characters
-
-```json
-{
-  "inflow": "inflow.py",
-  "incorp_params": {
-    "inc_url": "https://pokeapi.co/api/v2/pokemon/?limit=50",
-    "rec_path": "results",
-    "inc_code": "id",
-    "inc_name": "name",
-    "excl_lst": ["sprites", "moves", "game_indices", "held_items"],
-    "conv_dict": {
-      "stats": "calc(calculate_bst, 'stats', default=0, target_type=int)"
-    },
-    "name_chg": [["stats", "base_stat_total"]]
-  },
-  "export_params": {"file_path": "data/pokemon.ndjson"}
-}
-```
-
-```bash
-incorporator validate pipeline.json
-incorporator stream pipeline.json
-```
+The CLI handles user-defined reducers via an **`inflow.py` sidecar** — a single Python file containing the helper functions your pipeline.json references. No fjord wrapper, no outflow function, no second class. Just a vanilla `stream()` pipeline that uses your reducer. See [`inflow.py`](inflow.py) and [`pipeline.json`](pipeline.json), which ship next to the entry script, and the run addendum at the bottom of this page.
 
 The token resolver imports `inflow.py` at config-load time, sees `calculate_bst` in its public symbols, and resolves the `calc(...)` string to a real Python callable before the engine runs. This shallow pipeline is a **wiring demo**: the `/pokemon/?limit=50` list rows carry only `name` + a HATEOAS `url` (no per-Pokémon `stats`), so `base_stat_total` resolves to the `default=0` for every row — for a real Base Stat Total you need the parent-child drill from the Python script above. What it does prove is that the reducer is wired and runs **before** format dispatch, so this same pipeline.json works for any export format — switch the extension to `.csv`, `.parquet`, `.avro`, etc., and the resolved field still lands in the cell.
 
@@ -266,6 +233,79 @@ The token resolver imports `inflow.py` at config-load time, sees `calculate_bst`
 | Apply `calc()` reductions in a fjord outflow | [Tutorial 9 — NASCAR Fantasy Fjord](../../09-nascar-fantasy-fjord/README.md) |
 | Stream paginated APIs with custom paginators | [Streaming & Pagination Deep Dive](../../../docs/streaming_and_pagination.md) |
 | Land the reduced output in a warehouse | [Tutorial 3 — Universal Formats](../../03-universal-formats/README.md) |
+
+---
+
+## 🐳 Run It From the CLI (+ Docker)
+
+Reference material — three ways to run the wiring demo, in order.
+
+**1. Python entry** (what every section above walked through — the full
+parent-child drill, ~100 s wall-clock, unchanged):
+
+```bash
+cd examples/appendix/pokeapi-etl
+python pokeapi_etl_calc.py
+```
+
+**2. CLI form** — [`inflow.py`](inflow.py) + [`pipeline.json`](pipeline.json)
+ship next to the entry script; no inline duplicates here (see them drift
+once, trust them forever).
+
+```bash
+cd examples/appendix/pokeapi-etl      # see caveats below
+incorporator validate pipeline.json
+incorporator stream pipeline.json
+```
+
+> **Run from inside this directory.** `export_params.file_path`
+> (`"out/pokemon.ndjson"`) is CWD-relative, and `"inflow": "inflow.py"` is
+> config-dir-relative — running
+> `incorporator stream examples/appendix/pokeapi-etl/pipeline.json` from
+> the repo root writes output to `<repo-root>/out/` and would break the
+> sidecar resolution if it were repo-root-relative instead.
+>
+> **Caveat — `inc_code` is `"name"`, not `"id"`.** The `/pokemon/?limit=50`
+> shallow list rows carry only `name` + a HATEOAS `url` — there is no
+> `id` field to bind. `inc_code="id"` against this endpoint does not error;
+> it silently falls back to `Incorporator`'s auto-increment counter, so
+> every row gets keyed `1, 2, 3, ...` by fetch position rather than by
+> real Pokémon ID. `"name"` is a real, present, human-meaningful field, so
+> this config uses it instead — a deliberate deviation from the entry
+> script's `inc_code="id"` (which is safe there because the *enriched*
+> per-Pokémon payload actually has an `id`). This is unrelated to the
+> `base_stat_total=0` caveat above, which stays exactly as documented.
+>
+> **Caveat — no host throttle on the CLI path.**
+> `register_host_penstock("pokeapi.co", rate_per_sec=1.5)` lives at the
+> top of `pokeapi_etl_calc.py`; the CLI path never imports that file, so a
+> plain `incorporator stream pipeline.json` run has no PokéAPI throttle
+> registered (same gap as [Tutorial 10](../../10-multi-source-fjord/README.md)).
+> Harmless here — this config fetches a single page, no pagination — but
+> worth knowing before scaling this pattern up.
+
+**3. Docker** — reasoned from the `Dockerfile`/`docker-compose.yml`, **NOT
+run or verified** (no Docker available in this pass — confirm before
+relying on it):
+
+```bash
+# Reasoned, unverified.
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$(pwd)/examples/appendix/pokeapi-etl:/app/config:ro" \
+  -v "$(pwd)/examples/appendix/pokeapi-etl/out:/app/out" \
+  incorporator:latest \
+  stream /app/config/pipeline.json
+```
+
+The image's `WORKDIR` is `/app`, and `export_params.file_path` is
+CWD-relative (never rebased against the config's directory) — so
+`pipeline.json`'s `"out/pokemon.ndjson"` resolves to `/app/out/...` inside
+the container. The mount target must therefore be `/app/out`, not one of
+the three paths the `Dockerfile` prepares (`/app/config`, `/app/data`,
+`/app/logs`). Because `/app/out` is not one of the pre-`chown`'d
+directories, `--user` overrides to the invoking host user so the non-root
+`appuser` can still write.
 
 ---
 

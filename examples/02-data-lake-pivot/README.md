@@ -139,23 +139,7 @@ Because the data is parked in `.inc_dict` registries, you can immediately use `l
 
 ## Run it from the CLI
 
-This is the simplest CLI case — fetch JSON, write to SQLite (or Avro, or Parquet, or any other supported format). Pure JSON, no sidecar file needed:
-
-```json
-{
-  "incorp_params": {
-    "inc_url": "https://jsonplaceholder.typicode.com/users",
-    "inc_code": "id",
-    "inc_name": "name"
-  },
-  "export_params": {"file_path": "data/users_warehouse.db"}
-}
-```
-
-```bash
-incorporator validate pipeline.json
-incorporator stream pipeline.json
-```
+This is the simplest CLI case — fetch JSON, write to SQLite (or Avro, or Parquet, or any other supported format). Pure JSON, no sidecar file needed: see [`pipeline.json`](pipeline.json), ships next to the entry script, and the run addendum at the bottom of this page.
 
 **Switch the export target by changing the file extension** — Incorporator infers the handler from the path:
 
@@ -179,6 +163,57 @@ For a containerised daemon that polls + refreshes on a schedule, see [`examples/
 | Land Parquet artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md) |
 | Stream massive files through chunking + paginators | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |
 | See the format kwarg reference | [Formats & Compression](../../docs/formats_and_compression.md) |
+
+---
+
+## 🐳 Run It From the CLI (+ Docker)
+
+Reference material — three ways to run the exact same pivot, in order.
+
+**1. Python entry** (what every section above walked through):
+
+```bash
+cd examples/02-data-lake-pivot
+python data_lake_pivot.py
+```
+
+**2. CLI form** — [`pipeline.json`](pipeline.json) ships next to the entry
+script; no inline JSON duplicate here (see it drift once, trust it forever).
+Pure JSON, no sidecar needed for this pipeline.
+
+```bash
+cd examples/02-data-lake-pivot      # see caveat below
+incorporator validate pipeline.json
+incorporator stream pipeline.json
+```
+
+> **Run from inside this directory.** `export_params.file_path`
+> (`"out/users_warehouse.db"`) is CWD-relative. Running
+> `incorporator stream examples/02-data-lake-pivot/pipeline.json` from the
+> repo root silently writes to `<repo-root>/out/` instead.
+
+**3. Docker** — reasoned from the `Dockerfile`/`docker-compose.yml`, **NOT
+run or verified** (no Docker available in this pass — confirm before
+relying on it):
+
+```bash
+# Reasoned, unverified.
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$(pwd)/examples/02-data-lake-pivot:/app/config:ro" \
+  -v "$(pwd)/examples/02-data-lake-pivot/out:/app/out" \
+  incorporator:latest \
+  stream /app/config/pipeline.json
+```
+
+The image's `WORKDIR` is `/app`, and `export_params.file_path` is
+CWD-relative (never rebased against the config's directory) — so
+`pipeline.json`'s `"out/users_warehouse.db"` resolves to `/app/out/...`
+inside the container. The mount target must therefore be `/app/out`, not
+one of the three paths the `Dockerfile` prepares (`/app/config`,
+`/app/data`, `/app/logs`). Because `/app/out` is not one of the
+pre-`chown`'d directories, `--user` overrides to the invoking host user so
+the non-root `appuser` can still write.
 
 ---
 
