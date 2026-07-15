@@ -1,0 +1,31 @@
+{
+  "_comment_": "Multi-source fjord: CoinGecko USD vs Binance USDT spread. Run from this directory: incorporator validate pipeline.json && incorporator fjord pipeline.json --logs",
+
+  "inflow": "inflow.py",
+  "outflow": "outflow.py",
+
+  "stream_params": [
+    {
+      "cls_name": "CoinGecko",
+      "incorp_params": {
+        "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
+        "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
+        "inc_code": "id",
+        "name_chg": [["symbol", "binance_pair"]]
+      },
+      "depends_on": ["BinancePair"]
+    },
+    {
+      "cls_name": "BinancePair",
+      "incorp_params": {
+        "inc_url": "https://api.binance.us/api/v3/ticker/price",
+        "inc_code": "symbol",
+        "conv_dict": {"price": "inc(float, default=0.0)"}
+      }
+    }
+  ],
+
+  "export_params": {"file_path": "out/crypto_spread.ndjson"},
+  "refresh_interval": {"CoinGecko": 60, "BinancePair": 30},
+  "export_interval": 60.0
+}

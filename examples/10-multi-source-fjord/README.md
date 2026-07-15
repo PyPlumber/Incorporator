@@ -345,59 +345,6 @@ if __name__ == "__main__":
 
 ---
 
-## 🐳 Run It From the CLI
-
-The same pipeline as a `pipeline.json`:
-
-```json
-{
-  "inflow": "examples/10-multi-source-fjord/inflow.py",
-  "outflow": "examples/10-multi-source-fjord/outflow.py",
-  "stream_params": [
-    {
-      "cls_name": "CoinGecko",
-      "incorp_params": {
-        "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
-        "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
-        "inc_code": "id",
-        "name_chg": [["symbol", "binance_pair"]]
-      },
-      "depends_on": ["BinancePair"]
-    },
-    {
-      "cls_name": "BinancePair",
-      "incorp_params": {
-        "inc_url": "https://api.binance.us/api/v3/ticker/price",
-        "inc_code": "symbol",
-        "conv_dict": {"price": "inc(float, default=0.0)"}
-      }
-    }
-  ],
-  "export_params": {"file_path": "out/crypto_spread.ndjson"},
-  "refresh_interval": {"CoinGecko": 60, "BinancePair": 30},
-  "export_interval": 60.0
-}
-```
-
-> `inc()` sigils (`"inc(float, default=0.0)"`) resolve straight out of
-> plain JSON — no sidecar needed for coercion alone. `link_to()` is
-> different: it needs the *peer dataset* (`state["BinancePair"]`), which
-> only exists inside a Python `inflow(state)` callable, so the join
-> itself stays in `inflow.py` and `pipeline.json` only needs to point
-> `"inflow"` at it plus declare `depends_on`.
-
-```bash
-incorporator validate pipeline.json
-incorporator fjord pipeline.json --logs
-```
-
-The JSON uses `cls_name` (string) while the Python uses `cls` (class
-reference). The CLI loader resolves `cls_name` by importing the
-outflow file and looking up the class by name — that's how the JSON
-stays serialisable.
-
----
-
 ## Two Advanced Patterns
 
 The crypto-spread example above uses the simplest fjord shape:
@@ -530,6 +477,75 @@ return = one file.
 | See the 7-source production fjord with state-aware `inflow()` | [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md) |
 | Run the static (non-daemon) join variant | [Appendix — Crypto Graph Mapping](../appendix/crypto-graph-mapping/README.md) |
 | Configure fjord from JSON for the CLI | [CLI & Configuration Guide](../../docs/cli_and_configuration.md) |
+
+---
+
+## 🐳 Run It From the CLI (+ Docker)
+
+Reference material — three ways to run the exact same pipeline, in order.
+
+**1. Python entry** (what every section above walked through):
+
+```bash
+cd examples/10-multi-source-fjord
+python crypto_spread.py
+```
+
+**2. CLI form** — [`pipeline.json`](pipeline.json) ships next to the entry
+script; no inline JSON duplicate here (see it drift once, trust it forever).
+It uses bare, config-dir-relative sidecar paths (`"inflow": "inflow.py"`,
+`"outflow": "outflow.py"`) — see the [CLI & Configuration
+Guide](../../docs/cli_and_configuration.md) for the general input/output
+path-resolution rule this relies on.
+
+```bash
+cd examples/10-multi-source-fjord      # see caveat below
+incorporator validate pipeline.json
+incorporator fjord pipeline.json --logs
+```
+
+> **Run from inside this directory.** `export_params.file_path`
+> (`"out/crypto_spread.ndjson"`) is CWD-relative, not config-dir-relative —
+> the same INPUT/OUTPUT asymmetry `stream()` and `fjord()` always use.
+> Running `incorporator fjord examples/10-multi-source-fjord/pipeline.json`
+> from the repo root silently writes to `<repo-root>/out/` instead.
+>
+> **Caveat — no host throttle on the CLI path.** `register_host_penstock("api.coingecko.com", rate_per_sec=0.2)`
+> lives at the top of `crypto_spread.py`; the CLI path never imports that
+> file, so a plain `incorporator fjord pipeline.json` run has no CoinGecko
+> throttle registered and can hit the free tier's ~5-15 req/min rate limit
+> faster than the Python entry does. There's currently no declarative
+> `pipeline.json` field for registering a host throttle.
+
+**3. Docker** — reasoned from the `Dockerfile`/`docker-compose.yml`, **NOT
+run or verified** (no Docker available in this pass — confirm before
+relying on it):
+
+```bash
+# Reasoned, unverified.
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$(pwd)/examples/10-multi-source-fjord:/app/config:ro" \
+  -v "$(pwd)/examples/10-multi-source-fjord/out:/app/out" \
+  incorporator:latest \
+  fjord /app/config/pipeline.json --logs
+```
+
+The image's `WORKDIR` is `/app`, and `export_params.file_path` is
+CWD-relative (never rebased against the config's directory) — so
+`pipeline.json`'s `"out/crypto_spread.ndjson"` resolves to `/app/out/...`
+inside the container. The mount target must therefore be `/app/out`, not
+one of the three paths the `Dockerfile` prepares (`/app/config`,
+`/app/data`, `/app/logs`) — mounting at `/app/data` would leave the write
+going to an unmounted `/app/out`, stranding the output in the container
+layer where `--rm` discards it. Because `/app/out` is not one of the
+pre-`chown`'d directories, `--user` overrides to the invoking host user so
+the non-root `appuser` can still write. Net: a working write path with
+zero `pipeline.json` edits and no `Dockerfile`/compose changes.
+`docker compose up -d` isn't used here —
+`docker-compose.yml`'s volumes anchor at repo-root `./config` / `./data`,
+not at this tutorial's own directory, and editing the compose file is out
+of scope for this pass.
 
 ---
 
