@@ -584,3 +584,124 @@ def test_cli_stream_inflow_outflow_absent_stays_none(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.stdout
     assert captured_kwargs.get("inflow") is None
     assert captured_kwargs.get("outflow") is None
+
+
+# ==========================================
+# Fjord CLI parity bugs — inflow forwarding + sidecar sys.modules cache key
+# ==========================================
+
+
+def test_cli_fjord_forwards_inflow_to_fjord(tmp_path: Path) -> None:
+    """fjord runner forwards the 'inflow' config key to LoggedIncorporator.fjord().
+
+    Before this fix, ``_run_fjord`` never read ``config.get("inflow")`` and
+    never passed ``inflow=`` to the engine call — a fjord config declaring
+    ``"inflow": "inflow.py"`` validated cleanly but had it silently discarded
+    at run time.
+    """
+    inflow_file = tmp_path / "inflow.py"
+    inflow_file.write_text("# inflow stub\n", encoding="utf-8")
+    outflow_file = tmp_path / "coin_market.py"
+    outflow_file.write_text(FJORD_USER_MODULE_SRC, encoding="utf-8")
+
+    config = tmp_path / "fjord.json"
+    config.write_text(
+        json.dumps(
+            {
+                "inflow": "inflow.py",
+                "outflow": "coin_market.py",
+                "stream_params": [{"cls_name": "Coin", "incorp_params": {"inc_url": "https://x"}}],
+                "export_params": {"file_path": str(tmp_path / "out.ndjson")},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured_kwargs: dict[str, Any] = {}
+
+    async def _capture_fjord(**kwargs: Any) -> Any:  # type: ignore[return]
+        captured_kwargs.update(kwargs)
+        yield Wave(chunk_index=1, rows_processed=0, processing_time_sec=0.0)
+
+    with patch("incorporator.cli.LoggedIncorporator.fjord", new=_capture_fjord):
+        result = runner.invoke(app, ["fjord", str(config)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "inflow" in captured_kwargs, "inflow must be forwarded to fjord()"
+    assert captured_kwargs["inflow"] == str(inflow_file.resolve())
+
+
+def test_cli_fjord_inflow_absent_stays_none(tmp_path: Path) -> None:
+    """When 'inflow' is absent from a fjord config, fjord() receives None.
+
+    Guards the None/absent distinction explicitly, mirroring the equivalent
+    stream() coverage.
+    """
+    config, _ = _write_fjord_fixture(tmp_path)
+
+    captured_kwargs: dict[str, Any] = {}
+
+    async def _capture_fjord(**kwargs: Any) -> Any:  # type: ignore[return]
+        captured_kwargs.update(kwargs)
+        yield Wave(chunk_index=1, rows_processed=0, processing_time_sec=0.0)
+
+    with patch("incorporator.cli.LoggedIncorporator.fjord", new=_capture_fjord):
+        result = runner.invoke(app, ["fjord", str(config)])
+
+    assert result.exit_code == 0, result.stdout
+    assert captured_kwargs.get("inflow") is None
+
+
+def test_cli_fjord_resolves_cls_name_against_same_module_as_token_resolver(tmp_path: Path) -> None:
+    """The class bound to a token-resolved conv_dict callable must be the SAME
+    object the fjord runner resolves 'cls_name' against.
+
+    Root cause under audit: ``_load_pipeline_config`` loads ``outflow.py`` once
+    (via ``merge_sidecar_extra_names``, default ``sys.modules`` hint) to build
+    the token-resolver allow-list, then ``_run_fjord``'s own loader used a
+    DIFFERENT hint (``_inc_fjord_user_module``) for the same path — producing
+    two independently-``exec``'d module objects.  A helper referenced from a
+    JSON token (e.g. ``"@identity_conv"``) would then close over its own
+    module's ``Coin`` class, which is not the ``Coin`` object seeded into
+    ``stream_params[i]["cls"]``.  This test fails on unpatched ``main`` and
+    passes once both loads share the default ``sys.modules`` cache key.
+    """
+    outflow_file = tmp_path / "outflow.py"
+    outflow_file.write_text(
+        "from incorporator import Incorporator\n"
+        "class Coin(Incorporator):\n    pass\n"
+        "def identity_conv(x):\n    return x\n"
+        "def outflow(state):\n    return []\n",
+        encoding="utf-8",
+    )
+
+    config = tmp_path / "fjord.json"
+    config.write_text(
+        json.dumps(
+            {
+                "outflow": "outflow.py",
+                "stream_params": [
+                    {
+                        "cls_name": "Coin",
+                        "incorp_params": {"inc_url": "https://x", "conv_dict": {"foo": "@identity_conv"}},
+                    }
+                ],
+                "export_params": {"file_path": str(tmp_path / "out.ndjson")},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured_kwargs: dict[str, Any] = {}
+
+    async def _capture_fjord(**kwargs: Any) -> Any:  # type: ignore[return]
+        captured_kwargs.update(kwargs)
+        yield Wave(chunk_index=1, rows_processed=0, processing_time_sec=0.0)
+
+    with patch("incorporator.cli.LoggedIncorporator.fjord", new=_capture_fjord):
+        result = runner.invoke(app, ["fjord", str(config)])
+
+    assert result.exit_code == 0, result.stdout
+    resolved_cls = captured_kwargs["stream_params"][0]["cls"]
+    conv_fn = captured_kwargs["stream_params"][0]["incorp_params"]["conv_dict"]["foo"]
+    assert conv_fn.__globals__["Coin"] is resolved_cls

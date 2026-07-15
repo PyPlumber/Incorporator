@@ -285,11 +285,21 @@ def _load_user_module(outflow_path: Path) -> Any:
     CLI uses this to resolve ``cls_name`` strings back to Incorporator
     subclasses and to make the ``outflow(state)`` function available to
     :meth:`Incorporator.fjord`.
+
+    Deliberately omits a custom ``name_hint`` so this hits the SAME
+    ``sys.modules`` cache entry that ``_load_pipeline_config``'s earlier
+    ``merge_sidecar_extra_names(...)`` call already populated for this path
+    (default hint).  A diverging hint would ``exec`` a second, independent
+    module object — so a token-resolved ``conv_dict`` helper referencing a
+    class by name (e.g. ``Coin``) would close over a phantom ``Coin`` whose
+    ``inc_dict`` never receives the rows the engine actually seeds into the
+    class resolved here.  Mirrors the same-hint precedent in
+    :func:`incorporator.tideweaver.config.build_watershed`.
     """
     from ..usercode import load_user_module as _ucm_load_user_module
 
     try:
-        return _ucm_load_user_module(outflow_path, name_hint="_inc_fjord_user_module")
+        return _ucm_load_user_module(outflow_path)
     except (FileNotFoundError, ImportError, SyntaxError) as exc:
         _err(f"Error: failed to load outflow file {outflow_path}: {exc}", fg=_red())
         sys.exit(1)
@@ -331,6 +341,7 @@ async def _run_fjord(
     export_params = config["export_params"]
     refresh_interval = config.get("refresh_interval")
     export_interval = config.get("export_interval")
+    inflow_raw = config.get("inflow")
 
     # outflow_raw is already config-dir-absolute after resolve_config_paths
     # ran inside _load_pipeline_config — no further rebasing needed here.
@@ -356,6 +367,7 @@ async def _run_fjord(
         refresh_interval=refresh_interval,
         export_interval=export_interval,
         enable_logging=enable_logging,
+        inflow=inflow_raw,
     )
 
     try:
