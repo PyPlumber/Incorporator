@@ -3,7 +3,7 @@
 # Quickstart:
 #   1. cp .env.example .env       # then fill in any secrets you need
 #   2. mkdir -p config data logs   # if you haven't already
-#   3. cp examples/pipeline_stream.json config/pipeline.json
+#   3. cp examples/cli-templates/stream-basic.json config/pipeline.json
 #   4. docker compose up -d
 #   5. docker compose logs -f      # watch audits stream
 #
