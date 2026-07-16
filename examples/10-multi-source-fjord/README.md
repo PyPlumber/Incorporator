@@ -302,6 +302,10 @@ if __name__ == "__main__":
 > logs.** Subclass the source classes from `LoggedIncorporator` and
 > pass `enable_logging=True` on the fjord call; every wave and
 > every `RejectEntry` lands in `logs/<ClassName>_{api,error,debug}.log`
+> — one unified set named after the class you call `fjord()` on, not one
+> set per source (a fjord fuses its sources into a single session; the
+> per-source identity lives in each record's `operation` field, e.g.
+> `fjord_refresh:BinancePair`) — all
 > via a non-blocking `QueueHandler`.  URL/internet-traffic errors route
 > to `_api.log`; parse/codebase errors route to `_error.log`.  Replay
 > with `await ClassName.get_rejects()` (unions both files) from any
