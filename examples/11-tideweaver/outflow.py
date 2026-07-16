@@ -19,14 +19,10 @@ symbol/bid/ask fields to uniform ``asset`` / ``bid`` / ``ask`` attributes via
 attributes across all three venues with no per-venue field-name plumbing and
 no try/except. ``normalize_asset`` has no leading underscore so it resolves
 both as a direct Python import and as a ``watershed.json`` conv_dict token
-(``calc(normalize_asset, ...)``) via the sidecar-helper wiring in
-``load_watershed``.
+(``calc(normalize_asset, ...)``).
 
-Relative inc_file / outflow paths resolve against the config file's directory,
-so these commands work from any directory:
-
-    incorporator validate examples/11-tideweaver/watershed.json
-    incorporator tideweaver run examples/11-tideweaver/watershed.json --json-output
+Relative ``inc_file`` / ``outflow`` paths in ``watershed.json`` resolve
+against the config file's directory, not the caller's working directory.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -35,11 +31,9 @@ from typing import Any
 from incorporator import Incorporator
 
 # Dateless window: watershed.json's "window" references these public names
-# via the "@window_start" / "@window_end" sigil (resolve_tokens, extended
-# with this sidecar's public names by merge_sidecar_extra_names). Fixtures
-# are offline, so a 2-minute window gives each interval (15/30/30/30s) 4-8
-# ticks -- enough for the tail Fjord to flush its append-mode export more
-# than once.
+# via the "@window_start" / "@window_end" sigil. Fixtures are offline, so a
+# 2-minute window gives each interval (15/30/30/30s) 4-8 ticks -- enough for
+# the tail Fjord to flush its append-mode export more than once.
 window_start = datetime.now(timezone.utc)
 window_end = window_start + timedelta(minutes=2)
 
@@ -96,9 +90,7 @@ def normalize_asset(raw: Any) -> str | None:
     """Map one venue's raw symbol/pair key to a canonical asset code.
 
     Referenced by each venue Stream's build-time conv_dict in arb_scanner.py
-    (calc(normalize_asset, <raw_symbol_key>, default=None)) AND by
-    watershed.json's conv_dict token (resolved via load_watershed's
-    extra_names wiring, framework commit 221b16c).
+    and by watershed.json's matching conv_dict token.
     """
     return NORMALIZATION.get(str(raw))
 

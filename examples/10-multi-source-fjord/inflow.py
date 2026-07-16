@@ -10,8 +10,7 @@ own ``incorp()`` in tier 1, with ``state["BinancePair"]`` already a live
 ``IncorporatorList``.
 
 ``link_to``'s conv_dict key must match the SOURCE field it reads (the
-dispatcher feeds a bare ``Op`` with ``d.get(key)`` — see
-``incorporator/schema/builder.py``'s conv_dict pass) — so the override
+dispatcher feeds a bare ``Op`` with ``d.get(key)``) — so the override
 below targets ``"symbol"`` (CoinGecko's raw ticker field), not a new
 ``"binance_pair"`` key.  ``crypto_spread.py``'s ``name_chg`` then renames
 the resolved-object field to ``binance_pair`` post-conv_dict, freeing

@@ -498,83 +498,6 @@ data from before the failure began.
 
 ---
 
-## Run it from the CLI
-
-`watershed.json` is the declarative form.  Every Python knob has a JSON equivalent;
-env-var interpolation (`${VAR}`, `${VAR:-default}`, `${file:/run/secrets/key}`) is
-applied at load time.
-
-```json
-{
-  "window": {"start": "${WINDOW_START}", "end": "${WINDOW_END}"},
-  "shape": "diamond",
-  "outflow": "outflow.py",
-  "drain_timeout": 30,
-  "gate_mode": "hard",
-  "head":   {"name": "binance", "class": "BinanceBook",    "verb": "stream", "interval": 15,
-             "incorp_params": {"inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
-                               "inc_code": "symbol",
-                               "conv_dict": {
-                                 "asset": "calc(normalize_asset, 'symbol', default=None)",
-                                 "bid": "calc(float, 'bidPrice', default=0.0, target_type=float)",
-                                 "ask": "calc(float, 'askPrice', default=0.0, target_type=float)"
-                               }}},
-  "middle": [
-    {"name": "coinbase", "class": "CoinbaseTicker", "verb": "stream", "interval": 30,
-     "incorp_params": {"inc_url": "https://api.exchange.coinbase.com/products/BTC-USD/ticker",
-                       "inc_code": "trade_id",
-                       "conv_dict": {
-                         "asset": "calc(normalize_asset, 'product_id', default=None)",
-                         "bid": "calc(float, 'bid', default=0.0, target_type=float)",
-                         "ask": "calc(float, 'ask', default=0.0, target_type=float)"
-                       }}},
-    {"name": "kraken",   "class": "KrakenTicker",   "verb": "stream", "interval": 30,
-     "incorp_params": {"inc_url": "https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD",
-                       "rec_path": "result", "inc_code": "pair",
-                       "name_chg": [["_key", "pair"]],
-                       "conv_dict": {
-                         "asset": "calc(normalize_asset, '_key', default=None)",
-                         "bid": "calc(float, 'b.0', default=0.0, target_type=float)",
-                         "ask": "calc(float, 'a.0', default=0.0, target_type=float)"
-                       }}}
-  ],
-  "tail":   {"name": "best_market", "class": "BestMarket", "verb": "fjord", "interval": 30,
-             "export_params": {"file_path": "out/arb_signals.ndjson",
-                               "format": "ndjson", "if_exists": "append"}}
-}
-```
-
-Supported `shape` values:
-
-* `"chain"` — top-level `currents: [...]`.
-* `"diamond"` — `head` / `middle` / `tail`.
-* `"fanout"` — `source` + `sinks: [...]`.
-* `"parallel"` — `currents: [...]`, no `gate_mode`.
-* `"custom"` — `currents: [...]` + `edges: [{"from": "a", "to": "b", "gate_mode": "hard"}]` (or `"flow": {...}` for a per-edge `FlowControl`).
-
-Each current entry's `"class"` is resolved against the outflow sidecar (same
-convention as `fjord()`).  Run it:
-
-```bash
-incorporator tideweaver run watershed.json --json-output
-```
-
-The CLI resolves `outflow`, `inflow`, and `inc_file` paths relative to `watershed.json`'s directory, so the command works from any working directory. `export_params.file_path` (`"out/arb_signals.ndjson"`) is CWD-relative — the output file lands in `<your working directory>/out/`, not alongside the config.
-
-> **`conv_dict` tokens resolve against the `outflow` sidecar.**  A `conv_dict`
-> token like `"calc(normalize_asset, 'symbol', default=None)"` needs
-> `normalize_asset` in the token resolver's allow-list. The CLI's `tideweaver
-> run` load path extends that allow-list from BOTH the `inflow` and `outflow`
-> sidecars' public names, so declaring `normalize_asset` in `outflow.py` (no
-> separate `inflow.py` needed) is enough. The CLI form produces the exact same
-> rows as `python arb_scanner.py` — both show Kraken participating, with `ETH`
-> at `arb_opportunity=true`.
-
-One NDJSON `Tide` record per scheduler pass lands on stdout; status banners go to
-stderr so log shippers can ingest stdout directly.
-
----
-
 ## Post-run tuning
 
 `LoggedTideweaver` is the drop-in that routes every `Tide` + `RejectEntry` to
@@ -675,6 +598,23 @@ Stream(
 The default is `0.0` — first tick fires immediately.  A stagger of
 `~1 × expected_upstream_latency` typically eliminates most warm-up skips
 without adding meaningful wall-clock latency to the window.
+
+---
+
+## Run it
+
+```bash
+python examples/11-tideweaver/arb_scanner.py
+```
+
+The same diamond also runs from the CLI via `incorporator tideweaver run
+watershed.json --json-output` (see [`watershed.json`](watershed.json)) and
+in Docker via the mount pattern at
+[../README.md](../README.md#running-a-tutorial-in-docker) (Docker: not run
+or verified — its own worked example already targets this tutorial).
+Verified live: both forms fuse the same three fixture snapshots into
+identical BTC (~0.74 bps) / ETH (~5.29 bps, `arb_opportunity=true`)
+best-market rows.
 
 ---
 
