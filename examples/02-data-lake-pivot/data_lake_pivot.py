@@ -5,8 +5,7 @@ This example demonstrates how Incorporator bridges the gap between Web APIs and
 Enterprise Data Lakes. We will fetch deeply nested JSON, dynamically map it,
 and instantly export it to both SQLite and Apache Avro.
 
-Crucially, it proves that the syntax for O(1) Memory Mapping (inc_code) is
-100% universal across Web, Relational, and Binary data sources.
+The same `inc_code` vocabulary works across the web, SQLite, and Avro sources below.
 """
 
 import asyncio
@@ -38,14 +37,14 @@ async def main() -> None:
     print("\n2. Pivoting to Local SQLite Database...")
     db_path = OUT / "users_warehouse.db"
 
-    # Flattens nested dictionaries into JSON strings and executes C-speed bulk inserts.
+    # Flattens nested address/company dicts for SQLite storage.
     await User.export(instance=users, file_path=str(db_path), sql_table="employees", if_exists="replace")
     print(f"   Exported natively to {db_path}")
 
     print("\n3. Pivoting to Apache Avro (Big Data Format)...")
     avro_path = OUT / "users_datalake.avro"
 
-    # Translates the dynamic Pydantic schema into a strict Avro binary stream.
+    # Converts the inferred schema into strict Avro types.
     await User.export(instance=users, file_path=str(avro_path), format_type=FormatType.AVRO)
     print(f"   Exported natively to {avro_path}")
 
