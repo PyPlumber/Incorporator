@@ -10,10 +10,9 @@
   "_comment_8_": "(interval >= window length) and the 'liquidity' Fjord tail joins them read-time via",
   "_comment_9_": "link_to(...) in outflow.py -- see the README's shape-choice note for why this replaces",
   "_comment_10_": "the never-shipped fjord/pipeline.json daemon the README used to document.",
-  "_comment_11_": "crypto_assets forces current_price through inc(float,...): the auto-inferred schema locks",
-  "_comment_12_": "a numeric field's type from its FIRST sampled row (CoinGecko's #1-by-market-cap row, i.e.",
-  "_comment_13_": "bitcoin) -- when that live price happens to be a whole dollar amount, every OTHER row's",
-  "_comment_14_": "price silently truncates to an int. See this appendix's README 'Suspected framework gap'.",
+  "_comment_11_": "current_price is typed via inc(float): CoinGecko returns it as a raw JSON number (int for",
+  "_comment_12_": "whole-dollar bitcoin, float for the rest). KEEP this -- without it the fractional prices",
+  "_comment_13_": "truncate to 0 in the pipeline (stablecoins -> 0.0). See the README's note.",
 
   "window": {
     "start": "@window_start",

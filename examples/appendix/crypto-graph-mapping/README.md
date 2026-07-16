@@ -182,21 +182,17 @@ Produces `out/crypto_liquidity.ndjson` with up to 100 rows, sorted by
 assets not listed on binance.us under that quote currency — real sparse
 data, not a bug.
 
-> **Suspected framework gap — schema inference locks a numeric field's type
-> from its first sampled row, with no int→float promotion across the rest of
-> the sample.** `crypto_assets`'s `current_price` conv_dict entry
-> (`inc(float, default=0.0)`) is a defensive fix, not decoration. CoinGecko's
-> `current_price` is a raw JSON number; `market_cap_desc` ordering always
-> puts bitcoin first. When bitcoin's live price happens to be a whole-dollar
-> amount at fetch time, the JSON parser hands back a Python `int`, the schema
-> builder locks the whole column to `int` from that first row, and every
-> other asset's price — most of which genuinely have cents (`$0.999342`,
-> `$0.0731`, ...) — truncates to `0`. Observed live, intermittently (present
-> on some fetches, absent on others, purely dependent on whether BTC quoted a
-> round number at that instant). Forcing `inc(float, ...)` in the conv_dict
-> sidesteps it. Binance's `quoteVolume`/`bidPrice` fields never hit this
-> because Binance always returns them as JSON strings, not numbers — no
-> int/float ambiguity to lock onto.
+> **Why `current_price` is typed with `inc(float, default=0.0)` — keep this
+> line.** CoinGecko returns `current_price` as a raw JSON number: an `int` for
+> whole-dollar coins (bitcoin, which `market_cap_desc` puts first) and a
+> `float` for the rest. Declaring the field `float` in `conv_dict` is ordinary
+> type control — and it's load-bearing here: **remove it and the fractional
+> prices truncate to `0` in the pipeline** (verified live — stablecoins like
+> USDT/USDC come out `0.0`, everything else rounds to whole dollars). Binance's
+> numeric fields arrive as JSON strings, so they never need this. (The
+> underlying question — why unguarded inference truncates rather than widening
+> to `int | float` in the pipeline path — is tracked as a framework item, not
+> something this tutorial needs to solve.)
 
 ---
 
