@@ -182,17 +182,15 @@ Produces `out/crypto_liquidity.ndjson` with up to 100 rows, sorted by
 assets not listed on binance.us under that quote currency — real sparse
 data, not a bug.
 
-> **Why `current_price` is typed with `inc(float, default=0.0)` — keep this
-> line.** CoinGecko returns `current_price` as a raw JSON number: an `int` for
-> whole-dollar coins (bitcoin, which `market_cap_desc` puts first) and a
-> `float` for the rest. Declaring the field `float` in `conv_dict` is ordinary
-> type control — and it's load-bearing here: **remove it and the fractional
-> prices truncate to `0` in the pipeline** (verified live — stablecoins like
-> USDT/USDC come out `0.0`, everything else rounds to whole dollars). Binance's
-> numeric fields arrive as JSON strings, so they never need this. (The
-> underlying question — why unguarded inference truncates rather than widening
-> to `int | float` in the pipeline path — is tracked as a framework item, not
-> something this tutorial needs to solve.)
+> **Declare `current_price` as `float` — keep this `inc(float, default=0.0)`
+> line.** CoinGecko returns `current_price` as a raw JSON number whose *type*
+> is inconsistent: a whole-dollar coin like bitcoin arrives as an `int`
+> (`64524`), everything else as a `float` (`0.999`). When the source mixes int
+> and float in one column, pin the type you want in `conv_dict` — here,
+> `float`, so sub-dollar prices (stablecoins, small-caps) keep their cents.
+> Leave it out and a re-read coerces the column to that first-seen `int` and
+> the fractional prices round to whole dollars (stablecoins → `0.0`). Binance's
+> numeric fields arrive as JSON strings, so they never need this.
 
 ---
 
