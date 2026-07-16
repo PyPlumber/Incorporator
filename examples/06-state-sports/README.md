@@ -361,6 +361,8 @@ No CLI form fits this one: the drill templates a different `inc_url` for each
 league discovered at runtime (`{sport}/{league}/teams/...`), and a declarative
 `Stream(parent_current=)` issues one URL for the whole parent set — it can't
 vary the URL per parent. So this per-parent-templated drill stays in Python.
+([Tutorial 5](../05-parent-child-drilling/README.md) shows the single-URL
+parent-child drill that *does* have a `watershed.json` CLI form.)
 
 ---
 
