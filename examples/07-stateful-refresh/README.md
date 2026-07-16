@@ -298,6 +298,19 @@ back-to-back with a decision matrix at the close.
 
 ---
 
+## Run it
+
+```bash
+python examples/07-stateful-refresh/stateful_refresh.py
+```
+
+There's no CLI form for `refresh()` — the tutorial's verb has no `incorporator`
+subcommand. For the long-running polling case specifically, Tutorial 8's
+`stream` daemon and `cli-templates/daemon-mode.json` cover it from the CLI;
+the three `refresh()` shapes shown here stay in Python.
+
+---
+
 ## Where to Go Next
 
 > **Up next: [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md).** T7 ran `refresh()` manually three ways; T8 wraps it in a long-lived daemon with periodic export — the production shape for live dashboards.

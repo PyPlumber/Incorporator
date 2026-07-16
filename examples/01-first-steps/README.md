@@ -274,6 +274,19 @@ And the discovery loop you ran *before* that:
 
 ---
 
+## Run it
+
+```bash
+python examples/01-first-steps/first_steps.py
+```
+
+There's no `incorporator` CLI form for this tutorial: its lesson is `test()`,
+the JIT API profiler — a Python-only discovery tool. The config CLI covers
+`stream` / `fjord` / `tideweaver run`, not `test` / `incorp`, so the
+discovery-first flow shown here lives in Python.
+
+---
+
 ## Where to Go Next
 
 > 👉 **Up next: [Tutorial 2 — Data Lake Pivot](../02-data-lake-pivot/README.md).**  T1 loaded a single endpoint; T2 takes those rows and pivots them into BI-ready columnar shape — the second universal step in every ETL job.  Runs in ~2 s against a SaaS-style `/users` endpoint that doesn't compete with CoinGecko's per-minute window.

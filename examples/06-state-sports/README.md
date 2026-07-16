@@ -351,6 +351,19 @@ above.
 
 ---
 
+## Run it
+
+```bash
+python examples/06-state-sports/state_sports.py    # pass a region by editing main("CA")
+```
+
+No CLI form fits this one: the drill templates a different `inc_url` for each
+league discovered at runtime (`{sport}/{league}/teams/...`), and a declarative
+`Stream(parent_current=)` issues one URL for the whole parent set — it can't
+vary the URL per parent. So this per-parent-templated drill stays in Python.
+
+---
+
 ## Where to Go Next
 
 > **Up next: [Tutorial 7 — Stateful Refresh](../07-stateful-refresh/README.md).**

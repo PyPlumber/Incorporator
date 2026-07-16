@@ -258,6 +258,19 @@ across both.  T8 covers `stream()` end-to-end — for a paginated source like a
 
 ---
 
+## Run it
+
+```bash
+python examples/03-universal-formats/universal_formats.py
+```
+
+No CLI form fits this one: it fans a single `incorp()` into four export formats
+and then re-reads two of them to prove the round-trip preserves types. A
+`stream` / `fjord` config produces one output — not a multi-format fan-out plus
+verification — so this tutorial stays in Python.
+
+---
+
 ## Where to Go Next
 
 > 👉 **Up next: [Tutorial 4 — XML Post Audit](../04-xml-post-audit/README.md).**  Compliance teams audit warehouses like the one you just built every day.  T4 walks through a used-car fraud case: an XML invoice ledger enriched via one batched POST against NHTSA's federal VIN database, joined on VIN to flag discrepancies.  Teaches XML inflow + POST shapes — and lets CoinGecko's per-minute window refresh before T5's 11 child drills.
