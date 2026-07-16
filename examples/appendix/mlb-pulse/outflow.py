@@ -23,6 +23,7 @@ Relative paths in the config resolve against its directory; run from any directo
 from __future__ import annotations
 
 import operator
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from incorporator import Incorporator, register_host_penstock
@@ -35,6 +36,17 @@ from incorporator.schema.converters import calc, is_garbage_value
 # ---------------------------------------------------------------------------
 
 register_host_penstock("statsapi.mlb.com", rate_per_sec=1.0)
+
+# ---------------------------------------------------------------------------
+# Dateless window: watershed.json's "window" references these public names
+# via the "@window_start" / "@window_end" sigil. Mirrors mlb_pulse.py's own
+# `_run()` window exactly (25s), keeping both entry forms byte-identical in
+# timing. Stretch this if the MLB API's ~31 calls @ 1 req/sec run long --
+# mirrors the README's rate-limit note.
+# ---------------------------------------------------------------------------
+
+window_start = datetime.now(timezone.utc)
+window_end = window_start + timedelta(seconds=25)
 
 # ---------------------------------------------------------------------------
 # Named module-level helpers (lambda-free, per AGENTS.md H3 idiom)

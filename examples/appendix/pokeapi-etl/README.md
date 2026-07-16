@@ -217,11 +217,49 @@ You aren't just ingesting APIs — you are sculpting them. The explicit `inc_chi
 
 ## Run it from the CLI
 
-The CLI handles user-defined reducers via an **`inflow.py` sidecar** — a single Python file containing the helper functions your pipeline.json references. No fjord wrapper, no outflow function, no second class. Just a vanilla `stream()` pipeline that uses your reducer. See [`inflow.py`](inflow.py) and [`pipeline.json`](pipeline.json), which ship next to the entry script, and the run addendum at the bottom of this page.
+The CLI form reproduces the Python entry's **exact two-phase drill**, not a
+shallow wiring demo — this appendix is outside the numbered tutorial path, so
+it's free to reach for [Tideweaver](../../11-tideweaver/README.md)'s
+`Watershed.chain` shape even though Tideweaver itself is introduced later, in
+Tutorial 11. Three currents, in order:
 
-The token resolver imports `inflow.py` at config-load time, sees `calculate_bst` in its public symbols, and resolves the `calc(...)` string to a real Python callable before the engine runs. This shallow pipeline is a **wiring demo**: the `/pokemon/?limit=50` list rows carry only `name` + a HATEOAS `url` (no per-Pokémon `stats`), so `base_stat_total` resolves to the `default=0` for every row — for a real Base Stat Total you need the parent-child drill from the Python script above. What it does prove is that the reducer is wired and runs **before** format dispatch, so this same pipeline.json works for any export format — switch the extension to `.csv`, `.parquet`, `.avro`, etc., and the resolved field still lands in the cell.
+1. `nav` (`Stream`) — shallow discovery, all 150 `{name, url}` rows in one
+   `?limit=150&offset=0` call.
+2. `pokemon` (`Stream(parent_current="nav")`) — the T5 drill against `nav`'s
+   parked snapshot; 150 concurrent `/pokemon/{id}/` detail fetches, real
+   `stats`/`types`, reduced the same way as the Python entry.
+3. `export_pokemon` (`Export`) — snapshots `pokemon`'s drilled registry to
+   `out/pokemon.ndjson`. **Required, not cosmetic**:
+   `Stream(parent_current=...)`'s own `export_params` is never consumed by
+   the scheduler, so this third current is the only thing that writes the
+   rows to disk.
 
-> **Tip:** for paginators and pre-built converter instances, use the cleaner `@name` syntax. Define `next_page = NextUrlPaginator("next")` in `inflow.py`, then reference it as `"inc_page": "@next_page"` in pipeline.json — zero JSON escape characters. See [the CLI guide](../../../docs/cli_and_configuration.md#text-form-tokens-paginators-converters-etc) for the full pattern.
+See [`inflow.py`](inflow.py) and [`watershed.json`](watershed.json), which
+ship next to the entry script — `inflow.py` now carries the `Nav` / `Pokemon`
+classes, the `calculate_bst` / `format_typing` reducers (kept in sync with
+`pokeapi_etl_calc.py` verbatim), and the `pokeapi.co` host-throttle
+registration. That last one matters: the CLI path imports `inflow.py`,
+never `pokeapi_etl_calc.py`, so `inflow.py` is the only place the 1.5
+req/sec throttle can be registered before 150 concurrent detail requests
+fire.
+
+> **Suspected framework gap — why `nav` fetches one page (`limit=150`), not
+> three (`limit=50` × `call_lim=3`) like the Python entry.** A Tideweaver
+> `Stream` current with no `parent_current` always runs through
+> `cls.stream()` (chunking mode). Chunking mode's `refresh_params` defaults
+> to `{}` whenever the field is omitted — including from a `watershed.json`
+> `Stream` node, which has no way to forward an explicit "no, really, skip
+> refresh" down to `stream()` (`Stream.refresh_params=None`, the field's own
+> default, is indistinguishable from "not set" once it reaches the
+> scheduler). That default `{}` makes `stream()` silently call
+> `cls.refresh()` after every chunk. For a
+> **paginated** chunk, each row was extracted via `rec_path` and carries no
+> per-instance origin URL, so `refresh()` raises and the chunked engine
+> aborts pagination after page 1 — the CLI form would silently cap at 50
+> rows instead of 150. Fetching all 150 in a single unpaginated page
+> sidesteps the bug (no continuation needed) — `inc_code="name"` further
+> ensures the implicit post-chunk refresh re-fetch upserts the same 150 rows
+> in place instead of re-inserting them under new auto-increment keys.
 
 ---
 
@@ -238,7 +276,7 @@ The token resolver imports `inflow.py` at config-load time, sees `calculate_bst`
 
 ## 🐳 Run It From the CLI (+ Docker)
 
-Reference material — three ways to run the wiring demo, in order.
+Reference material — three ways to run the exact same two-phase drill, in order.
 
 **1. Python entry** (what every section above walked through — the full
 parent-child drill, ~100 s wall-clock, unchanged):
@@ -248,41 +286,31 @@ cd examples/appendix/pokeapi-etl
 python pokeapi_etl_calc.py
 ```
 
-**2. CLI form** — [`inflow.py`](inflow.py) + [`pipeline.json`](pipeline.json)
-ship next to the entry script; no inline duplicates here (see them drift
-once, trust them forever).
+**2. CLI form** — [`inflow.py`](inflow.py) + [`watershed.json`](watershed.json)
+ship next to the entry script; no inline JSON duplicate here (see it drift
+once, trust it forever).
 
 ```bash
-cd examples/appendix/pokeapi-etl      # see caveats below
-incorporator validate pipeline.json
-incorporator stream pipeline.json
+cd examples/appendix/pokeapi-etl
+incorporator validate watershed.json
+incorporator tideweaver run watershed.json
 ```
+
+Expect ~100-120 s wall-clock (150 detail requests @ 1.5 req/sec) — that is
+expected, not a hang. Produces `out/pokemon.ndjson` with 150 rows, real
+`base_stat_total` values (Mewtwo = 680), matching the Python entry.
 
 > **Run from inside this directory.** `export_params.file_path`
 > (`"out/pokemon.ndjson"`) is CWD-relative, and `"inflow": "inflow.py"` is
 > config-dir-relative — running
-> `incorporator stream examples/appendix/pokeapi-etl/pipeline.json` from
-> the repo root writes output to `<repo-root>/out/` and would break the
+> `incorporator tideweaver run examples/appendix/pokeapi-etl/watershed.json`
+> from the repo root writes output to `<repo-root>/out/` and would break the
 > sidecar resolution if it were repo-root-relative instead.
 >
-> **Caveat — `inc_code` is `"name"`, not `"id"`.** The `/pokemon/?limit=50`
-> shallow list rows carry only `name` + a HATEOAS `url` — there is no
-> `id` field to bind. `inc_code="id"` against this endpoint does not error;
-> it silently falls back to `Incorporator`'s auto-increment counter, so
-> every row gets keyed `1, 2, 3, ...` by fetch position rather than by
-> real Pokémon ID. `"name"` is a real, present, human-meaningful field, so
-> this config uses it instead — a deliberate deviation from the entry
-> script's `inc_code="id"` (which is safe there because the *enriched*
-> per-Pokémon payload actually has an `id`). This is unrelated to the
-> `base_stat_total=0` caveat above, which stays exactly as documented.
->
-> **Caveat — no host throttle on the CLI path.**
-> `register_host_penstock("pokeapi.co", rate_per_sec=1.5)` lives at the
-> top of `pokeapi_etl_calc.py`; the CLI path never imports that file, so a
-> plain `incorporator stream pipeline.json` run has no PokéAPI throttle
-> registered (same gap as [Tutorial 10](../../10-multi-source-fjord/README.md)).
-> Harmless here — this config fetches a single page, no pagination — but
-> worth knowing before scaling this pattern up.
+> **The window is dateless.** `watershed.json`'s `window` references
+> `@window_start` / `@window_end`, two public `datetime` names defined in
+> `inflow.py` and evaluated fresh at sidecar-import time (a 3-minute span
+> from "now") — no env vars, no editing timestamps before a re-run.
 
 **3. Docker** — reasoned from the `Dockerfile`/`docker-compose.yml`, **NOT
 run or verified** (no Docker available in this pass — confirm before
@@ -295,12 +323,12 @@ docker run --rm \
   -v "$(pwd)/examples/appendix/pokeapi-etl:/app/config:ro" \
   -v "$(pwd)/examples/appendix/pokeapi-etl/out:/app/out" \
   incorporator:latest \
-  stream /app/config/pipeline.json
+  tideweaver run /app/config/watershed.json
 ```
 
 The image's `WORKDIR` is `/app`, and `export_params.file_path` is
 CWD-relative (never rebased against the config's directory) — so
-`pipeline.json`'s `"out/pokemon.ndjson"` resolves to `/app/out/...` inside
+`watershed.json`'s `"out/pokemon.ndjson"` resolves to `/app/out/...` inside
 the container. The mount target must therefore be `/app/out`, not one of
 the three paths the `Dockerfile` prepares (`/app/config`, `/app/data`,
 `/app/logs`). Because `/app/out` is not one of the pre-`chown`'d

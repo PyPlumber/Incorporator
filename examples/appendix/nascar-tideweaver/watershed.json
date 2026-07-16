@@ -4,11 +4,12 @@
   "_comment_3_": "so the example runs from any working directory:",
   "_comment_4_": "  incorporator validate examples/appendix/nascar-tideweaver/watershed.json",
   "_comment_5_": "  incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json --json-output",
-  "_comment_6_": "Override the default window with env vars: RACE_START / RACE_END (ISO 8601, UTC).",
+  "_comment_6_": "Window is dateless: 'window_start' / 'window_end' are public names defined in",
+  "_comment_6b_": "outflow.py, evaluated at sidecar-import time -- no env vars needed.",
 
   "window": {
-    "start": "${RACE_START:-2026-05-16T00:00:00+00:00}",
-    "end":   "${RACE_END:-2026-12-31T23:59:59+00:00}"
+    "start": "@window_start",
+    "end": "@window_end"
   },
 
   "shape": "diamond",
@@ -67,7 +68,7 @@
     "verb": "fjord",
     "interval": 30,
     "export_params": {
-      "file_path": "data/driver_state.ndjson",
+      "file_path": "out/driver_state.ndjson",
       "format": "ndjson",
       "if_exists": "append"
     }

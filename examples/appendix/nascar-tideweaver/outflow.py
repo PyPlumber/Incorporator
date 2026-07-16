@@ -20,10 +20,19 @@ Relative ``inc_file`` paths inside ``watershed.json`` resolve against the
 config file's directory, so these commands work from any directory.
 """
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from incorporator import Incorporator
 from incorporator.schema.converters import inc
+
+# Dateless window: watershed.json's "window" references these public names
+# via the "@window_start" / "@window_end" sigil (resolve_tokens, extended
+# with this sidecar's public names by merge_sidecar_extra_names). Fixtures
+# are offline, so a 2-minute window gives the uniform 30s interval 4 ticks --
+# enough for the tail Fjord to flush its append-mode export more than once.
+window_start = datetime.now(timezone.utc)
+window_end = window_start + timedelta(minutes=2)
 
 
 class LapData(Incorporator):

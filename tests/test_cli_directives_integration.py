@@ -8,20 +8,24 @@ Verifies that the wrapper directives flow through:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from incorporator.cli.envexpand import expand_env
-from incorporator.cli.tokens import resolve_tokens
+from incorporator.cli.tokens import TokenResolutionError, resolve_tokens
 from incorporator.cli.validate import (
     autodetect_type,
     validate_fjord_config,
     validate_stream_config,
     validate_watershed_config,
 )
+from incorporator.io.config_paths import resolve_config_paths
 from incorporator.schema.directives import Ex, Nm, Pk, _normalize_etl_kwargs
+from incorporator.tideweaver.config import load_watershed
+from incorporator.usercode import merge_sidecar_extra_names
 
 # ---------------------------------------------------------------------------
 # resolve_tokens() — mixed bare + wrapped shapes
@@ -159,13 +163,93 @@ def test_fjord_template_validates(rel_path: str) -> None:
 
 @pytest.mark.parametrize("rel_path", _WATERSHED_TEMPLATES)
 def test_watershed_template_validates(rel_path: str) -> None:
-    """Every in-repo watershed config passes full build_watershed validation."""
+    """Every in-repo watershed config passes full build_watershed validation.
+
+    Mirrors ``_load_pipeline_config``'s exact sequence (``cli/runners.py:72-152``)
+    rather than calling ``validate_watershed_config`` on the raw/env-expanded
+    dict directly: ``build_watershed`` (unlike ``load_watershed``) does NOT
+    resolve ``@name`` sidecar tokens itself (that step lives in
+    ``load_watershed``, one layer up), so a config whose ``window`` uses the
+    dateless ``"@window_start"``/``"@window_end"`` sigil form would otherwise
+    reach ``_parse_window`` as a literal, unresolved string and fail. Every
+    REAL CLI entry point (``incorporator validate``, ``incorporator tideweaver
+    validate/run``) already resolves tokens via ``_load_pipeline_config``
+    before validation ever runs — this test previously skipped that step,
+    which is a test-fidelity bug, not evidence the mechanism doesn't work.
+    """
     raw, config_dir = _load_raw(rel_path)
-    # Watershed window timestamps are ISO-8601 strings with :-defaults; env-expand
+    # Watershed window timestamps may be ISO-8601 strings with :-defaults, or a
+    # dateless "@name" sigil resolved from an inflow/outflow sidecar; env-expand
     # resolves the ${VAR:-default} form without requiring any env vars to be set.
     expanded: dict[str, Any] = expand_env(raw)
-    errors = validate_watershed_config(expanded, config_dir)
+    rebased = resolve_config_paths(expanded, config_dir)
+    inflow_field = rebased.get("inflow")
+    outflow_field = rebased.get("outflow")
+    extra_names = merge_sidecar_extra_names(
+        Path(str(inflow_field)) if inflow_field else None,
+        Path(str(outflow_field)) if outflow_field else None,
+        strict_outflow=False,
+    )
+    resolved = resolve_tokens(rebased, extra_names=extra_names or None)
+    errors = validate_watershed_config(resolved, config_dir)
     assert errors == [], f"Config {rel_path} failed: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Dateless watershed windows — pin the sidecar-datetime-token mechanism
+# ---------------------------------------------------------------------------
+
+
+def test_watershed_window_resolves_sidecar_datetime_token(tmp_path: Path) -> None:
+    """Pins the dateless-window mechanism: a public sidecar ``datetime``
+    resolves through ``load_watershed``'s token pipeline into
+    ``Watershed.window``.
+
+    If ``resolve_tokens`` is ever narrowed to a key-allowlist that excludes
+    ``"window"``, this goes from an equality assertion to a ``ValueError``
+    raised by ``_parse_dt`` when it receives the literal string
+    ``"@window_start"`` — i.e. it fails loudly, not silently.
+    """
+    outflow_body = (
+        "from incorporator import Incorporator\n"
+        "import datetime as _dt\n"
+        "window_start = _dt.datetime(2099, 1, 1, tzinfo=_dt.timezone.utc)\n"
+        "window_end = window_start + _dt.timedelta(seconds=60)\n"
+        "class LapData(Incorporator):\n    pass\n"
+        "def outflow(state):\n    return []\n"
+    )
+    (tmp_path / "outflow.py").write_text(outflow_body, encoding="utf-8")
+
+    body: dict[str, Any] = {
+        "window": {"start": "@window_start", "end": "@window_end"},
+        "shape": "chain",
+        "outflow": "outflow.py",
+        "drain_timeout": 5,
+        "gate_mode": "hard",
+        "currents": [
+            {"name": "laps", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        ],
+    }
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+
+    ws = load_watershed(cfg)
+
+    expected_start = datetime(2099, 1, 1, tzinfo=timezone.utc)
+    expected_end = expected_start + timedelta(seconds=60)
+    assert ws.window == (expected_start, expected_end)
+
+
+def test_watershed_window_token_requires_sidecar_merge_not_resolve_tokens_alone() -> None:
+    """Proves the sidecar merge, not ``resolve_tokens``/``_parse_window``
+    themselves, is what makes the dateless mechanism work.
+
+    Calling ``resolve_tokens`` on a ``"window"`` block with NO ``extra_names``
+    (i.e. no sidecar merge) must raise ``TokenResolutionError`` — the
+    ``"@window_start"`` name is not in the framework's own ``_ALLOWED_NAMES``.
+    """
+    with pytest.raises(TokenResolutionError):
+        resolve_tokens({"window": {"start": "@window_start", "end": "@window_end"}}, extra_names=None)
 
 
 # ---------------------------------------------------------------------------

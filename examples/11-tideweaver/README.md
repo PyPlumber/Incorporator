@@ -319,7 +319,7 @@ async def main() -> None:
             cls=BestMarket,
             interval=30,
             export_params={
-                "file_path": "data/arb_signals.ndjson",
+                "file_path": "out/arb_signals.ndjson",
                 "format": "ndjson",
                 "if_exists": "append",
             },
@@ -347,7 +347,7 @@ The `BestMarket` Fjord current's tick is a **fjord flush**:
    engine's weak-ref `inc_dict`).
 2. Hand them to `outflow(state)`, defined in `outflow.py`.
 3. Materialise the returned rows into the dynamic output class.
-4. Export them to `data/arb_signals.ndjson` (append-friendly — every flush adds rows).
+4. Export them to `out/arb_signals.ndjson` (append-friendly — every flush adds rows).
 
 ### `outflow.py` — symbol normalization + best-market join
 
@@ -539,7 +539,7 @@ applied at load time.
                        }}}
   ],
   "tail":   {"name": "best_market", "class": "BestMarket", "verb": "fjord", "interval": 30,
-             "export_params": {"file_path": "data/arb_signals.ndjson",
+             "export_params": {"file_path": "out/arb_signals.ndjson",
                                "format": "ndjson", "if_exists": "append"}}
 }
 ```
@@ -559,7 +559,7 @@ convention as `fjord()`).  Run it:
 incorporator tideweaver run watershed.json --json-output
 ```
 
-The CLI resolves `outflow`, `inflow`, and `inc_file` paths relative to `watershed.json`'s directory, so the command works from any working directory. `export_params.file_path` (`"data/arb_signals.ndjson"`) is CWD-relative — the output file lands in `<your working directory>/data/`, not alongside the config.
+The CLI resolves `outflow`, `inflow`, and `inc_file` paths relative to `watershed.json`'s directory, so the command works from any working directory. `export_params.file_path` (`"out/arb_signals.ndjson"`) is CWD-relative — the output file lands in `<your working directory>/out/`, not alongside the config.
 
 > **`conv_dict` tokens resolve against the `outflow` sidecar.**  A `conv_dict`
 > token like `"calc(normalize_asset, 'symbol', default=None)"` needs

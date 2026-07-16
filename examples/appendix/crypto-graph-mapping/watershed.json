@@ -1,0 +1,80 @@
+{
+  "_comment_1_": "CLI-declarative form of the static graph join (crypto_graph_mapping.py).",
+  "_comment_2_": "Relative outflow path is resolved against this JSON's parent directory,",
+  "_comment_3_": "so the example runs from any working directory:",
+  "_comment_4_": "  incorporator validate examples/appendix/crypto-graph-mapping/watershed.json",
+  "_comment_5_": "  incorporator tideweaver run examples/appendix/crypto-graph-mapping/watershed.json",
+  "_comment_6_": "Window is dateless: 'window_start' / 'window_end' are public names defined in",
+  "_comment_6b_": "outflow.py, evaluated at sidecar-import time -- no env vars needed.",
+  "_comment_7_": "One-shot, not a daemon: shape='parallel' runs the 3 independent sources once each",
+  "_comment_8_": "(interval >= window length) and the 'liquidity' Fjord tail joins them read-time via",
+  "_comment_9_": "link_to(...) in outflow.py -- see the README's shape-choice note for why this replaces",
+  "_comment_10_": "the never-shipped fjord/pipeline.json daemon the README used to document.",
+  "_comment_11_": "crypto_assets forces current_price through inc(float,...): the auto-inferred schema locks",
+  "_comment_12_": "a numeric field's type from its FIRST sampled row (CoinGecko's #1-by-market-cap row, i.e.",
+  "_comment_13_": "bitcoin) -- when that live price happens to be a whole dollar amount, every OTHER row's",
+  "_comment_14_": "price silently truncates to an int. See this appendix's README 'Suspected framework gap'.",
+
+  "window": {
+    "start": "@window_start",
+    "end": "@window_end"
+  },
+
+  "shape": "parallel",
+  "outflow": "outflow.py",
+  "drain_timeout": 25,
+
+  "currents": [
+    {
+      "name": "binance_stats",
+      "class": "BinanceStat",
+      "verb": "stream",
+      "interval": 90,
+      "on_error": "isolate",
+      "incorp_params": {
+        "inc_url": "https://api.binance.us/api/v3/ticker/24hr",
+        "inc_code": "symbol",
+        "excl_lst": ["priceChangePercent", "weightedAvgPrice", "openPrice", "prevClosePrice"]
+      }
+    },
+    {
+      "name": "binance_books",
+      "class": "BinanceBook",
+      "verb": "stream",
+      "interval": 90,
+      "on_error": "isolate",
+      "incorp_params": {
+        "inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
+        "inc_code": "symbol"
+      }
+    },
+    {
+      "name": "crypto_assets",
+      "class": "CryptoAsset",
+      "verb": "stream",
+      "interval": 90,
+      "on_error": "isolate",
+      "incorp_params": {
+        "inc_url": "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1",
+        "inc_code": "id",
+        "inc_name": "name",
+        "conv_dict": {
+          "current_price": "inc(float, default=0.0)"
+        }
+      }
+    },
+    {
+      "name": "liquidity",
+      "class": "CryptoLiquidity",
+      "verb": "fjord",
+      "interval": 8,
+      "on_error": "isolate",
+      "parent_currents": ["binance_stats", "binance_books", "crypto_assets"],
+      "export_params": {
+        "file_path": "out/crypto_liquidity.ndjson",
+        "format": "ndjson",
+        "if_exists": "replace"
+      }
+    }
+  ]
+}

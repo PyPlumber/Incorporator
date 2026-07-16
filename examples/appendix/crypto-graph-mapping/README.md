@@ -150,44 +150,112 @@ No nightmare dict lookups — standard Python `.sort()`, `filter()`, and compreh
 
 ---
 
-## 🐳 Run it from the CLI
+## Run it from the CLI
 
-To run the join as a **live daemon** instead of a one-shot, lift it into a fjord: each source becomes its own `stream_params` entry, and `outflow.py` performs the `link_to` join:
+`cls.fjord()` is a genuine unbounded daemon — `incorporator fjord pipeline.json`
+loops forever until Ctrl+C/SIGTERM, which contradicts this appendix's own
+point ("you don't need a daemon... the results printed, then the process
+exits"). The CLI form instead ships a short, bounded [Tideweaver](../../11-tideweaver/README.md)
+`watershed.json` (`shape: "parallel"`) — this appendix is outside the
+numbered tutorial path, so it's free to reach for Tideweaver even though
+Tutorial 11 introduces it later. `incorporator tideweaver run` exits on its
+own once the window's `end` timestamp passes; no daemon, no Ctrl+C needed.
 
-```json
-{
-  "outflow": "outflow.py",
-  "stream_params": [
-    {
-      "cls_name": "BinanceBook",
-      "incorp_params": {
-        "inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
-        "inc_code": "symbol"
-      },
-      "refresh_params": {}
-    },
-    {
-      "cls_name": "CryptoAsset",
-      "incorp_params": {
-        "inc_url": "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=100",
-        "inc_code": "id",
-        "inc_name": "name"
-      },
-      "refresh_params": {}
-    }
-  ],
-  "export_params": {"file_path": "data/crypto_fusion.ndjson"},
-  "refresh_interval": 60,
-  "export_interval": 120
-}
-```
+Four currents: three independent Streams (`binance_stats`, `binance_books`,
+`crypto_assets` — no dependency among them, matching `shape: "parallel"`'s
+"N independent pipelines, none waiting on each other") feeding one `Fjord`
+tail (`liquidity`) whose `outflow(state)` performs the exact same `link_to` +
+`make_linker` factory-closure join as `main()` above — just read-time, once
+all three parent snapshots exist, instead of build-time in local scope.
+
+See [`outflow.py`](outflow.py) and [`watershed.json`](watershed.json), which
+ship next to the entry script.
 
 ```bash
-incorporator validate pipeline.json
-incorporator fjord pipeline.json
+cd examples/appendix/crypto-graph-mapping
+incorporator validate watershed.json
+incorporator tideweaver run watershed.json
 ```
 
-`outflow.py` defines `BinanceBook(Incorporator)`, `CryptoAsset(Incorporator)`, and the `outflow(state)` function that runs the `link_to` lookups across the two in-memory registries. With the intervals above, every 60 s the sources refresh, and every 120 s the fused dataset is flushed. See [`examples/cli-templates/outflow_example.py`](../../cli-templates/outflow_example.py) for the pattern and [the CLI guide](../../../docs/cli_and_configuration.md) for the full schema.
+Produces `out/crypto_liquidity.ndjson` with up to 100 rows, sorted by
+`market_cap_rank` ascending. `usdt_*`/`usdc_*` are legitimately `None` for
+assets not listed on binance.us under that quote currency — real sparse
+data, not a bug.
+
+> **Suspected framework gap — schema inference locks a numeric field's type
+> from its first sampled row, with no int→float promotion across the rest of
+> the sample.** `crypto_assets`'s `current_price` conv_dict entry
+> (`inc(float, default=0.0)`) is a defensive fix, not decoration. CoinGecko's
+> `current_price` is a raw JSON number; `market_cap_desc` ordering always
+> puts bitcoin first. When bitcoin's live price happens to be a whole-dollar
+> amount at fetch time, the JSON parser hands back a Python `int`, the schema
+> builder locks the whole column to `int` from that first row, and every
+> other asset's price — most of which genuinely have cents (`$0.999342`,
+> `$0.0731`, ...) — truncates to `0`. Observed live, intermittently (present
+> on some fetches, absent on others, purely dependent on whether BTC quoted a
+> round number at that instant). Forcing `inc(float, ...)` in the conv_dict
+> sidesteps it. Binance's `quoteVolume`/`bidPrice` fields never hit this
+> because Binance always returns them as JSON strings, not numbers — no
+> int/float ambiguity to lock onto.
+
+---
+
+## 🐳 Run It From the CLI (+ Docker)
+
+Reference material — three ways to run the exact same three-source join, in order.
+
+**1. Python entry** (what every section above walked through — the
+build-time `link_to` join, ~3 API calls, one-shot):
+
+```bash
+cd examples/appendix/crypto-graph-mapping
+python crypto_graph_mapping.py
+```
+
+**2. CLI form** — [`outflow.py`](outflow.py) + [`watershed.json`](watershed.json)
+ship next to the entry script; no inline JSON duplicate here (see it drift
+once, trust it forever).
+
+```bash
+cd examples/appendix/crypto-graph-mapping
+incorporator validate watershed.json
+incorporator tideweaver run watershed.json
+```
+
+> **Run from inside this directory.** `export_params.file_path`
+> (`"out/crypto_liquidity.ndjson"`) is CWD-relative, and `"outflow":
+> "outflow.py"` is config-dir-relative — running `incorporator tideweaver
+> run examples/appendix/crypto-graph-mapping/watershed.json` from the repo
+> root writes output to `<repo-root>/out/` and would break the sidecar
+> resolution if it were repo-root-relative instead.
+>
+> **The window is dateless.** `watershed.json`'s `window` references
+> `@window_start` / `@window_end`, two public `datetime` names defined in
+> `outflow.py` and evaluated fresh at sidecar-import time (a 70-second span
+> from "now") — no env vars, no editing timestamps before a re-run.
+
+**3. Docker** — reasoned from the `Dockerfile`/`docker-compose.yml`, **NOT
+run or verified** (no Docker available in this pass — confirm before
+relying on it):
+
+```bash
+# Reasoned, unverified.
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$(pwd)/examples/appendix/crypto-graph-mapping:/app/config:ro" \
+  -v "$(pwd)/examples/appendix/crypto-graph-mapping/out:/app/out" \
+  incorporator:latest \
+  tideweaver run /app/config/watershed.json
+```
+
+The image's `WORKDIR` is `/app`, and `export_params.file_path` is
+CWD-relative (never rebased against the config's directory) — so
+`watershed.json`'s `"out/crypto_liquidity.ndjson"` resolves to
+`/app/out/...` inside the container. The mount target must therefore be
+`/app/out`, not one of the three paths the `Dockerfile` prepares
+(`/app/config`, `/app/data`, `/app/logs`). Because `/app/out` is not one of
+the pre-`chown`'d directories, `--user` overrides to the invoking host user
+so the non-root `appuser` can still write.
 
 ---
 

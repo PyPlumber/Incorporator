@@ -29,9 +29,19 @@ so these commands work from any directory:
     incorporator tideweaver run examples/11-tideweaver/watershed.json --json-output
 """
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from incorporator import Incorporator
+
+# Dateless window: watershed.json's "window" references these public names
+# via the "@window_start" / "@window_end" sigil (resolve_tokens, extended
+# with this sidecar's public names by merge_sidecar_extra_names). Fixtures
+# are offline, so a 2-minute window gives each interval (15/30/30/30s) 4-8
+# ticks -- enough for the tail Fjord to flush its append-mode export more
+# than once.
+window_start = datetime.now(timezone.utc)
+window_end = window_start + timedelta(minutes=2)
 
 # ---------------------------------------------------------------------------
 # Source classes (one per exchange feed)

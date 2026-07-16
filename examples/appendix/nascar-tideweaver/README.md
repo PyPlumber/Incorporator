@@ -174,7 +174,7 @@ incorporator validate examples/appendix/nascar-tideweaver/watershed.json
 incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json --json-output
 ```
 
-The CLI resolves `inc_file`, `inflow`, and `outflow` relative to `watershed.json`'s directory, so these commands work from any working directory. `export_params.file_path` (`"data/driver_state.ndjson"`) is CWD-relative — the output file lands in `<your working directory>/data/`, not alongside the config.
+The CLI resolves `inc_file`, `inflow`, and `outflow` relative to `watershed.json`'s directory, so these commands work from any working directory. `export_params.file_path` (`"out/driver_state.ndjson"`) is CWD-relative — the output file lands in `<your working directory>/out/`, not alongside the config.
 
 ---
 

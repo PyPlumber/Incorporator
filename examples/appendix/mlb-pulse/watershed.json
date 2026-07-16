@@ -4,14 +4,15 @@
   "_comment_3_": "so the example runs from any working directory:",
   "_comment_4_": "  incorporator validate examples/appendix/mlb-pulse/watershed.json",
   "_comment_5_": "  incorporator tideweaver run examples/appendix/mlb-pulse/watershed.json",
-  "_comment_6_": "Override the default window with env vars: PULSE_START / PULSE_END (ISO 8601, UTC).",
+  "_comment_6_": "Window is dateless: 'window_start' / 'window_end' are public names defined in",
+  "_comment_6b_": "outflow.py, evaluated at sidecar-import time -- no env vars needed.",
   "_comment_7_": "hitting and pitching nodes use verb: stream with parent_current='al_teams' for",
   "_comment_8_": "T5 parent-child fan-out. The al_teams parent's inc_url scopes server-side via",
   "_comment_9_": "?sportId=1&leagueId=103, so no post-fetch row filter is needed — see the README",
   "_comment_10_": "row-filter decision tree (URL filter is the framework's preferred primitive).",
   "window": {
-    "start": "${PULSE_START:-2026-05-28T00:00:00+00:00}",
-    "end":   "${PULSE_END:-2026-05-28T00:00:25+00:00}"
+    "start": "@window_start",
+    "end": "@window_end"
   },
 
   "shape": "diamond",

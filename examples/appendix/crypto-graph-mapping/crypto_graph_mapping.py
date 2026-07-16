@@ -7,6 +7,9 @@ distinct mapping paths (USDT and USDC sub-markets).
 
 It showcases the `link_to` function, the `calc` interceptor, and Factory Closures
 to create a deeply interconnected, null-safe data graph.
+
+Run with:
+    python examples/appendix/crypto-graph-mapping/crypto_graph_mapping.py
 """
 
 import asyncio

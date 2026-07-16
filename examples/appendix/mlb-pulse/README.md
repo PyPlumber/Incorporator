@@ -187,8 +187,12 @@ MLB Stats API is unauthenticated and publishes no rate limit — 1 req/sec
 **~31 calls @ 1.0 r/s ≈ 31 seconds**, which slightly exceeds the
 25-second window. With `gate_mode="weir"` letting middles progress in
 parallel, the first full hitting + pitching pass typically completes
-within the window and the leaderboard prints from that pass. Stretching
-the window to 35 seconds is the common live-run tweak.
+within the window and the leaderboard prints from that pass. The window is
+dateless in both entry forms — `mlb_pulse.py`'s own `_run()` and the CLI
+form's `outflow.py` (`window_end = window_start + timedelta(seconds=25)`,
+next to the host-throttle registration). Stretching the window to 35
+seconds is the common live-run tweak: edit that one `timedelta(...)` line
+in whichever entry form you're running.
 
 If you bump the throttle higher than 1.0 r/s without testing,
 `architect.tune()` will tell you in Phase 3 — that's the post-run

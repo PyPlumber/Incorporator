@@ -9,10 +9,12 @@
   "_comment_8_": "  binance:  https://api.binance.us/api/v3/ticker/bookTicker",
   "_comment_9_": "  coinbase: https://api.exchange.coinbase.com/products/BTC-USD/ticker",
   "_comment_10_": "  kraken:   https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD (with rec_path: result)",
+  "_comment_11_": "Window is dateless: 'window_start' / 'window_end' are public names defined in",
+  "_comment_12_": "outflow.py, evaluated at sidecar-import time -- no env vars needed.",
 
   "window": {
-    "start": "${WINDOW_START:-2026-05-16T00:00:00+00:00}",
-    "end":   "${WINDOW_END:-2026-12-31T23:59:59+00:00}"
+    "start": "@window_start",
+    "end": "@window_end"
   },
 
   "shape": "diamond",
@@ -76,7 +78,7 @@
     "verb": "fjord",
     "interval": 30,
     "export_params": {
-      "file_path": "data/arb_signals.ndjson",
+      "file_path": "out/arb_signals.ndjson",
       "format": "ndjson",
       "if_exists": "append"
     }
