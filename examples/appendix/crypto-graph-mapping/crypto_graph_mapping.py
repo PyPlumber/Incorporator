@@ -111,7 +111,8 @@ async def main() -> None:
     # ==========================================
     print("=" * 115)
     print(
-        f"{'ASSET':<18} | {'GLOBAL PRICE':<14} | {'USDT VOLUME':<16} | {'USDT BEST BID':<14} | {'USDC VOLUME':<16} | {'USDC BEST BID'}"
+        f"{'ASSET':<18} | {'GLOBAL PRICE':<14} | {'USDT VOLUME':<16} | "
+        f"{'USDT BEST BID':<14} | {'USDC VOLUME':<16} | {'USDC BEST BID'}"
     )
     print("=" * 115)
 

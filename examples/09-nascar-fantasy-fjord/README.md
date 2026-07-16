@@ -255,7 +255,7 @@ It is wired in the runner's `Driver` stream entry via `calc()`:
 
 ### 2e. State-aware inflow
 
-`inflow(state)` is called before each source seeds.  With `depends_on=["Track", "Driver"]` declared on `Race`, the engine splits sources into topo tiers and calls `inflow(state)` per tier — tier 0 sources (`Track`, `Driver`, the three Standings, `LeagueRoster`) each receive the current partial state as peers publish; `Race` (tier 1) sees a fully-populated state when `inflow` is called for it.  The `if "Track" in state and "Driver" in state:` guard is still necessary for the **refresh-wave** path — a peer refresh failure could leave the state incomplete, and without the guard `inflow` would emit a `link_to()` resolver pointing at a stale or missing registry.  Fjord re-applies `inflow(state)` on every refresh so the closures always see the latest snapshots.
+`inflow(state)` is called before each source seeds.  With `depends_on=["Track", "Driver"]` declared on `Race`, the engine splits sources into topo tiers and calls `inflow(state)` per tier — tier 0 sources (`Track`, `Driver`, the three Standings, `LeagueRoster`) each receive the current partial state as peers publish; `Race` (tier 1) sees a fully-populated state when `inflow` is called for it — but `inflow` also fires for the tier-0 sources themselves, before both peers are published, so the `if "Track" in state and "Driver" in state:` guard emits `Race`'s override only once its peers exist.  The same guard covers the **refresh-wave** path, where a peer refresh failure could otherwise leave `inflow` emitting a `link_to()` resolver pointing at a stale or missing registry.  Fjord re-applies `inflow(state)` on every refresh so the closures always see the latest snapshots.
 
 ```python
 # ── State-aware inflow — wires Race.conv_dict against live peers ────
@@ -264,12 +264,13 @@ It is wired in the runner's `Driver` stream entry via `calc()`:
 def inflow(state: dict[str, Any]) -> dict[str, Any]:
     """Build per-source ``conv_dict`` overrides from sibling registries.
 
-    Inflow is called before each source's ``incorp()``.  With tiered-
-    parallel seed (``depends_on=["Track", "Driver"]`` on Race), ``state``
-    is fully populated with tier-0 registries by the time this fires for
-    Race — no partial-state guards needed for the tier-1 entry.  The guard
-    below is still correct for the refresh-wave path where state may briefly
-    be incomplete if a peer refresh fails.
+    Inflow is called before each source's ``incorp()``.  On the early
+    calls (Track / Driver / Standings / LeagueRoster) ``state`` is
+    empty or partial, so we only emit Race's override once its peers
+    exist — fjord then re-applies it on every refresh wave so Race's
+    ``track_id``, ``pole_winner_driver_id``, and ``winner_driver_id``
+    resolve to live ``Track`` / ``Driver`` instances rather than raw
+    integers.
     """
     overrides: dict[str, Any] = {}
     if "Track" in state and "Driver" in state:
