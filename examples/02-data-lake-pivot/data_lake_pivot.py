@@ -26,44 +26,44 @@ class User(Incorporator):
 
 
 async def main() -> None:
-    print("🌐 1. Fetching Nested JSON from Public API...")
+    print("1. Fetching Nested JSON from Public API...")
     # The JSONPlaceholder API contains heavily nested 'address' and 'company' dicts.
     users = await User.incorp(
         inc_url="https://jsonplaceholder.typicode.com/users",
         inc_code="id",  # Maps JSON key to Memory Registry
         inc_name="name",  # Maps JSON key to human-readable label
     )
-    print(f"   ✅ Mapped {len(users)} users into Python memory.")
+    print(f"   Mapped {len(users)} users into Python memory.")
 
-    print("\n🗄️ 2. Pivoting to Local SQLite Database...")
+    print("\n2. Pivoting to Local SQLite Database...")
     db_path = OUT / "users_warehouse.db"
 
     # Flattens nested dictionaries into JSON strings and executes C-speed bulk inserts.
     await User.export(instance=users, file_path=str(db_path), sql_table="employees", if_exists="replace")
-    print(f"   ✅ Exported natively to {db_path}")
+    print(f"   Exported natively to {db_path}")
 
-    print("\n🐘 3. Pivoting to Apache Avro (Big Data Format)...")
+    print("\n3. Pivoting to Apache Avro (Big Data Format)...")
     avro_path = OUT / "users_datalake.avro"
 
     # Translates the dynamic Pydantic schema into a strict Avro binary stream.
     await User.export(instance=users, file_path=str(avro_path), format_type=FormatType.AVRO)
-    print(f"   ✅ Exported natively to {avro_path}")
+    print(f"   Exported natively to {avro_path}")
 
-    print("\n🔄 4. The Round Trip: Reading back from Binary Sources...")
+    print("\n4. The Round Trip: Reading back from Binary Sources...")
 
     # A. Read directly from SQLite
     sql_users = await User.incorp(
         inc_file=str(db_path), sql_query="SELECT * FROM employees", inc_code="id", inc_name="name"
     )
-    print(f"   ✅ Read {len(sql_users)} users from SQLite.")
+    print(f"   Read {len(sql_users)} users from SQLite.")
 
     # B. Read directly from Avro
     avro_users = await User.incorp(inc_file=str(avro_path), format_type=FormatType.AVRO, inc_code="id", inc_name="name")
-    print(f"   ✅ Read {len(avro_users)} users from Avro.")
+    print(f"   Read {len(avro_users)} users from Avro.")
 
     # Let's prove Incorporator flawlessly un-flattened the nested data AND
     # successfully built the O(1) inc_dict lookup registries for all three formats!
-    print("\n🏆 VERIFICATION (Testing O(1) Lookups for User ID '1'):")
+    print("\nVERIFICATION (Testing O(1) Lookups for User ID '1'):")
 
     target_id = 1
 

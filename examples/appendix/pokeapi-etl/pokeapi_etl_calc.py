@@ -48,13 +48,13 @@ def format_typing(types_array: Any) -> str:
 
 
 async def main() -> None:
-    print("🔴 Booting up the Pokedex Terminal...")
+    print("Booting up the Pokedex Terminal...")
     BASE_URL = "https://pokeapi.co/api/v2"
 
     # ==========================================
     # 1. PHASE 1: SHALLOW DISCOVERY
     # ==========================================
-    print("⏳ Running Phase 1: Shallow Discovery (Fetching 150 records)...")
+    print("Running Phase 1: Shallow Discovery (Fetching 150 records)...")
     # PokeAPI's free tier documents a 100 req/min ceiling.  The
     # ``register_host_penstock`` call at module top throttles every
     # ``pokeapi.co`` request to 1.5 req/sec (90/min); the explicit
@@ -70,7 +70,7 @@ async def main() -> None:
         requests_per_second=1.5,  # 90 req/min — under PokeAPI's 100/min ceiling
     )
 
-    print(f"✅ Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
+    print(f"Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
 
     # ==========================================
     # 2. PHASE 2: DEEP ENRICHMENT (HATEOAS)
@@ -97,7 +97,7 @@ async def main() -> None:
         requests_per_second=1.5,
     )
 
-    print(f"✅ Enrichment Complete. Loaded {len(enriched_pokemon)} Pokémon into memory.")
+    print(f"Enrichment Complete. Loaded {len(enriched_pokemon)} Pokémon into memory.")
 
     # ==========================================
     # 3. LORE TABLE: The Gen 1 Power Rankings
@@ -107,7 +107,7 @@ async def main() -> None:
         enriched_pokemon.sort(key=lambda p: getattr(p, "base_stat_total", 0), reverse=True)
 
         print("\n" + "=" * 90)
-        print(" 🏆 TABLE 1: KANTO POWER RANKINGS (Sorted by Base Stat Total)")
+        print("TABLE 1: KANTO POWER RANKINGS (Sorted by Base Stat Total)")
         print("    Showcasing: `inc_parent` Deep-Drill and `calc` Array Reductions.")
         print("=" * 90)
         print(f"{'POKEMON':<20} | {'BASE STAT TOTAL':<18} | {'PRIMARY TYPING':<25} | {'WEIGHT (hg)'}")

@@ -38,7 +38,7 @@ async def incorp_demo() -> None:
         inc_code="id",  # primary key for the registry
         inc_name="name",  # display label
     )
-    print(f"✅ Loaded {len(coins)} coins.\n")
+    print(f"Loaded {len(coins)} coins.\n")
 
     # Dot-notation access.
     btc = Coin.inc_dict["bitcoin"]
@@ -46,7 +46,7 @@ async def incorp_demo() -> None:
     print(f"  Symbol:    {btc.symbol.upper()}")
     print(f"  Price:     ${btc.current_price:,.2f}")
     print(f"  Rank:      #{btc.market_cap_rank}")
-    print(f"  24h Δ:     {btc.price_change_percentage_24h:+.2f}%")
+    print(f"  24h delta:     {btc.price_change_percentage_24h:+.2f}%")
 
     # Iteration — IncorporatorList IS a list.
     print("\n  Top 5 coins by market cap:")

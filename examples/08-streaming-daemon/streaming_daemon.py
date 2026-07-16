@@ -60,7 +60,7 @@ from outflow import BinancePair  # noqa: E402
 
 async def stateful_demo() -> None:
     """Long-running daemon: refresh every 30 s, snapshot every 5 min."""
-    print("📈 Starting Binance ticker daemon (Ctrl+C to drain)...\n")
+    print("Starting Binance ticker daemon (Ctrl+C to drain)...\n")
     async for wave in BinancePair.stream(
         incorp_params={
             "inc_url": "https://api.binance.us/api/v3/ticker/24hr",
@@ -74,9 +74,9 @@ async def stateful_demo() -> None:
         enable_logging=True,
     ):
         if wave.failed_sources:
-            print(f"⚠️  {wave.operation} chunk {wave.chunk_index}: {wave.failed_sources}")
+            print(f" {wave.operation} chunk {wave.chunk_index}: {wave.failed_sources}")
         else:
-            print(f"✅ {wave.operation} chunk {wave.chunk_index}: {wave.rows_processed} pairs")
+            print(f"{wave.operation} chunk {wave.chunk_index}: {wave.rows_processed} pairs")
 
 
 # ----------------------------------------------------------------------
@@ -95,7 +95,7 @@ async def chunking_demo(max_pages: int = 3) -> None:
     walking the full catalogue (40+ pages at per_page=250).  In a real
     backfill, drop the cap and let the paginator run to exhaustion.
     """
-    print("📦 Starting CoinGecko paginated drain (chunking mode)...\n")
+    print("Starting CoinGecko paginated drain (chunking mode)...\n")
     # NOTE: ``paginator.call_lim`` is clobbered every wave by stream()'s
     # chunked engine (it forces call_lim=1 per wave for O(1) memory).
     # The demo cap lives in the consumer loop instead — break after
@@ -124,16 +124,16 @@ async def chunking_demo(max_pages: int = 3) -> None:
         enable_logging=True,
     ):
         if wave.failed_sources:
-            print(f"⚠️  page {wave.chunk_index}: {wave.failed_sources}")
+            print(f"page {wave.chunk_index}: {wave.failed_sources}")
         else:
-            print(f"📦 page {wave.chunk_index}: {wave.rows_processed} coins")
+            print(f"page {wave.chunk_index}: {wave.rows_processed} coins")
         if wave.chunk_index >= max_pages:
             break  # demo cap; remove for full drain
 
     if out.exists():
-        print(f"\n✅ Drain complete. Output: {out} ({out.stat().st_size:,} bytes)")
+        print(f"\nDrain complete. Output: {out} ({out.stat().st_size:,} bytes)")
     else:
-        print("\n⚠️  Drain produced no output — likely rate-limited or empty source.")
+        print("\n Drain produced no output — likely rate-limited or empty source.")
 
 
 # ----------------------------------------------------------------------

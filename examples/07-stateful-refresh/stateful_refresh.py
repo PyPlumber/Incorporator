@@ -38,7 +38,7 @@ async def main() -> None:
         inc_url="https://api.binance.us/api/v3/ticker/24hr",
         inc_code="symbol",
     )
-    print(f"✅ Loaded {len(pairs)} trading pairs from Binance.")
+    print(f"Loaded {len(pairs)} trading pairs from Binance.")
     btc_before = Pair.inc_dict["BTCUSDT"].lastPrice
     print(f"   BTCUSDT lastPrice (before): {btc_before}")
 
@@ -50,13 +50,13 @@ async def main() -> None:
     # The canonical "what's the current value" lookup is Pair.inc_dict[...] —
     # refresh replaces the instances under the same keys, so a local var
     # captured before the refresh would now point at a stale model.
-    print("\n⏳ Waiting 2 seconds for the market to move...")
+    print("\nWaiting 2 seconds for the market to move...")
     await asyncio.sleep(2)
     await Pair.refresh()
 
     btc_after = Pair.inc_dict["BTCUSDT"].lastPrice
     moved = "moved!" if btc_after != btc_before else "no change (Binance quiet)"
-    print(f"🔄 In-state refresh complete.  BTCUSDT lastPrice: {btc_after}  ({moved})")
+    print(f"In-state refresh complete.  BTCUSDT lastPrice: {btc_after}  ({moved})")
 
     # ------------------------------------------------------------------
     # 3. RE-SOURCE REFRESH — repoint at a different endpoint.
@@ -66,7 +66,7 @@ async def main() -> None:
     # The framework rebuilds every instance with the new endpoint's schema,
     # so the registry now exposes `.price` instead of `.lastPrice`.
     await Pair.refresh("https://api.binance.us/api/v3/ticker/price")
-    print(f"\n🔁 Re-sourced from /ticker/price (lighter endpoint).")
+    print(f"\nRe-sourced from /ticker/price (lighter endpoint).")
     print(f"   BTCUSDT current price: {Pair.inc_dict['BTCUSDT'].price}")
     print(f"   cls.inc_url updated to: {Pair.inc_url}")
 
@@ -79,7 +79,7 @@ async def main() -> None:
     # want explicit intent in the code.
     my_pairs = [Pair.inc_dict[s] for s in ("BTCUSDT", "ETHUSDT")]
     await Pair.refresh(instance=my_pairs)
-    print(f"\n🎯 Targeted refresh of {len(my_pairs)} pairs.")
+    print(f"\nTargeted refresh of {len(my_pairs)} pairs.")
     print(f"   BTCUSDT current price: {Pair.inc_dict['BTCUSDT'].price}")
 
     # Any failed sources surface on the result list for reject-retry workflows.
@@ -89,7 +89,7 @@ async def main() -> None:
     # headers.  (See docs/debugging.md for the LoggedIncorporator + get_error
     # pattern.)
     if pairs.failed_sources:
-        print(f"\n⚠️  Failed sources during initial load: {pairs.failed_sources}")
+        print(f"\n Failed sources during initial load: {pairs.failed_sources}")
 
 
 if __name__ == "__main__":

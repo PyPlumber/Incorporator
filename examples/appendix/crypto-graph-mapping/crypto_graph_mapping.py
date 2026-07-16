@@ -61,29 +61,29 @@ class CryptoAsset(Incorporator):
 
 
 async def main() -> None:
-    print("🌐 Initiating Multi-Graph Data Fusion...")
+    print("Initiating Multi-Graph Data Fusion...")
 
     # ==========================================
     # PHASE 1: Fetch the Two Target Registries
     # ==========================================
-    print("⏳ Fetching 24H Exchange Statistics...")
+    print("Fetching 24H Exchange Statistics...")
     binance_stats = await BinanceStat.incorp(
         inc_url="https://api.binance.us/api/v3/ticker/24hr",
         inc_code="symbol",
         excl_lst=["priceChangePercent", "weightedAvgPrice", "openPrice", "prevClosePrice"],
     )
 
-    print("⏳ Fetching Live Order Book Bids/Asks...")
+    print("Fetching Live Order Book Bids/Asks...")
     binance_books = await BinanceBook.incorp(
         inc_url="https://api.binance.us/api/v3/ticker/bookTicker", inc_code="symbol"
     )
 
-    print(f"✅ Loaded {len(binance_stats)} Stats and {len(binance_books)} Order Books into memory.")
+    print(f"Loaded {len(binance_stats)} Stats and {len(binance_books)} Order Books into memory.")
 
     # ==========================================
     # PHASE 2: Fetch CoinGecko and Fuse!
     # ==========================================
-    print("⏳ Fetching CoinGecko assets and building 4 sub-market links per asset...")
+    print("Fetching CoinGecko assets and building 4 sub-market links per asset...")
 
     # ``binance_stats`` and ``binance_books`` must stay bound in this
     # scope — ``inc_dict`` is a ``WeakValueDictionary``, so dropping
@@ -104,7 +104,7 @@ async def main() -> None:
         },
     )
 
-    print(f"✅ Fused {len(assets)} assets. Commencing Unified Readout...\n")
+    print(f"Fused {len(assets)} assets. Commencing Unified Readout...\n")
 
     # ==========================================
     # PHASE 3: Traverse the Unified Graph

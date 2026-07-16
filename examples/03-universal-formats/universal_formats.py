@@ -47,7 +47,7 @@ async def snapshot() -> "list[Coin]":
         inc_name="name",
         excl_lst=["image"],  # heavy field — see Tutorial 1 inspector output
     )
-    print(f"📥 Loaded {len(coins)} coins from CoinGecko.")
+    print(f"Loaded {len(coins)} coins from CoinGecko.")
     return coins
 
 
@@ -63,7 +63,7 @@ async def append_log(coins, data_dir: Path) -> None:
         file_path=data_dir / "coins_log.csv",
         if_exists="append",
     )
-    print(f"📜 Appended {len(coins)} rows to NDJSON + CSV log.")
+    print(f"Appended {len(coins)} rows to NDJSON + CSV log.")
 
 
 async def upsert_warehouse(coins, data_dir: Path) -> None:
@@ -74,7 +74,7 @@ async def upsert_warehouse(coins, data_dir: Path) -> None:
         sql_table="coin_snapshots",
         if_exists="append",
     )
-    print(f"🗃️  Upserted {len(coins)} rows into SQLite warehouse.")
+    print(f"Upserted {len(coins)} rows into SQLite warehouse.")
 
 
 async def snapshot_parquet(coins, data_dir: Path) -> None:
@@ -86,22 +86,22 @@ async def snapshot_parquet(coins, data_dir: Path) -> None:
             file_path=out,
             parquet_compression="snappy",
         )
-        print(f"📊 Wrote Parquet snapshot ({out.stat().st_size} bytes).")
+        print(f"Wrote Parquet snapshot ({out.stat().st_size} bytes).")
     except Exception as e:  # noqa: BLE001
-        print(f"⚠️  Parquet export skipped ({e!s}) — install incorporator[parquet]")
+        print(f"Parquet export skipped ({e!s}) — install incorporator[parquet]")
 
 
 async def verify_round_trip(data_dir: Path) -> None:
     """Re-incorp every artifact and prove the object graph round-trips."""
-    print("\n🔁 Round-trip verification:")
+    print("\nRound-trip verification:")
 
     from_ndjson = await Coin.incorp(inc_file=data_dir / "coins_log.ndjson", inc_code="id")
     btc = from_ndjson.inc_dict["bitcoin"]
-    print(f"  ndjson  → BTC ${btc.current_price:,.2f}")
+    print(f"  ndjson  -> BTC ${btc.current_price:,.2f}")
 
     from_csv = await Coin.incorp(inc_file=data_dir / "coins_log.csv", inc_code="id")
     btc = from_csv.inc_dict["bitcoin"]
-    print(f"  csv     → BTC ${btc.current_price:,.2f}")
+    print(f"  csv     -> BTC ${btc.current_price:,.2f}")
 
     from_sqlite = await Coin.incorp(
         inc_file=data_dir / "coins_warehouse.sqlite",
@@ -109,13 +109,13 @@ async def verify_round_trip(data_dir: Path) -> None:
         inc_code="id",
     )
     btc = from_sqlite.inc_dict["bitcoin"]
-    print(f"  sqlite  → BTC ${btc.current_price:,.2f}")
+    print(f"  sqlite  -> BTC ${btc.current_price:,.2f}")
 
     parquet_path = data_dir / "coins_latest.parquet"
     if parquet_path.exists():
         from_parquet = await Coin.incorp(inc_file=parquet_path, inc_code="id")
         btc = from_parquet.inc_dict["bitcoin"]
-        print(f"  parquet → BTC ${btc.current_price:,.2f}")
+        print(f"  parquet -> BTC ${btc.current_price:,.2f}")
 
 
 async def main() -> None:
@@ -126,7 +126,7 @@ async def main() -> None:
     here = Path(__file__).resolve().parent
     data_dir = here / "out"
     data_dir.mkdir(exist_ok=True)
-    print(f"📁 Warehouse root: {data_dir}\n")
+    print(f"Warehouse root: {data_dir}\n")
 
     coins = await snapshot()
     await append_log(coins, data_dir)
