@@ -248,6 +248,22 @@ flattening.
 
 ---
 
+## Run it
+
+```bash
+python examples/05-parent-child-drilling/parent_child_drilling.py
+```
+
+The same drill also runs from the CLI via
+`incorporator tideweaver run watershed.json` (see
+[`watershed.json`](watershed.json) + [`inflow.py`](inflow.py)) and in
+Docker via the mount pattern at
+[../README.md](../README.md#running-a-tutorial-in-docker) (Docker: not
+run or verified). Verified live: 10 `coin` rows drill into 10
+`coin_detail` rows, matching the Python entry row-for-row.
+
+---
+
 ## Where to Go Next
 
 > 👉 **Up next: [Tutorial 6 — State Sports](../06-state-sports/README.md).**  The parent-child pattern you just learned on CoinGecko powers a different kind of fan-out too — twice over.  T6 reuses T5's `inc_parent` shape bound to a **single** parent at a time, in a plain `for` loop, chained: league → team (normalizing each team's venue state), then team → roster, whose `conv_dict` shows `inc`, `calc`, and `pluck`.  Still a pure one-shot script, no Watershed — that's T11's job.  Lands in ~15-25 s.
@@ -260,72 +276,6 @@ flattening.
 | Keep both registries live with `refresh()` | [Tutorial 7 — Stateful Refresh](../07-stateful-refresh/README.md) |
 | Fuse parent + child into one composite record | [Tutorial 10 — Multi-Source Fjord](../10-multi-source-fjord/README.md) |
 | Paginated HATEOAS drill with `calc()` reductions | [Appendix — PokéAPI ETL](../appendix/pokeapi-etl/README.md) |
-
----
-
-## 🐳 Run It From the CLI (+ Docker)
-
-Reference material — three ways to run the exact same parent-child drill, in order.
-
-**1. Python entry** (what every section above walked through — the full parent-child drill, ~50 s wall-clock, unchanged):
-
-```bash
-python examples/05-parent-child-drilling/parent_child_drilling.py
-```
-
-**2. CLI form** — [`inflow.py`](inflow.py) + [`watershed.json`](watershed.json) ship next to the entry script; no inline JSON duplicate here (see it drift once, trust it forever).
-
-```bash
-cd examples/05-parent-child-drilling
-incorporator validate watershed.json
-incorporator tideweaver run watershed.json
-```
-
-Verified live: 10 `coin` parent rows drill into 10 `coin_detail` rows in
-`out/coin_details.ndjson`, matching the Python entry row-for-row — e.g.
-`bitcoin` lands `genesis_date="2009-01-03"`, `links_homepage=["http://www.bitcoin.org"]`;
-`tether` lands `genesis_date="-"` (the `inc(str, default="-")` fallback),
-`links_homepage=["https://tether.to/"]`.
-
-> **Run from inside this directory.** `export_params.file_path`
-> (`"out/coin_details.ndjson"`) is CWD-relative, and `"inflow": "inflow.py"`
-> is config-dir-relative — running
-> `incorporator tideweaver run examples/05-parent-child-drilling/watershed.json`
-> from the repo root writes output to `<repo-root>/out/` instead.
->
-> **The window is dateless.** `watershed.json`'s `window` references
-> `@window_start` / `@window_end`, two public `datetime` names defined in
-> `inflow.py` and evaluated fresh at sidecar-import time (a 3-minute span
-> from "now") — no env vars, no editing timestamps before a re-run.
->
-> **Host throttle lives in the sidecar, not the Python entry.**
-> `register_host_penstock("api.coingecko.com", rate_per_sec=0.2)` is
-> registered in `inflow.py` — the CLI path imports `inflow.py`, never
-> `parent_child_drilling.py`, so this is the only place the throttle can be
-> registered before the 10 concurrent detail requests fire.
-
-**3. Docker** — reasoned from the `Dockerfile`/`docker-compose.yml`, **NOT
-run or verified** (no Docker available in this pass — confirm before
-relying on it):
-
-```bash
-# Reasoned, unverified.
-docker run --rm \
-  --user "$(id -u):$(id -g)" \
-  -v "$(pwd)/examples/05-parent-child-drilling:/app/config:ro" \
-  -v "$(pwd)/examples/05-parent-child-drilling/out:/app/out" \
-  incorporator:latest \
-  tideweaver run /app/config/watershed.json
-```
-
-The image's `WORKDIR` is `/app`, and `export_params.file_path` is
-CWD-relative (never rebased against the config's directory) — so
-`watershed.json`'s `"out/coin_details.ndjson"` resolves to `/app/out/...`
-inside the container. The mount target must therefore be `/app/out`, not
-one of the three paths the `Dockerfile` prepares (`/app/config`,
-`/app/data`, `/app/logs`). Because `/app/out` is not one of the
-pre-`chown`'d directories, `--user` overrides to the invoking host user so
-the non-root `appuser` can still write.
 
 ---
 

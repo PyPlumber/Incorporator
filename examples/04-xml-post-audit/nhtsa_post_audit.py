@@ -1,15 +1,11 @@
 """
-Declarative Bulk POST Enrichment: Auditing "Shady Jimmy"
---------------------------------------------------------
-This example demonstrates how to parse a deeply nested XML file and use
-Incorporator's dynamic POST capabilities to batch-query a federal
-government database (NHTSA) to verify the records.
+Bulk POST Enrichment: Auditing "Shady Jimmy"
+---------------------------------------------
+Parses a deeply nested XML ledger, then batch-POSTs the VINs to a federal
+government database (NHTSA) to verify each record against the truth.
 
-It highlights:
-1. Zero-Boilerplate XML parsing.
-2. The Explicit `inc_child` State Carrier.
-3. Declarative Bulk POST execution using the `join_all` token.
-4. O(1) Memory lookups using the internal `.inc_dict` registry.
+Covers: schema-free XML parsing, the `inc_child` state carrier, a single
+batched POST via `join_all`, and an O(1) `.inc_dict` join.
 """
 
 import asyncio

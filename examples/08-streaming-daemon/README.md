@@ -297,13 +297,29 @@ instead.
 
 ---
 
-## Run it from the CLI
+## Run it
 
-Both engines have CLI equivalents driven by config files that ship next to
-`streaming_daemon.py`: see [`pipeline.json`](pipeline.json) (chunking — the
-canonical T8 use, matches the script's default) and
-[`pipeline_stateful.json`](pipeline_stateful.json) (the stateful shim). Full
-run instructions are in the addendum at the bottom of this page.
+```bash
+python examples/08-streaming-daemon/streaming_daemon.py    # runs chunking_demo() by default
+```
+
+Both engines also run from the CLI via configs that ship next to the
+entry script: [`pipeline.json`](pipeline.json) (chunking — matches the
+script's default) and [`pipeline_stateful.json`](pipeline_stateful.json)
+(the stateful shim, via [`outflow.py`](outflow.py)) — see
+[../README.md](../README.md#running-a-tutorial-in-docker) for the Docker
+mount pattern (Docker: not run or verified).
+
+```bash
+incorporator stream pipeline.json --logs
+incorporator stream pipeline_stateful.json --logs
+```
+
+`pipeline.json`'s CLI form has no page cap (unlike `chunking_demo()`'s
+`max_pages=3`) and walks CoinGecko's entire catalogue — interrupt with
+Ctrl+C after a page or two. `pipeline_stateful.json` needs the fielded
+`BinancePair` receiver class in `outflow.py`; a bare class fails at
+export time (see that file).
 
 The `--logs` flag enables disk logging inside `LoggedIncorporator`.  Add
 `--heartbeat-file /tmp/inc.beat` and your Docker `HEALTHCHECK` (already baked into
@@ -326,109 +342,6 @@ hangs.  See the [deployment guide](../../docs/deployment.md) for the full Compos
 | Land per-window columnar artifacts (Parquet) | [Appendix — Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md) |
 | Master the paginator family for the chunking engine | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |
 | Ship as a Docker daemon with health checks | [Deployment Guide](../../docs/deployment.md) |
-
----
-
-## 🐳 Run It From the CLI (+ Docker)
-
-Reference material — three ways to run each engine, in order. **Only
-`pipeline.json` (chunking) matches `streaming_daemon.py`'s actual default
-run** — `main()` calls `chunking_demo()` unconditionally and
-`stateful_demo()` is commented out (`streaming_daemon.py:137-141`), so
-picking a demo in the Python form means editing the source. The CLI form
-has no such asymmetry: either config runs directly, by name.
-
-**1. Python entry** (what every section above walked through):
-
-```bash
-cd examples/08-streaming-daemon
-python streaming_daemon.py          # runs chunking_demo() by default
-```
-
-**2. CLI form** — [`pipeline.json`](pipeline.json) (chunking) and
-[`pipeline_stateful.json`](pipeline_stateful.json) (stateful shim) ship
-next to the entry script; no inline JSON duplicates here (see them drift
-once, trust them forever). `pipeline.json` is pure JSON, no sidecar
-needed. `pipeline_stateful.json` references [`outflow.py`](outflow.py) —
-`streaming_daemon.py`'s `stateful_demo()` imports the same `BinancePair`
-class from that same file, so the Python and CLI forms share one
-receiver-class definition (see the caveat below for why a fielded class
-is required here).
-
-```bash
-cd examples/08-streaming-daemon      # see caveat below
-incorporator validate pipeline.json
-incorporator stream pipeline.json --logs
-
-incorporator validate pipeline_stateful.json
-incorporator stream pipeline_stateful.json --logs
-```
-
-> **Run from inside this directory.** Both configs' `export_params.file_path`
-> (`"out/coins_full.ndjson"`, `"out/binance_ticker.ndjson"`) are CWD-relative.
-> Running `incorporator stream examples/08-streaming-daemon/pipeline.json`
-> from the repo root silently writes to `<repo-root>/out/` instead.
->
-> **Caveat — `pipeline.json`'s chunking drain has no page cap.**
-> `chunking_demo()`'s `max_pages=3` cap is a `break` in the Python
-> *consumer loop*, not a paginator setting — `PageNumberPaginator` has no
-> `end_page`/`max_pages` kwarg, and `stream()`'s chunking engine
-> unconditionally forces `paginator.call_lim=1` per wave regardless (see
-> the comment at `streaming_daemon.py:92-96`). A bare CLI run has no
-> equivalent consumer-loop hook, so `incorporator stream pipeline.json`
-> walks CoinGecko's **entire** catalogue (40-70+ pages at `per_page=250`) —
-> several minutes wall-clock. Interrupt it (`Ctrl+C`) after a page or two
-> rather than waiting for full completion; the framework's documented
-> graceful-drain guarantee seals the file cleanly.
->
-> **Caveat — no host throttle on the CLI path.**
-> `register_host_penstock("api.coingecko.com", rate_per_sec=0.2)` lives at
-> the top of `streaming_daemon.py`; the CLI path never imports that file,
-> so a plain `incorporator stream pipeline.json` run has no CoinGecko
-> throttle registered (same gap as [Tutorial 10](../10-multi-source-fjord/README.md)).
-> There's currently no declarative `pipeline.json` field for registering a
-> host throttle.
->
-> **Why `pipeline_stateful.json` needs a fielded receiver class.**
-> `stream(stateful_polling=True)` synthesises an *identity* outflow: export
-> receives the same already-built row instances `incorp()`/`refresh()`
-> produced, not freshly-shaped dicts. That pass-through only round-trips
-> cleanly when the receiver class declares real fields — a bare
-> `class BinancePair(LoggedIncorporator): pass` crashes at the export tick
-> with `Outflow Error: 1 validation error for BinancePair ...
-> input_type=DynamicModel` (confirmed live: `incorp`/`refresh` succeed,
-> `export` fails). Root cause is a framework bug in the bare-class fallback
-> of `flush()`'s schema re-inference, not this config — see the framework
-> gap tracked in this repo's context notes. The workaround shown here (a
-> fielded class in [`outflow.py`](outflow.py), wired via `"outflow":
-> "outflow.py"` and imported by `stateful_demo()` too) sidesteps the buggy
-> branch entirely and is fully verified end to end, same as `pipeline.json`
-> (chunking).
-
-**3. Docker** — reasoned from the `Dockerfile`/`docker-compose.yml`, **NOT
-run or verified** (no Docker available in this pass — confirm before
-relying on it):
-
-```bash
-# Reasoned, unverified.
-docker run --rm \
-  --user "$(id -u):$(id -g)" \
-  -v "$(pwd)/examples/08-streaming-daemon:/app/config:ro" \
-  -v "$(pwd)/examples/08-streaming-daemon/out:/app/out" \
-  incorporator:latest \
-  stream /app/config/pipeline.json --logs
-```
-
-The image's `WORKDIR` is `/app`, and `export_params.file_path` is
-CWD-relative (never rebased against the config's directory) — so
-either config's `"out/..."` target resolves to `/app/out/...` inside the
-container. The mount target must therefore be `/app/out`, not one of the
-three paths the `Dockerfile` prepares (`/app/config`, `/app/data`,
-`/app/logs`). Because `/app/out` is not one of the pre-`chown`'d
-directories, `--user` overrides to the invoking host user so the non-root
-`appuser` can still write. Swap `pipeline.json` for
-`pipeline_stateful.json` in the command above to run the stateful shim
-instead.
 
 ---
 

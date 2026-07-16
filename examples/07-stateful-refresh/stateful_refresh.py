@@ -66,7 +66,7 @@ async def main() -> None:
     # The framework rebuilds every instance with the new endpoint's schema,
     # so the registry now exposes `.price` instead of `.lastPrice`.
     await Pair.refresh("https://api.binance.us/api/v3/ticker/price")
-    print(f"\nRe-sourced from /ticker/price (lighter endpoint).")
+    print("\nRe-sourced from /ticker/price (lighter endpoint).")
     print(f"   BTCUSDT current price: {Pair.inc_dict['BTCUSDT'].price}")
     print(f"   cls.inc_url updated to: {Pair.inc_url}")
 

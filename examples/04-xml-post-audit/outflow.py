@@ -1,17 +1,10 @@
 """Outflow sidecar for examples/04-xml-post-audit/pipeline.json.
 
-The CLI form's second network phase (the NHTSA batch POST) has no
-JSON-expressible peer-dependency primitive -- fjord's inflow(state)
-seed-override only merges conv_dict between peers, not inc_parent (see
-this tutorial's suspected-framework-gaps notes). outflow(state) is invoked
-via asyncio.to_thread(outflow_fn, state) -- a worker thread with no
-running event loop -- so it is free to open its own loop with
-asyncio.run() to await NHTSASpec.incorp(inc_parent=...). Verified safe
-across the loop boundary: incorporator.io.penstock.resolve_penstock()
-constructs a fresh BoundPenstock (fresh FlowState + lazily-created lock)
-per call rather than reusing one bound to the registration-time loop, so
-register_host_penstock's module-level registration (below) throttles
-correctly regardless of which event loop later calls incorp().
+fjord's outflow(state) has no JSON primitive for a second, dependent
+incorp() call, so this sidecar performs the NHTSA batch-POST phase in
+plain Python and returns the reconciled rows. outflow(state) runs off the
+main event loop, so it's free to open its own loop via asyncio.run() --
+the host throttle registered below still applies correctly.
 """
 
 import asyncio

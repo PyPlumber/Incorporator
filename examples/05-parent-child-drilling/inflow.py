@@ -24,10 +24,8 @@ from incorporator import Incorporator, register_host_penstock
 register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
 
 # Dateless window: watershed.json's "window" references these public names
-# via the "@window_start" / "@window_end" sigil (resolve_tokens, extended
-# with this sidecar's public names by merge_sidecar_extra_names). Evaluated
-# once at import time -- see incorporator/tideweaver/config.py's
-# build_watershed ordering.
+# via the "@window_start" / "@window_end" sigil, evaluated once at import
+# time (a 3-minute span from "now").
 window_start = datetime.now(timezone.utc)
 window_end = window_start + timedelta(minutes=3)
 
