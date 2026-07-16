@@ -251,16 +251,14 @@ flattening.
 ## Run it
 
 ```bash
+# Python entry
 python examples/05-parent-child-drilling/parent_child_drilling.py
+
+# Same drill, from the CLI
+incorporator tideweaver run watershed.json
 ```
 
-The same drill also runs from the CLI via
-`incorporator tideweaver run watershed.json` (see
-[`watershed.json`](watershed.json) + [`inflow.py`](inflow.py)) and in
-Docker via the mount pattern at
-[../README.md](../README.md#running-a-tutorial-in-docker) (Docker: not
-run or verified). Verified live: 10 `coin` rows drill into 10
-`coin_detail` rows, matching the Python entry row-for-row.
+Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: 10 coin rows drill into 10 coin_detail rows, matching the Python entry row-for-row (see [`watershed.json`](watershed.json) + [`inflow.py`](inflow.py)).
 
 ---
 

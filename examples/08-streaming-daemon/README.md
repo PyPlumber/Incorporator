@@ -300,32 +300,15 @@ instead.
 ## Run it
 
 ```bash
-python examples/08-streaming-daemon/streaming_daemon.py    # runs chunking_demo() by default
+# Python entry (runs chunking_demo() by default)
+python examples/08-streaming-daemon/streaming_daemon.py
+
+# Same two engines, from the CLI
+incorporator stream pipeline.json --logs             # chunking, matches the script default
+incorporator stream pipeline_stateful.json --logs    # stateful shim, via outflow.py
 ```
 
-Both engines also run from the CLI via configs that ship next to the
-entry script: [`pipeline.json`](pipeline.json) (chunking — matches the
-script's default) and [`pipeline_stateful.json`](pipeline_stateful.json)
-(the stateful shim, via [`outflow.py`](outflow.py)) — see
-[../README.md](../README.md#running-a-tutorial-in-docker) for the Docker
-mount pattern (Docker: not run or verified).
-
-```bash
-incorporator stream pipeline.json --logs
-incorporator stream pipeline_stateful.json --logs
-```
-
-`pipeline.json`'s CLI form has no page cap (unlike `chunking_demo()`'s
-`max_pages=3`) and walks CoinGecko's entire catalogue — interrupt with
-Ctrl+C after a page or two. `pipeline_stateful.json` needs the fielded
-`BinancePair` receiver class in `outflow.py`; a bare class fails at
-export time (see that file).
-
-The `--logs` flag enables disk logging inside `LoggedIncorporator`.  Add
-`--heartbeat-file /tmp/inc.beat` and your Docker `HEALTHCHECK` (already baked into
-the ship-with-the-repo `Dockerfile`) will restart the container if the daemon
-hangs.  See the [deployment guide](../../docs/deployment.md) for the full Compose
-/ secrets / healthcheck walkthrough.
+Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). `pipeline.json`'s CLI form has no page cap and walks CoinGecko's full catalogue — interrupt with Ctrl+C after a page or two; `pipeline_stateful.json` needs the fielded `BinancePair` class in [`outflow.py`](outflow.py).
 
 ---
 

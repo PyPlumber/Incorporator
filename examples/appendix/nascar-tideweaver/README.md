@@ -204,18 +204,14 @@ group per-driver / per-edge to see which feed caused the skip.
 ## Run it
 
 ```bash
+# Python entry
 python examples/appendix/nascar-tideweaver/nascar_tideweaver.py
+
+# Same diamond, from the CLI
+incorporator tideweaver run watershed.json --json-output
 ```
 
-The same diamond also runs from the CLI via `incorporator tideweaver run
-watershed.json --json-output` (see [`watershed.json`](watershed.json)) and
-in Docker via the mount pattern at
-[../../README.md](../../README.md#running-a-tutorial-in-docker) (Docker:
-not run or verified). Both entry points load classes and `outflow(state)`
-from the same `outflow.py` sidecar. Verified live: both forms fuse the
-same three fixture snapshots into driver-state rows with the same shape
-(`driver`/`laps`/`pits`/`flag`) — row counts differ since each entry's
-window length differs (15s Python vs. `outflow.py`'s 2-minute CLI window).
+Also runs in Docker via the [central mount pattern](../../README.md#running-a-tutorial-in-docker) (not run or verified). Both entry points load the same classes and `outflow(state)` (see [`watershed.json`](watershed.json)); row counts differ by design — the two forms use different window lengths, so each flushes a different number of tide snapshots.
 
 ---
 

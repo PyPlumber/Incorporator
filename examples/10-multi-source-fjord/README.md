@@ -472,15 +472,14 @@ return = one file.
 ## Run it
 
 ```bash
+# Python entry
 python examples/10-multi-source-fjord/crypto_spread.py
+
+# Same pipeline, from the CLI
+incorporator fjord pipeline.json --logs
 ```
 
-The same fusion also runs from the CLI via `incorporator fjord pipeline.json
---logs` (see [`pipeline.json`](pipeline.json)) and in Docker via the mount
-pattern at [../README.md](../README.md#running-a-tutorial-in-docker)
-(Docker: not run or verified). Verified live: both forms fuse the same 46
-overlapping CoinGecko/Binance symbols into real basis-point spread rows
-(exact bps drifts run to run — live market prices, not a fixture).
+Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: both forms fuse the same 46 overlapping CoinGecko/Binance symbols into real basis-point spread rows (exact bps drifts run to run — live prices; see [`pipeline.json`](pipeline.json)).
 
 ---
 

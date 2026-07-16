@@ -855,16 +855,14 @@ Note how **Toyota has fewer drivers than Chevrolet (9 vs 20) but nearly twice th
 ## Run it
 
 ```bash
+# Python entry
 python examples/09-nascar-fantasy-fjord/nascar_fantasy.py
+
+# Same fjord, from the CLI
+incorporator fjord pipeline.json --logs
 ```
 
-The same fjord also runs from the CLI via `incorporator fjord pipeline.json
---logs` (see [`pipeline.json`](pipeline.json)) and in Docker via the mount
-pattern at [../README.md](../README.md#running-a-tutorial-in-docker)
-(Docker: not run or verified). Verified live: both forms fuse the same
-live NASCAR feed into identical row counts across all eleven waves and
-identical manufacturer-leaderboard totals (exact counts drift week to
-week — live standings, not a fixture).
+Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: both forms fuse the same live NASCAR feed into identical row counts across all eleven waves and identical manufacturer-leaderboard totals (counts drift week to week — live standings, see [`pipeline.json`](pipeline.json)).
 
 ---
 

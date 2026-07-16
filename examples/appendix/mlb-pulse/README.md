@@ -249,18 +249,14 @@ Matches the [Tutorial 9](../../09-nascar-fantasy-fjord/), [Tutorial 11](../../11
 ## Run it
 
 ```bash
-cd examples/appendix/mlb-pulse
-python mlb_pulse.py
-```
+# Python entry
+python examples/appendix/mlb-pulse/mlb_pulse.py
 
-Or the CLI-declarative form (same diamond, same `outflow.py`, same 15 cards):
-
-```bash
-cd examples/appendix/mlb-pulse
+# Same diamond, same outflow.py, same 15 cards, from the CLI
 incorporator tideweaver run watershed.json
 ```
 
-Docker: mount pattern at [../../README.md](../../README.md#running-a-tutorial-in-docker) (not run or verified).
+Also runs in Docker via the [central mount pattern](../../README.md#running-a-tutorial-in-docker) (not run or verified).
 
 Artifacts produced (all under `out/`, gitignored by repo policy):
 

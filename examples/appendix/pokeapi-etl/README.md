@@ -218,15 +218,14 @@ You aren't just ingesting APIs — you are sculpting them. The explicit `inc_chi
 ## Run it
 
 ```bash
+# Python entry
 python examples/appendix/pokeapi-etl/pokeapi_etl_calc.py
+
+# Same two-phase drill, from the CLI
+incorporator tideweaver run watershed.json
 ```
 
-The same two-phase drill also runs from the CLI via `incorporator
-tideweaver run watershed.json` (see [`watershed.json`](watershed.json) and
-[`inflow.py`](inflow.py)) and in Docker via the mount pattern at
-[../../README.md](../../README.md#running-a-tutorial-in-docker) (Docker:
-not run or verified). Verified live: both forms drill all 150 Pokémon and
-agree on Mewtwo's base stat total (680).
+Also runs in Docker via the [central mount pattern](../../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: both forms drill all 150 Pokémon and agree on Mewtwo's base stat total (680) (see [`watershed.json`](watershed.json) + [`inflow.py`](inflow.py)).
 
 ---
 

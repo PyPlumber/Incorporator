@@ -219,17 +219,14 @@ true_spec = govt_specs.inc_dict.get(jimmy_vin)
 ## Run it
 
 ```bash
+# Python entry
 python examples/04-xml-post-audit/nhtsa_post_audit.py
+
+# Same audit, from the CLI
+incorporator fjord pipeline.json
 ```
 
-The full audit — including the NHTSA batch-POST reconciliation — also runs
-from the CLI via `incorporator fjord pipeline.json` (see
-[`pipeline.json`](pipeline.json) + [`outflow.py`](outflow.py)) and in
-Docker via the mount pattern at
-[../README.md](../README.md#running-a-tutorial-in-docker) (Docker: not
-run or verified). Verified live: the CLI form reproduces the same single
-fraud hit as the Python entry — INV-010, Porsche 911 flagged under a
-Honda Civic listing.
+Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: the CLI form reproduces the same single fraud hit as the Python entry — INV-010, a Porsche 911 flagged under a Honda Civic listing (see [`pipeline.json`](pipeline.json) + [`outflow.py`](outflow.py)).
 
 ---
 

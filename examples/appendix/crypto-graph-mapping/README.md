@@ -165,18 +165,14 @@ need it.
 ## Run it
 
 ```bash
+# Python entry
 python examples/appendix/crypto-graph-mapping/crypto_graph_mapping.py
+
+# Same three-source join, from the CLI
+incorporator tideweaver run watershed.json
 ```
 
-The same three-source join also runs from the CLI via `incorporator
-tideweaver run watershed.json` (see [`watershed.json`](watershed.json) and
-[`outflow.py`](outflow.py)) — a bounded Tideweaver `parallel` shape that
-exits once the window ends, not `cls.fjord()`'s unbounded daemon — and in
-Docker via the mount pattern at
-[../../README.md](../../README.md#running-a-tutorial-in-docker) (Docker:
-not run or verified). Verified live: both forms sort the same top assets
-by `market_cap_rank`, with `usdt_*`/`usdc_*` legitimately `None` for
-assets missing that quote currency on binance.us.
+Also runs in Docker via the [central mount pattern](../../README.md#running-a-tutorial-in-docker) (not run or verified). This is a bounded Tideweaver `parallel` shape that exits when the window ends, not `cls.fjord()`'s unbounded daemon. Verified live: both forms sort the same top assets by `market_cap_rank`, with `usdt_*`/`usdc_*` legitimately `None` for assets missing that quote on binance.us (see [`watershed.json`](watershed.json) + [`outflow.py`](outflow.py)).
 
 ---
 

@@ -140,13 +140,14 @@ Because the data is parked in `.inc_dict` registries, you can immediately use `l
 ## Run it
 
 ```bash
+# Python entry
 python examples/02-data-lake-pivot/data_lake_pivot.py
+
+# The SQLite step, from the CLI
+incorporator stream pipeline.json
 ```
 
-The SQLite step also runs from the CLI — `incorporator stream pipeline.json`
-(see [`pipeline.json`](pipeline.json)) — and in Docker via the mount pattern
-in [../README.md](../README.md#running-a-tutorial-in-docker) (Docker: reasoned
-from the Dockerfile, not run or verified).
+Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). The CLI form runs only the SQLite export step — the Python entry does more (see [`pipeline.json`](pipeline.json)).
 
 ---
 

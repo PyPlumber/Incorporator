@@ -604,17 +604,14 @@ without adding meaningful wall-clock latency to the window.
 ## Run it
 
 ```bash
+# Python entry
 python examples/11-tideweaver/arb_scanner.py
+
+# Same diamond, from the CLI
+incorporator tideweaver run watershed.json --json-output
 ```
 
-The same diamond also runs from the CLI via `incorporator tideweaver run
-watershed.json --json-output` (see [`watershed.json`](watershed.json)) and
-in Docker via the mount pattern at
-[../README.md](../README.md#running-a-tutorial-in-docker) (Docker: not run
-or verified — its own worked example already targets this tutorial).
-Verified live: both forms fuse the same three fixture snapshots into
-identical BTC (~0.74 bps) / ETH (~5.29 bps, `arb_opportunity=true`)
-best-market rows.
+Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: both forms fuse the same three fixture snapshots into identical BTC (~0.74 bps) / ETH (~5.29 bps, arb_opportunity=true) best-market rows (see [`watershed.json`](watershed.json)).
 
 ---
 
