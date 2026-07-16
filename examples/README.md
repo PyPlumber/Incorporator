@@ -75,3 +75,30 @@ incorporator tideweaver run examples/11-tideweaver/watershed.json
 Relative `inc_file` / `inflow` / `outflow` paths inside the JSON resolve against the
 config file's own directory, so these commands work from any working directory; output
 paths (`export_params.file_path`) are relative to where you run the command.
+
+### Running a tutorial in Docker
+
+The published image's entrypoint is the `incorporator` CLI, and it ships only the
+framework — examples are **mounted**, not baked in. Because a config's `inflow` /
+`outflow` / `inc_file` paths resolve against the config's own directory, mounting a
+tutorial directory at `/app/config` runs it with no image change:
+
+```bash
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$(pwd)/examples/11-tideweaver:/app/config:ro" \
+  -v "$(pwd)/examples/11-tideweaver/out:/app/out" \
+  incorporator:latest \
+  tideweaver run /app/config/watershed.json
+```
+
+The one subtlety: `export_params.file_path` is **CWD-relative** (the container's
+CWD is `/app`), not config-dir-relative — so an `out/…` export lands in `/app/out`,
+which is why the second mount points the tutorial's own `out/` there rather than at
+`/app/data`. Per-tutorial addenda give the exact command for each example; this is
+the shared pattern behind them.
+
+> **Not verified in CI.** These `docker run` commands are reasoned from the
+> `Dockerfile` + path-resolution rules and are documented for reference — the
+> repo's Docker CI job only smoke-tests `--version`, so confirm locally before
+> relying on them in production.
