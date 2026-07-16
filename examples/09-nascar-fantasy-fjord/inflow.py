@@ -1,24 +1,10 @@
 """Inflow sidecar for the NASCAR fantasy-league fjord pipeline.
 
-Provides incoming-data manipulation: the ``inflow(state)`` callable that
-wires Race's foreign-key fields against already-loaded Track + Driver
-registries, plus the conv_dict helpers and constants those wires depend on.
-
-* ``_DATE_FIELDS`` — tuple of Race fields that carry raw timestamp strings
-  and must be coerced to ``datetime`` objects.
-* ``_driver_id_or_none`` — sentinel guard for NASCAR's ``0``-as-missing
-  pattern on driver-ID fields; lets ``link_to`` short-circuit cleanly.
-* ``_speed_or_none`` — sentinel guard for NASCAR's ``0.0``-as-missing
-  pattern on ``pole_winner_speed``; same shape as ``_driver_id_or_none``
-  but for a float field consumed by ``calc()`` instead of ``link_to()``.
-* ``mfg_from_logo_url`` — parses a NASCAR CDN logo URL into the make name
-  (``'Chevrolet'``, ``'Ford'``, ``'Toyota'``, ``'Ram'``); used as the
-  ``calc()`` converter for the Driver source's ``Manufacturer`` field.
-  Public (no leading underscore) so the CLI-form ``pipeline.json`` can
-  reference it by bare name — ``usercode.py``'s ``extract_public_names``
-  skips ``_``-prefixed names.
-* ``inflow(state)`` — fjord seed hook called before each source refresh;
-  emits Race conv_dict overrides once Track + Driver registries are live.
+Provides the ``inflow(state)`` seed hook that wires Race's foreign-key
+fields against already-loaded Track + Driver registries, plus the
+sentinel-guard converters (``_driver_id_or_none``, ``_speed_or_none``,
+``mfg_from_logo_url``) those wires and the Driver source depend on —
+see each function's own docstring for its sentinel pattern.
 
 Output shaping (``outflow(state)``, source classes, ``OWNER_SCORED``) lives
 in the sibling ``outflow.py``.

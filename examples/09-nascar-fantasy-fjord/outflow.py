@@ -15,23 +15,15 @@ fused state:
   the top driver per make.
 
 Each derived class gets its own export file via fjord's multi-output
-contract.  No daemon plumbing, no lock acquisition, no per-class
-fanout — fjord handles all of it.
+contract.
 
 Incoming-data manipulation (``_DATE_FIELDS``, ``_driver_id_or_none``,
 ``mfg_from_logo_url``, and the ``inflow(state)`` seed hook) lives in
 the sibling ``inflow.py``.
 
-**Kyle Busch / owner-seat scoring.**  Kyle Busch (driver_id 454,
-RCR #8) died mid-season.  Per league rules, the roster spot stays
-but scoring pivots from the driver's Cup points to the RCR #133
-owner-entry points (``CupOwnerStanding`` feed, vehicle_number '133').
-``OWNER_SCORED = {454: '133'}`` is the O(1) lookup map; inside the
-per-pick scoring loop the map's presence routes that driver_id to
-``CupOwnerStanding.inc_dict['133']`` instead of
-``CupStanding.inc_dict[454]``.  All other picks are unaffected.
-The #133 entry was originally renumbered from #33 after the mid-season
-switch; the feed now reports it as vehicle_number '133'.
+Kyle Busch died mid-season; ``OWNER_SCORED`` routes his roster pick to
+the RCR #133 owner-entry feed instead of driver points — see
+``CupOwnerStanding`` below.
 """
 
 from collections import Counter, defaultdict
@@ -107,14 +99,9 @@ _SERIES_LIST = ("Cup", "Busch", "Truck")
 
 
 def _hometown(driver: Any) -> str:
-    """Compose ``City, ST`` from the driver's hometown fields, or
-    ``Unknown`` if either piece is missing.
-
-    ``Hometown_City`` / ``Hometown_State`` are coerced to plain strings
-    at Driver's own build time (``inc(str, default="")`` in
-    `nascar_fantasy.py`) — no ``getattr(..., "") or ""`` guard needed
-    here.  The ``city and state`` composition is business logic (how to
-    format two strings together), not a null guard, so it stays.
+    """Compose ``City, ST`` from the driver's hometown fields, falling
+    back to ``Unknown``. Fields are already coerced to ``str`` at
+    Driver's build time, so this is composition, not a null guard.
     """
     city = driver.Hometown_City.strip()
     state = driver.Hometown_State.strip()
@@ -124,15 +111,10 @@ def _hometown(driver: Any) -> str:
 
 
 def _track_loc(track: Any) -> str:
-    """Compose ``City, ST`` for a track.
+    """Compose ``City, ST`` for a track, or ``Unknown``.
 
-    ``track`` itself can be ``None`` (a Race whose Track FK didn't
-    resolve) — that "is there a related object at all" check is a
-    legitimate null-object guard on the join result, not a field-
-    coercion guard, and stays.  Track's own ``city``/``state`` fields
-    are not build-time coerced (no matching conv_dict entry — NASCAR's
-    tracks.json ships them as plain strings already), so the local
-    ``or ""`` guard remains for defense against a genuinely missing key.
+    ``track`` can be ``None`` (a Race whose Track FK didn't resolve) —
+    that's a null-object guard on the join result, not a coercion gap.
     """
     if track is None:
         return "Unknown"
@@ -175,16 +157,12 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     # ════════════════════════════════════════════════════════════════
     monthly: list[dict[str, Any]] = []
     for race in races:
-        # date_scheduled arrives via inflow.py's inc(datetime) -- a Race
-        # with a genuinely missing schedule date is a null-object case
-        # (dt is None), not a coercion gap, so this guard stays.
+        # A race with no schedule date is a null-object case, not a coercion gap.
         dt = getattr(race, "date_scheduled", None)
         if dt is None or dt.month != now.month or dt.year != now.year:
             continue
-        # pole / winner / track can each be None -- the FK didn't resolve
-        # (link_to's sentinel-aware extractor for driver IDs; a Race whose
-        # track_id had no Track match) -- a null-object guard on the JOIN
-        # result, not a field-coercion guard, so `if track else` etc. stay.
+        # pole / winner / track can each be None if the FK didn't resolve --
+        # a null-object guard on the join result, so `if track else` etc. stay.
         pole = race.pole_winner_driver_id
         winner = race.winner_driver_id
         track = getattr(race, "track", None) or getattr(race, "track_id", None)
@@ -214,12 +192,8 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     # View 2 — FantasyTeam
     # ════════════════════════════════════════════════════════════════
     # Materialise each team's roster by series, sorted by car number.
-    # Read from state["LeagueRoster"] instead of a hardcoded constant.
-    # This roster -> Driver lookup stays read-time: LeagueRoster.roster is
-    # a list of {series_id, driver_id} dicts (not a flat FK field), and
-    # Driver seeds in the same tier as LeagueRoster with no ordering
-    # guarantee between tier-0 siblings -- link_to() can't fan out a
-    # nested list-of-dicts at build time, so this is the honest boundary.
+    # roster -> Driver stays read-time: LeagueRoster.roster is a list of
+    # {series_id, driver_id} dicts, not a flat FK field link_to() can join.
     league_teams: dict[str, dict[int, list[Any]]] = {}
     for team in league:
         team_cd = team.team_id
@@ -256,17 +230,10 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             series_cls = points_standings.get(series_id)
             for car_idx, driver in enumerate(roster[series_id], start=1):
                 did = int(driver.inc_code)
-                # Conditional join whose TARGET dataset is chosen per-row at
-                # runtime (series_id picks Cup/Busch/Truck; OWNER_SCORED
-                # membership picks Owner vs Cup) -- link_to() binds to ONE
-                # dataset per conv_dict entry and can't branch between three
-                # datasets on another field's runtime value.  Stays read-time;
-                # this is dynamic dispatch, not a static FK.
+                # Which dataset to join against is chosen per-row at runtime
+                # (series + OWNER_SCORED membership) -- link_to() can't branch
+                # between three datasets like this, so it stays read-time.
                 if did in OWNER_SCORED and series_id == 1:
-                    # Kyle Busch (driver_id 454) and any future deceased Cup
-                    # driver: score from the owner-entry standings instead of
-                    # the driver standings.  The roster spot stays; only the
-                    # points source changes.
                     owner_vnum = OWNER_SCORED[did]  # '133' — must be string key
                     stnd = owner_standings.inc_dict.get(owner_vnum) if owner_standings else None
                     owner_seat: str | None = owner_vnum
@@ -274,20 +241,16 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                     stnd = series_cls.inc_dict.get(driver.inc_code) if series_cls else None
                     owner_seat = None
 
-                # stnd itself is a null-object guard on the join result (a
-                # driver with no standings row) -- every field READ off stnd
-                # below is a plain attribute because Cup/Busch/TruckStanding's
-                # own conv_dict (nascar_fantasy.py) already coerced them.
+                # stnd is a null-object guard (a driver with no standings row);
+                # fields read off it are plain attrs, already build-time coerced.
                 pts = stnd.points if stnd else 0
                 wins = stnd.wins if stnd else 0
                 per_series[series_id] += pts
                 total_wins += wins
 
-                # Manufacturer can live on either the driver record or
-                # the standings row.  Prefer the standings copy (it's
-                # season-current) and fall back to the driver record.
-                # Owner standings don't carry manufacturer; fall back to
-                # the driver record for owner-seated picks.
+                # Prefer the season-current standings copy of manufacturer,
+                # falling back to the driver record (owner standings don't
+                # carry it, so owner-seated picks always fall back).
                 mfg = (stnd.manufacturer if stnd and owner_seat is None else "") or driver.Manufacturer or "Unknown"
                 mfg = mfg.strip() or "Unknown"
                 mfg_counter[mfg] += 1
@@ -308,14 +271,8 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                     # laps_led is not tracked in owner standings; emit 0.
                     "laps_led": stnd.laps_led if stnd and owner_seat is None else 0,
                     "points": pts,
-                    # ``delta_leader`` is signed in the raw feed (negative
-                    # for drivers behind the leader, 0 for the leader).
-                    # Fantasy UX wants "points behind leader" as a
-                    # positive number — abs() makes the column intuitive
-                    # without altering the underlying truth.  CupOwnerStanding
-                    # doesn't carry delta_leader (different conv_dict, same
-                    # honest-boundary reason as laps_led above), so the
-                    # owner-seat branch reports None instead of reading it.
+                    # delta_leader is signed (negative = behind); abs() reads
+                    # as "points behind leader". Owner standings don't carry it.
                     "points_back": abs(stnd.delta_leader) if stnd and owner_seat is None else None,
                 }
                 if owner_seat is not None:

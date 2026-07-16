@@ -1196,36 +1196,6 @@ Note how **Toyota has fewer drivers than Chevrolet (9 vs 20) but nearly twice th
 
 ---
 
-## Run it from the CLI
-
-The same eight-source pipeline expressed as a JSON config — no Python wrapper
-required — ships next to `nascar_fantasy.py` as [`pipeline.json`](pipeline.json),
-with [`inflow.py`](inflow.py) and [`outflow.py`](outflow.py) as its sidecars
-(the same two files `nascar_fantasy.py` imports). No inline JSON duplicate
-here; the CLI loader resolves each `cls_name` by importing the `outflow=`
-file and looking up the class by name, which is how the multi-source
-registration stays JSON-serialisable. Full run instructions, the one
-CLI-vs-Python behavioural difference (`Driver.Manufacturer`), and Docker
-are in the addendum at the bottom of this page.
-
-The `--logs` flag routes every Wave through the `LoggedIncorporator` queue
-handler into one **unified session**, not one per source class:
-`logs/LoggedIncorporator_api.log` (URL/internet-traffic errors — HTTP
-4xx/5xx, timeouts), `logs/LoggedIncorporator_error.log` (successful waves,
-parse failures, schema errors), `logs/LoggedIncorporator_debug.log`
-(superset), and `logs/LoggedIncorporator_tide.log` (per-wave summary) —
-four files total, regardless of source count. `LoggedIncorporator.fjord()`'s
-own docstring documents this as intentional: every source's waves and every
-outflow emission land under the one class the CLI invoked `fjord()` on, "so
-one `get_error` call returns the full pipeline's error history." (Per-class
-routing is a `LoggedIncorporator.stream()` behaviour — genuine when you
-subclass per source — not a `fjord()` one.) Use `get_rejects()` to read all
-failures across both routing files; use `entry["reject"]["is_url_traffic_error"]`
-to classify each one. Add `--heartbeat-file /tmp/inc.beat` to pair with
-Docker's `HEALTHCHECK`.
-
----
-
 ## 🧠 What This Demonstrates
 
 | Pattern | Where to look |
@@ -1249,6 +1219,22 @@ Docker's `HEALTHCHECK`.
 
 ---
 
+## Run it
+
+```bash
+python examples/09-nascar-fantasy-fjord/nascar_fantasy.py
+```
+
+The same fjord also runs from the CLI via `incorporator fjord pipeline.json
+--logs` (see [`pipeline.json`](pipeline.json)) and in Docker via the mount
+pattern at [../README.md](../README.md#running-a-tutorial-in-docker)
+(Docker: not run or verified). Verified live: both forms fuse the same
+live NASCAR feed into identical row counts across all eleven waves and
+identical manufacturer-leaderboard totals (exact counts drift week to
+week — live standings, not a fixture).
+
+---
+
 ## Where to Go Next
 
 > 👉 **Up next: [Tutorial 10 — Multi-Source Fjord](../10-multi-source-fjord/README.md).**  T9 walked the *full* fjord shape — eight sources, state-aware inflow, three outputs.  T10 introduces `fjord()` formally on its minimum viable form (two co-equal sources, one outflow) on the crypto-spread pattern.
@@ -1261,83 +1247,6 @@ Docker's `HEALTHCHECK`.
 | Run the diamond shape across NASCAR race telemetry | [Appendix — NASCAR Tideweaver](../appendix/nascar-tideweaver/README.md) |
 | Configure this pipeline as a CLI fjord run | [CLI & Configuration Guide](../../docs/cli_and_configuration.md) |
 | Revisit chunking & streaming fundamentals | [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md) |
-
----
-
-## 🐳 Run It From the CLI (+ Docker)
-
-Reference material — three ways to run the exact same eight-source pipeline, in order.
-
-**1. Python entry** (what every section above walked through):
-
-```bash
-cd examples/09-nascar-fantasy-fjord
-python nascar_fantasy.py
-```
-
-**2. CLI form** — [`pipeline.json`](pipeline.json) ships next to the entry
-script, with [`inflow.py`](inflow.py) / [`outflow.py`](outflow.py) as its
-sidecars — the same two files the Python entry imports. No inline JSON
-duplicate here (see it drift once, trust it forever).
-
-```bash
-cd examples/09-nascar-fantasy-fjord
-incorporator validate pipeline.json
-incorporator fjord pipeline.json --logs
-```
-
-> **Run from inside this directory.** Every `export_params` entry
-> (`"out/nascar_monthly_schedule.ndjson"`, etc.) is CWD-relative, not
-> config-dir-relative. Running `incorporator fjord
-> examples/09-nascar-fantasy-fjord/pipeline.json` from the repo root
-> silently writes to `<repo-root>/out/` instead.
->
-> **One-shot, not a daemon.** Every `stream_params` entry sets
-> `"refresh_params": null` and the config declares no top-level
-> `refresh_interval` / `export_interval`, so the pipeline seeds all eight
-> sources once, outflows once, and exits — matching
-> `nascar_fantasy.py`'s "one-shot test run" design (see the commented-out
-> production `refresh_interval` block in that file for the cadences a
-> live daemon would use: `Driver` 1 h, `Race` 10 min, the three standings
-> 5 min each, outflow every 60 s).
->
-> **`Driver.Manufacturer` is wired identically in both forms.** The JSON
-> config's `Driver` entry carries
-> `"Manufacturer": "calc(mfg_from_logo_url, 'Manufacturer', default='Unknown', target_type=str)"`
-> — the same converter `nascar_fantasy.py` calls directly. The token
-> resolver's public-name allow-list (built from `inflow.py`'s exports)
-> excludes any identifier starting with an underscore, which is why the
-> helper in `inflow.py` is named `mfg_from_logo_url` (no leading
-> underscore) rather than a private name.
-
-**3. Docker** — reasoned from the `Dockerfile`/`docker-compose.yml`, **NOT
-run or verified** (no Docker available in this pass — confirm before
-relying on it):
-
-```bash
-# Reasoned, unverified.
-docker run --rm \
-  --user "$(id -u):$(id -g)" \
-  -v "$(pwd)/examples/09-nascar-fantasy-fjord:/app/config:ro" \
-  -v "$(pwd)/examples/09-nascar-fantasy-fjord/out:/app/out" \
-  incorporator:latest \
-  fjord /app/config/pipeline.json --logs
-```
-
-The image's `WORKDIR` is `/app`, and every `export_params.file_path` is
-CWD-relative (never rebased against the config's directory) — so
-`pipeline.json`'s `"out/..."` targets resolve to `/app/out/...` inside
-the container. The mount target must therefore be `/app/out`, not one of
-the three paths the `Dockerfile` prepares (`/app/config`, `/app/data`,
-`/app/logs`). Mounting the whole example directory read-only at
-`/app/config` carries `pipeline.json`, `inflow.py`, `outflow.py`, and
-`fixtures/league_teams.json` together in one mount — no `cp`-into-`config/`
-staging step needed, unlike an earlier revision of this section that
-predated bare, config-dir-relative sidecar refs. `--user` lets the
-non-root `appuser` write to the separately-mounted `/app/out`.
-`docker compose up -d` isn't used here — `docker-compose.yml`'s volumes
-anchor at repo-root `./config` / `./data`, not at this tutorial's own
-directory, and editing the compose file is out of scope for this pass.
 
 ---
 
