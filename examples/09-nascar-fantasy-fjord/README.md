@@ -79,11 +79,9 @@ The output directory (`out/`) is created at runtime; you don't need to make it.
 
 ## 🔧 Step 1: The Roster Fixture
 
-`fixtures/league_teams.json` is the **only** piece of business logic that isn't either an API or framework wiring — it's the league commissioner's source of truth.  Eight teams, each with a roster of 8 drivers (1 Truck pick, 1 Busch pick, 6 Cup picks).  Lay it down verbatim:
+`fixtures/league_teams.json` is the **only** piece of business logic that isn't either an API or framework wiring — it's the league commissioner's source of truth.  Eight teams, each with a roster of 8 drivers (1 Truck pick, 1 Busch pick, 6 Cup picks).  Here's the shape (first team shown; all eight ship in the file):
 
-```bash
-mkdir -p examples/09-nascar-fantasy-fjord/fixtures
-cat > examples/09-nascar-fantasy-fjord/fixtures/league_teams.json <<'EOF'
+```json
 [
   {
     "team_id": "Queen",
@@ -97,101 +95,11 @@ cat > examples/09-nascar-fantasy-fjord/fixtures/league_teams.json <<'EOF'
       {"series_id": 1, "driver_id": 3859},
       {"series_id": 1, "driver_id": 4481}
     ]
-  },
-  {
-    "team_id": "Intim'tor",
-    "roster": [
-      {"series_id": 3, "driver_id": 4312},
-      {"series_id": 2, "driver_id": 34},
-      {"series_id": 1, "driver_id": 4030},
-      {"series_id": 1, "driver_id": 4023},
-      {"series_id": 1, "driver_id": 3989},
-      {"series_id": 1, "driver_id": 4153},
-      {"series_id": 1, "driver_id": 4065},
-      {"series_id": 1, "driver_id": 4481}
-    ]
-  },
-  {
-    "team_id": "WonderBoy",
-    "roster": [
-      {"series_id": 3, "driver_id": 4235},
-      {"series_id": 2, "driver_id": 4133},
-      {"series_id": 1, "driver_id": 4153},
-      {"series_id": 1, "driver_id": 4030},
-      {"series_id": 1, "driver_id": 1816},
-      {"series_id": 1, "driver_id": 4065},
-      {"series_id": 1, "driver_id": 3859},
-      {"series_id": 1, "driver_id": 4481}
-    ]
-  },
-  {
-    "team_id": "AlabamaG",
-    "roster": [
-      {"series_id": 3, "driver_id": 4446},
-      {"series_id": 2, "driver_id": 34},
-      {"series_id": 1, "driver_id": 4030},
-      {"series_id": 1, "driver_id": 454},
-      {"series_id": 1, "driver_id": 4023},
-      {"series_id": 1, "driver_id": 4153},
-      {"series_id": 1, "driver_id": 4065},
-      {"series_id": 1, "driver_id": 4481}
-    ]
-  },
-  {
-    "team_id": "Jaws",
-    "roster": [
-      {"series_id": 3, "driver_id": 4446},
-      {"series_id": 2, "driver_id": 34},
-      {"series_id": 1, "driver_id": 4065},
-      {"series_id": 1, "driver_id": 4030},
-      {"series_id": 1, "driver_id": 4153},
-      {"series_id": 1, "driver_id": 3859},
-      {"series_id": 1, "driver_id": 4001},
-      {"series_id": 1, "driver_id": 4481}
-    ]
-  },
-  {
-    "team_id": "Seven",
-    "roster": [
-      {"series_id": 3, "driver_id": 4235},
-      {"series_id": 2, "driver_id": 4133},
-      {"series_id": 1, "driver_id": 1816},
-      {"series_id": 1, "driver_id": 454},
-      {"series_id": 1, "driver_id": 4062},
-      {"series_id": 1, "driver_id": 1361},
-      {"series_id": 1, "driver_id": 3859},
-      {"series_id": 1, "driver_id": 4481}
-    ]
-  },
-  {
-    "team_id": "Cale",
-    "roster": [
-      {"series_id": 3, "driver_id": 4427},
-      {"series_id": 2, "driver_id": 4133},
-      {"series_id": 1, "driver_id": 4023},
-      {"series_id": 1, "driver_id": 4001},
-      {"series_id": 1, "driver_id": 4153},
-      {"series_id": 1, "driver_id": 4030},
-      {"series_id": 1, "driver_id": 4065},
-      {"series_id": 1, "driver_id": 4481}
-    ]
-  },
-  {
-    "team_id": "Confused",
-    "roster": [
-      {"series_id": 3, "driver_id": 4235},
-      {"series_id": 2, "driver_id": 34},
-      {"series_id": 1, "driver_id": 4023},
-      {"series_id": 1, "driver_id": 3989},
-      {"series_id": 1, "driver_id": 4062},
-      {"series_id": 1, "driver_id": 4153},
-      {"series_id": 1, "driver_id": 4469},
-      {"series_id": 1, "driver_id": 4481}
-    ]
   }
 ]
-EOF
 ```
+
+> The full file is [`fixtures/league_teams.json`](fixtures/league_teams.json) (106 lines, 8 teams) — this walkthrough excerpts one team to show the shape.
 
 **Schema rationale.**  Each team has a `team_id` (used as the registry key — `inc_code=team_id` in the driver script) and a `roster` array.  Each roster row is a `(series_id, driver_id)` pair where `series_id` is `1` (Cup), `2` (Busch), or `3` (Truck) and `driver_id` joins to `Driver.Nascar_Driver_ID`.  The outflow uses `series_id` to pick which Standings registry to look the driver up in, and `driver_id` to pull the live `Driver` instance for hometown / team / manufacturer.
 
@@ -206,19 +114,13 @@ The ETL lives in two sibling sidecars, split by **direction of data flow** so th
 
 The runner points `inflow=` at `inflow.py` and `outflow=` at `outflow.py`.  A converter used in a `conv_dict` is incoming-data manipulation even though the runner imports it directly — so it belongs in `inflow.py`, not `outflow.py`.
 
-Lay both files down whole; we'll walk them in chunks below.
+Both files ship next to this README; we'll walk the parts that matter below.
 
 ### 2a. Source classes
 
 Each fjord source needs its own subclass so the Standings classes don't share `inc_dict`.  `LeagueRoster` is the only local-file source — fed by a hand-curated JSON file, demonstrating that fjord mixes API + filesystem sources without any special casing.  `CupOwnerStanding` is the eighth source — see the Kyle Busch section below.
 
 ```python
-"""Outflow sidecar for the NASCAR fantasy-league fjord pipeline."""
-
-from collections import Counter, defaultdict
-from datetime import datetime
-from typing import Any
-
 from incorporator import Incorporator
 
 
@@ -229,24 +131,8 @@ class Track(Incorporator):
     pass
 
 
-class Driver(Incorporator):
-    pass
-
-
-class Race(Incorporator):
-    pass
-
-
-class CupStanding(Incorporator):
-    pass
-
-
-class BuschStanding(Incorporator):
-    pass
-
-
-class TruckStanding(Incorporator):
-    pass
+# Driver, Race, CupStanding, BuschStanding, and TruckStanding follow the
+# identical bare-``pass`` shape as Track above.
 
 
 class LeagueRoster(Incorporator):
@@ -256,16 +142,27 @@ class LeagueRoster(Incorporator):
 
 
 class CupOwnerStanding(Incorporator):
-    """Owner-entry standings for the Cup series.  Keyed by vehicle_number
-    (string: '133', '3', '33') — see the Kyle Busch / owner-seat section."""
+    """Owner-entry standings for the Cup series.
+
+    Keyed by ``vehicle_number`` (a string: '133', '3', '33', …) rather than
+    ``owner_id`` because owner_id 553 repeats across all three RCR entries
+    (#3, #133, #33).  The RCR #133 row (position 27, 237 pts) is the
+    owner-seat substitute for Kyle Busch (driver_id 454) after his
+    mid-season death.  The car was renumbered from #33 to #133 at the
+    same time.
+    """
 
 
-# Owner-seat routing map: driver_id → vehicle_number (string).
-# The per-pick scoring loop reads this at O(1) to route picks for
-# deceased / released Cup drivers to CupOwnerStanding instead of CupStanding.
+# ── Deceased-driver owner-seat routing ────────────────────────────
+# Map driver_id → vehicle_number (string) for picks that must score
+# from the owner standings instead of the driver standings.
+# Adding a new entry here is sufficient to route any future deceased /
+# released driver; no other code changes are required.
 # Scoring policy only — conv_dict lives inline in the runner (nascar_fantasy.py).
 OWNER_SCORED: dict[int, str] = {454: "133"}
 ```
+
+> The full file is [`outflow.py`](outflow.py) (~340 lines) — this walkthrough excerpts the parts that matter.
 
 > ⚠️ **Do not pre-declare fields on these classes.**  The framework builds Pydantic schemas dynamically from the incoming JSON; if you stub `track_id: int = None` on `Track`, fjord stops inferring and you lose half your columns to silent drops.  The classes are deliberately bare — source classes are seeded by dynamic schema inference from the incoming JSON, so a bare `pass` body is exactly right here.  (The framework does emit a one-time WARNING for a bare *output* class — see the §2g callout — but that path is the derived-class emit, not source seeding.)
 
@@ -419,38 +316,14 @@ def _speed_or_none(raw: Any) -> float | None:
 
 ### 2f. Helpers
 
-Two small string-composition helpers used by the outflow.  Pure functions, no state.
+Two small string-composition helpers used by the outflow.  Pure functions, no state.  `_track_loc` shows the pattern; `_hometown` follows the identical shape for a driver's hometown fields (minus the null-object guard, since a resolved `Driver` instance always exists by this point):
 
 ```python
-# ── Helpers ────────────────────────────────────────────────────────
-
-
-def _hometown(driver: Any) -> str:
-    """Compose ``City, ST`` from the driver's hometown fields, or
-    ``Unknown`` if either piece is missing.
-
-    Hometown_City / Hometown_State are coerced to plain strings at
-    Driver's own build time (inc(str, default="") in nascar_fantasy.py)
-    -- no getattr(..., "") or "" guard needed here.  The ``city and
-    state`` composition is business logic (how to format two strings
-    together), not a null guard, so it stays.
-    """
-    city = driver.Hometown_City.strip()
-    state = driver.Hometown_State.strip()
-    if city and state:
-        return f"{city}, {state}"
-    return city or state or "Unknown"
-
-
 def _track_loc(track: Any) -> str:
-    """Compose ``City, ST`` for a track.
+    """Compose ``City, ST`` for a track, or ``Unknown``.
 
-    ``track`` itself can be None (a Race whose Track FK didn't resolve)
-    -- that "is there a related object at all" check is a legitimate
-    null-object guard on the join result, not a field-coercion guard,
-    and stays.  Track's city/state fields are not build-time coerced
-    (tracks.json ships them as plain strings already), so the local
-    ``or ""`` guard remains as defense against a genuinely missing key.
+    ``track`` can be ``None`` (a Race whose Track FK didn't resolve) —
+    that's a null-object guard on the join result, not a coercion gap.
     """
     if track is None:
         return "Unknown"
@@ -461,6 +334,8 @@ def _track_loc(track: Any) -> str:
     return city or state or "Unknown"
 ```
 
+> The full file is [`outflow.py`](outflow.py) (~340 lines) — this walkthrough excerpts the parts that matter.
+
 ### 2g. Outflow — three derived views in one function
 
 `outflow(state)` returns `dict[ClassName, list[dict]]` and fjord builds **one dynamic Incorporator subclass per dict key** at first emit.  This is the multi-output contract: three keys in the return → three derived classes → three NDJSON files.
@@ -470,9 +345,6 @@ def _track_loc(track: Any) -> str:
 The function reads from `state["Driver"]`, `state["Race"]`, `state["LeagueRoster"]`, and the three Standings registries.  If any of the three required dependencies are missing (first wave hasn't completed yet), return `{}` to skip the emit.
 
 ```python
-# ── Outflow — three derived views ──────────────────────────────────
-
-
 def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Compute three derived views from the fused state.  Each dict
     key becomes a derived Incorporator subclass and is written to its
@@ -483,20 +355,9 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     league = state.get("LeagueRoster")
     if drivers is None or races is None or league is None:
         return {}
-
-    # CupOwnerStanding is an optional eighth source — if it fails to load the
-    # outflow degrades gracefully (owner-scored picks score 0 pts) rather than
-    # aborting.  The owner-seat branch in View 2 reads this handle.
-    owner_standings = state.get("CupOwnerStanding")
-
-    points_standings = {
-        1: state.get("CupStanding"),
-        2: state.get("BuschStanding"),
-        3: state.get("TruckStanding"),
-    }
-
-    now = datetime.now()
 ```
+
+`owner_standings` (the optional eighth `CupOwnerStanding` source, degrading gracefully if absent) and `points_standings` (a `{series_id: Standing_registry}` lookup dict for `CupStanding`/`BuschStanding`/`TruckStanding`) are also pulled from `state` here — see [`outflow.py`](outflow.py) for the exact lines.
 
 #### View 1 — `MonthlyRaceSchedule`
 
@@ -560,19 +421,14 @@ Per-team scoreboard.  For each team's roster pick `{series_id, driver_id}`:
 `.inc_dict.get(key)` is the framework's O(1) primary-key lookup on the registry — every `IncorporatorList` exposes it.  This is the honest read-time boundary described above: **both** lookups here are joins whose target dataset can't be pinned to one `conv_dict` entry, so both stay read-time — everything downstream of them is a plain attribute read.
 
 ```python
-    # ════════════════════════════════════════════════════════════════
-    # View 2 — FantasyTeam
-    # ════════════════════════════════════════════════════════════════
-    # This roster -> Driver lookup stays read-time: LeagueRoster.roster is
-    # a list of {series_id, driver_id} dicts (not a flat FK field), and
-    # Driver seeds in the same tier as LeagueRoster with no ordering
-    # guarantee between tier-0 siblings -- link_to() can't fan out a
-    # nested list-of-dicts at build time, so this is the honest boundary.
+    # Materialise each team's roster by series, sorted by car number.
+    # roster -> Driver stays read-time: LeagueRoster.roster is a list of
+    # {series_id, driver_id} dicts, not a flat FK field link_to() can join.
     league_teams: dict[str, dict[int, list[Any]]] = {}
     for team in league:
         team_cd = team.team_id
         league_teams[team_cd] = {}
-        for pick in (team.roster or []):
+        for pick in team.roster or []:
             sid = int(getattr(pick, "series_id", 0))
             did = int(getattr(pick, "driver_id", 0))
             driver_obj = drivers.inc_dict.get(did)
@@ -581,97 +437,13 @@ Per-team scoreboard.  For each team's roster pick `{series_id, driver_id}`:
         for sid in (1, 2, 3):
             if sid in league_teams[team_cd]:
                 league_teams[team_cd][sid].sort(key=lambda d: int(d.Badge))
-
-    fantasy: list[dict[str, Any]] = []
-    for team_cd, roster in league_teams.items():
-        team_obj: dict[str, Any] = {
-            "team_id":          team_cd,
-            "roster":           [],
-            "points":           [],
-            "manufacturer_mix": {},
-            "total_wins":       0,
-            "total_score":      0,
-        }
-        team_score = 0
-        per_series: dict[int, int] = {}
-        mfg_counter: Counter = Counter()
-        total_wins = 0
-
-        for series_id, series_name in enumerate(_SERIES_LIST, start=1):
-            per_series[series_id] = 0
-            if series_id not in roster:
-                continue
-            series_cls = points_standings.get(series_id)
-            for car_idx, driver in enumerate(roster[series_id], start=1):
-                did = int(driver.inc_code)
-                # Conditional join whose TARGET dataset is chosen per-row at
-                # runtime (series_id picks Cup/Busch/Truck; OWNER_SCORED
-                # membership picks Owner vs Cup) -- link_to() binds to ONE
-                # dataset per conv_dict entry and can't branch between three
-                # datasets on another field's runtime value.  Stays read-time.
-                if did in OWNER_SCORED and series_id == 1:
-                    owner_vnum = OWNER_SCORED[did]
-                    stnd = owner_standings.inc_dict.get(owner_vnum) if owner_standings else None
-                    owner_seat: str | None = owner_vnum
-                else:
-                    stnd = series_cls.inc_dict.get(driver.inc_code) if series_cls else None
-                    owner_seat = None
-
-                # stnd itself is a null-object guard on the join result (a
-                # driver with no standings row) -- every field READ off
-                # stnd below is a plain attribute because the Standing
-                # classes' own conv_dict (nascar_fantasy.py) coerced them.
-                pts = stnd.points if stnd else 0
-                wins = stnd.wins if stnd else 0
-                per_series[series_id] += pts
-                total_wins += wins
-
-                mfg = (stnd.manufacturer if stnd and owner_seat is None else "") or driver.Manufacturer or "Unknown"
-                mfg = mfg.strip() or "Unknown"
-                mfg_counter[mfg] += 1
-
-                driver_name = getattr(driver, "inc_name", "Unknown").strip()
-                row: dict[str, Any] = {
-                    "series":       series_name,
-                    "car_idx":      car_idx,
-                    "name":         f"{driver_name} [owner seat: RCR #{owner_seat}]" if owner_seat else driver_name,
-                    "car":          driver.Badge,
-                    "team":         driver.Team.strip() or "Unknown",
-                    "manufacturer": mfg,
-                    "hometown":     _hometown(driver),
-                    "rank":         stnd.position if stnd else None,
-                    "wins":         wins,
-                    "t10":          stnd.top_10 if stnd else 0,
-                    "top_5":        stnd.top_5 if stnd else 0,
-                    # laps_led is not tracked in owner standings; emit 0.
-                    "laps_led":     stnd.laps_led if stnd and owner_seat is None else 0,
-                    "points":       pts,
-                    # CupOwnerStanding doesn't carry delta_leader either --
-                    # same honest-boundary reason as laps_led above.
-                    "points_back":  abs(stnd.delta_leader) if stnd and owner_seat is None else None,
-                }
-                if owner_seat is not None:
-                    row["owner_seat"] = owner_seat
-                team_obj["roster"].append(row)
-            team_score += per_series[series_id]
-
-        for series_id, series_name in enumerate(_SERIES_LIST, start=1):
-            pts = per_series[series_id]
-            team_obj["points"].append({
-                "series":     series_name,
-                "points":     pts,
-                "percentage": round(pts / team_score, 4) if team_score else 0,
-            })
-        team_obj["points"].append({"series": "GRAND TOTAL", "points": team_score, "percentage": 1.0})
-        team_obj["total_score"] = team_score
-        team_obj["total_wins"] = total_wins
-        team_obj["manufacturer_mix"] = dict(mfg_counter.most_common())
-        fantasy.append(team_obj)
-
-    fantasy.sort(key=lambda t: -t["total_score"])
 ```
 
-Every field read off `stnd` or `driver` above is a plain attribute — no `getattr(..., default) or fallback` — because `nascar_fantasy.py`'s `conv_dict`s guarantee they're always present.  Only `stnd` itself (does this driver have a standings row at all?) and `owner_seat is None` (is this an owner-seated pick, whose source class lacks certain fields?) remain as guards — both null-object / cross-source-shape checks, not coercion gaps.
+From here the scoring loop walks each team's `league_teams` entries series-by-series, looks up each driver's Standings row (or, for an owner-seated pick, the `CupOwnerStanding` row instead — the same `OWNER_SCORED` branch walked in the **Kyle Busch** section below), and builds one `row` dict per driver — its exact shape is the same one shown in **Output 2**'s sample JSON above.  Team totals (`total_score`, `total_wins`, `manufacturer_mix`) accumulate alongside the per-driver rows; the finished team list sorts by descending `total_score`.
+
+> The full file is [`outflow.py`](outflow.py) (~340 lines) — this walkthrough excerpts the parts that matter.
+
+Every field read off `stnd` or `driver` in the full scoring loop is a plain attribute — no `getattr(..., default) or fallback` — because `nascar_fantasy.py`'s `conv_dict`s guarantee they're always present.  Only `stnd` itself (does this driver have a standings row at all?) and `owner_seat is None` (is this an owner-seated pick, whose source class lacks certain fields?) remain as guards in `outflow.py` — both null-object / cross-source-shape checks, not coercion gaps.
 
 #### View 3 — `ManufacturerLeaderboard`
 
@@ -723,307 +495,168 @@ The three dict keys land verbatim as fjord-built class names and match the keys 
 
 `nascar_fantasy.py` is the runner.  It declares the eight sources (seven API + one local file), points `inflow=` at `inflow.py` and `outflow=` at `outflow.py`, and configures the three export targets.  The `Race` entry carries `depends_on=["Track", "Driver"]`, which opts the seed phase into tiered-parallel mode: the seven co-equal tier-0 sources fire concurrently, and `Race` seeds in tier 1 once those registries are ready.  `refresh_params=None` on every source = single-wave test mode; with no `export_interval` set, the pipeline exits cleanly after one outflow wave.
 
+> The full file is [`nascar_fantasy.py`](nascar_fantasy.py) (330 lines) — this walkthrough excerpts the parts that matter.  The module's own ~30-line docstring (enumerating all three advanced fjord capabilities this tutorial demonstrates) is worth reading directly in the file rather than duplicated here.
+
+Three exclusion lists (`_OWNER_EXCL`, `_STANDINGS_EXCL`, `_DRIVER_EXCL`) drop noisy API fields before `conv_dict` runs — see the file for the full lists.  The sibling-sidecar import idiom (`sys.path.insert(0, str(HERE))` before `from inflow import ...` / `from outflow import ...`) is also in the file, unchanged from a standard Python script layout.
+
+Static reference data that never refreshes:
+
 ```python
-"""NASCAR fantasy league as a multi-output fjord pipeline."""
-
-import asyncio
-import sys
-from datetime import datetime
-from pathlib import Path
-
-from incorporator import Incorporator, calc, inc
-
-HERE = Path(__file__).resolve().parent
-DATA = HERE / "out"  # examples/09-nascar-fantasy-fjord/out/
-
-# Sibling sidecar import — Python only auto-adds HERE to sys.path for the
-# bare ``python <script>`` invocation; explicit insert covers ``python -m``
-# and other launch paths.
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-
-from inflow import mfg_from_logo_url  # noqa: E402
-from outflow import (  # noqa: E402
-    BuschStanding,
-    CupOwnerStanding,
-    CupStanding,
-    Driver,
-    LeagueRoster,
-    Race,
-    Track,
-    TruckStanding,
-)
-
-CURRENT_YEAR = datetime.now().year
-CFC_BASE = "https://cf.nascar.com/cacher"
-PROD_BASE = f"https://cf.nascar.com/data/cacher/production/{CURRENT_YEAR}"
-STANDINGS_BASE = "racinginsights-points-feed.json"
-
-# Owner-standings exclusion list — drop the redundant name-component
-# fields; ``owner_name`` is already the ``inc_name`` and is sufficient.
-_OWNER_EXCL = ["owner_first_name", "owner_last_name", "owner_suffix"]
-
-# Standings exclusion list — drop only the genuinely-noisy fields.
-# Keep ``position``, ``top_5``, ``laps_led``, ``delta_leader``,
-# ``poles``, ``starts``, ``manufacturer``, and ``playoff_eligible``:
-# FantasyTeam scoring and ManufacturerLeaderboard both need them.
-_STANDINGS_EXCL = [
-    "is_clinch",
-    "driver_first_name",
-    "driver_last_name",
-    "driver_suffix",
-    "playoff_stage_wins",
-]
-# Driver exclusion list — keep ``Manufacturer``, ``Hometown_City``,
-# ``Hometown_State`` (used by the enriched FantasyTeam roster).
-_DRIVER_EXCL = [
-    "Series_Logo",
-    "Short_Name",
-    "Description",
-    "Hobbies",
-    "Children",
-    "Residing_City",
-    "Residing_State",
-    "Residing_Country",
-    "Image_Transparent",
-    "SecondaryImage",
-    "Career_Stats",
-    "Age",
-    "Rank",
-    "Points",
-    "Points_Behind",
-    "No_Wins",
-    "Poles",
-    "Top5",
-    "Top10",
-    "Laps_Led",
-    "Stage_Wins",
-    "Playoff_Points",
-    "Playoff_Rank",
-    "Integrated_Sponsor_Name",
-    "Integrated_Sponsor",
-    "Integrated_Sponsor_URL",
-    "Silly_Season_Change",
-    "Silly_Season_Change_Description",
-    "Driver_Post_Status",
-    "Driver_Part_Time",
-]
-
-
-async def main() -> None:
-    print("Initiating NASCAR Data Gateway (fjord)...\n")
-    DATA.mkdir(exist_ok=True)
-
-    async for wave in Incorporator.fjord(
-        stream_params=[
-            # ── Static reference data — never refresh ──
-            {
-                "cls": Track,
-                "incorp_params": {
-                    "inc_url": f"{CFC_BASE}/tracks.json",
-                    "rec_path": "items",
-                    "inc_code": "track_id",
-                    "inc_name": "track_name",
-                    "conv_dict": {
-                        "track_type": inc(str, default="Unknown"),
-                        "length": inc(float, default=None),
-                    },
-                },
-                "refresh_params": None,  # tracks never change
-            },
-            # ── Drivers refresh occasionally ──
-            {
-                "cls": Driver,
-                "incorp_params": {
-                    "inc_url": f"{CFC_BASE}/drivers.json",
-                    "rec_path": "response",
-                    "inc_code": "Nascar_Driver_ID",
-                    "inc_name": "Full_Name",
-                    "excl_lst": _DRIVER_EXCL,
-                    "conv_dict": {
-                        # drivers.json carries Manufacturer as a logo-image URL
-                        # (e.g. 'https://.../Chevrolet_2025-330x140.png').  Parse
-                        # the make name from the URL basename so that owner-seat
-                        # fallback in outflow.py yields a clean text string.
-                        # Empty Manufacturer fields are handled by is_garbage_value
-                        # before the callable runs and land as default='Unknown'.
-                        "Manufacturer": calc(mfg_from_logo_url, "Manufacturer", default="Unknown", target_type=str),
-                        "Hometown_City": inc(str, default=""),
-                        "Hometown_State": inc(str, default=""),
-                        "Team": inc(str, default=""),
-                        # Badge is a numeric-string car number ("5", "8") in
-                        # the raw feed; keep the "0" default numeric-string
-                        # (not "N/A") so outflow.py's sort-by-car-number
-                        # int(driver.Badge) never breaks on a missing badge.
-                        "Badge": inc(str, default="0"),
-                    },
-                },
-                "refresh_params": None,
-            },
-            # ── Race schedule — depends on Track + Driver via inflow ──
-            # depends_on enables tiered-parallel seed: Track + Driver +
-            # the three Standings + LeagueRoster all fire concurrently in
-            # tier 0; Race fires in tier 1 once its peers' registries are
-            # available for link_to() resolution.
-            {
-                "cls": Race,
-                "incorp_params": {
-                    "inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/race_list_basic.json",
-                    "rec_path": "series_1",
-                    "inc_code": "race_id",
-                    "inc_name": "race_name",
-                    "excl_lst": ["schedule", "track_name"],
-                    "name_chg": [("track_id", "track")],
-                },
-                "depends_on": ["Track", "Driver"],
-                "refresh_params": None,
-            },
-            # ── Live standings, one source per series ──
-            {
-                "cls": CupStanding,
-                "incorp_params": {
-                    "inc_url": f"{PROD_BASE}/1/{STANDINGS_BASE}",
-                    "inc_code": "driver_id",
-                    "inc_name": "driver_name",
-                    "excl_lst": _STANDINGS_EXCL,
-                    "conv_dict": {
-                        "points": inc(int, default=0),
-                        "wins": inc(int, default=0),
-                        "top_10": inc(int, default=0),
-                        "top_5": inc(int, default=0),
-                        "laps_led": inc(int, default=0),
-                        "position": inc(int, default=0),
-                        "delta_leader": inc(int, default=0),
-                        "manufacturer": inc(str, default=""),
-                        "playoff_eligible": inc(bool, default=False),
-                    },
-                },
-                "refresh_params": None,
-            },
-            {
-                "cls": BuschStanding,
-                "incorp_params": {
-                    "inc_url": f"{PROD_BASE}/2/{STANDINGS_BASE}",
-                    "inc_code": "driver_id",
-                    "inc_name": "driver_name",
-                    "excl_lst": _STANDINGS_EXCL,
-                    "conv_dict": {
-                        "points": inc(int, default=0),
-                        "wins": inc(int, default=0),
-                        "top_10": inc(int, default=0),
-                        "top_5": inc(int, default=0),
-                        "laps_led": inc(int, default=0),
-                        "position": inc(int, default=0),
-                        "delta_leader": inc(int, default=0),
-                        "manufacturer": inc(str, default=""),
-                        "playoff_eligible": inc(bool, default=False),
-                    },
-                },
-                "refresh_params": None,
-            },
-            {
-                "cls": TruckStanding,
-                "incorp_params": {
-                    "inc_url": f"{PROD_BASE}/3/{STANDINGS_BASE}",
-                    "inc_code": "driver_id",
-                    "inc_name": "driver_name",
-                    "excl_lst": _STANDINGS_EXCL,
-                    "conv_dict": {
-                        "points": inc(int, default=0),
-                        "wins": inc(int, default=0),
-                        "top_10": inc(int, default=0),
-                        "top_5": inc(int, default=0),
-                        "laps_led": inc(int, default=0),
-                        "position": inc(int, default=0),
-                        "delta_leader": inc(int, default=0),
-                        "manufacturer": inc(str, default=""),
-                        "playoff_eligible": inc(bool, default=False),
-                    },
-                },
-                "refresh_params": None,
-            },
-            # ── Owner-entry standings — Cup series ──
-            # Keyed by vehicle_number (string: '133', '3', '33') rather
-            # than owner_id because owner_id 553 repeats across all three
-            # RCR entries.  Used by outflow.OWNER_SCORED to score roster
-            # spots where a deceased/released Cup driver's pick is routed
-            # to the team's owner-entry points instead.
-            {
-                "cls": CupOwnerStanding,
-                "incorp_params": {
-                    "inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/1/final/1-owners-points.json",
-                    "inc_code": "vehicle_number",
-                    "inc_name": "owner_name",
-                    "excl_lst": _OWNER_EXCL,
-                    "conv_dict": {
-                        "points": inc(int, default=0),
-                        "wins": inc(int, default=0),
-                        "top_5": inc(int, default=0),
-                        "top_10": inc(int, default=0),
-                        "starts": inc(int, default=0),
-                        "position": inc(int, default=0),
-                        "dnf": inc(int, default=0),
-                        "winnings": inc(float, default=0),
-                    },
-                },
-                "refresh_params": None,
-            },
-            # ── Local-file source: the fantasy league rosters ──
-            # ``inc_file=`` routes through the same handler dispatch
-            # as the API sources above — JSON format is inferred from
-            # the file extension.  Rosters rarely change, so refresh
-            # is opted out.
-            {
-                "cls": LeagueRoster,
-                "incorp_params": {
-                    "inc_file": str(HERE / "fixtures/league_teams.json"),
-                    "inc_code": "team_id",
-                    "inc_name": "team_id",
-                },
-                "refresh_params": None,
-            },
-        ],
-        # The state-aware inflow sidecar (inflow.py) and output sidecar (outflow.py).
-        inflow=str(HERE / "inflow.py"),
-        outflow=str(HERE / "outflow.py"),
-        # Per-class export_params — one entry per dict-key returned
-        # by outflow(state).  Detection: nested dict shape = multi-output.
-        export_params={
-            "MonthlyRaceSchedule": {"file_path": str(DATA / "nascar_monthly_schedule.ndjson")},
-            "FantasyTeam": {"file_path": str(DATA / "nascar_fantasy_scoreboard.ndjson")},
-            "ManufacturerLeaderboard": {"file_path": str(DATA / "nascar_manufacturer_leaderboard.ndjson")},
+{
+    "cls": Track,
+    "incorp_params": {
+        "inc_url": f"{CFC_BASE}/tracks.json",
+        "rec_path": "items",
+        "inc_code": "track_id",
+        "inc_name": "track_name",
+        "conv_dict": {
+            "track_type": inc(str, default="Unknown"),
+            "length": inc(float, default=None),
         },
-        # This is a one-shot test run — every source has
-        # ``refresh_params=None`` above so no refresh daemon spawns
-        # and the pipeline exits after a single outflow wave.
-        #
-        # For a production long-running daemon, drop the
-        # ``refresh_params=None`` lines and uncomment the cadence
-        # block below (per-class dict by name).
-        #
-        # refresh_interval={
-        #     "Driver":        3600,   # 1 h
-        #     "Race":          600,    # 10 min (pole finalises Sat)
-        #     "CupStanding":   300,    # 5 min on race day
-        #     "BuschStanding": 300,
-        #     "TruckStanding": 300,
-        # },
-        # export_interval=60,
-    ):
-        op = wave.operation
-        if wave.failed_sources:
-            print(f"WARN  {op:35s} chunk {wave.chunk_index}: {wave.failed_sources}")
-        else:
-            print(f"OK    {op:35s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
+    },
+    "refresh_params": None,  # tracks never change
+},
+```
 
-    print("\nPipeline complete.")
-    print(f"   - {DATA / 'nascar_monthly_schedule.ndjson'}")
-    print(f"   - {DATA / 'nascar_fantasy_scoreboard.ndjson'}")
-    print(f"   - {DATA / 'nascar_manufacturer_leaderboard.ndjson'}")
+`Driver` carries the `calc(mfg_from_logo_url, ...)` wiring already walked in Step 2d above:
 
+```python
+{
+    "cls": Driver,
+    "incorp_params": {
+        "inc_url": f"{CFC_BASE}/drivers.json",
+        "rec_path": "response",
+        "inc_code": "Nascar_Driver_ID",
+        "inc_name": "Full_Name",
+        "excl_lst": _DRIVER_EXCL,
+        "conv_dict": {
+            "Manufacturer": calc(mfg_from_logo_url, "Manufacturer", default="Unknown", target_type=str),
+            "Hometown_City": inc(str, default=""),
+            "Hometown_State": inc(str, default=""),
+            "Team": inc(str, default=""),
+            "Badge": inc(str, default="0"),
+        },
+    },
+    "refresh_params": None,
+},
+```
 
-if __name__ == "__main__":
-    asyncio.run(main())
+`Race` carries `depends_on=["Track", "Driver"]` — the tiered-parallel seed trigger discussed in **The Sources** above:
+
+```python
+{
+    "cls": Race,
+    "incorp_params": {
+        "inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/race_list_basic.json",
+        "rec_path": "series_1",
+        "inc_code": "race_id",
+        "inc_name": "race_name",
+        "excl_lst": ["schedule", "track_name"],
+        "name_chg": [("track_id", "track")],
+    },
+    "depends_on": ["Track", "Driver"],
+    "refresh_params": None,
+},
+```
+
+One `stream_params` entry per Standings series.  `BuschStanding` and `TruckStanding` follow the identical shape, swapping only the series number in the URL and the class name:
+
+```python
+{
+    "cls": CupStanding,
+    "incorp_params": {
+        "inc_url": f"{PROD_BASE}/1/{STANDINGS_BASE}",
+        "inc_code": "driver_id",
+        "inc_name": "driver_name",
+        "excl_lst": _STANDINGS_EXCL,
+        "conv_dict": {
+            "points": inc(int, default=0),
+            "wins": inc(int, default=0),
+            "top_10": inc(int, default=0),
+            "top_5": inc(int, default=0),
+            "laps_led": inc(int, default=0),
+            "position": inc(int, default=0),
+            "delta_leader": inc(int, default=0),
+            "manufacturer": inc(str, default=""),
+            "playoff_eligible": inc(bool, default=False),
+        },
+    },
+    "refresh_params": None,
+},
+```
+
+`CupOwnerStanding` — the eighth source, uniquely shaped and keyed by `vehicle_number` (see the Kyle Busch section below):
+
+```python
+{
+    "cls": CupOwnerStanding,
+    "incorp_params": {
+        "inc_url": f"{CFC_BASE}/{CURRENT_YEAR}/1/final/1-owners-points.json",
+        "inc_code": "vehicle_number",
+        "inc_name": "owner_name",
+        "excl_lst": _OWNER_EXCL,
+        "conv_dict": {
+            "points": inc(int, default=0),
+            "wins": inc(int, default=0),
+            "top_5": inc(int, default=0),
+            "top_10": inc(int, default=0),
+            "starts": inc(int, default=0),
+            "position": inc(int, default=0),
+            "dnf": inc(int, default=0),
+            "winnings": inc(float, default=0),
+        },
+    },
+    "refresh_params": None,
+},
+```
+
+`LeagueRoster` — the file-source demo (API + file source mixing):
+
+```python
+{
+    "cls": LeagueRoster,
+    "incorp_params": {
+        "inc_file": str(HERE / "fixtures/league_teams.json"),
+        "inc_code": "team_id",
+        "inc_name": "team_id",
+    },
+    "refresh_params": None,
+},
+```
+
+The `fjord()` call's `inflow=` / `outflow=` / `export_params=` wiring:
+
+```python
+inflow=str(HERE / "inflow.py"),
+outflow=str(HERE / "outflow.py"),
+export_params={
+    "MonthlyRaceSchedule": {"file_path": str(DATA / "nascar_monthly_schedule.ndjson")},
+    "FantasyTeam": {"file_path": str(DATA / "nascar_fantasy_scoreboard.ndjson")},
+    "ManufacturerLeaderboard": {"file_path": str(DATA / "nascar_manufacturer_leaderboard.ndjson")},
+},
+```
+
+Every source above ships `refresh_params=None` for single-wave test mode; the file's commented-out block shows what a production daemon would uncomment instead:
+
+```python
+# refresh_interval={
+#     "Driver":        3600,   # 1 h
+#     "Race":          600,    # 10 min (pole finalises Sat)
+#     "CupStanding":   300,    # 5 min on race day
+#     "BuschStanding": 300,
+#     "TruckStanding": 300,
+# },
+# export_interval=60,
+```
+
+Each wave prints its own outcome:
+
+```python
+op = wave.operation
+if wave.failed_sources:
+    print(f"WARN  {op:35s} chunk {wave.chunk_index}: {wave.failed_sources}")
+else:
+    print(f"OK    {op:35s} chunk {wave.chunk_index}: {wave.rows_processed} rows")
 ```
 
 Notable wiring:
