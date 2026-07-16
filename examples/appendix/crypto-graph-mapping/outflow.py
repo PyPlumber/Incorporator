@@ -1,23 +1,10 @@
-"""Outflow logic and class definitions for the crypto-graph-mapping Tideweaver.
+"""Outflow logic for the crypto-graph-mapping Tideweaver.
 
-Defines the three source ``Incorporator`` subclasses referenced from
-``watershed.json`` (mirroring ``crypto_graph_mapping.py``'s ``BinanceStat`` /
-``BinanceBook`` / ``CryptoAsset``), the derived ``CryptoLiquidity`` output
-class, and the ``outflow(state)`` function the tail Fjord calls each tick.
-
-``crypto_graph_mapping.py``'s ``main()`` does this exact join at BUILD time
-via ``conv_dict={"stats_usdt": calc(link_to(binance_stats, ...), "symbol"), ...}``
-because it has all three registries in local scope before it constructs
-``CryptoAsset``. A Tideweaver ``parallel`` shape has no such ordering
-guarantee across its three independent source Streams (and no cross-current
-``inflow(state)`` seed hook — that's specific to the legacy ``fjord()``
-daemon's tiered seeding), so this join happens READ-TIME instead, in the
-tail Fjord's ``outflow(state)``, once all three parent snapshots exist. Same
-``link_to`` + ``make_linker`` factory-closure pattern, just invoked directly
-as a plain callable (``Op.__call__``) rather than wired into a ``conv_dict``.
-
-Imported by ``incorporator tideweaver run watershed.json``, so host-throttle
-registration lives here (the Python entry registers it independently too).
+Mirrors ``crypto_graph_mapping.py``'s three source classes plus the derived
+``CryptoLiquidity`` row. Unlike ``main()``'s BUILD-time ``conv_dict`` join,
+``outflow(state)`` here joins READ-TIME once all three parallel Streams
+have parked a snapshot -- host-throttle registration lives here too, since
+the CLI path imports this module directly.
 """
 
 from __future__ import annotations

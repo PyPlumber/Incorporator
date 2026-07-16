@@ -9,15 +9,12 @@ function used by BOTH entry points in this directory:
 Both entry points stay in lockstep because they load the same class
 definitions and the same join logic from this single module.
 
-The three head / middle streams read from local JSON fixtures so the
-example runs without any network access or credentials:
-
-    python examples/appendix/nascar-tideweaver/nascar_tideweaver.py
-    incorporator validate examples/appendix/nascar-tideweaver/watershed.json
-    incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json
+The three head / middle streams read from local JSON fixtures, so the
+example runs without any network access or credentials. See the README's
+"Run it" section for the run commands (both entry forms).
 
 Relative ``inc_file`` paths inside ``watershed.json`` resolve against the
-config file's directory, so these commands work from any directory.
+config file's directory, so the CLI form works from any directory.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -27,10 +24,9 @@ from incorporator import Incorporator
 from incorporator.schema.converters import inc
 
 # Dateless window: watershed.json's "window" references these public names
-# via the "@window_start" / "@window_end" sigil (resolve_tokens, extended
-# with this sidecar's public names by merge_sidecar_extra_names). Fixtures
-# are offline, so a 2-minute window gives the uniform 30s interval 4 ticks --
-# enough for the tail Fjord to flush its append-mode export more than once.
+# via the "@window_start" / "@window_end" sigil. Fixtures are offline, so a
+# 2-minute window gives the uniform 30s interval 4 ticks -- enough for the
+# tail Fjord to flush its append-mode export more than once.
 window_start = datetime.now(timezone.utc)
 window_end = window_start + timedelta(minutes=2)
 

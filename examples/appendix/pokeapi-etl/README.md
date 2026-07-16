@@ -215,51 +215,18 @@ You aren't just ingesting APIs — you are sculpting them. The explicit `inc_chi
 
 ---
 
-## Run it from the CLI
+## Run it
 
-The CLI form reproduces the Python entry's **exact two-phase drill**, not a
-shallow wiring demo — this appendix is outside the numbered tutorial path, so
-it's free to reach for [Tideweaver](../../11-tideweaver/README.md)'s
-`Watershed.chain` shape even though Tideweaver itself is introduced later, in
-Tutorial 11. Three currents, in order:
+```bash
+python examples/appendix/pokeapi-etl/pokeapi_etl_calc.py
+```
 
-1. `nav` (`Stream`) — shallow discovery, all 150 `{name, url}` rows in one
-   `?limit=150&offset=0` call.
-2. `pokemon` (`Stream(parent_current="nav")`) — the T5 drill against `nav`'s
-   parked snapshot; 150 concurrent `/pokemon/{id}/` detail fetches, real
-   `stats`/`types`, reduced the same way as the Python entry.
-3. `export_pokemon` (`Export`) — snapshots `pokemon`'s drilled registry to
-   `out/pokemon.ndjson`. **Required, not cosmetic**:
-   `Stream(parent_current=...)`'s own `export_params` is never consumed by
-   the scheduler, so this third current is the only thing that writes the
-   rows to disk.
-
-See [`inflow.py`](inflow.py) and [`watershed.json`](watershed.json), which
-ship next to the entry script — `inflow.py` now carries the `Nav` / `Pokemon`
-classes, the `calculate_bst` / `format_typing` reducers (kept in sync with
-`pokeapi_etl_calc.py` verbatim), and the `pokeapi.co` host-throttle
-registration. That last one matters: the CLI path imports `inflow.py`,
-never `pokeapi_etl_calc.py`, so `inflow.py` is the only place the 1.5
-req/sec throttle can be registered before 150 concurrent detail requests
-fire.
-
-> **Suspected framework gap — why `nav` fetches one page (`limit=150`), not
-> three (`limit=50` × `call_lim=3`) like the Python entry.** A Tideweaver
-> `Stream` current with no `parent_current` always runs through
-> `cls.stream()` (chunking mode). Chunking mode's `refresh_params` defaults
-> to `{}` whenever the field is omitted — including from a `watershed.json`
-> `Stream` node, which has no way to forward an explicit "no, really, skip
-> refresh" down to `stream()` (`Stream.refresh_params=None`, the field's own
-> default, is indistinguishable from "not set" once it reaches the
-> scheduler). That default `{}` makes `stream()` silently call
-> `cls.refresh()` after every chunk. For a
-> **paginated** chunk, each row was extracted via `rec_path` and carries no
-> per-instance origin URL, so `refresh()` raises and the chunked engine
-> aborts pagination after page 1 — the CLI form would silently cap at 50
-> rows instead of 150. Fetching all 150 in a single unpaginated page
-> sidesteps the bug (no continuation needed) — `inc_code="name"` further
-> ensures the implicit post-chunk refresh re-fetch upserts the same 150 rows
-> in place instead of re-inserting them under new auto-increment keys.
+The same two-phase drill also runs from the CLI via `incorporator
+tideweaver run watershed.json` (see [`watershed.json`](watershed.json) and
+[`inflow.py`](inflow.py)) and in Docker via the mount pattern at
+[../../README.md](../../README.md#running-a-tutorial-in-docker) (Docker:
+not run or verified). Verified live: both forms drill all 150 Pokémon and
+agree on Mewtwo's base stat total (680).
 
 ---
 
@@ -271,69 +238,6 @@ fire.
 | Apply `calc()` reductions in a fjord outflow | [Tutorial 9 — NASCAR Fantasy Fjord](../../09-nascar-fantasy-fjord/README.md) |
 | Stream paginated APIs with custom paginators | [Streaming & Pagination Deep Dive](../../../docs/streaming_and_pagination.md) |
 | Land the reduced output in a warehouse | [Tutorial 3 — Universal Formats](../../03-universal-formats/README.md) |
-
----
-
-## 🐳 Run It From the CLI (+ Docker)
-
-Reference material — three ways to run the exact same two-phase drill, in order.
-
-**1. Python entry** (what every section above walked through — the full
-parent-child drill, ~100 s wall-clock, unchanged):
-
-```bash
-cd examples/appendix/pokeapi-etl
-python pokeapi_etl_calc.py
-```
-
-**2. CLI form** — [`inflow.py`](inflow.py) + [`watershed.json`](watershed.json)
-ship next to the entry script; no inline JSON duplicate here (see it drift
-once, trust it forever).
-
-```bash
-cd examples/appendix/pokeapi-etl
-incorporator validate watershed.json
-incorporator tideweaver run watershed.json
-```
-
-Expect ~100-120 s wall-clock (150 detail requests @ 1.5 req/sec) — that is
-expected, not a hang. Produces `out/pokemon.ndjson` with 150 rows, real
-`base_stat_total` values (Mewtwo = 680), matching the Python entry.
-
-> **Run from inside this directory.** `export_params.file_path`
-> (`"out/pokemon.ndjson"`) is CWD-relative, and `"inflow": "inflow.py"` is
-> config-dir-relative — running
-> `incorporator tideweaver run examples/appendix/pokeapi-etl/watershed.json`
-> from the repo root writes output to `<repo-root>/out/` and would break the
-> sidecar resolution if it were repo-root-relative instead.
->
-> **The window is dateless.** `watershed.json`'s `window` references
-> `@window_start` / `@window_end`, two public `datetime` names defined in
-> `inflow.py` and evaluated fresh at sidecar-import time (a 3-minute span
-> from "now") — no env vars, no editing timestamps before a re-run.
-
-**3. Docker** — reasoned from the `Dockerfile`/`docker-compose.yml`, **NOT
-run or verified** (no Docker available in this pass — confirm before
-relying on it):
-
-```bash
-# Reasoned, unverified.
-docker run --rm \
-  --user "$(id -u):$(id -g)" \
-  -v "$(pwd)/examples/appendix/pokeapi-etl:/app/config:ro" \
-  -v "$(pwd)/examples/appendix/pokeapi-etl/out:/app/out" \
-  incorporator:latest \
-  tideweaver run /app/config/watershed.json
-```
-
-The image's `WORKDIR` is `/app`, and `export_params.file_path` is
-CWD-relative (never rebased against the config's directory) — so
-`watershed.json`'s `"out/pokemon.ndjson"` resolves to `/app/out/...` inside
-the container. The mount target must therefore be `/app/out`, not one of
-the three paths the `Dockerfile` prepares (`/app/config`, `/app/data`,
-`/app/logs`). Because `/app/out` is not one of the pre-`chown`'d
-directories, `--user` overrides to the invoking host user so the non-root
-`appuser` can still write.
 
 ---
 

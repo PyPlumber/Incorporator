@@ -200,38 +200,6 @@ feedback loop closing.
 
 ---
 
-## ▶️ Run
-
-```bash
-cd examples/appendix/mlb-pulse
-python mlb_pulse.py
-```
-
-Or the CLI-declarative form (same diamond, same `outflow.py`, same 15 cards):
-
-```bash
-cd examples/appendix/mlb-pulse
-incorporator tideweaver run watershed.json
-```
-
-Artifacts produced (all under `out/`, gitignored by repo policy):
-
-| File | What |
-|---|---|
-| `out/al_pulse.ndjson` | 15 ranked Pulse Cards, sorted by Power Index descending — the headline deliverable |
-| `logs/MLBPulse_tide.log` | Every yielded `Tide` (fired + no-op) — single-file source for `LoggedTideweaver.get_tides("MLBPulse")` |
-| `logs/MLBPulse_error.log` | Codebase/canal rejects + scheduler events (`watershed_started`/`watershed_completed` + diagnostics) + non-API waves |
-| `logs/MLBPulse_api.log` | URL/internet-traffic errors (`is_url_traffic_error=True`) — rate limits, HTTP errors, timeouts |
-| `logs/MLBPulse_debug.log` | Superset of both error and api files + DEBUG lifecycle events — used by `get_current()` |
-
-Plus console output:
-- Pre-flight architect+test schemas
-- Per-tick scheduler log (which currents fired vs skipped)
-- Post-run architect.tune() hints
-- Final fixed-width leaderboard table
-
----
-
 ## 🧱 File layout
 
 ```
@@ -275,6 +243,40 @@ Matches the [Tutorial 9](../../09-nascar-fantasy-fjord/), [Tutorial 11](../../11
 - **All 30 teams.** Scoped to the American League (15 teams) via `?leagueId=103` to keep the demo runnable in ~30 seconds; the same shape extends to the National League by changing the URL filter to `?leagueId=104`.
 - **Historical comparisons.** Current-season snapshot only.
 - **The `tests/test_tideweaver_routing_diamond.py` companion.** That test runs the same diamond shape with mocked endpoints + assertion-driven correctness checks. This appendix is the live-API counterpart; the test is the regression-prevention counterpart. They're complementary.
+
+---
+
+## Run it
+
+```bash
+cd examples/appendix/mlb-pulse
+python mlb_pulse.py
+```
+
+Or the CLI-declarative form (same diamond, same `outflow.py`, same 15 cards):
+
+```bash
+cd examples/appendix/mlb-pulse
+incorporator tideweaver run watershed.json
+```
+
+Docker: mount pattern at [../../README.md](../../README.md#running-a-tutorial-in-docker) (not run or verified).
+
+Artifacts produced (all under `out/`, gitignored by repo policy):
+
+| File | What |
+|---|---|
+| `out/al_pulse.ndjson` | 15 ranked Pulse Cards, sorted by Power Index descending — the headline deliverable |
+| `logs/MLBPulse_tide.log` | Every yielded `Tide` (fired + no-op) — single-file source for `LoggedTideweaver.get_tides("MLBPulse")` |
+| `logs/MLBPulse_error.log` | Codebase/canal rejects + scheduler events (`watershed_started`/`watershed_completed` + diagnostics) + non-API waves |
+| `logs/MLBPulse_api.log` | URL/internet-traffic errors (`is_url_traffic_error=True`) — rate limits, HTTP errors, timeouts |
+| `logs/MLBPulse_debug.log` | Superset of both error and api files + DEBUG lifecycle events — used by `get_current()` |
+
+Plus console output:
+- Pre-flight architect+test schemas
+- Per-tick scheduler log (which currents fired vs skipped)
+- Post-run architect.tune() hints
+- Final fixed-width leaderboard table
 
 ---
 

@@ -148,108 +148,35 @@ assets.sort(key=lambda a: getattr(a, "market_cap_rank", 0))
 ```
 No nightmare dict lookups — standard Python `.sort()`, `filter()`, and comprehensions across your dynamically mapped graph using dot-notation.
 
----
+### 5. Float typing for `current_price`
 
-## Run it from the CLI
-
-`cls.fjord()` is a genuine unbounded daemon — `incorporator fjord pipeline.json`
-loops forever until Ctrl+C/SIGTERM, which contradicts this appendix's own
-point ("you don't need a daemon... the results printed, then the process
-exits"). The CLI form instead ships a short, bounded [Tideweaver](../../11-tideweaver/README.md)
-`watershed.json` (`shape: "parallel"`) — this appendix is outside the
-numbered tutorial path, so it's free to reach for Tideweaver even though
-Tutorial 11 introduces it later. `incorporator tideweaver run` exits on its
-own once the window's `end` timestamp passes; no daemon, no Ctrl+C needed.
-
-Four currents: three independent Streams (`binance_stats`, `binance_books`,
-`crypto_assets` — no dependency among them, matching `shape: "parallel"`'s
-"N independent pipelines, none waiting on each other") feeding one `Fjord`
-tail (`liquidity`) whose `outflow(state)` performs the exact same `link_to` +
-`make_linker` factory-closure join as `main()` above — just read-time, once
-all three parent snapshots exist, instead of build-time in local scope.
-
-See [`outflow.py`](outflow.py) and [`watershed.json`](watershed.json), which
-ship next to the entry script.
-
-```bash
-cd examples/appendix/crypto-graph-mapping
-incorporator validate watershed.json
-incorporator tideweaver run watershed.json
-```
-
-Produces `out/crypto_liquidity.ndjson` with up to 100 rows, sorted by
-`market_cap_rank` ascending. `usdt_*`/`usdc_*` are legitimately `None` for
-assets not listed on binance.us under that quote currency — real sparse
-data, not a bug.
-
-> **Declare `current_price` as `float` — keep this `inc(float, default=0.0)`
-> line.** CoinGecko returns `current_price` as a raw JSON number whose *type*
-> is inconsistent: a whole-dollar coin like bitcoin arrives as an `int`
-> (`64524`), everything else as a `float` (`0.999`). When the source mixes int
-> and float in one column, pin the type you want in `conv_dict` — here,
-> `float`, so sub-dollar prices (stablecoins, small-caps) keep their cents.
-> Leave it out and a re-read coerces the column to that first-seen `int` and
-> the fractional prices round to whole dollars (stablecoins → `0.0`). Binance's
-> numeric fields arrive as JSON strings, so they never need this.
+CoinGecko's `current_price` field arrives with an inconsistent JSON
+number type: whole-dollar coins (`64524`) come back as an `int`, everything
+else (`0.999`) as a `float`. **Keep `"current_price": inc(float,
+default=0.0)`** in the `conv_dict` — pinning the type here is what lets
+sub-dollar prices (stablecoins, small-caps) keep their cents; drop it and
+the column re-reads as whatever type showed up first, rounding fractional
+prices to whole dollars. This is an example-side typing decision, not a
+framework bug — Binance's numeric fields arrive as strings, so they never
+need it.
 
 ---
 
-## 🐳 Run It From the CLI (+ Docker)
-
-Reference material — three ways to run the exact same three-source join, in order.
-
-**1. Python entry** (what every section above walked through — the
-build-time `link_to` join, ~3 API calls, one-shot):
+## Run it
 
 ```bash
-cd examples/appendix/crypto-graph-mapping
-python crypto_graph_mapping.py
+python examples/appendix/crypto-graph-mapping/crypto_graph_mapping.py
 ```
 
-**2. CLI form** — [`outflow.py`](outflow.py) + [`watershed.json`](watershed.json)
-ship next to the entry script; no inline JSON duplicate here (see it drift
-once, trust it forever).
-
-```bash
-cd examples/appendix/crypto-graph-mapping
-incorporator validate watershed.json
-incorporator tideweaver run watershed.json
-```
-
-> **Run from inside this directory.** `export_params.file_path`
-> (`"out/crypto_liquidity.ndjson"`) is CWD-relative, and `"outflow":
-> "outflow.py"` is config-dir-relative — running `incorporator tideweaver
-> run examples/appendix/crypto-graph-mapping/watershed.json` from the repo
-> root writes output to `<repo-root>/out/` and would break the sidecar
-> resolution if it were repo-root-relative instead.
->
-> **The window is dateless.** `watershed.json`'s `window` references
-> `@window_start` / `@window_end`, two public `datetime` names defined in
-> `outflow.py` and evaluated fresh at sidecar-import time (a 70-second span
-> from "now") — no env vars, no editing timestamps before a re-run.
-
-**3. Docker** — reasoned from the `Dockerfile`/`docker-compose.yml`, **NOT
-run or verified** (no Docker available in this pass — confirm before
-relying on it):
-
-```bash
-# Reasoned, unverified.
-docker run --rm \
-  --user "$(id -u):$(id -g)" \
-  -v "$(pwd)/examples/appendix/crypto-graph-mapping:/app/config:ro" \
-  -v "$(pwd)/examples/appendix/crypto-graph-mapping/out:/app/out" \
-  incorporator:latest \
-  tideweaver run /app/config/watershed.json
-```
-
-The image's `WORKDIR` is `/app`, and `export_params.file_path` is
-CWD-relative (never rebased against the config's directory) — so
-`watershed.json`'s `"out/crypto_liquidity.ndjson"` resolves to
-`/app/out/...` inside the container. The mount target must therefore be
-`/app/out`, not one of the three paths the `Dockerfile` prepares
-(`/app/config`, `/app/data`, `/app/logs`). Because `/app/out` is not one of
-the pre-`chown`'d directories, `--user` overrides to the invoking host user
-so the non-root `appuser` can still write.
+The same three-source join also runs from the CLI via `incorporator
+tideweaver run watershed.json` (see [`watershed.json`](watershed.json) and
+[`outflow.py`](outflow.py)) — a bounded Tideweaver `parallel` shape that
+exits once the window ends, not `cls.fjord()`'s unbounded daemon — and in
+Docker via the mount pattern at
+[../../README.md](../../README.md#running-a-tutorial-in-docker) (Docker:
+not run or verified). Verified live: both forms sort the same top assets
+by `market_cap_rank`, with `usdt_*`/`usdc_*` legitimately `None` for
+assets missing that quote currency on binance.us.
 
 ---
 

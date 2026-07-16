@@ -165,19 +165,6 @@ Same structure as Tutorial 11's `outflow.outflow()` — snapshot upstream regist
 
 ---
 
-## CLI form
-
-The CLI entry uses [`watershed.json`](./watershed.json) with `"outflow": "outflow.py"` — the same sidecar the Python runner imports. Class names (`LapData` / `PitStops` / `FlagEvents` / `DriverState`) are shared:
-
-```bash
-incorporator validate examples/appendix/nascar-tideweaver/watershed.json
-incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json --json-output
-```
-
-The CLI resolves `inc_file`, `inflow`, and `outflow` relative to `watershed.json`'s directory, so these commands work from any working directory. `export_params.file_path` (`"out/driver_state.ndjson"`) is CWD-relative — the output file lands in `<your working directory>/out/`, not alongside the config.
-
----
-
 ## Per-edge telemetry via `LoggingObserver`
 
 The `watershed.json` above wires `"observer": {"type": "logging", ...}` on every
@@ -211,6 +198,24 @@ group per-driver / per-edge to see which feed caused the skip.
 * **Bounded race window** — the orchestrator runs for the race duration and exits clean. No daemon to babysit between sessions.
 * **Mixed cadences** — laps are fast, pits are medium, flags are bursty. Per-current intervals match the source's actual update rhythm.
 * **One coherent fused output** — the dashboard wants one driver-state record per N seconds carrying the latest from all three sources. The Fjord tail does exactly that via `outflow(state)`.
+
+---
+
+## Run it
+
+```bash
+python examples/appendix/nascar-tideweaver/nascar_tideweaver.py
+```
+
+The same diamond also runs from the CLI via `incorporator tideweaver run
+watershed.json --json-output` (see [`watershed.json`](watershed.json)) and
+in Docker via the mount pattern at
+[../../README.md](../../README.md#running-a-tutorial-in-docker) (Docker:
+not run or verified). Both entry points load classes and `outflow(state)`
+from the same `outflow.py` sidecar. Verified live: both forms fuse the
+same three fixture snapshots into driver-state rows with the same shape
+(`driver`/`laps`/`pits`/`flag`) — row counts differ since each entry's
+window length differs (15s Python vs. `outflow.py`'s 2-minute CLI window).
 
 ---
 
