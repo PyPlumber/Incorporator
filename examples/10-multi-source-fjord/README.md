@@ -65,18 +65,22 @@ classes and reads a live cross-source snapshot to fuse them.
 Both sources coerce their own fields at build time — `current_price`
 and `price` each get a plain, static `inc(float, default=0.0)` in
 their own `conv_dict`, right where they're declared in
-`crypto_spread.py`. Neither source needs anything about the other to
-build itself, so there's no `depends_on` and no tiered seed — both
-seed in parallel, same as any independent-source fjord.
+`crypto_spread.py`. The join-KEY derivation also happens at build
+time now: CoinGecko computes its own `binance_key` (`"btc"` ->
+`"BTCUSDT"`) and BinancePair computes its own `base_symbol`
+(`"BTCUSDT"` -> `"BTC"`), each via a `calc(...)` entry in its own
+`conv_dict`. Neither source needs anything about the other to build
+itself, so there's no `depends_on` and no tiered seed — both seed in
+parallel, same as any independent-source fjord.
 
-The join itself — CoinGecko symbol -> matching Binance pair — happens
-at **read time**, inline inside `outflow(state)`. `fjord()` hands
-`outflow()` a snapshot of every source on each export wave, taken
-under its own shared lock, so `state["BinancePair"].inc_dict.get(...)`
-is a safe, cheap lookup against already-coerced `BinancePair`
-instances — no registry-race guard needed, because the snapshot list
-holds a strong reference to every instance for the duration of the
-call.
+Only the *lookup* itself — lining up CoinGecko's `binance_key` against
+the live Binance snapshot — happens at **read time**, inline inside
+`outflow(state)`. `fjord()` hands `outflow()` a snapshot of every
+source on each export wave, taken under its own shared lock, so
+`state["BinancePair"].inc_dict.get(...)` is a safe, cheap lookup
+against already-coerced `BinancePair` instances — no registry-race
+guard needed, because the snapshot list holds a strong reference to
+every instance for the duration of the call.
 
 ```python
 # examples/10-multi-source-fjord/outflow.py
@@ -94,9 +98,14 @@ class BinancePair(Incorporator):
     """Source B — Binance USDT-quoted prices."""
 
 
-def _to_binance_symbol(sym: str) -> str:
+def to_binance_key(symbol: str) -> str:
     """CoinGecko ticker symbol -> Binance USDT pair key: 'btc' -> 'BTCUSDT'."""
-    return f"{sym.upper()}USDT"
+    return f"{symbol.upper()}USDT"
+
+
+def strip_usdt_suffix(symbol: str) -> str:
+    """Binance pair key -> display symbol: 'BTCUSDT' -> 'BTC'."""
+    return symbol.removesuffix("USDT")
 
 
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -107,7 +116,7 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc).isoformat()
 
     for coin in coins:
-        pair = pairs.inc_dict.get(_to_binance_symbol(coin.symbol))
+        pair = pairs.inc_dict.get(coin.binance_key)
         if pair is None:
             continue
 
@@ -122,7 +131,7 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
         spread_bps = round(((binance_usdt - gecko_usd) / gecko_usd) * 10_000, 2)
 
         rows.append({
-            "symbol": pair.inc_code.removesuffix("USDT"),
+            "symbol": pair.base_symbol,
             "coingecko_usd": gecko_usd,
             "binance_usdt": binance_usdt,
             "spread_bps": spread_bps,
@@ -165,10 +174,11 @@ sources don't need that: the join happens once, per wave, in
 
 ```python
 import asyncio
-from incorporator import Incorporator
+from incorporator import Incorporator, inc
+from incorporator.schema.converters import calc
 
 # Bring the classes into scope so fjord() can register them.
-from outflow import BinancePair, CoinGecko
+from outflow import BinancePair, CoinGecko, strip_usdt_suffix, to_binance_key
 
 
 async def main():
@@ -180,7 +190,10 @@ async def main():
                     "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
                     "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
                     "inc_code": "id",
-                    "conv_dict": {"current_price": inc(float, default=0.0)},
+                    "conv_dict": {
+                        "current_price": inc(float, default=0.0),
+                        "binance_key": calc(to_binance_key, "symbol", default="", target_type=str),
+                    },
                 },
             },
             {
@@ -188,7 +201,10 @@ async def main():
                 "incorp_params": {
                     "inc_url": "https://api.binance.us/api/v3/ticker/price",
                     "inc_code": "symbol",
-                    "conv_dict": {"price": inc(float, default=0.0)},
+                    "conv_dict": {
+                        "price": inc(float, default=0.0),
+                        "base_symbol": calc(strip_usdt_suffix, "symbol", default="", target_type=str),
+                    },
                 },
             },
         ],

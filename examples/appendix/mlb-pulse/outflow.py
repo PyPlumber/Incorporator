@@ -98,15 +98,21 @@ def flatten_team_records(team_records: list[dict]) -> list[dict]:
         losses = tr.get("losses", league_rec.get("losses", 0))
         win_pct_raw = tr.get("winningPercentage", league_rec.get("pct", "0"))
         gb_raw = tr.get("gamesBack", "0")
+        win_pct = _coerce_float(win_pct_raw, 0.0)
+        runs_scored = _coerce_float(tr.get("runsScored", 0), 0.0)
+        runs_allowed = _coerce_float(tr.get("runsAllowed", 0), 0.0)
+        pythag = derive_pythag(runs_scored, runs_allowed)
         rows.append(
             {
                 "team_id": _coerce_int(team_id, 0),
                 "wins": _coerce_int(wins, 0),
                 "losses": _coerce_int(losses, 0),
-                "win_pct": _coerce_float(win_pct_raw, 0.0),
+                "win_pct": win_pct,
                 "games_back": _coerce_games_back(gb_raw),
-                "runs_scored": _coerce_float(tr.get("runsScored", 0), 0.0),
-                "runs_allowed": _coerce_float(tr.get("runsAllowed", 0), 0.0),
+                "runs_scored": runs_scored,
+                "runs_allowed": runs_allowed,
+                "pythag": pythag,
+                "pythag_delta": round(pythag - win_pct, 4),
             }
         )
     return rows
@@ -273,8 +279,8 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
                     "ops": hit.ops,
                     "era": pit.era,
                     "power_index": 0.0,  # filled after league means computed
-                    "pythag": derive_pythag(tr_row.runs_scored, tr_row.runs_allowed),
-                    "pythag_delta": 0.0,  # filled after power_index pass
+                    "pythag": tr_row.pythag,
+                    "pythag_delta": tr_row.pythag_delta,
                     "power_rank": 0,  # filled after sort
                 }
             )
@@ -288,7 +294,6 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
 
     for r in rows:
         r["power_index"] = derive_power_index(r["ops"], r["era"], mean_ops, mean_era)
-        r["pythag_delta"] = round(r["pythag"] - r["win_pct"], 4)
 
     rows.sort(key=operator.itemgetter("power_index"), reverse=True)
 

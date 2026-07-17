@@ -10,7 +10,10 @@
         "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
         "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
         "inc_code": "id",
-        "conv_dict": {"current_price": "inc(float, default=0.0)"}
+        "conv_dict": {
+          "current_price": "inc(float, default=0.0)",
+          "binance_key": "calc(to_binance_key, 'symbol', default='', target_type=str)"
+        }
       }
     },
     {
@@ -18,7 +21,10 @@
       "incorp_params": {
         "inc_url": "https://api.binance.us/api/v3/ticker/price",
         "inc_code": "symbol",
-        "conv_dict": {"price": "inc(float, default=0.0)"}
+        "conv_dict": {
+          "price": "inc(float, default=0.0)",
+          "base_symbol": "calc(strip_usdt_suffix, 'symbol', default='', target_type=str)"
+        }
       }
     }
   ],

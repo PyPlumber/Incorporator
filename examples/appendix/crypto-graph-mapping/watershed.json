@@ -58,7 +58,9 @@
         "inc_code": "id",
         "inc_name": "name",
         "conv_dict": {
-          "current_price": "inc(float, default=0.0)"
+          "current_price": "inc(float, default=0.0)",
+          "symbol": "calc(upper_symbol, 'symbol', default='', target_type=str)",
+          "market_cap_rank": "inc(int, default=0)"
         }
       }
     },

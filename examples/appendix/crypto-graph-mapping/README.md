@@ -29,7 +29,7 @@ Build a Unified Stablecoin Liquidity Dashboard. For the top 100 cryptocurrencies
 
 ```python
 import asyncio
-from incorporator import Incorporator, link_to, register_host_penstock
+from incorporator import Incorporator, inc, link_to, register_host_penstock
 from incorporator.schema.converters import calc
 
 # Pace api.coingecko.com at 0.2 req/sec (12/min — under the 5-15/min
@@ -76,6 +76,9 @@ async def main() -> None:
         inc_code="id",
         inc_name="name",
         conv_dict={
+            "symbol": calc(str.upper, "symbol", default="", target_type=str),
+            "market_cap_rank": inc(int, default=0),
+
             # We use our Factory to generate 4 parallel mapping routes simultaneously!
             "stats_usdt": calc(link_to(binance_stats, extractor=make_linker("USDT")), "symbol"),
             "book_usdt":  calc(link_to(binance_books, extractor=make_linker("USDT")), "symbol"),

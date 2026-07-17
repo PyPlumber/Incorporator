@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 from incorporator import Incorporator, inc, register_host_penstock
+from incorporator.schema.converters import calc
 
 # Pace api.coingecko.com at 0.2 req/sec (12/min) — under the free-tier
 # 5-15/min ceiling.  Binance has no per-host registry entry; the default
@@ -42,7 +43,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 # Bring the source classes into scope so fjord() can register them.
-from outflow import BinancePair, CoinGecko  # noqa: E402
+from outflow import BinancePair, CoinGecko, strip_usdt_suffix, to_binance_key  # noqa: E402
 
 
 async def main() -> None:
@@ -59,7 +60,10 @@ async def main() -> None:
                     "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
                     "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
                     "inc_code": "id",
-                    "conv_dict": {"current_price": inc(float, default=0.0)},
+                    "conv_dict": {
+                        "current_price": inc(float, default=0.0),
+                        "binance_key": calc(to_binance_key, "symbol", default="", target_type=str),
+                    },
                 },
             },
             {
@@ -70,7 +74,10 @@ async def main() -> None:
                     # shape; swap back to api.binance.com if you're outside those regions.
                     "inc_url": "https://api.binance.us/api/v3/ticker/price",
                     "inc_code": "symbol",
-                    "conv_dict": {"price": inc(float, default=0.0)},
+                    "conv_dict": {
+                        "price": inc(float, default=0.0),
+                        "base_symbol": calc(strip_usdt_suffix, "symbol", default="", target_type=str),
+                    },
                 },
             },
         ],

@@ -35,6 +35,10 @@ def make_linker(quote_currency: str):
 
     Same factory-closure pattern as ``crypto_graph_mapping.py`` -- a
     ``def``-based closure, not a ``lambda``, so it stays lambda-free-legal.
+    ``symbol_str`` arrives pre-upper (CryptoAsset's own conv_dict coerces
+    ``symbol`` at build time), so the ``.upper()`` here is a no-op on an
+    already-upper string -- kept for safety since this factory is also
+    reused verbatim against Binance's own already-upper ``symbol`` keys.
     """
 
     def linker(symbol_str: str) -> str | None:
@@ -43,6 +47,16 @@ def make_linker(quote_currency: str):
         return None
 
     return linker
+
+
+def upper_symbol(value: str) -> str:
+    """Named wrapper for str.upper -- str.upper is attribute access,
+    rejected by the JSON token grammar's safe-eval walker (see
+    incorporator/cli/tokens.py); a named module-level function resolves
+    as a bare ast.Name instead. Public (no leading underscore) so both
+    entry forms' token resolvers see it.
+    """
+    return value.upper()
 
 
 class BinanceStat(Incorporator):
@@ -96,7 +110,7 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
 
     rows: list[dict[str, Any]] = []
     for asset in assets:
-        symbol = getattr(asset, "symbol", "")
+        symbol = asset.symbol  # already upper-cased via CryptoAsset's own conv_dict
         stats_usdt = link_stats_usdt(symbol)
         book_usdt = link_books_usdt(symbol)
         stats_usdc = link_stats_usdc(symbol)
@@ -104,9 +118,9 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             {
                 "inc_code": asset.inc_code,
-                "symbol": str(symbol).upper(),
-                "current_price": getattr(asset, "current_price", 0.0),
-                "market_cap_rank": getattr(asset, "market_cap_rank", 0),
+                "symbol": asset.symbol,
+                "current_price": asset.current_price,
+                "market_cap_rank": asset.market_cap_rank,
                 "usdt_volume": getattr(stats_usdt, "quoteVolume", None),
                 "usdt_bid": getattr(book_usdt, "bidPrice", None),
                 "usdc_volume": getattr(stats_usdc, "quoteVolume", None),
