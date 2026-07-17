@@ -59,7 +59,13 @@ class CalcOp:
         self.target_type = target_type
         self.input_list = [DataPath.parse(dep) for dep in input_list]
         self.is_pure = pure
-        if pure:
+        # Skip the lru_cache wrap when func is itself a non-pure Op (e.g.
+        # calc(link_to(Peer), "fk") input-redirection) — auto-propagate the
+        # inner Op's purity instead of re-freezing its lazy/live result.
+        # Wrapping a lazy link_to() lookup here would cache its first (often
+        # pre-populate None) result forever, reproducing the exact
+        # permanently-empty bug link_to()'s own laziness fixes.
+        if pure and not (isinstance(func, Op) and not func.is_pure):
             self.func = functools.lru_cache(maxsize=10_000)(func)
 
 
@@ -76,6 +82,14 @@ class CalcAllOp:
         self.target_type = target_type
         self.input_list = [DataPath.parse(dep) for dep in input_list]
         self.is_pure = pure
+        # No lru_cache wrap here, unlike CalcOp — and none should be added.
+        # builder.py invokes calc_all's func exactly once per dispatch with
+        # whole-column *lists* as positional args (`func(*col_args)`);
+        # lists are unhashable, so wrapping self.func in lru_cache would
+        # make every default (pure=True) calc_all call raise TypeError on
+        # its first invocation, silently caught by builder.py's dispatch
+        # try/except and replaced with `[default] * len(rows)` for every
+        # row. is_pure is stored for API symmetry with CalcOp only.
 
 
 class Op:

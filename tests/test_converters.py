@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from incorporator import Incorporator
 from incorporator.schema import router
 from incorporator.schema.builder import apply_etl_transformations
 from incorporator.schema.converters import (
@@ -234,25 +235,70 @@ def test_url_toolkit() -> None:
 
 
 def test_link_to_relational_mapping() -> None:
-    """Asserts relational mapping handles plain lists and nulls."""
+    """Asserts relational mapping resolves against a live Incorporator registry and rejects nulls."""
 
-    # Use SimpleNamespace to mock the object-oriented structure of Pydantic models
-    mock_obj_1 = SimpleNamespace(inc_code=1, name="Daytona")
-    mock_obj_2 = SimpleNamespace(inc_code="A100", name="Talladega")
+    class Track(Incorporator):
+        name: str | None = None
 
-    # Test 1: Passing a plain Python list (link_to should build the dict dynamically)
-    plain_list = [mock_obj_1, mock_obj_2]
-    mapper = link_to(plain_list)
+    # track_1's inc_code is the STRING "1" — simulates a source field that
+    # arrived as text — so an int lookup exercises the str(key) fallback.
+    track_1 = Track(inc_code="1", name="Daytona")
+    track_2 = Track(inc_code="A100", name="Talladega")
 
-    assert mapper(1) == mock_obj_1
-    assert mapper("1") == mock_obj_1  # String-to-int cast fallback
-    assert mapper("A100") == mock_obj_2  # Direct string match
+    # link_to now requires a live inc_dict target (IncorporatorList or
+    # Incorporator subclass) — a plain list is a TypeError (see
+    # test_link_to_plain_list_target_raises_type_error).
+    mapper = link_to(Track)
+
+    assert mapper(1) == track_1  # int key falls back to str(1) == "1"
+    assert mapper("A100") == track_2  # Direct string match
     assert mapper(None) is None
     assert mapper("bad_id") is None
 
-    # Test 2: Using an extractor
-    extractor_mapper = link_to(plain_list, extractor=lambda x: int(x) * 1)
-    assert extractor_mapper("1") == mock_obj_1
+    # Test 2: Using an extractor — "1" cast to int(1), still resolves via
+    # the same str(key) fallback since the registry key is the string "1".
+    extractor_mapper = link_to(Track, extractor=lambda x: int(x) * 1)
+    assert extractor_mapper("1") == track_1
+
+
+def test_link_to_plain_list_target_raises_type_error() -> None:
+    """link_to raises TypeError at construction for a plain-list / inc_dict-less target.
+
+    Locked behavior removal (2026-07): the old eager-copy path silently
+    accepted a bare ``list``. That support is deliberately dropped.
+    """
+    with pytest.raises(TypeError, match="inc_dict"):
+        link_to([SimpleNamespace(inc_code=1, name="Daytona")])
+
+
+def test_calc_purity_guard_does_not_freeze_lazy_link_to() -> None:
+    """calc(link_to(EmptyPeer), key) must not re-freeze link_to's lazy/live lookup.
+
+    ``CalcOp``'s lru_cache wrap is skipped when ``func`` is itself an
+    ``Op`` with ``is_pure=False`` — the purity of the inner ``link_to()``
+    Op auto-propagates instead of being cached over.  Populate the target
+    AFTER building the ``CalcOp`` and confirm the same ``CalcOp.func``
+    resolves rather than returning a cached ``None``.
+    """
+
+    class EmptyPeer(Incorporator):
+        name: str | None = None
+
+    join_op = link_to(EmptyPeer)
+    c_op = calc(join_op, "fk", default=None)
+
+    # The wrap-skip means CalcOp.func IS the link_to Op itself, unwrapped.
+    assert c_op.func is join_op
+
+    assert c_op.func(1) is None  # target still empty
+
+    # Bind to a local — EmptyPeer.inc_dict is a WeakValueDictionary; an
+    # unbound instance is reclaimed before the next lookup runs.
+    peer = EmptyPeer(inc_code=1, name="Daytona")
+
+    result = c_op.func(1)  # same CalcOp.func — proves it isn't lru_cache-frozen
+    assert result is peer
+    assert result.name == "Daytona"
 
 
 class MockObj:

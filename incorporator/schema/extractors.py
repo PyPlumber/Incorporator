@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import collections.abc
 import logging
-import weakref
 from collections.abc import Callable
 from typing import Any
 
@@ -141,6 +140,15 @@ def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Op:
     through the other class's :attr:`inc_dict`, so it's an O(1) hit per
     row — no quadratic scan.
 
+    **Lazy and live, not a snapshot.**  ``link_to()`` does not copy
+    ``dataset`` at construction time — it stores the reference and
+    re-reads ``dataset.inc_dict`` on every lookup.  This means a
+    ``link_to(PeerClass)`` built before ``PeerClass`` has ever ticked
+    (e.g. a JSON-config ``"link_to(PeerClass)"`` token resolved at
+    config-load time) resolves to ``None`` on the first few calls and
+    then starts resolving correctly the moment ``PeerClass`` populates
+    its registry — it never gets permanently stuck empty.
+
     Example::
 
         rockets = await Rocket.incorp(inc_url="...", inc_code="id")
@@ -156,9 +164,12 @@ def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Op:
         # After:  launch.rocket is the actual Rocket instance — launch.rocket.name works
 
     Args:
-        dataset: The right-hand side of the join.  Typically an
-            :class:`IncorporatorList`; any object with an ``inc_dict``
-            mapping works too.
+        dataset: The right-hand side of the join — an
+            :class:`IncorporatorList`, an :class:`Incorporator` subclass, or
+            any object exposing a live ``inc_dict`` mapping.  Raises
+            :class:`TypeError` at construction if ``dataset`` has no
+            ``inc_dict`` attribute (a plain ``list`` is **not** accepted —
+            build an :class:`IncorporatorList` via ``incorp()`` instead).
         extractor: Optional transformer applied to the current row's
             value before the lookup — useful when the FK needs reshaping
             (e.g. uppercase + suffix to match a stock-ticker format)::
@@ -179,41 +190,28 @@ def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Op:
     (otherwise an ``extractor`` like ``str.upper`` would raise on a None
     FK and trigger a per-row WARNING at the dispatch boundary).
 
+    **Liveness and GC contract.**  Every call reads ``dataset.inc_dict``
+    fresh — there is no cached snapshot to go stale.  For an
+    :class:`IncorporatorList` target, the closure's strong reference to
+    the list keeps its rows alive for as long as the ``Op`` itself is
+    alive (stronger than a point-in-time copy).  For a bare
+    :class:`Incorporator` subclass target, row liveness depends on
+    *something else* holding a strong reference to each instance — the
+    same class-level :class:`weakref.WeakValueDictionary` race that
+    already applies anywhere ``Cls.inc_dict`` is read directly — but this
+    is strictly better than the old build-time-snapshot behavior, which
+    was permanently empty for any target that hadn't populated yet. A
+    garbage-collected or absent key resolves to ``None``, never raises.
+
     For lists of foreign keys (e.g. tags → tag objects) use
     :func:`link_to_list`.
     """
-    # 1. Primary Cache: OOM-Safe for production Incorporator/Pydantic objects
-    registry: weakref.WeakValueDictionary[Any, Any] = weakref.WeakValueDictionary()
-    # 2. Fallback Cache: Strong references for tests (SimpleNamespace) or non-weakref classes
-    fallback_registry: dict[Any, Any] = {}
-
-    def _add_to_cache(k: Any, v: Any) -> None:
-        try:
-            registry[k] = v
-            registry[str(k)] = v  # Shadow string map
-        except TypeError:
-            # Alert on every miss so memory pressure from large non-weakrefable datasets
-            # is visible in logs rather than silently accumulating.
-            logger.debug(
-                "link_to: strong-ref fallback cache miss for key %r — "
-                "object is not weakrefable. Large non-weakrefable datasets (e.g. built-in dicts) "
-                "will not be garbage-collected until the enclosing scope exits.",
-                k,
-            )
-            fallback_registry[k] = v
-            fallback_registry[str(k)] = v
-
-    if isinstance(dataset, list):
-        for item in dataset:
-            code = getattr(item, "inc_code", None)
-            if code is not None:
-                _add_to_cache(code, item)
-    else:
-        # Failsafe for single objects or IncorporatorLists that already have inc_dict
-        reg = getattr(dataset, "inc_dict", {})
-        if isinstance(reg, collections.abc.Mapping):
-            for k, v in reg.items():
-                _add_to_cache(k, v)
+    if not isinstance(getattr(dataset, "inc_dict", None), collections.abc.Mapping):
+        raise TypeError(
+            f"link_to() requires a target with a live 'inc_dict' mapping — pass the "
+            f"IncorporatorList returned by incorp() or an Incorporator subclass, not "
+            f"{type(dataset).__name__!r}. A plain list is not accepted."
+        )
 
     def _lookup(val: Any) -> Any:
         # Align with inc()'s null-handling contract: garbage input
@@ -229,28 +227,29 @@ def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Op:
         # garbage (``None``, ``""``, ``"N/A"``, etc.), short-circuit
         # to ``None`` instead of attempting the registry lookup.
         # The dict lookup itself wouldn't find anything, but garbage
-        # keys would still cost the str-coercion + four lookups
-        # below — and a future warning-instrumented lookup would
-        # falsely surface this as a "missed join" when it's actually
-        # a missing FK.
+        # keys would still cost the str-coercion + lookups below — and
+        # a future warning-instrumented lookup would falsely surface
+        # this as a "missed join" when it's actually a missing FK.
         if is_garbage_value(key):
             return None
 
-        # O(1) Instant Lookup (Check Weak Registry first, then Fallback)
-        if key in registry:
-            return registry[key]
-        if key in fallback_registry:
-            return fallback_registry[key]
-
+        # Re-read dataset.inc_dict on EVERY call — never cache it, not
+        # even lazily on first call. A class's inc_dict starts as the
+        # shared base WeakValueDictionary and forks into a per-class dict
+        # on that class's FIRST write (Incorporator._ensure_inc_dict()).
+        # A link_to() built before the peer's first tick would cache the
+        # pre-fork object and miss every entry the peer ever registers.
+        reg = getattr(dataset, "inc_dict", {})
+        value = reg.get(key)
+        if value is not None:
+            return value
         # Ultimate Type-Splinter defense (Strings)
-        str_key = str(key)
-        if str_key in registry:
-            return registry[str_key]
-        if str_key in fallback_registry:
-            return fallback_registry[str_key]
+        return reg.get(str(key))
 
-        return None
-
+    # is_pure=False is load-bearing, not a leftover default: this lookup is
+    # non-referentially-transparent by design (None before the peer ticks,
+    # the actual object after) — lru_cache-wrapping it would freeze the
+    # very "before it ticks" None the lazy design exists to fix.
     return Op(_lookup, input_keys=(), is_pure=False)
 
 

@@ -239,6 +239,41 @@ def test_at_sigil_empty_pass_through() -> None:
     assert out["x"] == "@"
 
 
+# ---------- link_to(PeerClass) config-load repro (lazy/live regression) ----------
+
+
+def test_link_to_token_resolves_before_peer_populates() -> None:
+    """A ``"link_to(PeerClass)"`` token resolved at config-load time (before
+    ``PeerClass`` has ever ticked) must still find peer rows once they exist.
+
+    Reproduces the real pipeline.json shape: ``resolve_tokens`` builds the
+    ``Op`` once, up front, via ``extra_names`` (mirrors how an ``inflow.py``
+    extends the allow-list) — well before the peer source's own ``incorp()``
+    populates its ``inc_dict``.
+    """
+    from incorporator import Incorporator
+
+    class PeerClass(Incorporator):
+        name: str | None = None
+
+    out = resolve_tokens(
+        {"conv_dict": {"peer_id": "link_to(PeerClass)"}},
+        extra_names={"PeerClass": PeerClass},
+    )
+    op = out["conv_dict"]["peer_id"]
+    assert callable(op)
+
+    assert op(1) is None  # PeerClass hasn't ticked yet — not a construction-time snapshot
+
+    # Bind to a local — inc_dict is a WeakValueDictionary; an unbound
+    # instance is reclaimed before the next lookup even runs.
+    peer = PeerClass(inc_code=1, name="Resolved")  # populate via model_post_init
+
+    result = op(1)  # the SAME resolved Op — must now find the entry
+    assert result is peer
+    assert result.name == "Resolved"
+
+
 def test_single_quote_inside_call_token() -> None:
     """JSON-friendly form: NextUrlPaginator('next') — no escape needed."""
     from incorporator.io.pagination import NextUrlPaginator

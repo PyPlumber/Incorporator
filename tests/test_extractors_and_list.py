@@ -5,6 +5,7 @@ from typing import Any, List
 
 import pytest
 
+from incorporator import Incorporator
 from incorporator.list import IncorporatorList, _deduplicate_extracted
 from incorporator.schema.converters import _EachSentinel
 from incorporator.schema.extractors import (
@@ -19,6 +20,17 @@ from incorporator.schema.extractors import (
 )
 from incorporator.schema.path import DataPath
 from incorporator.schema.router import extract_parent_data, resolve_declarative_routing
+
+
+class Peer(Incorporator):
+    """Tiny live-registry Incorporator subclass — link_to's real target shape.
+
+    Direct construction auto-registers into ``Peer.inc_dict`` via
+    ``model_post_init`` (no ``incorp()`` / network call needed), mirroring
+    ``tests/test_inflow_state.py``'s bare-class pattern.
+    """
+
+    name: str | None = None
 
 
 # ==========================================
@@ -73,35 +85,96 @@ def test_split_and_get_cast_type_failure_returns_none() -> None:
 
 
 # ==========================================
-# 3. link_to — str_key fallback
+# 3. link_to — str_key fallback, laziness, and construction guard
 # ==========================================
 
 
 def test_link_to_string_key_coercion_lookup() -> None:
-    """link_to must fall back to str(key) lookup when integer key is not found directly."""
-    # SimpleNamespace is not weakrefable → goes into fallback_registry
-    items = [SimpleNamespace(inc_code=42, name="Alice")]
-    mapper = link_to(items)
+    """link_to must fall back to str(key) lookup when an int key isn't found directly.
 
-    # Look up with the string representation of the integer key
-    result = mapper("42")  # str(42) == "42" — should find the item
-    assert result is not None
+    The registry entry is keyed by the STRING form of the id (e.g. the
+    source data's identity field arrived as text); the lookup value is an
+    INT (e.g. an FK elsewhere in the payload was already coerced). ``str(key)``
+    absorbs exactly this "API returns int, registry keyed by string" mismatch.
+    """
+    # Bind to a local — Peer.inc_dict is a WeakValueDictionary, so an
+    # unbound instance is reclaimed the moment the constructor call returns.
+    alice = Peer(inc_code="42", name="Alice")
+    mapper = link_to(Peer)
+
+    result = mapper(42)  # int key; registry holds the string "42"
+    assert result is alice
     assert result.name == "Alice"
 
 
 def test_link_to_none_key_returns_none() -> None:
     """When the lookup key resolves to None, mapper must return None."""
-    items = [SimpleNamespace(inc_code=1, name="Alice")]
-    mapper = link_to(items)
+    _alice = Peer(inc_code=1, name="Alice")
+    mapper = link_to(Peer)
     assert mapper(None) is None
 
 
 def test_link_to_list_non_list_input_returns_empty() -> None:
     """link_to_list must return [] when the value is not a list."""
-    items = [SimpleNamespace(inc_code=1, name="Alice")]
-    mapper = link_to_list(items)
+    _alice = Peer(inc_code=1, name="Alice")
+    mapper = link_to_list(Peer)
     assert mapper("not-a-list") == []
     assert mapper(None) == []
+
+
+def test_link_to_plain_list_target_raises_type_error() -> None:
+    """link_to raises TypeError at construction for an inc_dict-less target (plain list).
+
+    Locked behavior removal (2026-07): the old eager-copy path silently
+    accepted a plain ``list`` of ``SimpleNamespace``-like objects. That
+    support is deliberately dropped — the target must expose a live
+    ``inc_dict`` mapping (an IncorporatorList or Incorporator subclass).
+    """
+    with pytest.raises(TypeError, match="inc_dict"):
+        link_to([SimpleNamespace(inc_code=1, name="Alice")])
+
+
+def test_link_to_resolves_once_empty_target_populates() -> None:
+    """link_to(EmptyPeer) built against an empty target resolves once the peer populates.
+
+    This is the fork-landmine guard (locked decision #2): the Op must
+    re-read ``dataset.inc_dict`` on EVERY call rather than caching the
+    reference on first use — Incorporator._ensure_inc_dict() forks a
+    subclass's inc_dict off the shared base default on that class's FIRST
+    write, so caching before the first write (even lazily) would miss the
+    forked dict forever.
+    """
+
+    class EmptyPeer(Incorporator):
+        name: str | None = None
+
+    op = link_to(EmptyPeer)
+    assert op(1) is None  # target is still empty — no crash, resolves to None
+
+    # Bind to a local — inc_dict is a WeakValueDictionary; an unbound instance
+    # would be reclaimed before the next lookup even runs.
+    peer = EmptyPeer(inc_code=1, name="Daytona")  # populates EmptyPeer.inc_dict via model_post_init
+
+    result = op(1)  # the SAME op — proves live re-read, not a build-time snapshot
+    assert result is peer
+    assert result.name == "Daytona"
+
+
+def test_link_to_is_pure_false_and_not_lru_cache_wrapped() -> None:
+    """link_to's Op must stay is_pure=False — a lru_cache wrap would freeze a stale None forever."""
+
+    class MutablePeer(Incorporator):
+        name: str | None = None
+
+    op = link_to(MutablePeer)
+    assert op.is_pure is False
+
+    assert op(7) is None  # not yet populated
+    _talladega = MutablePeer(inc_code=7, name="Talladega")
+    # If this Op were lru_cache-wrapped, the cached None from the call above
+    # would be returned again here instead of the freshly-registered peer.
+    assert op(7) is not None
+    assert op(7).name == "Talladega"
 
 
 # ==========================================
@@ -232,11 +305,13 @@ def test_link_to_extractor_skips_on_garbage_fk() -> None:
     Without the pre-check, ``str.upper(None)`` would raise TypeError and
     trigger a per-row WARNING at the builder.py dispatch boundary.
     """
-    books = [
-        SimpleNamespace(inc_code="BTC"),
-        SimpleNamespace(inc_code="ETH"),
-    ]
-    op = link_to(books, extractor=str.upper)
+
+    class Book(Incorporator):
+        pass
+
+    _btc = Book(inc_code="BTC")
+    _eth = Book(inc_code="ETH")
+    op = link_to(Book, extractor=str.upper)
     # Garbage FKs short-circuit silently.
     assert op(None) is None
     assert op("") is None
@@ -253,29 +328,39 @@ def test_link_to_extractor_return_value_garbage_check() -> None:
     input returning ``""``, or a custom extractor returning ``"n/a"``
     when it can't compute a key), short-circuit to ``None`` before
     the registry lookup.  The dict lookup wouldn't find anything either
-    way, but skipping it saves the str-coercion + four lookups AND
-    prevents a future warning-instrumented lookup from falsely
-    surfacing this as a "missed join" when it's actually a missing FK.
+    way, but skipping it saves the str-coercion + lookups AND prevents a
+    future warning-instrumented lookup from falsely surfacing this as a
+    "missed join" when it's actually a missing FK.
     """
-    books = [SimpleNamespace(inc_code="BTC"), SimpleNamespace(inc_code="ETH")]
+
+    class Book(Incorporator):
+        pass
+
+    _btc = Book(inc_code="BTC")
+    _eth = Book(inc_code="ETH")
     # Extractor that always returns empty string — a stand-in for a real
     # extractor failing to compute a key from messy input.
-    op = link_to(books, extractor=lambda v: "")
+    op = link_to(Book, extractor=lambda v: "")
     assert op("btc") is None  # extractor returned "", short-circuit
 
     # Extractor that returns "n/a" — common in real data cleaning fns.
-    op_na = link_to(books, extractor=lambda v: "n/a")
+    op_na = link_to(Book, extractor=lambda v: "n/a")
     assert op_na("btc") is None
 
     # Sanity: a real-value extractor still hits the registry.
-    op_ok = link_to(books, extractor=str.upper)
+    op_ok = link_to(Book, extractor=str.upper)
     assert op_ok("btc").inc_code == "BTC"
 
 
 def test_link_to_list_filters_garbage_elements() -> None:
     """link_to_list filters garbage list elements before invoking the per-element linker."""
-    books = [SimpleNamespace(inc_code="BTC"), SimpleNamespace(inc_code="ETH")]
-    op = link_to_list(books, extractor=str.upper)
+
+    class Book(Incorporator):
+        pass
+
+    _btc = Book(inc_code="BTC")
+    _eth = Book(inc_code="ETH")
+    op = link_to_list(Book, extractor=str.upper)
     result = op(["btc", None, "n/a", "eth", ""])
     assert [item.inc_code for item in result] == ["BTC", "ETH"]
 

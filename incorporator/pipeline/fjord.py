@@ -449,13 +449,11 @@ async def _run_fjord_engine(
         if refresh_params is not None:
             # Note on refresh + inflow(state): refresh re-uses the original
             # ``conv_dict`` (with its captured ``link_to(state["X"], …)``
-            # closures).  Because ``link_to`` holds a reference to the live
-            # ``IncorporatorList`` object, in-place mutations on the peer's
-            # registry are visible automatically — no per-tick re-resolution
-            # needed for the common refresh-by-mutate case.  Pipelines that
-            # actually swap the peer's IncorporatorList wholesale on refresh
-            # are an edge case; document on the inflow.py docstring rather
-            # than rebuilding state every refresh tick.
+            # closures).  ``link_to`` re-reads the target's live ``inc_dict``
+            # on every lookup call (it is not a build-time snapshot), so
+            # both in-place mutations on the peer's registry AND a wholesale
+            # swap of the peer's ``IncorporatorList`` are visible automatically
+            # — no per-tick re-resolution needed for either case.
             tasks.append(
                 asyncio.create_task(
                     _refresh_daemon(

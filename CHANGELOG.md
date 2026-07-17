@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`link_to()` / `link_to_list()` are now lazy and live instead of a
+  build-time snapshot** (`incorporator/schema/extractors.py`): previously
+  `link_to(dataset)` copied `dataset`'s entries into a private registry
+  once, at the moment the `conv_dict` entry was constructed. A `link_to`
+  built against a target whose `inc_dict` was still empty at that
+  moment — e.g. a `"link_to(PeerClass)"` JSON-config token resolved at
+  config-load time, before `PeerClass` had ever ticked — stayed
+  permanently empty even after the peer populated. `link_to()` now
+  stores a reference to the target and re-reads its `inc_dict` on every
+  lookup call, so an `Op` built too early starts resolving correctly the
+  moment the peer populates. Also fixed the composed case: `CalcOp`
+  no longer wraps a non-pure `Op` (e.g. `calc(link_to(...), key)`) in
+  `functools.lru_cache`, which previously would have re-frozen
+  `link_to`'s lazy result behind a stale cached `None`.
+
+### Changed / Removed
+
+- **BREAKING: `link_to()` / `link_to_list()` no longer accept a plain
+  `list` as the join target** — this was the mechanism that used to make
+  the eager build-time snapshot possible. Pass the `IncorporatorList`
+  returned by `incorp()` (or an `Incorporator` subclass) instead; a
+  target with no live `inc_dict` mapping now raises `TypeError` at
+  construction rather than silently building a private copy.
+
 ## [1.4.0] - 2026-07-12
 
 ### Changed
