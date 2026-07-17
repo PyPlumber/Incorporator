@@ -56,58 +56,27 @@ stem (`outflow.py` → `Outflow`).
 
 ---
 
-## Step 1: `inflow.py` + `outflow.py` — Build-Time Join, Read-Time Fuse
+## Step 1: `outflow.py` — Read-Time Join
 
-`fjord()` needs Python code (class definitions + the join logic), so
-it lives in two sidecar files split by direction of data flow:
-`inflow.py` wires the cross-source join into CoinGecko's own
-`conv_dict` at build time; `outflow.py` declares the source classes and
-reads the already-joined, already-coerced fields as plain attributes.
+`fjord()` needs Python code (class definitions + the join logic), and
+here that's a single sidecar: `outflow.py` declares both source
+classes and reads a live cross-source snapshot to fuse them.
 
-> **Read-time DX rule: coerce + join at build time; outflow reads plain
-> attributes.**  The pre-rewrite version of this tutorial hand-rolled
-> the join and the coercion inside `outflow()` itself —
-> `pairs.inc_dict.get(f"{symbol}USDT")`, `float(getattr(pair, "price",
-> 0) or 0)`.  Every one of those guards exists only because the raw
-> field hadn't been resolved/coerced yet.  Move the resolution earlier
-> (into the `conv_dict` at each source's own build time, via
-> `link_to()` and `inc()`/`calc()`) and the guards disappear — not
-> relocated, *eliminated* — because the framework's `is_garbage_value`
-> null contract already did the defensive work once, at construction.
-> See `docs/api_atlas.md`'s "Build-time vs read-time: where coercion +
-> joins belong" section for the general rule.
+Both sources coerce their own fields at build time — `current_price`
+and `price` each get a plain, static `inc(float, default=0.0)` in
+their own `conv_dict`, right where they're declared in
+`crypto_spread.py`. Neither source needs anything about the other to
+build itself, so there's no `depends_on` and no tiered seed — both
+seed in parallel, same as any independent-source fjord.
 
-CoinGecko needs the Binance registry to exist before its own
-`conv_dict` runs, so it declares `depends_on=["BinancePair"]` —
-this switches `fjord()`'s seed from all-parallel to **tiered**:
-BinancePair seeds in tier 0, then `inflow(state)` fires for CoinGecko
-in tier 1 with `state["BinancePair"]` already a live `IncorporatorList`.
-
-```python
-# examples/10-multi-source-fjord/inflow.py
-from incorporator import inc, link_to
-
-
-def _to_binance_symbol(sym: str) -> str:
-    """CoinGecko ticker symbol -> Binance USDT pair key: 'btc' -> 'BTCUSDT'."""
-    return f"{sym.upper()}USDT"
-
-
-def inflow(state):
-    overrides = {}
-    if "BinancePair" in state:
-        overrides["CoinGecko"] = {
-            "conv_dict": {
-                "current_price": inc(float, default=0.0),
-                # link_to()'s conv_dict key must match the SOURCE field it
-                # reads ("symbol") -- the dispatcher feeds it d.get(key).
-                # name_chg (below, in crypto_spread.py) frees a clean,
-                # distinctly-named attribute for outflow.py.
-                "symbol": link_to(state["BinancePair"], extractor=_to_binance_symbol),
-            }
-        }
-    return overrides
-```
+The join itself — CoinGecko symbol -> matching Binance pair — happens
+at **read time**, inline inside `outflow(state)`. `fjord()` hands
+`outflow()` a snapshot of every source on each export wave, taken
+under its own shared lock, so `state["BinancePair"].inc_dict.get(...)`
+is a safe, cheap lookup against already-coerced `BinancePair`
+instances — no registry-race guard needed, because the snapshot list
+holds a strong reference to every instance for the duration of the
+call.
 
 ```python
 # examples/10-multi-source-fjord/outflow.py
@@ -125,14 +94,20 @@ class BinancePair(Incorporator):
     """Source B — Binance USDT-quoted prices."""
 
 
+def _to_binance_symbol(sym: str) -> str:
+    """CoinGecko ticker symbol -> Binance USDT pair key: 'btc' -> 'BTCUSDT'."""
+    return f"{sym.upper()}USDT"
+
+
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Join CoinGecko USD vs Binance USDT for overlapping symbols."""
     coins = state["CoinGecko"] or []
+    pairs = state["BinancePair"]
     rows = []
     now = datetime.now(timezone.utc).isoformat()
 
     for coin in coins:
-        pair = coin.binance_pair            # plain attribute -- None if unmatched
+        pair = pairs.inc_dict.get(_to_binance_symbol(coin.symbol))
         if pair is None:
             continue
 
@@ -157,12 +132,17 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 ```
 
-Two source classes + one function. No daemon plumbing, no lock
-acquisition, no wave emission, and — after this rewrite — no
-`getattr(..., default) or fallback`, no `float(x or 0)`, no
-`.inc_dict.get(...)` registry lookup: `fjord()` handles the plumbing,
-the build-time `conv_dict` handles the defensive work, `outflow()`
-reads plain attributes.
+Two source classes + one function, one file. No daemon plumbing, no
+lock acquisition, no wave emission: `fjord()` handles the plumbing,
+each source's own static `conv_dict` handles its own coercion, and
+`outflow()` does the one thing only it can do — the cross-source join
+— reading straight off the live snapshot it's already handed.
+
+`inflow(state)` (below, in Pattern 1) exists for the harder case where
+a *build-time* join is required — e.g. a downstream step needs the
+resolved object before its own `conv_dict` can finish. These two
+sources don't need that: the join happens once, per wave, in
+`outflow()`.
 
 > **Don't pre-declare the output class.**  For multi-output
 > `outflow(state) -> dict[ClassName, list[dict]]`, the framework builds
@@ -200,9 +180,8 @@ async def main():
                     "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
                     "params": {"vs_currency": "usd", "per_page": 100, "page": 1},
                     "inc_code": "id",
-                    "name_chg": [("symbol", "binance_pair")],
+                    "conv_dict": {"current_price": inc(float, default=0.0)},
                 },
-                "depends_on": ["BinancePair"],     # waits for tier 0 -- see inflow.py
             },
             {
                 "cls": BinancePair,
@@ -213,7 +192,6 @@ async def main():
                 },
             },
         ],
-        inflow="examples/10-multi-source-fjord/inflow.py",
         outflow="examples/10-multi-source-fjord/outflow.py",
         export_params={"file_path": "out/crypto_spread.ndjson"},
         refresh_interval={"CoinGecko": 60, "BinancePair": 30},   # per-source cadences
@@ -316,12 +294,12 @@ if __name__ == "__main__":
 
 ## What `fjord()` is Doing Under the Hood
 
-1. **Tiered seed.** Because CoinGecko declares `depends_on=["BinancePair"]`,
-   `fjord()` seeds in topological tiers instead of one flat parallel batch:
-   BinancePair (tier 0) seeds first, then CoinGecko (tier 1) seeds with
-   `inflow(state)`'s build-time `link_to()` override applied. Sources with
-   no `depends_on` at all fall back to the fully-parallel `asyncio.gather`
-   path — one wave per source either way.
+1. **Parallel seed.** Neither source declares `depends_on`, so `fjord()`
+   seeds both with `asyncio.gather` — one wave per source, no ordering
+   between them. (A source that needs another already-seeded registry
+   at its *own* build time would declare `depends_on` and pair it with
+   `inflow(state)` — see Pattern 1 below; these two sources don't need
+   that, since their join happens later, in `outflow()`.)
 2. **Per-source refresh daemons.** One daemon per entry. Each
    independently re-fetches on its own `refresh_interval` (override
    per entry — CoinGecko's free tier is rate-limited while Binance is

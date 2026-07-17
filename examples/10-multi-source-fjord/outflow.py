@@ -7,15 +7,13 @@ export wave to fuse them into a single row stream: the basis-point
 spread between CoinGecko USD price and Binance USDT price for every
 overlapping symbol.
 
-The cross-source join (CoinGecko symbol -> Binance pair) and both
-sources' numeric coercion happen at BUILD time, in the `conv_dict`s
-declared in `crypto_spread.py` and the sibling `inflow.py` — see those
-files' docstrings for the wiring. By the time a row reaches `outflow()`
-below, `coin.binance_pair` is either a resolved `BinancePair` instance
-or `None` (never a raw string to parse), and `coin.current_price` /
-`pair.price` are already floats. Reads here are plain attribute access;
-no `getattr(..., default) or fallback`, no `float(x or 0)`, no
-`.inc_dict.get(...)` registry lookup.
+Both sources' numeric coercion happens at BUILD time, in each source's
+own static `conv_dict` declared in `crypto_spread.py`. The cross-source
+join (CoinGecko symbol -> Binance pair) happens here, at READ time:
+`state["BinancePair"]` is the live `IncorporatorList` snapshot the fjord
+engine hands `outflow()` on every wave, taken under its own shared lock,
+so `.inc_dict.get(...)` is a safe, cheap lookup against already-coerced
+`BinancePair` instances.
 
 Dynamic output class is built from this file's stem —
 `outflow.py` -> `Outflow`.
@@ -35,24 +33,30 @@ class BinancePair(Incorporator):
     """Source B — Binance current USDT-quoted prices for every pair."""
 
 
+def _to_binance_symbol(sym: str) -> str:
+    """CoinGecko ticker symbol -> Binance USDT pair key: 'btc' -> 'BTCUSDT'."""
+    return f"{sym.upper()}USDT"
+
+
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Join CoinGecko USD vs Binance USDT for overlapping symbols.
 
-    For each CoinGecko coin whose ``binance_pair`` resolved (build-time
-    join via `inflow.py`'s `link_to`), emit a row containing the symbol,
-    both prices, and the basis-point spread.
+    For each CoinGecko coin, look up the matching `BinancePair` by
+    computed key (`SYMBOLUSDT`) against the live `state["BinancePair"]`
+    snapshot; unmatched coins are skipped.
 
     ``state`` is a snapshot of each source by class name, taken under
     the engine's shared lock. Return ``list[dict]``; fjord handles the
     export.
     """
     coins = state["CoinGecko"] or []
+    pairs = state["BinancePair"]
 
     rows: list[dict[str, Any]] = []
     now = datetime.now(timezone.utc).isoformat()
 
     for coin in coins:
-        pair = coin.binance_pair  # plain attribute — None if unmatched on Binance
+        pair = pairs.inc_dict.get(_to_binance_symbol(coin.symbol))
         if pair is None:
             continue
 
