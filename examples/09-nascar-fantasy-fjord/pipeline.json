@@ -1,7 +1,6 @@
 {
   "_comment_": "8-source NASCAR fantasy fjord. Run from this directory: incorporator validate pipeline.json && incorporator fjord pipeline.json --logs",
 
-  "inflow": "inflow.py",
   "outflow": "outflow.py",
 
   "stream_params": [
@@ -53,9 +52,17 @@
         "inc_code": "race_id",
         "inc_name": "race_name",
         "excl_lst": ["schedule", "track_name"],
-        "name_chg": [["track_id", "track"]]
+        "conv_dict": {
+          "date_scheduled": "inc(datetime)",
+          "race_date": "inc(datetime)",
+          "qualifying_date": "inc(datetime)",
+          "tunein_date": "inc(datetime)",
+          "number_of_cars_in_field": "inc(int, default=0)",
+          "television_broadcaster": "inc(str, default='TBD')",
+          "playoff_round": "inc(int, default=0)",
+          "pole_winner_speed": "calc(speed_or_none, 'pole_winner_speed')"
+        }
       },
-      "depends_on": ["Track", "Driver"],
       "refresh_params": null
     },
     {

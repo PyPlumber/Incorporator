@@ -17,9 +17,12 @@ fused state:
 Each derived class gets its own export file via fjord's multi-output
 contract.
 
-Incoming-data manipulation (``_DATE_FIELDS``, ``_driver_id_or_none``,
-``mfg_from_logo_url``, and the ``inflow(state)`` seed hook) lives in
-the sibling ``inflow.py``.
+Race's three foreign keys (``track_id``, ``pole_winner_driver_id``,
+``winner_driver_id``) resolve here, at READ time, against the live
+``state["Track"]`` / ``state["Driver"]`` snapshots ``outflow(state)``
+is handed each wave — see View 1 below. Every source's own static
+coercion (dates, defaults, the ``pole_winner_speed`` sentinel guard)
+lives in its own ``conv_dict`` in ``nascar_fantasy.py`` / ``pipeline.json``.
 
 Kyle Busch died mid-season; ``OWNER_SCORED`` routes his roster pick to
 the RCR #133 owner-entry feed instead of driver points — see
@@ -98,6 +101,42 @@ _SERIES_LIST = ("Cup", "Busch", "Truck")
 # ── Helpers ────────────────────────────────────────────────────────
 
 
+def mfg_from_logo_url(url: str) -> str:
+    """Parse a NASCAR manufacturer logo URL into the make name.
+
+    'https://www.nascar.com/.../Chevrolet_2025-330x140.png' -> 'Chevrolet'
+    'https://www.nascar.com/.../Ford-Logo-1-320x180.png'   -> 'Ford'
+    'https://www.nascar.com/.../Toyota-180x180.png'         -> 'Toyota'
+    'https://www.nascar.com/.../Ram-330x115.png'            -> 'Ram'
+
+    Splits the basename on underscores and hyphens; first token is the make.
+    is_garbage_value pre-handles empty / None inputs — no defensive guard needed.
+    Public (no leading underscore) so pipeline.json's conv_dict token
+    ``calc(mfg_from_logo_url, ...)`` resolves against this sidecar's
+    public namespace.
+    """
+    basename = url.rsplit("/", 1)[-1]  # 'Chevrolet_2025-330x140.png'
+    stem = basename.split(".")[0]  # 'Chevrolet_2025-330x140'
+    token = stem.replace("-", "_").split("_")[0]  # 'Chevrolet'
+    return token
+
+
+def speed_or_none(raw: Any) -> float | None:
+    """NASCAR returns ``0.0`` for ``pole_winner_speed`` on races whose pole
+    hasn't been set yet (same 0-as-missing sentinel pattern NASCAR uses for
+    the driver-ID FK fields, guarded read-time below in ``outflow()``).
+    Mapping ``0.0`` to ``None`` at Race's own build time means outflow reads
+    ``race.pole_winner_speed`` directly — no ``if pole else None`` guard
+    needed against the magic-number sentinel. Casts to ``float`` inline
+    (rather than via ``calc()``'s ``target_type=``) so a genuine ``None``
+    result doesn't hit ``float(None)`` and log a per-row coercion warning.
+    Public (no leading underscore) so pipeline.json's conv_dict token
+    ``calc(speed_or_none, ...)`` resolves against this sidecar's public
+    namespace.
+    """
+    return float(raw) if raw else None
+
+
 def _hometown(driver: Any) -> str:
     """Compose ``City, ST`` from the driver's hometown fields, falling
     back to ``Unknown``. Fields are already coerced to ``str`` at
@@ -136,6 +175,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     drivers = state.get("Driver")
     races = state.get("Race")
     league = state.get("LeagueRoster")
+    tracks = state.get("Track")
     if drivers is None or races is None or league is None:
         return {}
 
@@ -161,11 +201,17 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         dt = getattr(race, "date_scheduled", None)
         if dt is None or dt.month != now.month or dt.year != now.year:
             continue
-        # pole / winner / track can each be None if the FK didn't resolve --
-        # a null-object guard on the join result, so `if track else` etc. stay.
-        pole = race.pole_winner_driver_id
-        winner = race.winner_driver_id
-        track = getattr(race, "track", None) or getattr(race, "track_id", None)
+        # track / pole / winner are read-time joins against live sibling
+        # snapshots: race.track_id / pole_winner_driver_id / winner_driver_id
+        # are Race's own RAW FK ints (no rename, no build-time resolution
+        # anymore). The `if race.pole_winner_driver_id else None` guard is
+        # the relocated 0-as-missing sentinel filter -- NASCAR returns 0 for
+        # a driver-ID field whose event hasn't happened yet, and 0
+        # coincidentally resolves to a real driver, so this must run before
+        # the lookup, not after.
+        track = tracks.inc_dict.get(race.track_id) if tracks else None
+        pole = drivers.inc_dict.get(race.pole_winner_driver_id) if race.pole_winner_driver_id else None
+        winner = drivers.inc_dict.get(race.winner_driver_id) if race.winner_driver_id else None
 
         monthly.append(
             {
@@ -177,8 +223,9 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "track_miles": track.length if track else None,
                 "track_loc": _track_loc(track),
                 "pole_winner": getattr(pole, "Full_Name", None) if pole else None,
-                # inflow.py's _speed_or_none already promotes NASCAR's
-                # 0.0-as-missing sentinel to None at build time.
+                # Race's own conv_dict (nascar_fantasy.py / pipeline.json)
+                # already promotes NASCAR's 0.0-as-missing sentinel to None
+                # at Race's build time via speed_or_none().
                 "pole_speed": race.pole_winner_speed,
                 "winner": getattr(winner, "Full_Name", None) if winner else None,
                 "cars": race.number_of_cars_in_field,
@@ -193,7 +240,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     # ════════════════════════════════════════════════════════════════
     # Materialise each team's roster by series, sorted by car number.
     # roster -> Driver stays read-time: LeagueRoster.roster is a list of
-    # {series_id, driver_id} dicts, not a flat FK field link_to() can join.
+    # {series_id, driver_id} dicts, not a flat FK field a static conv_dict can join.
     league_teams: dict[str, dict[int, list[Any]]] = {}
     for team in league:
         team_cd = team.team_id
@@ -231,8 +278,8 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             for car_idx, driver in enumerate(roster[series_id], start=1):
                 did = int(driver.inc_code)
                 # Which dataset to join against is chosen per-row at runtime
-                # (series + OWNER_SCORED membership) -- link_to() can't branch
-                # between three datasets like this, so it stays read-time.
+                # (series + OWNER_SCORED membership) -- a static conv_dict entry
+                # can't branch between three datasets like this, so it stays read-time.
                 if did in OWNER_SCORED and series_id == 1:
                     owner_vnum = OWNER_SCORED[did]  # '133' — must be string key
                     stnd = owner_standings.inc_dict.get(owner_vnum) if owner_standings else None

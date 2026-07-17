@@ -4,12 +4,12 @@ Eight-source fjord pipeline showcasing advanced fjord capabilities via
 the fjord engine.  Demonstrates three advanced fjord capabilities in
 one config:
 
-1. **State-aware inflow** — ``Race.track_id`` and
-   ``Race.pole_winner_driver_id`` resolve to live ``Track`` and
-   ``Driver`` instances via ``inflow(state)`` in
-   ``inflow.py`` (sibling sidecar).  Track + Driver +
-   three standings classes seed in parallel; Race waits for its
-   peers and gets state-wired conv_dict on every refresh wave.
+1. **Read-time join** — ``Race.track_id``, ``pole_winner_driver_id``,
+   and ``winner_driver_id`` resolve to live ``Track`` / ``Driver``
+   instances inside ``outflow(state)`` (sibling sidecar
+   ``outflow.py``), against the live snapshot fjord hands it each
+   wave. All eight sources seed in parallel — no source needs another
+   source's registry to build itself.
 
 2. **Multi-output outflow** — ``outflow(state)`` returns
    ``dict[ClassName, list[dict]]``; fjord builds THREE derived classes
@@ -45,7 +45,6 @@ DATA = HERE / "out"  # examples/09-nascar-fantasy-fjord/out/
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from inflow import mfg_from_logo_url  # noqa: E402
 from outflow import (  # noqa: E402
     BuschStanding,
     CupOwnerStanding,
@@ -55,12 +54,17 @@ from outflow import (  # noqa: E402
     Race,
     Track,
     TruckStanding,
+    mfg_from_logo_url,
+    speed_or_none,
 )
 
 CURRENT_YEAR = datetime.now().year
 CFC_BASE = "https://cf.nascar.com/cacher"
 PROD_BASE = f"https://cf.nascar.com/data/cacher/production/{CURRENT_YEAR}"
 STANDINGS_BASE = "racinginsights-points-feed.json"
+
+# Race payload columns that ship as ISO date strings.
+_DATE_FIELDS = ("date_scheduled", "race_date", "qualifying_date", "tunein_date")
 
 # Owner-standings exclusion list — drop the redundant name-component
 # fields; ``owner_name`` is already the ``inc_name`` and is sufficient.
@@ -163,11 +167,10 @@ async def main() -> None:
                 },
                 "refresh_params": None,
             },
-            # ── Race schedule — depends on Track + Driver via inflow ──
-            # depends_on enables tiered-parallel seed: Track + Driver +
-            # the three Standings + LeagueRoster all fire concurrently in
-            # tier 0; Race fires in tier 1 once its peers' registries are
-            # available for link_to() resolution.
+            # ── Race schedule — a co-equal source, seeds in parallel with
+            # everyone else. Its three FKs (track_id, pole_winner_driver_id,
+            # winner_driver_id) resolve READ-TIME in outflow.py against the
+            # live Track / Driver snapshots -- see outflow.py's docstring.
             {
                 "cls": Race,
                 "incorp_params": {
@@ -176,9 +179,17 @@ async def main() -> None:
                     "inc_code": "race_id",
                     "inc_name": "race_name",
                     "excl_lst": ["schedule", "track_name"],
-                    "name_chg": [("track_id", "track")],
+                    "conv_dict": {
+                        **{key: inc(datetime) for key in _DATE_FIELDS},
+                        "number_of_cars_in_field": inc(int, default=0),
+                        "television_broadcaster": inc(str, default="TBD"),
+                        "playoff_round": inc(int, default=0),
+                        # 0.0-as-missing sentinel: NASCAR reports 0.0 for a
+                        # pole speed that hasn't been set yet. speed_or_none
+                        # promotes it to None at Race's own build time.
+                        "pole_winner_speed": calc(speed_or_none, "pole_winner_speed"),
+                    },
                 },
-                "depends_on": ["Track", "Driver"],
                 "refresh_params": None,
             },
             # ── Live standings, one source per series ──
@@ -286,8 +297,7 @@ async def main() -> None:
                 "refresh_params": None,
             },
         ],
-        # The state-aware inflow sidecar (inflow.py) and output sidecar (outflow.py).
-        inflow=str(HERE / "inflow.py"),
+        # The output sidecar (outflow.py) — source classes + outflow(state).
         outflow=str(HERE / "outflow.py"),
         # Per-class export_params — one entry per dict-key returned
         # by outflow(state).  Detection: nested dict shape = multi-output.
