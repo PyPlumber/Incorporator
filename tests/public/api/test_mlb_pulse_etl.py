@@ -1,10 +1,16 @@
 """T-Tutorial smoke test for the MLB AL Pulse Tideweaver appendix.
 
 Patches ``execute_request`` to return canned MLB Stats API payloads and drives
-the diamond end-to-end (head + 4 middles + tail Fjord). hitting_stream and
-pitching_stream use ``Stream(parent_current='al_teams')`` for T5 fan-out.
-Row filtering is server-side at the al_teams URL (``?leagueId=103``), so no
-post-fetch filter is applied — the parent's 15 AL teams ARE the scope.
+the diamond end-to-end: head (``al_teams``) + 3 middles (``standings``,
+``hitting``, ``pitching``) + tail Fjord (``pulse``). ``hitting``/``pitching``
+use ``Stream(parent_current='al_teams')`` for T5 fan-out. Row filtering is
+server-side at the ``al_teams`` URL (``?leagueId=103``), so no post-fetch
+filter is applied — the parent's 15 AL teams ARE the scope.
+
+``MLBStandings`` carries no ``conv_dict`` — the framework auto-promotes its
+raw ``teamRecords`` list into nested submodels with plain dotted attribute
+access, and the per-team flatten/derive happens read-time in
+``outflow(state)`` (see ``examples/appendix/mlb-pulse/outflow.py``).
 
 Asserts:
 - 15 output rows (one per AL team) on the final flush
@@ -49,8 +55,6 @@ _mlb_outflow = load_sidecar(_SIDECAR_DIR / "outflow.py", "mlb_pulse_outflow")
 MLBAllTeam = _mlb_outflow.MLBAllTeam
 MLBHitting = _mlb_outflow.MLBHitting
 MLBPitching = _mlb_outflow.MLBPitching
-MLBSchedule = _mlb_outflow.MLBSchedule
-MLBSTANDINGS_CONV_DICT = _mlb_outflow.MLBSTANDINGS_CONV_DICT
 MLBStandings = _mlb_outflow.MLBStandings
 TeamPulseCard = _mlb_outflow.TeamPulseCard
 
@@ -66,24 +70,6 @@ _AL_TEAM_IDS = _AL_EAST_IDS | _AL_CENTRAL_IDS | _AL_WEST_IDS
 # ---------------------------------------------------------------------------
 # Canned response payloads
 # ---------------------------------------------------------------------------
-
-_SCHEDULE_PAYLOAD = {
-    "dates": [
-        {
-            "games": [
-                {
-                    "gamePk": 1001,
-                    "gameDate": "2026-05-28",
-                    "status": {"detailedState": "Scheduled"},
-                    "teams": {
-                        "home": {"team": {"id": 147, "name": "New York Yankees"}},
-                        "away": {"team": {"id": 111, "name": "Boston Red Sox"}},
-                    },
-                }
-            ]
-        }
-    ]
-}
 
 
 def _make_team(team_id: int, name: str, abbr: str, short: str, division_id: int) -> dict:
@@ -129,7 +115,7 @@ def _team_rec(team_id: int, name: str, wins: int, losses: int, gb: float, rs: in
         "wins": wins,
         "losses": losses,
         "winningPercentage": pct,
-        "gamesBack": f"{gb:.1f}",
+        "gamesBack": "-" if gb == 0.0 else f"{gb:.1f}",
         "runsScored": rs,
         "runsAllowed": ra,
         "leagueRecord": {"wins": wins, "losses": losses, "pct": pct},
@@ -139,7 +125,7 @@ def _team_rec(team_id: int, name: str, wins: int, losses: int, gb: float, rs: in
 _STANDINGS_PAYLOAD = {
     "records": [
         {
-            "division": {"id": 201, "name": "American League East"},
+            "division": {"id": 201},
             "lastUpdated": "2026-05-28T12:00:00Z",
             "teamRecords": [
                 _team_rec(147, "New York Yankees", 32, 18, 0.0, 280, 195),
@@ -150,7 +136,7 @@ _STANDINGS_PAYLOAD = {
             ],
         },
         {
-            "division": {"id": 202, "name": "American League Central"},
+            "division": {"id": 202},
             "lastUpdated": "2026-05-28T12:00:00Z",
             "teamRecords": [
                 _team_rec(114, "Cleveland Guardians", 30, 20, 0.0, 260, 200),
@@ -161,7 +147,7 @@ _STANDINGS_PAYLOAD = {
             ],
         },
         {
-            "division": {"id": 200, "name": "American League West"},
+            "division": {"id": 200},
             "lastUpdated": "2026-05-28T12:00:00Z",
             "teamRecords": [
                 _team_rec(117, "Houston Astros", 31, 19, 0.0, 270, 200),
@@ -237,10 +223,8 @@ def _pitching_payload(team_id: int) -> dict:
 
 async def _mock_mlb_pulse(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
     """Return canned MLB Stats API responses keyed on URL pattern."""
-    if "schedule" in url:
-        payload: Any = _SCHEDULE_PAYLOAD
-    elif "/teams?sportId" in url:
-        payload = _TEAMS_PAYLOAD
+    if "/teams?sportId" in url:
+        payload: Any = _TEAMS_PAYLOAD
     elif "standings" in url:
         payload = _STANDINGS_PAYLOAD
     elif "group=hitting" in url:
@@ -268,7 +252,7 @@ async def _mock_mlb_pulse(url: str, *args: Any, **kwargs: Any) -> httpx.Response
 
 def _reset_all() -> None:
     """Wipe per-class inc_dict + parked snapshots to prevent test cross-contamination."""
-    for cls in (MLBSchedule, MLBAllTeam, MLBStandings, MLBHitting, MLBPitching, TeamPulseCard):
+    for cls in (MLBAllTeam, MLBStandings, MLBHitting, MLBPitching, TeamPulseCard):
         cls.inc_dict.clear()
         if "_tideweaver_snapshot" in cls.__dict__:
             try:
@@ -359,13 +343,8 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
     from datetime import datetime, timedelta, timezone
 
     now = datetime.now(timezone.utc)
-    # Widened from 12.0s: real-clock scheduler ticks under CPU contention
-    # need headroom.  drain_timeout=8.0 below is NOT the bottleneck here —
-    # it only bounds the post-window-close wait for in-flight ticks, and
-    # with ignore_ssl=True (see the Stream incorp_params below) every tick
-    # now completes in milliseconds rather than paying a real TLS
-    # cert-chain load, so 8.0s of drain headroom is ample regardless of
-    # window size.
+    # Real-clock scheduler ticks under CPU contention need headroom; see
+    # ``ignore_ssl=True`` below for why 16s is ample despite live-shaped Streams.
     window = (now, now + timedelta(seconds=16.0))
 
     # ``ignore_ssl=True`` on every Stream skips httpx.AsyncClient's real TLS
@@ -377,19 +356,6 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
     # ``ignore_ssl`` is a pre-existing, fully-plumbed incorp_params key (see
     # incorporator/io/fetch.py's HTTPClientBuilder.build_client); this is a
     # test-only fetch-cost fix, not a scheduler seam.
-    schedule_stream = Stream(
-        name="schedule",
-        cls=MLBSchedule,
-        interval=0.5,
-        on_error="isolate",
-        incorp_params={
-            "inc_url": "https://statsapi.mlb.com/api/v1/schedule?sportId=1",
-            "rec_path": "dates.0.games",
-            "inc_code": "gamePk",
-            "inc_name": "teams.home.team.name",
-            "ignore_ssl": True,
-        },
-    )
     al_teams_stream = Stream(
         name="al_teams",
         cls=MLBAllTeam,
@@ -409,12 +375,11 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
         cls=MLBStandings,
         interval=0.5,
         on_error="isolate",
+        # No conv_dict — teamRecords auto-promotes; outflow(state) flattens read-time.
         incorp_params={
             "inc_url": "https://statsapi.mlb.com/api/v1/standings?leagueId=103",
             "rec_path": "records",
             "inc_code": "division.id",
-            "inc_name": "division.name",
-            "conv_dict": MLBSTANDINGS_CONV_DICT,
             "ignore_ssl": True,
         },
     )
@@ -462,8 +427,8 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
 
     ws = Watershed.diamond(
         window=window,
-        head=schedule_stream,
-        middle=[al_teams_stream, standings_stream, hitting_stream, pitching_stream],
+        head=al_teams_stream,
+        middle=[standings_stream, hitting_stream, pitching_stream],
         tail=pulse_fjord,
         outflow=outflow_path,
         gate_mode="weir",
@@ -473,7 +438,7 @@ async def test_mlb_pulse_etl_produces_fifteen_ranked_al_cards(tmp_path: Any, mon
     currents_by_name = {c.name: c for c in ws.currents}
     monkeypatch.setattr(tw, "_invoke_tick", _make_pulse_tick(tw, strong_refs, currents_by_name))
 
-    # The scheduler drives all 5 upstream Stream ticks under the Weir gate's
+    # The scheduler drives all 4 upstream Stream ticks under the Weir gate's
     # freshness watermark (last_wave_at set inside _tick_wrapper, scheduler.py:761).
     # Pre-priming via direct Stream.cls.incorp() was removed because it does not
     # set last_wave_at and therefore does not satisfy the Weir gate — see

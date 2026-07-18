@@ -1,15 +1,4 @@
 {
-  "_comment_1_": "CLI-declarative form of the MLB AL Pulse diamond.",
-  "_comment_2_": "Relative outflow path is resolved against this JSON's parent directory,",
-  "_comment_3_": "so the example runs from any working directory:",
-  "_comment_4_": "  incorporator validate examples/appendix/mlb-pulse/watershed.json",
-  "_comment_5_": "  incorporator tideweaver run examples/appendix/mlb-pulse/watershed.json",
-  "_comment_6_": "Window is dateless: 'window_start' / 'window_end' are public names defined in",
-  "_comment_6b_": "outflow.py, evaluated at sidecar-import time -- no env vars needed.",
-  "_comment_7_": "hitting and pitching nodes use verb: stream with parent_current='al_teams' for",
-  "_comment_8_": "T5 parent-child fan-out. The al_teams parent's inc_url scopes server-side via",
-  "_comment_9_": "?sportId=1&leagueId=103, so no post-fetch row filter is needed — see the README",
-  "_comment_10_": "row-filter decision tree (URL filter is the framework's preferred primitive).",
   "window": {
     "start": "@window_start",
     "end": "@window_end"
@@ -17,58 +6,41 @@
 
   "shape": "diamond",
   "outflow": "outflow.py",
-  "drain_timeout": 20,
+  "drain_timeout": 15,
   "gate_mode": "weir",
 
   "head": {
-    "name": "schedule",
-    "class": "MLBSchedule",
+    "name": "al_teams",
+    "class": "MLBAllTeam",
     "verb": "stream",
-    "interval": 8,
+    "interval": 20,
     "on_error": "isolate",
     "incorp_params": {
-      "inc_url": "https://statsapi.mlb.com/api/v1/schedule?sportId=1",
-      "rec_path": "dates.0.games",
-      "inc_code": "gamePk",
-      "inc_name": "teams.home.team.name"
+      "inc_url": "https://statsapi.mlb.com/api/v1/teams?sportId=1&leagueId=103",
+      "rec_path": "teams",
+      "inc_code": "id",
+      "inc_name": "name"
     }
   },
 
   "middle": [
     {
-      "name": "al_teams",
-      "class": "MLBAllTeam",
+      "name": "standings",
+      "class": "MLBStandings",
       "verb": "stream",
       "interval": 20,
       "on_error": "isolate",
       "incorp_params": {
-        "inc_url": "https://statsapi.mlb.com/api/v1/teams?sportId=1&leagueId=103",
-        "rec_path": "teams",
-        "inc_code": "id",
-        "inc_name": "name"
-      }
-    },
-    {
-      "name": "standings",
-      "class": "MLBStandings",
-      "verb": "stream",
-      "interval": 8,
-      "on_error": "isolate",
-      "incorp_params": {
         "inc_url": "https://statsapi.mlb.com/api/v1/standings?leagueId=103",
         "rec_path": "records",
-        "inc_code": "division.id",
-        "inc_name": "division.name",
-        "conv_dict": {
-          "team_rows": "calc(flatten_team_records, 'teamRecords', default=[])"
-        }
+        "inc_code": "division.id"
       }
     },
     {
       "name": "hitting",
       "class": "MLBHitting",
       "verb": "stream",
-      "interval": 6,
+      "interval": 25,
       "on_error": "isolate",
       "parent_current": "al_teams",
       "incorp_params": {
@@ -77,7 +49,7 @@
         "rec_path": "stats.0.splits.0",
         "inc_code": "team.id",
         "conv_dict": {
-          "ops": "calc(float, 'stat.ops', default=0.0)"
+          "ops": "calc(float, 'stat.ops', default=0.0, target_type=float)"
         }
       }
     },
@@ -85,7 +57,7 @@
       "name": "pitching",
       "class": "MLBPitching",
       "verb": "stream",
-      "interval": 6,
+      "interval": 25,
       "on_error": "isolate",
       "parent_current": "al_teams",
       "incorp_params": {
@@ -94,7 +66,7 @@
         "rec_path": "stats.0.splits.0",
         "inc_code": "team.id",
         "conv_dict": {
-          "era": "calc(float, 'stat.era', default=9.99)"
+          "era": "calc(float, 'stat.era', default=9.99, target_type=float)"
         }
       }
     }
@@ -104,7 +76,7 @@
     "name": "pulse",
     "class": "TeamPulseCard",
     "verb": "fjord",
-    "interval": 4,
+    "interval": 5,
     "on_error": "isolate",
     "export_params": {
       "file_path": "out/al_pulse.ndjson",
