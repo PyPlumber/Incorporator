@@ -89,17 +89,6 @@ from incorporator import Incorporator
 from incorporator.schema.converters import inc
 from incorporator.schema.extractors import pluck
 
-# Build-time lift of the nested `links.homepage` path and an ASCII default for
-# `genesis_date` — collapses the read-time null-guard pyramid to plain attrs.
-# CoinGecko can omit `links` entirely (memecoins / new listings); pluck()
-# resolves missing path segments to None rather than raising, so the read-time
-# loop still needs one `or []` guard for that None-vs-[] case (honest
-# boundary, not a design flaw).
-COINDETAIL_CONV_DICT = {
-    "links_homepage": pluck("links.homepage"),
-    "genesis_date": inc(str, default="-"),
-}
-
 
 class Coin(Incorporator):
     """Lightweight market row from /coins/markets."""
@@ -120,13 +109,24 @@ async def main():
     print(f"OK: Loaded {len(coins)} parent market rows.")
 
     # Concurrent child drill — one /coins/{id} per parent.
+    #
+    # Build-time lift of the nested `links.homepage` path and an ASCII
+    # default for `genesis_date` — collapses the read-time null-guard
+    # pyramid to plain attrs. CoinGecko can omit `links` entirely
+    # (memecoins / new listings); pluck() resolves missing path segments
+    # to None rather than raising, so the read-time loop still needs one
+    # `or []` guard for that None-vs-[] case (honest boundary, not a
+    # design flaw).
     details = await CoinDetail.incorp(
         inc_url="https://api.coingecko.com/api/v3/coins/{}",
         inc_parent=coins,
         inc_child="id",
         inc_code="id",
         excl_lst=["image", "tickers", "community_data", "developer_data"],
-        conv_dict=COINDETAIL_CONV_DICT,
+        conv_dict={
+            "links_homepage": pluck("links.homepage"),
+            "genesis_date": inc(str, default="-"),
+        },
     )
     print(f"OK: Drilled {len(details)} per-coin detail records.\n")
 
@@ -254,9 +254,27 @@ flattening.
 # Python entry
 python examples/05-parent-child-drilling/parent_child_drilling.py
 
-# Same drill, from the CLI
+# Same drill, from the CLI — cd first: export_params.file_path
+# ("out/coin_details.ndjson") is CWD-relative, so the CLI form's output
+# lands in this directory only when run from here.
+cd examples/05-parent-child-drilling
+incorporator validate watershed.json
 incorporator tideweaver run watershed.json
 ```
+
+`watershed.json` runs a strict `coin` → `coin_detail` → `export_coin_detail`
+chain (`shape: "chain"`, `gate_mode: "hard"`): the `coin_detail` current is
+a `Stream(parent_current="coin")` — the same `inc_parent`/`inc_child` T5
+drill the Python entry runs above — and a separate `export_coin_detail`
+current writes the drilled rows, since `Stream(parent_current=...)`'s own
+export never gets consumed by the scheduler. The window is dateless:
+`"window_start"`/`"window_end"` are public names `inflow.py` computes at
+import time (a 3-minute span from "now"), so no env vars or date literals
+are needed to run it. `inflow.py` re-imports `Coin`/`CoinDetail` from
+`parent_child_drilling.py` rather than redefining them — see `inflow.py`'s
+own docstring — so both entry forms share one canonical class/conv_dict
+definition. Expect ~50 s wall-clock for the 10 concurrent detail requests
+at the 0.2 req/sec throttle.
 
 Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: 10 coin rows drill into 10 coin_detail rows, matching the Python entry row-for-row (see [`watershed.json`](watershed.json) + [`inflow.py`](inflow.py)).
 

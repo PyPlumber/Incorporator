@@ -1,18 +1,4 @@
 {
-  "_comment_1_": "CLI-declarative form of the single T5 parent-child drill (parent_child_drilling.py).",
-  "_comment_2_": "Relative inflow path is resolved against this JSON's parent directory,",
-  "_comment_3_": "so the example runs from any working directory:",
-  "_comment_4_": "  incorporator validate examples/05-parent-child-drilling/watershed.json",
-  "_comment_5_": "  incorporator tideweaver run examples/05-parent-child-drilling/watershed.json",
-  "_comment_6_": "Window is dateless: 'window_start' / 'window_end' are public names defined in",
-  "_comment_6b_": "inflow.py, evaluated at sidecar-import time -- no env vars needed.",
-  "_comment_7_": "'coin' loads the top-10 CoinGecko market rows; 'coin_detail' is a",
-  "_comment_8_": "Stream(parent_current='coin') T5 drill against each coin's real /coins/{id}",
-  "_comment_9_": "payload -- the exact inc_parent/inc_child fan-out the Python entry runs.",
-  "_comment_10_": "'export_coin_detail' is required: Stream(parent_current=...)'s own export_params",
-  "_comment_11_": "is never consumed by the scheduler, so a separate Export current is the only",
-  "_comment_12_": "thing that writes the drilled rows to disk.",
-
   "window": {
     "start": "@window_start",
     "end": "@window_end"

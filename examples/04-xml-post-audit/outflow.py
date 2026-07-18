@@ -1,47 +1,61 @@
-"""Outflow sidecar for examples/04-xml-post-audit/pipeline.json.
+"""Pure-store sidecar for the CLI form (``pipeline.json``).
 
-fjord's outflow(state) has no JSON primitive for a second, dependent
-incorp() call, so this sidecar performs the NHTSA batch-POST phase in
-plain Python and returns the reconciled rows. outflow(state) runs off the
-main event loop, so it's free to open its own loop via asyncio.run() --
-the host throttle registered below still applies correctly.
+``Invoice``/``NHTSASpec`` and the ``to_upper`` helper are defined ONCE, in
+``nhtsa_post_audit.py``. This module only re-exports them (via a plain
+import) plus the fjord's ``outflow(state)`` fusion hook -- there is no
+JSON-declarable primitive for a second, dependent ``incorp()`` call keyed
+on a first source's cached child path, so the NHTSA batch-POST phase
+stays hand-written Python here, returning the reconciled rows.
+``outflow(state)`` runs off the main event loop, so it's free to open its
+own loop via ``asyncio.run()`` -- the host throttle registered in
+``nhtsa_post_audit.py`` still applies correctly, since importing that
+module runs its module-level ``register_host_penstock(...)`` call as a
+side effect.
+
+**Identity safety, and why this arrangement is required, not cosmetic.**
+This file gets ``exec_module``'d under the CLI's default ``name_hint``
+(``incorporator/usercode.py``'s ``load_user_module``), invoked once for
+``merge_sidecar_extra_names`` (token/``cls_name`` resolution) and again
+for :meth:`Incorporator.fjord`'s own load -- both share the same cache
+key here, so there's only one exec in this daemon's case. Importing
+``Invoice``/``NHTSASpec`` (rather than redefining them) still matters:
+Python's own ``sys.modules['nhtsa_post_audit']`` cache guarantees this
+module and ``nhtsa_post_audit.py``'s own code always see the SAME
+canonical class objects, with no risk of drift between the two files'
+conv_dicts.
+
+**The one gap this file works around.** ``load_user_module`` does not add
+this file's own parent directory to ``sys.path`` before running it (unlike
+``python <script>.py``, which auto-prepends the script's directory) -- the
+``sys.path.insert`` below is required, guarded against a double insert.
 """
 
+from __future__ import annotations
+
 import asyncio
+import sys
+from pathlib import Path
 from typing import Any
 
-from incorporator import Incorporator, register_host_penstock
-from incorporator.schema.converters import calc
-from incorporator.schema.extractors import join_all, pluck
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
-# Pace NHTSA vPIC at 1.5 req/sec (90/min — under the 100-200/min ceiling).
-register_host_penstock("vpic.nhtsa.dot.gov", rate_per_sec=1.5)
+from nhtsa_post_audit import Invoice, NHTSASpec, to_upper  # noqa: E402
 
-# Referenced from pipeline.json's Invoice entry via the "@INVOICE_CONV_DICT"
-# sigil -- pluck(chain=str.upper) can't be expressed as a JSON call-grammar
-# token (str.upper is attribute access, rejected by the safe-eval walker).
-INVOICE_CONV_DICT = {
-    "jimmy_vin": pluck("Vehicle.VIN"),
-    "jimmy_make": pluck("Vehicle.Make", chain=str.upper),
-    "jimmy_model": pluck("Vehicle.Model", chain=str.upper),
-}
+from incorporator.schema.converters import calc  # noqa: E402
+from incorporator.schema.extractors import join_all  # noqa: E402
 
-NHTSA_CONV_DICT = {
-    "true_make": calc(str.upper, "Make", default="UNKNOWN", target_type=str),
-    "true_model": calc(str.upper, "Model", default="UNKNOWN", target_type=str),
-}
-
-
-class Invoice(Incorporator):
-    pass
-
-
-class NHTSASpec(Incorporator):
-    pass
+__all__ = ["Invoice", "NHTSASpec", "to_upper", "outflow"]
 
 
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Bulk-POST invoices["Invoice"] to NHTSA, then reconcile VIN by VIN."""
+    """Bulk-POST ``state["Invoice"]`` to NHTSA, then reconcile VIN by VIN.
+
+    ``incorporator fjord pipeline.json`` runs the fjord DAEMON path, so
+    ``state["Invoice"]`` is a live ``IncorporatorList`` (has ``.inc_dict``) --
+    distinct from a Tideweaver Fjord current's plain-list snapshots.
+    """
     invoices = state["Invoice"]
     govt_specs = asyncio.run(
         NHTSASpec.incorp(
@@ -52,7 +66,10 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
             form_payload={"format": "json", "data": join_all(";")},
             rec_path="Results",
             inc_code="VIN",
-            conv_dict=NHTSA_CONV_DICT,
+            conv_dict={
+                "true_make": calc(to_upper, "Make", default="UNKNOWN", target_type=str),
+                "true_model": calc(to_upper, "Model", default="UNKNOWN", target_type=str),
+            },
         )
     )
     rows = []

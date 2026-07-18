@@ -6,6 +6,19 @@ government database (NHTSA) to verify each record against the truth.
 
 Covers: schema-free XML parsing, the `inc_child` state carrier, a single
 batched POST via `join_all`, and an O(1) `.inc_dict` join.
+
+``Invoice``/``NHTSASpec`` and the ``to_upper`` helper are defined ONCE,
+here. ``outflow.py`` (the sibling CLI sidecar for ``pipeline.json``)
+re-exports them via a guarded ``sys.path.insert`` + plain import, rather
+than redefining them, so both entry forms operate on the exact same
+class objects and conv_dict logic (see ``outflow.py``'s docstring for
+why that matters). This file never runs a Fjord/Watershed in-process --
+``incorporator fjord pipeline.json`` is a separate CLI process that
+imports FROM here, the same direction as
+``examples/appendix/crypto-graph-mapping``.
+
+Run with:
+    python examples/04-xml-post-audit/nhtsa_post_audit.py
 """
 
 import asyncio
@@ -21,32 +34,23 @@ register_host_penstock("vpic.nhtsa.dot.gov", rate_per_sec=1.5)
 
 HERE = Path(__file__).resolve().parent
 
-# Build-time lift of the nested Vehicle.* fields Jimmy's ledger buries three
-# levels deep — pluck(chain=str.upper) drills + normalizes in one pass, so the
-# report loop below reads plain attributes instead of a getattr pyramid.
-INVOICE_CONV_DICT = {
-    "jimmy_vin": pluck("Vehicle.VIN"),
-    "jimmy_make": pluck("Vehicle.Make", chain=str.upper),
-    "jimmy_model": pluck("Vehicle.Model", chain=str.upper),
-}
 
-# NHTSA's Results rows are already flat; calc() is required (not inc()) because
-# the output key (true_make) differs from the source key (Make).
-NHTSA_CONV_DICT = {
-    "true_make": calc(str.upper, "Make", default="UNKNOWN", target_type=str),
-    "true_model": calc(str.upper, "Model", default="UNKNOWN", target_type=str),
-}
+def to_upper(value: str) -> str:
+    """Named wrapper for ``str.upper``. ``str.upper`` is attribute access,
+    rejected by the JSON token grammar's safe-eval walker (see
+    ``incorporator/cli/tokens.py``); a named module-level function resolves
+    as a bare ``ast.Name`` instead. Shared by both entry forms so the same
+    token name works in ``pipeline.json`` and here.
+    """
+    return value.upper()
 
 
-# ==========================================
-# 1. DEFINE OUR OBJECTS
-# ==========================================
 class Invoice(Incorporator):
-    pass
+    """One dealership sale, parsed from Jimmy's local XML ledger."""
 
 
 class NHTSASpec(Incorporator):
-    pass
+    """One federal VIN decode result from NHTSA's batch endpoint."""
 
 
 async def run_audit() -> None:
@@ -55,12 +59,19 @@ async def run_audit() -> None:
     # ==========================================
     # PHASE 1: Ingest the XML File
     # ==========================================
+    # Build-time lift of the nested Vehicle.* fields Jimmy's ledger buries three
+    # levels deep — pluck() drills, calc(to_upper) normalizes, so the report
+    # loop below reads plain attributes instead of a getattr pyramid.
     invoices = await Invoice.incorp(
         inc_file=HERE / "jimmy_ledger.xml",
         rec_path="Dealership.AuditFile.Invoices.Invoice",
         inc_code="id",
         inc_child="Vehicle.VIN",
-        conv_dict=INVOICE_CONV_DICT,
+        conv_dict={
+            "jimmy_vin": pluck("Vehicle.VIN"),
+            "jimmy_make": calc(to_upper, "Vehicle.Make", target_type=str),
+            "jimmy_model": calc(to_upper, "Vehicle.Model", target_type=str),
+        },
     )
 
     print(f"OK: Extracted {len(invoices)} Invoices. Contacting Federal Databases...")
@@ -70,6 +81,8 @@ async def run_audit() -> None:
     # ==========================================
     # Incorporator reads the cached `inc_child_path`, extracts every VIN,
     # and automatically joins them with semicolons into 1 Bulk Batch Request!
+    # NHTSA's Results rows are already flat; calc() is required (not inc())
+    # because the output key (true_make) differs from the source key (Make).
     govt_specs = await NHTSASpec.incorp(
         inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
         inc_parent=invoices,
@@ -78,7 +91,10 @@ async def run_audit() -> None:
         form_payload={"format": "json", "data": join_all(";")},
         rec_path="Results",
         inc_code="VIN",
-        conv_dict=NHTSA_CONV_DICT,
+        conv_dict={
+            "true_make": calc(to_upper, "Make", default="UNKNOWN", target_type=str),
+            "true_model": calc(to_upper, "Model", default="UNKNOWN", target_type=str),
+        },
     )
 
     print(f"OK: Government Data Received for {len(govt_specs)} vehicles. Initiating Fraud Audit...\n")

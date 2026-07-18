@@ -1,6 +1,4 @@
 {
-  "_comment_": "XML post audit: parse Jimmy's ledger, then outflow() does the NHTSA batch POST + reconciliation. Run from this directory: incorporator validate pipeline.json && incorporator fjord pipeline.json",
-
   "outflow": "outflow.py",
 
   "stream_params": [
@@ -11,7 +9,11 @@
         "rec_path": "Dealership.AuditFile.Invoices.Invoice",
         "inc_code": "id",
         "inc_child": "Vehicle.VIN",
-        "conv_dict": "@INVOICE_CONV_DICT"
+        "conv_dict": {
+          "jimmy_vin": "pluck('Vehicle.VIN')",
+          "jimmy_make": "calc(to_upper, 'Vehicle.Make', target_type=str)",
+          "jimmy_model": "calc(to_upper, 'Vehicle.Model', target_type=str)"
+        }
       },
       "refresh_params": null
     }

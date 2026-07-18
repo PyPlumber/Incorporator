@@ -74,49 +74,48 @@ register_host_penstock("vpic.nhtsa.dot.gov", rate_per_sec=1.5)
 
 HERE = Path(__file__).resolve().parent
 
-# Build-time lift of the nested Vehicle.* fields Jimmy's ledger buries three
-# levels deep — pluck(chain=str.upper) drills + normalizes in one pass, so the
-# report loop below reads plain attributes instead of a getattr pyramid.
-INVOICE_CONV_DICT = {
-    "jimmy_vin": pluck("Vehicle.VIN"),
-    "jimmy_make": pluck("Vehicle.Make", chain=str.upper),
-    "jimmy_model": pluck("Vehicle.Model", chain=str.upper),
-}
 
-# calc() is used here because uppercasing is a FUNCTION applied to the source
-# value, not a type coercion — calc(str.upper, "Make", ...) would still be the
-# right call even if the output key were "Make" (same as the source key).
-NHTSA_CONV_DICT = {
-    "true_make": calc(str.upper, "Make", default="UNKNOWN", target_type=str),
-    "true_model": calc(str.upper, "Model", default="UNKNOWN", target_type=str),
-}
+def to_upper(value: str) -> str:
+    """Named wrapper for ``str.upper`` — ``str.upper`` as a bare attribute
+    token is rejected by the CLI form's JSON safe-eval walker, so a named
+    module-level function is what makes the SAME conv_dict logic
+    expressible in both this Python entry and pipeline.json."""
+    return value.upper()
 
 
 class Invoice(Incorporator):
-    pass
+    """One dealership sale, parsed from Jimmy's local XML ledger."""
 
 
 class NHTSASpec(Incorporator):
-    pass
+    """One federal VIN decode result from NHTSA's batch endpoint."""
 
 
 async def run_audit() -> None:
     print("Parsing Shady Jimmy's Local XML Ledger...")
 
+    # Build-time lift of the nested Vehicle.* fields Jimmy's ledger buries
+    # three levels deep — pluck() drills, calc(to_upper) normalizes, so the
+    # report loop below reads plain attributes instead of a getattr pyramid.
     invoices = await Invoice.incorp(
         inc_file=HERE / "jimmy_ledger.xml",
         rec_path="Dealership.AuditFile.Invoices.Invoice",
         inc_code="id",
         # inc_child caches the VIN path on the list for the enrichment call below.
         inc_child="Vehicle.VIN",
-        conv_dict=INVOICE_CONV_DICT,
+        conv_dict={
+            "jimmy_vin": pluck("Vehicle.VIN"),
+            "jimmy_make": calc(to_upper, "Vehicle.Make", target_type=str),
+            "jimmy_model": calc(to_upper, "Vehicle.Model", target_type=str),
+        },
     )
 
     print(f"Extracted {len(invoices)} invoices. Contacting Federal Databases...")
 
     # Incorporator reads the cached inc_child path, extracts every VIN,
     # joins them with the delimiter, and issues one network call —
-    # regardless of ledger size.
+    # regardless of ledger size. calc() is required (not inc()) below
+    # because the output key (true_make) differs from the source key (Make).
     govt_specs = await NHTSASpec.incorp(
         inc_url="https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/",
         inc_parent=invoices,
@@ -128,7 +127,10 @@ async def run_audit() -> None:
         },
         rec_path="Results",
         inc_code="VIN",
-        conv_dict=NHTSA_CONV_DICT,
+        conv_dict={
+            "true_make": calc(to_upper, "Make", default="UNKNOWN", target_type=str),
+            "true_model": calc(to_upper, "Model", default="UNKNOWN", target_type=str),
+        },
     )
 
     print(f"Government data received for {len(govt_specs)} vehicles. Running audit...\n")
@@ -222,9 +224,21 @@ true_spec = govt_specs.inc_dict.get(jimmy_vin)
 # Python entry
 python examples/04-xml-post-audit/nhtsa_post_audit.py
 
-# Same audit, from the CLI
+# Same audit, from the CLI — cd first: pipeline.json's local inc_file
+# ("jimmy_ledger.xml") is config-dir-relative, but export_params.file_path
+# ("out/jimmy_audit.ndjson") is CWD-relative.
+cd examples/04-xml-post-audit
+incorporator validate pipeline.json
 incorporator fjord pipeline.json
 ```
+
+`pipeline.json` points `"outflow"` at `outflow.py`, a pure store that
+re-imports `Invoice`/`NHTSASpec`/`to_upper` from `nhtsa_post_audit.py`
+rather than redefining them — see `outflow.py`'s own docstring. Its
+`outflow(state)` function is the return-twin of the Python entry's print
+loop: `state["Invoice"]` is a live registry (this is the fjord *daemon*
+CLI path, not a Tideweaver Watershed), so it does the batch-POST enrichment
+in plain Python and reconciles VIN by VIN, exactly like `run_audit()` above.
 
 Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: the CLI form reproduces the same single fraud hit as the Python entry — INV-010, a Porsche 911 flagged under a Honda Civic listing (see [`pipeline.json`](pipeline.json) + [`outflow.py`](outflow.py)).
 

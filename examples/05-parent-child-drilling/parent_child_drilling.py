@@ -9,6 +9,15 @@ ID in O(1).  The framework dedups parent IDs, fans out the children
 concurrently through one shared HTTP/2 client, retries on transient
 failure, and surfaces any RejectEntry records on `.rejects`.
 
+``Coin``/``CoinDetail`` are defined ONCE, here. ``inflow.py`` (the
+sibling CLI sidecar for ``watershed.json``) re-exports them via a
+guarded ``sys.path.insert`` + plain import, rather than redefining
+them, so both entry forms operate on the exact same class objects —
+see ``inflow.py``'s own docstring. This file never builds a Watershed
+in-process — ``incorporator tideweaver run watershed.json`` is a
+separate CLI process that imports FROM here, the same direction as
+``examples/appendix/crypto-graph-mapping``.
+
 **Rate-limit note.**  CoinGecko's free public tier is 5–15 requests
 per *minute* (not per second).  The framework ships no implicit
 per-host throttling; this script calls ``register_host_penstock`` at
@@ -35,17 +44,6 @@ from incorporator.schema.extractors import pluck
 # Pace api.coingecko.com at 0.2 req/sec (12/min — comfortably under
 # the 5-15/min free-tier ceiling).
 register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
-
-# Build-time lift of the nested `links.homepage` path and an ASCII default for
-# `genesis_date` — collapses the read-time null-guard pyramid to plain attrs.
-# CoinGecko can omit `links` entirely (memecoins / new listings); pluck()
-# resolves missing path segments to None rather than raising, so the read-time
-# loop still needs one `or []` guard for that None-vs-[] case (honest
-# boundary, not a design flaw).
-COINDETAIL_CONV_DICT = {
-    "links_homepage": pluck("links.homepage"),
-    "genesis_date": inc(str, default="-"),
-}
 
 
 class Coin(Incorporator):
@@ -95,6 +93,14 @@ async def main() -> None:
     # ``requests_per_second`` paces the 10 child drills so they all
     # land inside CoinGecko's per-minute budget — without it the burst
     # would 429 the last few requests.
+    #
+    # Build-time lift of the nested `links.homepage` path and an ASCII
+    # default for `genesis_date` — collapses the read-time null-guard
+    # pyramid to plain attrs. CoinGecko can omit `links` entirely
+    # (memecoins / new listings); pluck() resolves missing path
+    # segments to None rather than raising, so the read-time loop still
+    # needs one `or []` guard for that None-vs-[] case (honest
+    # boundary, not a design flaw).
     details = await CoinDetail.incorp(
         inc_url="https://api.coingecko.com/api/v3/coins/{}",
         inc_parent=coins,
@@ -103,7 +109,10 @@ async def main() -> None:
         excl_lst=["image", "tickers", "community_data", "developer_data"],
         headers=headers,
         requests_per_second=rps,
-        conv_dict=COINDETAIL_CONV_DICT,
+        conv_dict={
+            "links_homepage": pluck("links.homepage"),
+            "genesis_date": inc(str, default="-"),
+        },
     )
     print(f"OK: Drilled {len(details)} per-coin detail records.\n")
 
