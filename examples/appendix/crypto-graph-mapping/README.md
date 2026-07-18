@@ -10,7 +10,7 @@
 
 # 🕸️ Multi-Graph Mapping: The Unified Trading Dashboard
 
-You don't need a daemon. You want T10's cross-venue join done **once**, the results printed (or exported), then the process exits. `link_to(...)` builds the in-memory join across two CoinGecko + Binance endpoints in one async-for-free call. `crypto_graph_mapping.py`'s `main()` resolves that join BUILD-time, inside `CryptoAsset`'s own `conv_dict`; the CLI form (`watershed.json`) resolves the *same* join READ-time instead, inside a `CryptoLiquidity` fjord's `outflow(state)` — see [Section 6](#6-the-declarative-form-watershedjson--a-read-time-fjord) for why the two entry points deliberately diverge.
+You don't need a daemon. You want T10's cross-venue join done **once**, the results printed (or exported), then the process exits. `link_to(...)` builds the in-memory join across two CoinGecko + Binance endpoints in one async-for-free call, and stops there — the linked `BinanceStat`/`BinanceBook` *objects* ride all the way to the point of use (print or export), the same graph-map idiom the framework's original real-API examples used. `crypto_graph_mapping.py`'s `main()` resolves that join BUILD-time, inside `CryptoAsset`'s own `conv_dict`; the CLI form (`watershed.json`) resolves the *same* join READ-time instead, inside a `CryptoLiquidity` fjord's `outflow(state)` — see [Section 6](#6-the-declarative-form-watershedjson--a-read-time-fjord) for why the two entry points deliberately diverge.
 
 In the real world, no single API has all the data you need:
 
@@ -30,9 +30,10 @@ Build a Unified Stablecoin Liquidity Dashboard. For the top 100 cryptocurrencies
 `BinanceStat`/`BinanceBook`/`CryptoAsset`/`CryptoLiquidity` and every conv_dict
 helper live in `crypto_graph_mapping.py`, defined exactly once — `outflow.py`
 only re-exports them (see [Section 6](#6-the-declarative-form-watershedjson--a-read-time-fjord)
-below). `main()` reads linearly — fetch both Binance registries, then fetch
-CoinGecko with the join `conv_dict` written inline in the `incorp()` call
-itself, then print the dashboard:
+below). `main()` reads linearly — fetch both Binance registries (each
+coercing its own numeric field), then fetch CoinGecko with the join
+`conv_dict` written inline in the `incorp()` call itself, then print the
+dashboard:
 
 ```python
 from incorporator import Incorporator, inc, link_to, register_host_penstock
@@ -59,22 +60,20 @@ def upper_symbol(value: str) -> str:
 class BinanceStat(Incorporator): ...
 class BinanceBook(Incorporator): ...
 class CryptoAsset(Incorporator): ...
-
-
-def quote_volume(stat: BinanceStat) -> str:
-    return stat.quoteVolume
-
-
-def bid_price(book: BinanceBook) -> str:
-    return book.bidPrice
+class CryptoLiquidity(Incorporator): ...  # bare — outflow(state)'s row keys are its shape
 
 
 async def main() -> None:
     binance_stats = await BinanceStat.incorp(
-        inc_url="https://api.binance.us/api/v3/ticker/24hr", inc_code="symbol", ...
+        inc_url="https://api.binance.us/api/v3/ticker/24hr",
+        inc_code="symbol",
+        conv_dict={"quoteVolume": inc(float, default=0.0)},  # Binance sends numeric strings
+        ...,
     )
     binance_books = await BinanceBook.incorp(
-        inc_url="https://api.binance.us/api/v3/ticker/bookTicker", inc_code="symbol"
+        inc_url="https://api.binance.us/api/v3/ticker/bookTicker",
+        inc_code="symbol",
+        conv_dict={"bidPrice": inc(float, default=0.0)},
     )
     assets = await CryptoAsset.incorp(
         inc_url="https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1",
@@ -85,16 +84,12 @@ async def main() -> None:
             "symbol": calc(upper_symbol, "symbol", default="", target_type=str),
             "market_cap_rank": inc(int, default=0),
             # We use our Factory to generate 4 parallel mapping routes simultaneously!
+            # The linked objects stop here — print_dashboard() traverses them
+            # directly at the point of use, no extraction fields.
             "stats_usdt": calc(link_to(binance_stats, extractor=make_linker("USDT")), "symbol"),
             "book_usdt": calc(link_to(binance_books, extractor=make_linker("USDT")), "symbol"),
             "stats_usdc": calc(link_to(binance_stats, extractor=make_linker("USDC")), "symbol"),
             "book_usdc": calc(link_to(binance_books, extractor=make_linker("USDC")), "symbol"),
-            # Extraction entries read the just-linked object — no getattr, no guard
-            # (calc's own garbage short-circuit skips the func on a missed link).
-            "usdt_volume": calc(quote_volume, "stats_usdt", target_type=float),
-            "usdt_bid": calc(bid_price, "book_usdt", target_type=float),
-            "usdc_volume": calc(quote_volume, "stats_usdc", target_type=float),
-            "usdc_bid": calc(bid_price, "book_usdc", target_type=float),
         },
     )
     print_dashboard(assets)
@@ -104,8 +99,9 @@ async def main() -> None:
 duration of the `CryptoAsset.incorp()` call — the `link_to(...)` entries
 above traverse them live while `conv_dict` resolves. `print_dashboard()`
 sorts with `assets.sort(key=operator.attrgetter("market_cap_rank"))` and
-reads every field with plain dots (`asset.usdt_volume`, `asset.current_price`,
-...) — no `getattr` anywhere in the file. See
+traverses the linked objects at the point of use with conditional dots
+(`asset.stats_usdt.quoteVolume if asset.stats_usdt else None`, ...) — no
+`getattr` anywhere in the file. See
 [`crypto_graph_mapping.py`](crypto_graph_mapping.py) for the full file,
 including `print_dashboard()`'s cp1252-safe formatting.
 
@@ -137,7 +133,7 @@ CoinGecko gives us `"btc"`; Binance expects `"BTCUSDT"`. The factory generates a
 ### 3. Native Null-Safety (Sparse Data Handling)
 In crypto, highly liquid coins trade against everything — but newer tokens might only have a `USDT` book and no `USDC` book yet.
 
-`link_to` is natively null-safe: if it searches the registry for `NEWCOINUSDC` and fails, it attaches `None` to `asset.stats_usdc`. It **never** raises `AttributeError`. The `conv_dict`'s `usdt_volume`/`usdt_bid`/`usdc_volume`/`usdc_bid` entries then resolve to their `calc` default (`None`) rather than crashing, since `calc`'s garbage short-circuit skips `quote_volume`/`bid_price` entirely on a missed link. `print_dashboard()`'s `fmt_usd()` helper checks `if value is None` and displays `"N/A"` — a plain `None`-check, not a defensive `getattr`.
+`link_to` is natively null-safe: if it searches the registry for `NEWCOINUSDC` and fails, it attaches `None` to `asset.stats_usdc`. It **never** raises `AttributeError`. Nothing extracts a scalar out of that linked object at build time — the object (or `None`) rides straight through to `print_dashboard()`, which reads it at the point of use with a conditional dot: `asset.stats_usdc.quoteVolume if asset.stats_usdc else None`. `fmt_usd()` then checks `if value is None` and displays `"N/A"` — a plain `None`-check, not a defensive `getattr`.
 
 ### 4. Database-Like Querying (`.sort()`)
 Because Incorporator infers the schema and transforms raw JSON into Python objects *during* ingestion, the final `assets` list behaves like a clean database result:
@@ -216,11 +212,18 @@ stay live.
 
 **`CryptoLiquidity`'s implicit projection.** `outflow(state)` returns plain
 dicts keyed `inc_code`, `symbol`, `current_price`, `market_cap_rank`,
-`usdt_volume`, `usdt_bid`, `usdc_volume`, `usdc_bid`. Because `outflow.py`
-re-exports a pre-declared `CryptoLiquidity` class (defined once, in
-`crypto_graph_mapping.py`) whose 7 business fields match those keys, the Fjord
-instantiates `CryptoLiquidity` directly from each returned row — the returned
-dict *is* the export shape; no separate `transform()` hook is needed.
+`usdt_volume`, `usdt_bid`, `usdc_volume`, `usdc_bid`. `CryptoLiquidity` is a
+*bare* class — no field declarations at all (see
+[`examples/appendix/nascar-tideweaver`](../nascar-tideweaver/README.md)'s
+`DriverState` for the same pattern). `Incorporator`'s `extra='allow'` means
+the Fjord instantiates `CryptoLiquidity` directly from each returned row
+regardless — the returned dict *is* the export shape; no separate
+`transform()` hook, and no matching field list, is needed. The numeric
+typing that a declared `float | None` field used to provide now lives one
+hop upstream, in `BinanceStat`/`BinanceBook`'s own `conv_dict` entries
+(`quoteVolume`/`bidPrice` coerced to `float` at their own `incorp()` time) —
+`outflow(state)` reads already-typed floats off those linked objects, it
+does no coercion of its own.
 
 `BinanceStat`/`BinanceBook`/`CryptoAsset`/`CryptoLiquidity` and the
 join-token helper the `conv_dict`/`outflow(state)` reference (`upper_symbol`)
@@ -250,39 +253,38 @@ to route a `link_to` through. Read both files side by side as a deliberate
 teaching pair: the same three sources, joined two different ways, each
 idiomatic for its own entry shape.
 
-### 7. Dot-notation, not `getattr` — where each guard actually lives
+### 7. Dot-notation, not `getattr` — the graph map rides to the point of use
 
-Neither `.py` file in this appendix contains a `getattr(`. In `main()`'s
-build-time join, three separate framework guarantees make that possible,
-each at a different stage:
+Neither `.py` file in this appendix contains a `getattr(`. Both entry
+points share the same idiom: `link_to` resolves an object (or `None`) into
+a `conv_dict`/state field and **stops there** — nothing extracts a scalar
+out of the linked object at build time. This is the framework's original
+graph-map idiom (`p.homeworld.inc_name`, `actor.location.inc_name`): a
+linked object rides, unmodified, all the way to wherever it's actually
+read, and is traversed with a conditional dot right there.
 
-* **`calc`'s input-key dot-path drills raw JSON only.** A `conv_dict`
-  input key like `"stats_usdt.quoteVolume"` would walk dicts and lists —
-  it cannot reach *into* an already-linked `Incorporator` instance. That's
-  why `usdt_volume`'s extraction step is a two-hop `conv_dict` sequence
-  (`stats_usdt` link, *then* `usdt_volume: calc(quote_volume, "stats_usdt", ...)`)
-  rather than a single dotted input key.
-* **The extraction helpers are plain one-liners with no guard**
-  (`def quote_volume(stat): return stat.quoteVolume`) because `calc`'s own
-  garbage short-circuit never calls the function on a `None`/garbage
-  input — a missed `link_to` resolves straight to the entry's `default`
-  and the helper is skipped entirely. The null path is guarded by the
-  framework, once, not by every helper that reads a linked object.
-* **Built instances read with plain dots** (`asset.usdt_volume`,
-  `asset.market_cap_rank`, `asset.symbol`) because `conv_dict` writes
-  every declared field — value or default — onto every row at build time.
-  There's nothing left to guard against by the time `print_dashboard()`
-  runs; the one remaining "might be missing" case (`usdt_volume` etc. for
-  a sparse asset) is a real `None`, checked once in `fmt_usd()`'s
-  `if value is None`, not scattered `getattr(..., None)` calls.
-
-`outflow.py`'s read-time join has no `calc` step to lean on — it reads
-`BinanceStat.inc_dict` / `BinanceBook.inc_dict` directly with `.get(...)`,
-not dispatched through the `conv_dict` machinery, so there's no garbage
-short-circuit to skip a step on a missed lookup. `outflow(state)` guards
-explicitly instead, with an inline `x.field if x is not None else None`
-conditional per lookup — still zero `getattr(`, just a different guard
-mechanism for a different call site.
+* **`main()`'s build-time join** writes `stats_usdt`/`book_usdt`/
+  `stats_usdc`/`book_usdc` onto each `CryptoAsset` — either the linked
+  `BinanceStat`/`BinanceBook` instance, or `None` on a missed lookup
+  (`link_to` is natively null-safe; it never raises `AttributeError`).
+  `print_dashboard()` reads those fields at print time with a conditional
+  dot per field: `asset.stats_usdt.quoteVolume if asset.stats_usdt else
+  None`. A missed link is a real `None`, guarded once, right where the
+  value is used — not by a chain of extraction helpers upstream.
+* **`outflow(state)`'s read-time join** does the same thing one call
+  earlier: it reads `BinanceStat.inc_dict` / `BinanceBook.inc_dict`
+  directly with `.get(...)`, then reads `.quoteVolume`/`.bidPrice` off the
+  result with the same `x.field if x is not None else None` conditional,
+  building the flat scalar dict NDJSON export needs. There's no `conv_dict`
+  machinery on this path to route a `link_to` through, so the guard is
+  written out explicitly instead of leaning on `calc`'s short-circuit —
+  still zero `getattr(`, just a different call site for the same
+  conditional-dot pattern.
+* **`quoteVolume`/`bidPrice` typing lives at the source.** `BinanceStat`/
+  `BinanceBook` each coerce their own field to `float` via a one-entry
+  `conv_dict` at their own `incorp()` time (`inc(float, default=0.0)`) —
+  the only reason both traversal sites above read a real number instead of
+  Binance's raw numeric string.
 
 ---
 

@@ -18,7 +18,10 @@
       "incorp_params": {
         "inc_url": "https://api.binance.us/api/v3/ticker/24hr",
         "inc_code": "symbol",
-        "excl_lst": ["priceChangePercent", "weightedAvgPrice", "openPrice", "prevClosePrice"]
+        "excl_lst": ["priceChangePercent", "weightedAvgPrice", "openPrice", "prevClosePrice"],
+        "conv_dict": {
+          "quoteVolume": "inc(float, default=0.0)"
+        }
       }
     },
     {
@@ -29,7 +32,10 @@
       "on_error": "isolate",
       "incorp_params": {
         "inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
-        "inc_code": "symbol"
+        "inc_code": "symbol",
+        "conv_dict": {
+          "bidPrice": "inc(float, default=0.0)"
+        }
       }
     },
     {

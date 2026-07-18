@@ -108,6 +108,14 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     which is what keeps each ``BinanceStat``/``BinanceBook`` instance alive
     (and its weak-ref ``inc_dict`` entry resolvable) between that Stream's
     own tick and any later ``liquidity`` wave that looks it up here.
+
+    ``quoteVolume``/``bidPrice`` resolve to real ``float`` values below (not
+    Binance's raw numeric strings) because ``BinanceStat``/``BinanceBook``
+    each coerce their own field via a one-entry ``conv_dict`` at their own
+    ``incorp()`` time -- see ``crypto_graph_mapping.py``'s ``main()`` and
+    ``watershed.json``'s ``binance_stats``/``binance_books`` currents.
+    ``CryptoLiquidity`` is a bare class (no field declarations); the dict
+    keys returned below ARE its export shape.
     """
     assets = state["CryptoAsset"]
     if not assets:

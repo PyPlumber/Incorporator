@@ -12,13 +12,19 @@ to create a deeply interconnected, null-safe data graph.
 defined ONCE, here. ``outflow.py`` re-exports them (rather than redefining
 them) so the CLI's class/token resolvers see the same canonical objects
 this file's own ``main()`` uses -- see ``outflow.py``'s docstring for why
-that matters. ``CryptoLiquidity`` is the CLI form's derived fjord row --
-this file's own ``main()`` never builds one; it writes the same 7 fields
-straight onto ``CryptoAsset`` via its build-time join instead. ``main()``
-reads linearly, top to bottom: fetch both Binance registries, then fetch
-CoinGecko with the 11-entry join ``conv_dict`` written inline in the
-``incorp()`` call itself, then print the dashboard -- no intermediate
-fetch/build wrapper functions.
+that matters. ``CryptoLiquidity`` is the CLI form's bare derived fjord
+row -- it carries no field declarations of its own; ``outflow(state)``'s
+returned row keys define its export shape. ``main()`` never builds one --
+it links the raw ``BinanceStat``/``BinanceBook`` objects straight onto
+``CryptoAsset`` via its build-time join and stops there; ``print_dashboard()``
+traverses those linked objects at the point of use, the same graph-map
+idiom the framework's original real-API examples used (``p.homeworld.inc_name``,
+``actor.location.inc_name``) -- linked objects ride to print time, no
+extraction fields. ``main()`` reads linearly, top to bottom: fetch both
+Binance registries (each coercing its own numeric field via a one-entry
+``conv_dict``), then fetch CoinGecko with the 7-entry join ``conv_dict``
+written inline in the ``incorp()`` call itself, then print the dashboard --
+no intermediate fetch/build wrapper functions.
 That makes this file's ``sys.path`` relationship with ``outflow.py`` the
 mirror image of T11's idiom (``examples/11-tideweaver/arb_scanner.py``
 inserts the MAIN script's dir so it can import FROM ``outflow.py``); here
@@ -78,35 +84,17 @@ class CryptoAsset(Incorporator):
 
 class CryptoLiquidity(Incorporator):
     """The CLI form's derived fjord row (see ``watershed.json``'s ``liquidity``
-    current + ``outflow.py``'s ``outflow(state)``). ``main()`` below doesn't
-    build any of these directly -- the build-time join in this file writes
-    the same 7 fields straight onto ``CryptoAsset`` instead. Defined here,
-    not in ``outflow.py``, per this appendix's identity-safety contract
-    (see ``outflow.py``'s module docstring)."""
-
-    symbol: str
-    current_price: float
-    market_cap_rank: int
-    usdt_volume: float | None
-    usdt_bid: float | None
-    usdc_volume: float | None
-    usdc_bid: float | None
-
-
-def quote_volume(stat: BinanceStat) -> str:
-    """24hr quote volume off a linked ``BinanceStat``.
-
-    No None-guard: ``calc``'s garbage short-circuit never invokes this on a
-    missed link (a failed ``link_to`` resolves straight to the entry's
-    ``default``, skipping the func entirely).
-    """
-    return stat.quoteVolume
-
-
-def bid_price(book: BinanceBook) -> str:
-    """Best bid price off a linked ``BinanceBook``. Same null-safety
-    contract as ``quote_volume``."""
-    return book.bidPrice
+    current + ``outflow.py``'s ``outflow(state)``). Bare on purpose -- no
+    field declarations. ``Incorporator``'s ``extra='allow'`` means the
+    returned row keys ARE the export shape (see
+    ``examples/appendix/nascar-tideweaver/outflow.py``'s ``DriverState``
+    for the same pattern). The numeric typing that used to live in this
+    class's declared ``float | None`` fields now lives at the source --
+    ``BinanceStat``/``BinanceBook``'s own ``conv_dict`` entries coerce
+    ``quoteVolume``/``bidPrice`` to ``float`` before ``outflow(state)``
+    ever reads them. ``main()`` below never builds one of these directly --
+    it links the raw ``BinanceStat``/``BinanceBook`` objects onto
+    ``CryptoAsset`` instead and reads them at print time."""
 
 
 def fmt_usd(value: float | None, decimals: int = 0) -> str:
@@ -119,9 +107,14 @@ def fmt_usd(value: float | None, decimals: int = 0) -> str:
 
 
 def print_dashboard(assets: IncorporatorList) -> None:
-    """Plain-dot readout. `conv_dict` already wrote every declared field
-    (or its default) onto each row at build time, so no `getattr`/
-    defensive access is needed here."""
+    """Graph-map readout. `conv_dict` linked the raw `BinanceStat`/
+    `BinanceBook` objects onto each `CryptoAsset` at build time and
+    stopped there -- this loop traverses those linked objects at the
+    point of use (`asset.stats_usdt.quoteVolume if asset.stats_usdt
+    else None`), the same idiom the framework's original real-API
+    examples used to traverse `p.homeworld.inc_name` /
+    `actor.location.inc_name`. A missed link is a real `None`, guarded
+    with a conditional dot -- no `getattr` anywhere in this file."""
     assets.sort(key=operator.attrgetter("market_cap_rank"))
 
     print("=" * 115)
@@ -139,10 +132,10 @@ def print_dashboard(assets: IncorporatorList) -> None:
         name = str(asset.inc_name).encode("ascii", errors="replace").decode("ascii")
         symbol = asset.symbol.encode("ascii", errors="replace").decode("ascii")
         global_price = fmt_usd(asset.current_price, decimals=2)
-        vol_usdt = fmt_usd(asset.usdt_volume)
-        bid_usdt = fmt_usd(asset.usdt_bid, decimals=2)
-        vol_usdc = fmt_usd(asset.usdc_volume)
-        bid_usdc = fmt_usd(asset.usdc_bid, decimals=2)
+        vol_usdt = fmt_usd(asset.stats_usdt.quoteVolume if asset.stats_usdt else None)
+        bid_usdt = fmt_usd(asset.book_usdt.bidPrice if asset.book_usdt else None, decimals=2)
+        vol_usdc = fmt_usd(asset.stats_usdc.quoteVolume if asset.stats_usdc else None)
+        bid_usdc = fmt_usd(asset.book_usdc.bidPrice if asset.book_usdc else None, decimals=2)
 
         asset_label = f"{name} ({symbol})"
         print(f"{asset_label:<18} | {global_price:<14} | {vol_usdt:<16} | {bid_usdt:<14} | {vol_usdc:<16} | {bid_usdc}")
@@ -158,15 +151,20 @@ async def main() -> None:
         inc_url="https://api.binance.us/api/v3/ticker/24hr",
         inc_code="symbol",
         excl_lst=["priceChangePercent", "weightedAvgPrice", "openPrice", "prevClosePrice"],
+        # Binance sends quoteVolume as a numeric STRING; coerce it here, once,
+        # at the source -- outflow.py's read-time join then reads a real float.
+        conv_dict={"quoteVolume": inc(float, default=0.0)},
     )
 
     print("Fetching Live Order Book Bids/Asks...")
     binance_books = await BinanceBook.incorp(
-        inc_url="https://api.binance.us/api/v3/ticker/bookTicker", inc_code="symbol"
+        inc_url="https://api.binance.us/api/v3/ticker/bookTicker",
+        inc_code="symbol",
+        conv_dict={"bidPrice": inc(float, default=0.0)},
     )
     print(f"Loaded {len(binance_stats)} Stats and {len(binance_books)} Order Books into memory.")
 
-    print("Fetching CoinGecko assets and building 4 sub-market links per asset...")
+    print("Fetching CoinGecko assets and linking 4 sub-market objects per asset...")
     assets = await CryptoAsset.incorp(
         inc_url="https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1",
         inc_code="id",
@@ -180,17 +178,12 @@ async def main() -> None:
             "market_cap_rank": inc(int, default=0),
             # MAGIC HAPPENS HERE: We use our Factory to generate 4 parallel mapping routes!
             # It maps the USDT and USDC pairings to both the Stats AND the Order Books.
+            # The linked objects stop here -- print_dashboard() traverses them
+            # directly at the point of use, no extraction fields.
             "stats_usdt": calc(link_to(binance_stats, extractor=make_linker("USDT")), "symbol"),
             "book_usdt": calc(link_to(binance_books, extractor=make_linker("USDT")), "symbol"),
             "stats_usdc": calc(link_to(binance_stats, extractor=make_linker("USDC")), "symbol"),
             "book_usdc": calc(link_to(binance_books, extractor=make_linker("USDC")), "symbol"),
-            # Extraction entries MUST follow their matching link entries above --
-            # conv_dict applies in dict-literal order; reading a link field before
-            # it's resolved reads None every time.
-            "usdt_volume": calc(quote_volume, "stats_usdt", target_type=float),
-            "usdt_bid": calc(bid_price, "book_usdt", target_type=float),
-            "usdc_volume": calc(quote_volume, "stats_usdc", target_type=float),
-            "usdc_bid": calc(bid_price, "book_usdc", target_type=float),
         },
     )
     print(f"Fused {len(assets)} assets. Commencing Unified Readout...\n")
