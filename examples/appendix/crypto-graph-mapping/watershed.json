@@ -1,19 +1,4 @@
 {
-  "_comment_1_": "CLI-declarative form of the static graph join (crypto_graph_mapping.py).",
-  "_comment_2_": "Relative outflow path is resolved against this JSON's parent directory,",
-  "_comment_3_": "so the example runs from any working directory:",
-  "_comment_4_": "  incorporator validate examples/appendix/crypto-graph-mapping/watershed.json",
-  "_comment_5_": "  incorporator tideweaver run examples/appendix/crypto-graph-mapping/watershed.json",
-  "_comment_6_": "Window is dateless: 'window_start' / 'window_end' are public names defined in",
-  "_comment_6b_": "outflow.py, evaluated at sidecar-import time -- no env vars needed.",
-  "_comment_7_": "One-shot, not a daemon: shape='parallel' runs the 3 independent sources once each",
-  "_comment_8_": "(interval >= window length) and the 'liquidity' Fjord tail joins them read-time via",
-  "_comment_9_": "link_to(...) in outflow.py -- see the README's shape-choice note for why this replaces",
-  "_comment_10_": "the never-shipped fjord/pipeline.json daemon the README used to document.",
-  "_comment_11_": "current_price is typed via inc(float): CoinGecko returns it as a raw JSON number (int for",
-  "_comment_12_": "whole-dollar bitcoin, float for the rest). KEEP this -- without it the fractional prices",
-  "_comment_13_": "truncate to 0 in the pipeline (stablecoins -> 0.0). See the README's note.",
-
   "window": {
     "start": "@window_start",
     "end": "@window_end"
