@@ -1,6 +1,4 @@
 {
-  "_comment_": "T8 canonical use: chunking-mode CoinGecko full-catalogue drain. Matches streaming_daemon.py's default chunking_demo() (no page cap -- see README addendum re: wall-clock). Run from this directory: incorporator validate pipeline.json && incorporator stream pipeline.json --logs",
-
   "incorp_params": {
     "inc_url": "https://api.coingecko.com/api/v3/coins/markets",
     "params": {"vs_currency": "usd", "per_page": 250},

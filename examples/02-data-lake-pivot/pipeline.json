@@ -1,6 +1,4 @@
 {
-  "_comment_": "T2 data-lake pivot: JSON -> SQLite via stream(). Run from this directory: incorporator validate pipeline.json && incorporator stream pipeline.json",
-
   "incorp_params": {
     "inc_url": "https://jsonplaceholder.typicode.com/users",
     "inc_code": "id",

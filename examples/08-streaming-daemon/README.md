@@ -303,12 +303,14 @@ instead.
 # Python entry (runs chunking_demo() by default)
 python examples/08-streaming-daemon/streaming_daemon.py
 
-# Same two engines, from the CLI
-incorporator stream pipeline.json --logs             # chunking, matches the script default
-incorporator stream pipeline_stateful.json --logs    # stateful shim, via outflow.py
+# Same two engines, from the CLI — cd first: both configs' export_params.file_path
+# ("out/coins_full.ndjson", "out/binance_ticker.ndjson") are CWD-relative
+cd examples/08-streaming-daemon
+incorporator validate pipeline.json && incorporator stream pipeline.json --logs             # chunking, matches the script default
+incorporator validate pipeline_stateful.json && incorporator stream pipeline_stateful.json --logs    # stateful shim, via outflow.py
 ```
 
-Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). `pipeline.json`'s CLI form has no page cap and walks CoinGecko's full catalogue — interrupt with Ctrl+C after a page or two; `pipeline_stateful.json` needs the fielded `BinancePair` class in [`outflow.py`](outflow.py).
+Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). `pipeline.json`'s CLI form has no page cap and walks CoinGecko's full catalogue — interrupt with Ctrl+C after a page or two; `pipeline_stateful.json` needs the fielded `BinancePair` class in [`outflow.py`](outflow.py) — `stream(stateful_polling=True)` resolves the receiver class by loading `outflow.py` as a module and either matching the PascalCase file-stem name or scanning for the sole `Incorporator` subclass in its namespace, so `BinancePair` must live there (not in `streaming_daemon.py`) for the CLI path to find it; `streaming_daemon.py`'s own `stateful_demo()` imports that exact same class back out of `outflow.py`, so both entry forms share one class object.
 
 ---
 

@@ -1,9 +1,5 @@
 {
-  "_comment_": "Two-source fjord pipeline. The output class is built dynamically from the outflow file's stem (outflow_example.py -> OutflowExample). Run: incorporator validate examples/cli-templates/fjord-basic.json && incorporator fjord examples/cli-templates/fjord-basic.json --logs",
-
   "outflow": "outflow_example.py",
-
-  "_dx_note_": "Refresh is on by default — no need for refresh_params on each entry. Set refresh_params: null to opt out of refresh on a specific source. refresh_interval can be a number (applies to all sources) or a {ClassName: seconds} dict for per-source cadences.",
 
   "stream_params": [
     {

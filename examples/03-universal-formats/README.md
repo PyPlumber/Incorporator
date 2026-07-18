@@ -54,153 +54,165 @@ dot-notation, same `inc_dict` registry, regardless of source file.
 
 ---
 
-## Step 1: Snapshot the Source Once
+## The Warehouse Script
 
-Same `incorp()` call you wrote in T1 — top-100 coins, CoinGecko's
-`/coins/markets`:
+Create `universal_formats.py` (the runnable version ships in this directory).
+One `incorp()` call, one `Coin` class, then four `export()` calls that vary
+only the `file_path` extension and a couple of format-specific kwargs:
 
 ```python
 import asyncio
+from pathlib import Path
 
-from incorporator import Incorporator
+from incorporator import Incorporator, register_host_penstock
+
+# Pace api.coingecko.com at 0.2 req/sec (12/min) — the free-tier ceiling
+# is 5-15/min documented.
+register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
 
 
 class Coin(Incorporator):
-    pass
+    """CoinGecko market row — auto-keyed by ``id``."""
 
 
-async def snapshot():
+COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
+
+
+async def main() -> None:
+    here = Path(__file__).resolve().parent
+    data_dir = here / "out"
+    data_dir.mkdir(exist_ok=True)
+    print(f"Warehouse root: {data_dir}\n")
+
+    # 1. One snapshot of CoinGecko's top-100 markets.
     coins = await Coin.incorp(
-        inc_url="https://api.coingecko.com/api/v3/coins/markets",
+        inc_url=COINGECKO_MARKETS_URL,
         params={"vs_currency": "usd", "per_page": 100, "page": 1},
         inc_code="id",
         inc_name="name",
+        excl_lst=["image"],  # heavy field — see Tutorial 1 inspector output
     )
-    print(f"📥 Loaded {len(coins)} coins from CoinGecko.")
-    return coins
-```
+    print(f"Loaded {len(coins)} coins from CoinGecko.")
 
-You now have a typed object graph in memory.  Time to land it in the warehouse.
+    # 2. Append to NDJSON + CSV — both grow row-wise.
+    await Coin.export(instance=coins, file_path=data_dir / "coins_log.ndjson", if_exists="append")
+    await Coin.export(instance=coins, file_path=data_dir / "coins_log.csv", if_exists="append")
+    print(f"Appended {len(coins)} rows to NDJSON + CSV log.")
 
----
-
-### A quick word on `export()`
-
-`incorp()` reads.  `export()` writes — the symmetric counterpart, with the same
-class, the same format auto-detection from the file extension, and the same kwargs
-idiom you just used.  Steps 2–4 below land the snapshot in three different stores by
-varying only the `file_path` extension and a couple of format-specific kwargs;
-everything else is identical between the three calls.
-
----
-
-## Step 2: Append to NDJSON and CSV (Append-Friendly Log)
-
-Both NDJSON and CSV grow row-wise.  Pass `if_exists="append"` to `export()` and each
-call adds a row block at the end of the file:
-
-```python
-from pathlib import Path
-
-DATA = Path("data")
-DATA.mkdir(exist_ok=True)
-
-
-async def append_log(coins):
-    # NDJSON: one JSON object per line; safe to grep, tail -f, ship to log aggregators.
+    # 3. Append into a SQLite warehouse table.
     await Coin.export(
         instance=coins,
-        file_path=DATA / "coins_log.ndjson",
-        if_exists="append",
-    )
-    # CSV: header written once, rows appended.  Good for spreadsheet consumers.
-    await Coin.export(
-        instance=coins,
-        file_path=DATA / "coins_log.csv",
-        if_exists="append",
-    )
-    print(f"📜 Appended {len(coins)} rows to NDJSON and CSV log.")
-```
-
-Run `snapshot()` and `append_log()` on a cron / interval; the files grow linearly.
-
----
-
-## Step 3: Append into SQLite (Append-Friendly Warehouse)
-
-SQLite uses `if_exists="append"` too, and also supports `if_exists="replace"` (drop
-the table and rewrite).  Each `append` call simply adds the snapshot's rows to the
-table — keyed by nothing, so you get a true time-series log: one row block per tick,
-queryable by snapshot order:
-
-```python
-async def upsert_warehouse(coins):
-    await Coin.export(
-        instance=coins,
-        file_path=DATA / "coins_warehouse.sqlite",
+        file_path=data_dir / "coins_warehouse.sqlite",
         sql_table="coin_snapshots",
-        if_exists="append",                              # accumulate rows; query later
+        if_exists="append",
     )
-    print(f"🗃️  Upserted {len(coins)} rows into SQLite warehouse.")
-```
+    print(f"Upserted {len(coins)} rows into SQLite warehouse.")
 
-Now your analysts can `SELECT id, current_price, last_updated FROM coin_snapshots
-ORDER BY last_updated DESC` to walk the appended rows in insertion order.
+    # 4. Atomically snapshot-replace a Parquet file.
+    parquet_path = data_dir / "coins_latest.parquet"
+    try:
+        await Coin.export(instance=coins, file_path=parquet_path, parquet_compression="snappy")
+        print(f"Wrote Parquet snapshot ({parquet_path.stat().st_size} bytes).")
+    except Exception as e:  # noqa: BLE001
+        print(f"Parquet export skipped ({e!s}) — install incorporator[parquet]")
 
----
+    # 5. Re-incorp every artifact and prove the object graph round-trips.
+    print("\nRound-trip verification:")
 
-## Step 4: Snapshot-Write Parquet (Columnar, Query-Friendly)
+    from_ndjson = await Coin.incorp(inc_file=data_dir / "coins_log.ndjson", inc_code="id")
+    btc = from_ndjson.inc_dict["bitcoin"]
+    print(f"  ndjson  -> BTC ${btc.current_price:,.2f}")
 
-Parquet can't append per tick (the column-statistics footer would have to be rewritten),
-so `export()` to a `.parquet` path **rebuilds the file atomically** every call — write
-to a sibling tempfile, then `os.replace()` on success.  A crash mid-write leaves the
-*previous* snapshot in place; never a half-written corrupt-footer file.
+    from_csv = await Coin.incorp(inc_file=data_dir / "coins_log.csv", inc_code="id")
+    btc = from_csv.inc_dict["bitcoin"]
+    print(f"  csv     -> BTC ${btc.current_price:,.2f}")
 
-```python
-async def snapshot_parquet(coins):
-    await Coin.export(
-        instance=coins,
-        file_path=DATA / "coins_latest.parquet",         # atomic snapshot-and-replace
-        parquet_compression="snappy",
-    )
-    print(f"📊 Wrote Parquet snapshot of {len(coins)} coins.")
-```
-
-This is the right pattern for hourly / daily *artifact* dumps that downstream consumers
-(Athena, DuckDB, Spark, Snowflake) query directly.  For per-tick accumulation, stay in
-NDJSON / CSV / SQLite and let a downstream batch job convert to Parquet at window close
-— see [Appendix: Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md).
-
----
-
-## Step 5: Round-Trip — Re-`incorp()` Each Artifact
-
-The warehouse is only as useful as the round-trip.  Read every format back and verify
-the object graph is identical:
-
-```python
-async def verify_round_trip():
-    # NDJSON / CSV / Parquet — pure file paths; format detected from extension.
-    from_ndjson = await Coin.incorp(inc_file=DATA / "coins_log.ndjson", inc_code="id")
-    from_csv    = await Coin.incorp(inc_file=DATA / "coins_log.csv",    inc_code="id")
-    from_parquet = await Coin.incorp(inc_file=DATA / "coins_latest.parquet", inc_code="id")
-
-    # SQLite needs the SQL query (extension isn't enough to pick a table).
     from_sqlite = await Coin.incorp(
-        inc_file=DATA / "coins_warehouse.sqlite",
+        inc_file=data_dir / "coins_warehouse.sqlite",
         sql_query="SELECT * FROM coin_snapshots",
         inc_code="id",
     )
+    btc = from_sqlite.inc_dict["bitcoin"]
+    print(f"  sqlite  -> BTC ${btc.current_price:,.2f}")
 
-    for label, snap in [("ndjson", from_ndjson), ("csv", from_csv),
-                         ("parquet", from_parquet), ("sqlite", from_sqlite)]:
-        btc = snap.inc_dict["bitcoin"]
-        print(f"  {label:8s} → BTC ${btc.current_price:,.2f}")
+    if parquet_path.exists():
+        from_parquet = await Coin.incorp(inc_file=parquet_path, inc_code="id")
+        btc = from_parquet.inc_dict["bitcoin"]
+        print(f"  parquet -> BTC ${btc.current_price:,.2f}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-You wrote one Pydantic schema (zero lines — the framework inferred it from CoinGecko).
-You're round-tripping that schema through four storage substrates.  No schema
-duplication, no per-format models.
+---
+
+## Framework Highlights
+
+### 1. `incorp()` Reads, `export()` Writes — Same Vocabulary
+
+`export()` is the symmetric counterpart to `incorp()`: same class, same format
+auto-detection from the file extension, same kwargs idiom. Steps 2–4 land the
+snapshot in three different stores by varying only the `file_path` extension
+and a couple of format-specific kwargs — everything else is identical.
+
+### 2. Append-Friendly Log: NDJSON + CSV
+
+Both NDJSON and CSV grow row-wise. Pass `if_exists="append"` and each call adds
+a row block at the end of the file:
+
+```python
+await Coin.export(instance=coins, file_path=data_dir / "coins_log.ndjson", if_exists="append")
+await Coin.export(instance=coins, file_path=data_dir / "coins_log.csv", if_exists="append")
+```
+
+NDJSON is safe to `grep`/`tail -f`/ship to log aggregators; CSV writes the
+header once and appends rows after — good for spreadsheet consumers. Run this
+on a cron / interval and the files grow linearly.
+
+### 3. Append-Friendly Warehouse: SQLite
+
+SQLite also supports `if_exists="replace"` (drop the table and rewrite), but
+`append` here gives a true time-series log — one row block per tick, queryable
+by snapshot order:
+
+```python
+await Coin.export(
+    instance=coins, file_path=data_dir / "coins_warehouse.sqlite", sql_table="coin_snapshots", if_exists="append"
+)
+```
+
+Analysts can then `SELECT id, current_price, last_updated FROM coin_snapshots
+ORDER BY last_updated DESC` to walk the appended rows in insertion order.
+
+### 4. Snapshot-Only: Parquet (Atomic Replace)
+
+Parquet can't append per tick (the column-statistics footer would have to be
+rewritten), so `export()` to a `.parquet` path **rebuilds the file atomically**
+every call — write to a sibling tempfile, then `os.replace()` on success. A
+crash mid-write leaves the *previous* snapshot in place, never a half-written
+corrupt-footer file. This is the right pattern for hourly / daily *artifact*
+dumps that downstream consumers (Athena, DuckDB, Spark, Snowflake) query
+directly — for per-tick accumulation, stay in NDJSON / CSV / SQLite and let a
+downstream batch job convert to Parquet at window close, see
+[Appendix: Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md).
+
+### 5. The Round Trip Proves the Schema Held
+
+Read every format back and confirm the object graph is identical — SQLite
+needs the SQL query since the extension alone can't pick a table; NDJSON,
+CSV, and Parquet are pure file paths with the format detected from the
+extension:
+
+```python
+from_sqlite = await Coin.incorp(
+    inc_file=data_dir / "coins_warehouse.sqlite", sql_query="SELECT * FROM coin_snapshots", inc_code="id"
+)
+```
+
+One Pydantic schema (zero lines — the framework inferred it from CoinGecko),
+round-tripped through four storage substrates. No schema duplication, no
+per-format models.
 
 ---
 

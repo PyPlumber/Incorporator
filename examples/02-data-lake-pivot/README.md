@@ -143,8 +143,10 @@ Because the data is parked in `.inc_dict` registries, you can immediately use `l
 # Python entry
 python examples/02-data-lake-pivot/data_lake_pivot.py
 
-# The SQLite step, from the CLI
-incorporator stream pipeline.json
+# Same SQLite pivot, from the CLI — cd first: pipeline.json's
+# export_params.file_path ("out/users_warehouse.db") is CWD-relative
+cd examples/02-data-lake-pivot
+incorporator validate pipeline.json && incorporator stream pipeline.json
 ```
 
 Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). The CLI form runs only the SQLite export step — the Python entry does more (see [`pipeline.json`](pipeline.json)).

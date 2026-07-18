@@ -1,6 +1,6 @@
 """
-Tutorial 2 — Data Lake Pivot (JSON ➡️ SQLite ➡️ Avro)
------------------------------------------------------
+Tutorial 2 — Data Lake Pivot (JSON -> SQLite -> Avro)
+------------------------------------------------------
 This example demonstrates how Incorporator bridges the gap between Web APIs and
 Enterprise Data Lakes. We will fetch deeply nested JSON, dynamically map it,
 and instantly export it to both SQLite and Apache Avro.

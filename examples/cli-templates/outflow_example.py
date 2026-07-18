@@ -39,15 +39,15 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
             return []
         launch = launch[0]
 
-    rocket = rockets.inc_dict.get(getattr(launch, "rocket", None))
+    rocket = rockets.inc_dict.get(launch.rocket)
     if rocket is None:
         return []
 
     return [
         {
             "launch_id": launch.inc_code,
-            "launch_name": getattr(launch, "name", None),
+            "launch_name": launch.name,
             "rocket_id": rocket.inc_code,
-            "rocket_name": getattr(rocket, "name", None),
+            "rocket_name": rocket.name,
         }
     ]
