@@ -258,7 +258,7 @@ class BestMarket(Incorporator):
 
 async def main() -> None:
     now = datetime.now(timezone.utc)
-    window = (now, now + timedelta(minutes=10))
+    window = (now, now + timedelta(seconds=90))
 
     watershed = Watershed.diamond(
         window=window,
@@ -325,7 +325,8 @@ async def main() -> None:
             },
         ),
         outflow="outflow.py",
-        drain_timeout=10.0,
+        gate_mode="hard",
+        drain_timeout=30.0,
     )
 
     async for tide in Tideweaver(watershed).run():
@@ -349,7 +350,7 @@ The `BestMarket` Fjord current's tick is a **fjord flush**:
 3. Materialise the returned rows into the dynamic output class.
 4. Export them to `out/arb_signals.ndjson` (append-friendly — every flush adds rows).
 
-### `outflow.py` — symbol normalization + best-market join
+### `outflow.py` — a pure sidecar over `arb_scanner.py`'s join
 
 The three exchanges return the same logical asset under different symbol shapes —
 Binance "BTCUSDT", Coinbase "BTC-USD", Kraken "XXBTZUSD" / "XBTUSD" — and each
@@ -389,47 +390,38 @@ per-venue field-name params, no `getattr(..., default)`, no `try/except`.
 > undeclared keys, emits a one-time WARNING and falls through to inference
 > so no fields are lost.  Declare the fields explicitly to silence the WARNING.
 
+`BinanceBook`/`CoinbaseTicker`/`KrakenTicker`/`BestMarket` and the
+`normalize_asset`/`_venue_quotes` helpers are defined **once**, in
+`arb_scanner.py` — right next to `main()`'s own `Watershed.diamond(...)` call
+that references them.  `outflow.py` is a pure sidecar: it re-imports those
+same objects via a guarded `sys.path.insert` + `from arb_scanner import
+(...)`, and only defines the CLI-only `window_start`/`window_end` tokens plus
+`outflow(state)` itself:
+
 ```python
 # outflow.py
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
-# Map exchange-native symbols to a canonical asset code.  Real scanners
-# load this from /exchangeInfo equivalents; we hard-code 2 pairs for the demo.
-NORMALIZATION = {
-    # Binance.us
-    "BTCUSDT": "BTC", "ETHUSDT": "ETH",
-    "BTCUSD":  "BTC", "ETHUSD":  "ETH",
-    # Coinbase
-    "BTC-USD": "BTC", "ETH-USD": "ETH",
-    # Kraken
-    "XXBTZUSD": "BTC", "XETHZUSD": "ETH", "XBTUSD": "BTC",
-}
+from arb_scanner import (
+    BestMarket,
+    BinanceBook,
+    CoinbaseTicker,
+    KrakenTicker,
+    _venue_quotes,
+    normalize_asset,
+)
 
-
-def normalize_asset(raw: Any) -> str | None:
-    """Map one venue's raw symbol/pair key to a canonical asset code.
-
-    Referenced by each venue Stream's build-time conv_dict in arb_scanner.py
-    (calc(normalize_asset, <raw_symbol_key>, default=None)) AND by
-    watershed.json's conv_dict token (resolved via the outflow/inflow
-    sidecar wiring in load_watershed / the CLI token resolver).
-    """
-    return NORMALIZATION.get(str(raw))
-
-
-def _venue_quotes(rows, venue: str):
-    """Extract canonical (asset, bid, ask, venue) tuples — rows already carry
-    uniform pre-coerced asset/bid/ask attrs via each venue Stream's build-time
-    conv_dict (see arb_scanner.py Stream definitions and watershed.json)."""
-    out = []
-    for row in rows:
-        asset = row.asset
-        if asset is None:
-            continue
-        if row.bid > 0 and row.ask > 0:
-            out.append((asset, row.bid, row.ask, venue))
-    return out
+# Dateless window: watershed.json's "window" references these public names
+# via the "@window_start" / "@window_end" sigil.
+window_start = datetime.now(timezone.utc)
+window_end = window_start + timedelta(seconds=90)
 
 
 def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -464,8 +456,31 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 ```
 
+`normalize_asset` stays public (no leading underscore) so it resolves both as a
+direct Python import and as `watershed.json`'s `calc(normalize_asset, ...)`
+conv_dict token; `_venue_quotes` keeps its leading underscore since it's an
+internal helper, not a conv_dict token target — an explicit
+`from arb_scanner import _venue_quotes` still works (only wildcard `import *`
+respects the underscore).
+
 A positive `spread_bps` with `arb_opportunity=True` means *the best bid on one venue is
 higher than the best ask on another* — classic cross-venue arb signal.
+
+> **Direct script execution and class identity.**  `arb_scanner.py` defines
+> every `Incorporator` subclass exactly once; `outflow.py` re-imports them, so
+> the CLI's class/token resolvers and the Python entry's own `Watershed` share
+> the same canonical class objects. That sharing depends on
+> `sys.modules["arb_scanner"]` already existing by the time `outflow.py` first
+> imports it — true automatically for the CLI form (which never runs
+> `arb_scanner.py` itself), but **not** true for `python arb_scanner.py`,
+> where this file executes as `sys.modules["__main__"]` rather than
+> `sys.modules["arb_scanner"]`. Without the one-line alias in
+> `arb_scanner.py` (`sys.modules.setdefault("arb_scanner",
+> sys.modules[__name__])`), the Tideweaver scheduler's lazy `outflow.py` load
+> would re-execute this whole file under a second, distinct `arb_scanner`
+> module — its own fresh copies of `BinanceBook`/`CoinbaseTicker`/
+> `KrakenTicker`, with empty `inc_dict` graph maps the real Streams never
+> populate.
 
 > **Missing-peer `KeyError` in `outflow(state)`?**  Same as the fjord verbs (T9, T10):
 > fjord's seed-error formatter rewrites the failed-sources entry to a copy-pasteable
@@ -604,12 +619,19 @@ without adding meaningful wall-clock latency to the window.
 ## Run it
 
 ```bash
-# Python entry
+# Python entry (writes to examples/11-tideweaver/out/arb_signals.ndjson)
 python examples/11-tideweaver/arb_scanner.py
 
 # Same diamond, from the CLI
-incorporator tideweaver run watershed.json --json-output
+cd examples/11-tideweaver && incorporator tideweaver run watershed.json --json-output
 ```
+
+`inc_file` / `outflow` in `watershed.json` resolve against the config file's
+own directory, so `incorporator tideweaver run` works from any working
+directory — but `export_params.file_path` (`"out/arb_signals.ndjson"`)
+resolves against the **caller's** working directory instead. Run the CLI
+form from inside `examples/11-tideweaver/` (as above) so both forms land in
+the same `out/` directory; running it from elsewhere writes to `<cwd>/out/`.
 
 Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: both forms fuse the same three fixture snapshots into identical BTC (~0.74 bps) / ETH (~5.29 bps, arb_opportunity=true) best-market rows (see [`watershed.json`](watershed.json)).
 

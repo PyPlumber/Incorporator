@@ -1,17 +1,4 @@
 {
-  "_comment_1_": "Sample watershed.json for the multi-exchange arb-scanner diamond pattern.",
-  "_comment_2_": "Relative inc_file / outflow paths are resolved against this JSON's parent directory,",
-  "_comment_3_": "so the example runs from any working directory:",
-  "_comment_4_": "  incorporator validate examples/11-tideweaver/watershed.json",
-  "_comment_5_": "  incorporator tideweaver run examples/11-tideweaver/watershed.json --json-output",
-  "_comment_6_": "Local JSON snapshots keep the CLI smoke-test runnable without network.",
-  "_comment_7_": "Swap inc_file for inc_url against live exchange endpoints in production:",
-  "_comment_8_": "  binance:  https://api.binance.us/api/v3/ticker/bookTicker",
-  "_comment_9_": "  coinbase: https://api.exchange.coinbase.com/products/BTC-USD/ticker",
-  "_comment_10_": "  kraken:   https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD (with rec_path: result)",
-  "_comment_11_": "Window is dateless: 'window_start' / 'window_end' are public names defined in",
-  "_comment_12_": "outflow.py, evaluated at sidecar-import time -- no env vars needed.",
-
   "window": {
     "start": "@window_start",
     "end": "@window_end"

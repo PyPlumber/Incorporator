@@ -19,6 +19,12 @@ mimic each exchange's response shape.  Real pipelines swap
 ``inc_file`` for ``inc_url`` against the live endpoints; the rest of
 the watershed stays identical.
 
+``BinanceBook``/``CoinbaseTicker``/``KrakenTicker``/``BestMarket`` and the
+``normalize_asset``/``_venue_quotes`` helpers are defined ONCE, here.
+``outflow.py`` re-exports them (rather than redefining them) so the CLI's
+class/token resolvers see the same canonical objects this file's own
+``main()`` uses — see ``outflow.py``'s docstring for why that matters.
+
 Run with:
     python examples/11-tideweaver/arb_scanner.py
 """
@@ -29,8 +35,9 @@ import asyncio
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
-from incorporator import Fjord, Stream, Tideweaver, Watershed
+from incorporator import Fjord, Incorporator, Stream, Tideweaver, Watershed
 from incorporator.schema.converters import calc
 
 HERE = Path(__file__).resolve().parent
@@ -45,15 +52,85 @@ OUT.mkdir(exist_ok=True)
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-# Reuse the same class definitions + outflow() that the CLI watershed.json
-# loads, so the Python and JSON entry points stay in lockstep.
-from outflow import (  # noqa: E402, F401
-    BestMarket,
-    BinanceBook,
-    CoinbaseTicker,
-    KrakenTicker,
-    normalize_asset,
-)
+# When run as `python arb_scanner.py`, this module executes as "__main__", so
+# it is NOT registered under sys.modules["arb_scanner"]. Tideweaver lazily
+# loads outflow.py from inside the best_market Fjord's first tick, and
+# outflow.py's "from arb_scanner import ..." would otherwise re-execute this
+# whole file under a fresh "arb_scanner" module name. Aliasing
+# sys.modules["arb_scanner"] to this already-executed module (before the
+# Watershed's first Fjord tick) makes outflow.py's import resolve to these
+# SAME canonical class objects instead. Only needed for direct script
+# execution — the CLI form never runs this file as __main__.
+if __name__ == "__main__":
+    sys.modules.setdefault("arb_scanner", sys.modules[__name__])
+
+
+# ---------------------------------------------------------------------------
+# Incorporator subclasses -- defined ONCE, here; outflow.py re-imports them.
+# ---------------------------------------------------------------------------
+
+
+class BinanceBook(Incorporator):
+    """Binance.us /api/v3/ticker/bookTicker — top of book per symbol."""
+
+
+class CoinbaseTicker(Incorporator):
+    """Coinbase Advanced Trade /products/{id}/ticker — top of book per product."""
+
+
+class KrakenTicker(Incorporator):
+    """Kraken /0/public/Ticker — top of book for the requested pairs."""
+
+
+class BestMarket(Incorporator):
+    """Derived per-asset arb snapshot — bare row class; ``outflow(state)``'s
+    returned dict keys ARE the export shape (``Incorporator``'s ``extra='allow'``
+    base means no field declarations are needed)."""
+
+
+# ---------------------------------------------------------------------------
+# Symbol normalization
+# ---------------------------------------------------------------------------
+
+# Map exchange-native symbol -> canonical asset code.  Real production
+# scanners build this dynamically from each exchange's /exchangeInfo feed.
+NORMALIZATION: dict[str, str] = {
+    # Binance.us
+    "BTCUSDT": "BTC",
+    "ETHUSDT": "ETH",
+    "BTCUSD": "BTC",
+    "ETHUSD": "ETH",
+    # Coinbase Advanced Trade
+    "BTC-USD": "BTC",
+    "ETH-USD": "ETH",
+    # Kraken (uses X/Z prefixes for "fiat-quoted crypto")
+    "XXBTZUSD": "BTC",
+    "XETHZUSD": "ETH",
+    "XBTUSD": "BTC",
+}
+
+
+def normalize_asset(raw: Any) -> str | None:
+    """Map one venue's raw symbol/pair key to a canonical asset code.
+
+    Referenced by each venue Stream's build-time conv_dict below (inline in
+    ``incorp_params``) and by watershed.json's matching conv_dict token.
+    """
+    return NORMALIZATION.get(str(raw))
+
+
+def _venue_quotes(rows: list[Any], venue: str) -> list[tuple[str, float, float, str]]:
+    """Extract canonical (asset, bid, ask, venue) tuples -- rows already carry
+    uniform pre-coerced asset/bid/ask attrs via each venue Stream's own
+    build-time conv_dict."""
+    out: list[tuple[str, float, float, str]] = []
+    for row in rows:
+        asset = row.asset
+        if asset is None:
+            continue
+        if row.bid > 0 and row.ask > 0:
+            out.append((asset, row.bid, row.ask, venue))
+    return out
 
 
 async def main() -> None:
@@ -64,14 +141,14 @@ async def main() -> None:
     out_file = OUT / "arb_signals.ndjson"
 
     now = datetime.now(timezone.utc)
-    window = (now, now + timedelta(seconds=15))
+    window = (now, now + timedelta(seconds=90))
 
     watershed = Watershed.diamond(
         window=window,
         head=Stream(
             name="binance",
             cls=BinanceBook,
-            interval=3.0,
+            interval=15.0,
             incorp_params={
                 "inc_file": str(SNAPSHOT_DIR / "binance_book.json"),
                 "inc_code": "symbol",
@@ -86,7 +163,7 @@ async def main() -> None:
             Stream(
                 name="coinbase",
                 cls=CoinbaseTicker,
-                interval=3.0,
+                interval=30.0,
                 incorp_params={
                     "inc_file": str(SNAPSHOT_DIR / "coinbase_ticker.json"),
                     "inc_code": "trade_id",
@@ -100,7 +177,7 @@ async def main() -> None:
             Stream(
                 name="kraken",
                 cls=KrakenTicker,
-                interval=3.0,
+                interval=30.0,
                 incorp_params={
                     "inc_file": str(SNAPSHOT_DIR / "kraken_ticker.json"),
                     # Kraken's raw pair key is "_key"; Pk-bind (pass 4) runs
@@ -123,7 +200,7 @@ async def main() -> None:
         tail=Fjord(
             name="best_market",
             cls=BestMarket,
-            interval=3.0,
+            interval=30.0,
             export_params={
                 "file_path": str(out_file),
                 "format": "ndjson",
@@ -131,10 +208,11 @@ async def main() -> None:
             },
         ),
         outflow=str(OUTFLOW_PATH),
-        drain_timeout=10.0,
+        gate_mode="hard",
+        drain_timeout=30.0,
     )
 
-    print("Running 3-exchange arb-scanner diamond for 15 s...\n")
+    print("Running 3-exchange arb-scanner diamond for 90 s...\n")
     async for tide in Tideweaver(watershed).run():
         print(
             f"Tide {tide.tide_number:3d} | fired: {','.join(tide.fired) or '-':<32} "
