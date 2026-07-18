@@ -131,14 +131,14 @@ def apply_etl_transformations(
        binding still sees the post-rename field.
 
     Note:
-        Null-handling contract for ``CalcOp`` / ``CalcAllOp``: a clean
-        func-returned ``None`` (``CalcOp``: ``func_returned_clean``;
-        ``CalcAllOp``: ``func_returned_clean and from_results``) passes
-        through as ``None`` unconverted.  Every other ``None`` (the
-        garbage short-circuit, the func-exception fallback, or the
-        ``IndexError`` fallback) is still run through ``target_type()``,
-        so an incompatible declared default still surfaces its "type
-        coercion failed" warning.
+        Null-handling contract for ``CalcOp`` / ``CalcAllOp``: ``target_type()``
+        coercion is skipped whenever the resulting ``val`` is ``None`` —
+        regardless of how it got there (a clean func-returned ``None``, the
+        garbage short-circuit landing on a ``None`` default, the func-exception
+        fallback landing on a ``None`` default, or the ``IndexError`` fallback
+        landing on a ``None`` default).  Coercion still runs — and still warns
+        on failure — for any non-``None`` ``val``, including a non-``None``
+        declared ``default``.
 
     Args:
         parsed_data: A single record dict or a list of record dicts from the
@@ -204,13 +204,11 @@ def apply_etl_transformations(
                     # Skip func and coerce to default when every input is garbage
                     # (None/""/n-a/null/unknown/nan/undefined) — mirrors inc()'s
                     # null-handling contract.
-                    func_returned_clean = False
                     if all(is_garbage_value(a) for a in args):
                         val = default
                     else:
                         try:
                             val = func(*args)
-                            func_returned_clean = True
                         except TypeError:
                             # TypeError sources here: (1) lru_cache rejecting an unhashable
                             # arg (list/dict/etc); (2) the func body itself raising TypeError
@@ -222,7 +220,6 @@ def apply_etl_transformations(
                             raw_func = getattr(func, "__wrapped__", func)
                             try:
                                 val = raw_func(*args)
-                                func_returned_clean = True
                             except Exception as e:
                                 logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
                                 val = default
@@ -230,10 +227,10 @@ def apply_etl_transformations(
                             logger.warning("calc failed for key '%s' with args %s: %s", key, args, e)
                             val = default
 
-                    # A clean func-returned None is a legitimate "no value" result and
-                    # passes through unconverted; see the docstring's Note for the full
-                    # null-handling contract.
-                    if target_type is not None and not (func_returned_clean and val is None):
+                    # A None val — whether a clean func return, the garbage
+                    # short-circuit, or an exception fallback — is never coerced;
+                    # see the docstring's Note for the full null-handling contract.
+                    if target_type is not None and val is not None:
                         try:
                             val = target_type(val)
                         except Exception as e:
@@ -250,22 +247,18 @@ def apply_etl_transformations(
                 # Same pre-check as CalcOp, applied across the full column matrix:
                 # if every cell of every input column is garbage, skip func and
                 # default every output row.
-                func_returned_clean = False
                 if all(is_garbage_value(v) for col in col_args for v in col):
                     results = [default] * len(dict_items)
                 else:
                     try:
                         results = func(*col_args)
-                        func_returned_clean = True
                     except Exception as e:
                         logger.warning("calc_all failed for key '%s': %s", key, e)
                         results = [default] * len(dict_items)
 
                 for idx, d in enumerate(dict_items):
-                    from_results = False
                     try:
                         val = results[idx]
-                        from_results = True
                     except IndexError:
                         logger.warning(
                             "calc_all returned fewer results than expected for key '%s' (needed index %d)",
@@ -274,11 +267,11 @@ def apply_etl_transformations(
                         )
                         val = default
 
-                    # Skip coercion only for a genuine func-returned None (both
-                    # func_returned_clean, batch-wide, and from_results, row-wide,
-                    # true) — see the docstring's Note for the full null-handling
+                    # A None val — whether a clean func-returned result, the
+                    # garbage short-circuit, or the IndexError fallback — is never
+                    # coerced; see the docstring's Note for the full null-handling
                     # contract.
-                    if target_type is not None and not (func_returned_clean and from_results and val is None):
+                    if target_type is not None and val is not None:
                         try:
                             val = target_type(val)
                         except Exception as e:

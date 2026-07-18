@@ -718,20 +718,17 @@ def test_calc_all_short_circuits_when_every_cell_garbage(caplog: pytest.LogCaptu
 
 
 def test_calc_garbage_default_with_incompatible_target_type(caplog: pytest.LogCaptureFixture) -> None:
-    """D2-01 (resolved: symmetric, no code change) — calc's all-garbage short-circuit.
+    """calc's all-garbage short-circuit with a ``None`` default never attempts coercion.
 
-    Pins the resolved-correct behaviour: when every input is garbage, calc
-    short-circuits to ``default`` silently at the func-invocation level (no
-    "calc failed" warning — the func is never called). But target_type
-    coercion is still attempted on that default per calc()'s documented
-    contract ("target_type: Optional type the result is coerced to" makes no
-    func-vs-default distinction). Here default=None and target_type=int, so
-    int(None) raises TypeError inside the coercion try/except; the coercion
-    branch catches it, re-falls-back to default (None again), and correctly
-    emits the "calc type coercion failed" WARNING. This is a KEEP, not a bug:
-    the warning is the only signal that the user's declared default is
-    incompatible with target_type — see D2-01 resolution (original review's
-    claimed CalcOp/CalcAllOp asymmetry did not match the code at HEAD).
+    Supersedes the earlier D2-01 "KEEP, not a bug" resolution: when every
+    input is garbage, calc short-circuits to ``default`` silently at the
+    func-invocation level (no "calc failed" warning — the func is never
+    called). Here default=None and target_type=int; coercing a ``None`` val
+    is never useful (``int(None)`` always raises, ``str(None)`` yields the
+    misleading string "None"), so the dispatcher now skips target_type
+    coercion for ANY ``None`` val, not just a clean func-returned one. No
+    "calc type coercion failed" warning fires — the output is correctly
+    ``None`` either way, and the warning was pure log noise.
     """
     op = calc(str.lower, "title", default=None, target_type=int)
     rows = [{"title": None}, {"title": ""}, {"title": "n/a"}]
@@ -741,20 +738,19 @@ def test_calc_garbage_default_with_incompatible_target_type(caplog: pytest.LogCa
     assert not [r for r in caplog.records if "calc failed" in r.getMessage()], (
         "garbage rows must not trigger the func-invocation warning"
     )
-    assert [r for r in caplog.records if "calc type coercion failed" in r.getMessage()], (
-        "an incompatible default must still trigger the coercion-failure warning"
+    assert not [r for r in caplog.records if "calc type coercion failed" in r.getMessage()], (
+        "a None default must never attempt (and thus never fail) target_type coercion"
     )
 
 
 def test_calc_all_garbage_default_with_incompatible_target_type(caplog: pytest.LogCaptureFixture) -> None:
-    """D2-01 calc_all twin — same resolved-correct, symmetric behaviour as calc().
+    """calc_all twin — same corrected, symmetric behaviour as calc().
 
     All cells garbage → calc_all short-circuits to [default] * len(rows)
-    silently (no "calc_all failed" warning). target_type=int is still
-    applied to each row's default value; int(None) raises, the coercion
-    branch falls back to default again, and the "calc_all type coercion
-    failed" warning fires per row. Symmetric with CalcOp — see D2-01
-    resolution (KEEP, not a bug).
+    silently (no "calc_all failed" warning). Since default=None here,
+    target_type=int coercion is skipped entirely per row — no "calc_all
+    type coercion failed" warning. Supersedes the earlier D2-01 resolution,
+    which treated the now-removed warning as intentional signal.
     """
 
     def should_not_run(titles: list) -> list:
@@ -768,9 +764,60 @@ def test_calc_all_garbage_default_with_incompatible_target_type(caplog: pytest.L
     assert not [r for r in caplog.records if "calc_all failed" in r.getMessage()], (
         "garbage rows must not trigger the func-invocation warning"
     )
-    assert [r for r in caplog.records if "calc_all type coercion failed" in r.getMessage()], (
-        "an incompatible default must still trigger the coercion-failure warning"
+    assert not [r for r in caplog.records if "calc_all type coercion failed" in r.getMessage()], (
+        "a None default must never attempt (and thus never fail) target_type coercion"
     )
+
+
+def test_calc_garbage_default_none_with_target_type_suppresses_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """calc(fn, key, default=None, target_type=float) on all-garbage input: no spurious warning.
+
+    Regression test for the log-noise bug: float(None) was being attempted
+    and its failure logged on every all-garbage row, even though the net
+    output (None) was already correct. Now target_type coercion is skipped
+    whenever val is None, so no warning fires.
+    """
+    op = calc(lambda x: x, "linked_field", default=None, target_type=float)
+    rows = [{"linked_field": None}, {"linked_field": ""}, {"linked_field": "n/a"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert all(r["out"] is None for r in result)
+    assert "calc type coercion failed" not in caplog.text
+
+
+def test_calc_all_garbage_default_none_with_target_type_suppresses_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """calc_all analog: default=None + target_type=float on all-garbage input emits no warning."""
+
+    def should_not_run(values: list) -> list:
+        raise AssertionError("calc_all func must not run when every cell is garbage")
+
+    op = calc_all(should_not_run, "linked_field", default=None, target_type=float)
+    rows = [{"linked_field": None}, {"linked_field": ""}, {"linked_field": "n/a"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert all(r["out"] is None for r in result)
+    assert "calc_all type coercion failed" not in caplog.text
+
+
+def test_calc_garbage_non_none_default_still_coerces(caplog: pytest.LogCaptureFixture) -> None:
+    """A non-None default is still coerced through target_type on the all-garbage path.
+
+    Pins that the ``val is not None`` guard still fires correctly on a real
+    default: default=0 with target_type=float must yield 0.0, not the bare
+    int 0, and no warning should fire since the coercion succeeds cleanly.
+    """
+
+    def should_not_run(x: Any) -> Any:
+        raise AssertionError("calc func must not run when input is garbage")
+
+    op = calc(should_not_run, "score", default=0, target_type=float)
+    rows = [{"score": None}, {"score": ""}, {"score": "n/a"}]
+    with caplog.at_level("WARNING", logger="incorporator.schema.builder"):
+        result = _run_calc(op, rows)
+    assert all(r["out"] == 0.0 and isinstance(r["out"], float) for r in result)
+    assert not [r for r in caplog.records if "calc type coercion failed" in r.getMessage()]
 
 
 # ---------------------------------------------------------------------------

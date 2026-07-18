@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`calc()` / `calc_all()` no longer attempt `target_type()` coercion on
+  ANY `None` value, closing the remaining log-noise gap left by the
+  [1.4.0] fix** (`incorporator/schema/builder.py::apply_etl_transformations`):
+  the [1.4.0] fix stopped coercing a *clean func-returned* `None` but
+  deliberately left the garbage-short-circuit and exception-fallback
+  `None` paths coerced, on the theory that an incompatible declared
+  `default` should still surface a "type coercion failed" warning. In
+  practice this meant a `calc(fn, key, target_type=float)` with
+  `default=None` logged a spurious WARNING on every row whose inputs were
+  all garbage — the coercion (`float(None)`) always raises, is always
+  caught, and always re-falls-back to the same `None` the row would have
+  gotten anyway, so the warning carried no signal, only noise (one
+  WARNING line per all-garbage row). Coercion is now
+  skipped whenever the resulting `val` is `None`, full stop — matching
+  how `inc()` already short-circuits on `is_garbage_value` before ever
+  calling a rank converter. A non-`None` default (e.g. `default=0`) is
+  still coerced and still warns on a genuine incompatibility.
 - **`link_to()` / `link_to_list()` are now lazy and live instead of a
   build-time snapshot** (`incorporator/schema/extractors.py`): previously
   `link_to(dataset)` copied `dataset`'s entries into a private registry
