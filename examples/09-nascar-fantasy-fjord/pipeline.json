@@ -1,6 +1,4 @@
 {
-  "_comment_": "8-source NASCAR fantasy fjord. Run from this directory: incorporator validate pipeline.json && incorporator fjord pipeline.json --logs",
-
   "outflow": "outflow.py",
 
   "stream_params": [

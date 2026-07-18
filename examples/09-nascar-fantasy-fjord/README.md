@@ -64,7 +64,7 @@ examples/09-nascar-fantasy-fjord/
 The output directory (`out/`) is created at runtime; you don't need to make it.
 
 > 💡 **Read-time DX rule: each source coerces its own fields; joins happen where the peer data actually lives.**
-> Every `getattr(x, "field", default) or fallback` guard in an `outflow()` function exists for one of two reasons: (1) the field hasn't been *coerced* yet (raw JSON string where you want an `int`/`float`/`bool`), or (2) the field hasn't been *joined* yet (a raw FK where you want the actual related object).  Coercion belongs in each source's own `conv_dict`, at its own build time — `inc()` for a plain type conversion, `calc()` for one that needs a function (like `Race`'s `speed_or_none` sentinel guard).  A cross-source join belongs in `outflow(state)`, at read time: `fjord()` hands `outflow()` a live snapshot of every source, taken under its own shared lock, every wave — `state["Track"].inc_dict.get(race.track_id)` is a safe, cheap, O(1) lookup, no different in cost or safety from a build-time join.
+> If you ever find yourself reaching for `getattr(x, "field", default) or fallback` inside an `outflow()` function, it's a sign one of two things hasn't happened yet: (1) the field hasn't been *coerced* (raw JSON string where you want an `int`/`float`/`bool`), or (2) the field hasn't been *joined* (a raw FK where you want the actual related object).  Coercion belongs in each source's own `conv_dict`, at its own build time — `inc()` for a plain type conversion, `calc()` for one that needs a function (like `Race`'s `speed_or_none` sentinel guard).  A cross-source join belongs in `outflow(state)`, at read time: `fjord()` hands `outflow()` a live snapshot of every source, taken under its own shared lock, every wave — `state["Track"].inc_dict.get(race.track_id)` is a safe, cheap, O(1) lookup, no different in cost or safety from a build-time join.  This tutorial's `outflow.py` has zero `getattr(` calls precisely because both boundaries are honored.
 >
 > This tutorial's `Standing` classes, `Track`, `Driver`, and `Race` all coerce their own numeric/string/date fields in `nascar_fantasy.py`'s `conv_dict`s.  `outflow.py`'s three views then read those coerced fields as plain attributes.  Every cross-source lookup — `Race`'s three FK joins (`track_id` → `Track`, `pole_winner_driver_id` / `winner_driver_id` → `Driver`), the roster → Driver fan-out, and the per-pick Standings dispatch — happens in `outflow(state)`, uniformly, via `.inc_dict.get(...)`.  There's one join mechanism in this tutorial, not two: no `link_to()`, no `depends_on` tiering, no state-aware `inflow(state)` sidecar.  (`inflow(state)` still exists in the framework for the rarer case where a *build-time* join is required — a downstream source's own `conv_dict` needs the resolved object before it can finish building.  Nothing in this pipeline needs that.)
 
@@ -260,8 +260,8 @@ def _track_loc(track: Any) -> str:
     """
     if track is None:
         return "Unknown"
-    city = (getattr(track, "city", "") or "").strip()
-    state = (getattr(track, "state", "") or "").strip()
+    city = (track.city or "").strip()
+    state = (track.state or "").strip()
     if city and state:
         return f"{city}, {state}"
     return city or state or "Unknown"
@@ -304,7 +304,7 @@ Current-month Cup races with resolved track + driver context.  Every field here 
     monthly: list[dict[str, Any]] = []
     for race in races:
         # A race with no schedule date is a null-object case, not a coercion gap.
-        dt = getattr(race, "date_scheduled", None)
+        dt = race.date_scheduled
         if dt is None or dt.month != now.month or dt.year != now.year:
             continue
         # track / pole / winner are read-time joins against live sibling
@@ -317,16 +317,16 @@ Current-month Cup races with resolved track + driver context.  Every field here 
         monthly.append({
             "race_id":     race.inc_code,
             "date":        dt.strftime("%Y-%m-%d"),
-            "race_name":   getattr(race, "race_name", "TBD"),
-            "track":       getattr(track, "inc_name", "Unknown") if track else "Unknown",
+            "race_name":   race.race_name or "TBD",
+            "track":       track.inc_name if track else "Unknown",
             "track_type":  track.track_type if track else "Unknown",
             "track_miles": track.length if track else None,
             "track_loc":   _track_loc(track),
-            "pole_winner": getattr(pole, "Full_Name", None) if pole else None,
+            "pole_winner": pole.Full_Name if pole else None,
             # Race's own conv_dict (Step 3) already promotes NASCAR's
             # 0.0-as-missing sentinel to None at Race's build time.
             "pole_speed":  race.pole_winner_speed,
-            "winner":      getattr(winner, "Full_Name", None) if winner else None,
+            "winner":      winner.Full_Name if winner else None,
             "cars":        race.number_of_cars_in_field,
             "tv":          race.television_broadcaster,
             "playoff":     bool(race.playoff_round),
@@ -338,7 +338,7 @@ Note the navigation idioms:
 
 * **`race.inc_code`** — every Incorporator instance exposes its primary key via `inc_code` and its display name via `inc_name`.  This is how you get back at the original ID.
 * **`tracks.inc_dict.get(race.track_id)`** — the framework's O(1) primary-key lookup on the live `Track` snapshot; `race.track_id` is Race's own raw FK field, untouched by any rename.
-* **`getattr(pole, "Full_Name", None) if pole else None`** — `pole` is a live `Driver` Pydantic instance whose schema came from the API; `Full_Name` is the API's actual field name and reaches us unchanged.
+* **`pole.Full_Name if pole else None`** — `pole` is a live `Driver` Pydantic instance whose schema came from the API; `Full_Name` is the API's actual field name and reaches us unchanged.
 * **`race.pole_winner_speed` (plain attribute, no guard)** — Race's own `speed_or_none` converter already ran at build time; the field is either a real float or `None`, never the raw `0.0` sentinel.
 
 #### View 2 — `FantasyTeam`
@@ -360,8 +360,8 @@ Per-team scoreboard.  For each team's roster pick `{series_id, driver_id}`:
         team_cd = team.team_id
         league_teams[team_cd] = {}
         for pick in team.roster or []:
-            sid = int(getattr(pick, "series_id", 0))
-            did = int(getattr(pick, "driver_id", 0))
+            sid = int(pick.series_id)
+            did = int(pick.driver_id)
             driver_obj = drivers.inc_dict.get(did)
             if driver_obj is not None and sid in (1, 2, 3):
                 league_teams[team_cd].setdefault(sid, []).append(driver_obj)
@@ -374,7 +374,7 @@ From here the scoring loop walks each team's `league_teams` entries series-by-se
 
 > The full file is [`outflow.py`](outflow.py) (~380 lines) — this walkthrough excerpts the parts that matter.
 
-Every field read off `stnd` or `driver` in the full scoring loop is a plain attribute — no `getattr(..., default) or fallback` — because `nascar_fantasy.py`'s `conv_dict`s guarantee they're always present.  Only `stnd` itself (does this driver have a standings row at all?) and `owner_seat is None` (is this an owner-seated pick, whose source class lacks certain fields?) remain as guards in `outflow.py` — both null-object / cross-source-shape checks, not coercion gaps.
+Every field read off `stnd` or `driver` in the full scoring loop is a plain attribute — no defensive default fallback — because `nascar_fantasy.py`'s `conv_dict`s guarantee they're always present.  Only `stnd` itself (does this driver have a standings row at all?) and `owner_seat is None` (is this an owner-seated pick, whose source class lacks certain fields?) remain as guards in `outflow.py` — both null-object / cross-source-shape checks, not coercion gaps.
 
 #### View 3 — `ManufacturerLeaderboard`
 
@@ -402,7 +402,7 @@ A third analytical view that's effectively "free" because the Cup standings are 
             "total_points":  sum(s.points for s in rows),
             "total_wins":    sum(s.wins for s in rows),
             "playoff_seats": sum(1 for s in rows if s.playoff_eligible),
-            "top_driver":    getattr(top, "inc_name", "Unknown"),
+            "top_driver":    top.inc_name,
             "top_points":    top.points,
         })
     manufacturer_rows.sort(key=lambda r: -r["total_points"])
@@ -639,7 +639,7 @@ All eight source waves fire concurrently via `asyncio.gather` — `Race`'s posit
 
 ### Output 1 — `out/nascar_monthly_schedule.ndjson`
 
-Per-race row with resolved track + driver context.  Past races have real `pole_winner`, `pole_speed`, and `winner`; future races have all three as `null` (the read-time sentinel guard + outflow `getattr` fallbacks):
+Per-race row with resolved track + driver context.  Past races have real `pole_winner`, `pole_speed`, and `winner`; future races have all three as `null` (the read-time 0-as-missing sentinel guard short-circuits the join to `None` before the lookup runs):
 
 ```jsonc
 {
@@ -790,11 +790,14 @@ Note how **Toyota has fewer drivers than Chevrolet (9 vs 20) but nearly twice th
 ## Run it
 
 ```bash
-# Python entry
+# Python entry — resolves out/ absolutely (HERE / "out"), runs from anywhere
 python examples/09-nascar-fantasy-fjord/nascar_fantasy.py
 
-# Same fjord, from the CLI
-incorporator fjord pipeline.json --logs
+# Same fjord, from the CLI — cd first: pipeline.json's export_params.file_path
+# entries are CWD-relative, not config-relative, so running from repo root
+# would silently write out/ next to your shell's cwd instead of next to the config
+cd examples/09-nascar-fantasy-fjord
+incorporator validate pipeline.json && incorporator fjord pipeline.json --logs
 ```
 
 Also runs in Docker via the [central mount pattern](../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: both forms fuse the same live NASCAR feed into identical row counts across all eleven waves and identical manufacturer-leaderboard totals (counts drift week to week — live standings, see [`pipeline.json`](pipeline.json)).

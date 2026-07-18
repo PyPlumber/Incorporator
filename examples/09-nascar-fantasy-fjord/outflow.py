@@ -157,8 +157,8 @@ def _track_loc(track: Any) -> str:
     """
     if track is None:
         return "Unknown"
-    city = (getattr(track, "city", "") or "").strip()
-    state = (getattr(track, "state", "") or "").strip()
+    city = (track.city or "").strip()
+    state = (track.state or "").strip()
     if city and state:
         return f"{city}, {state}"
     return city or state or "Unknown"
@@ -198,7 +198,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     monthly: list[dict[str, Any]] = []
     for race in races:
         # A race with no schedule date is a null-object case, not a coercion gap.
-        dt = getattr(race, "date_scheduled", None)
+        dt = race.date_scheduled
         if dt is None or dt.month != now.month or dt.year != now.year:
             continue
         # track / pole / winner are read-time joins against live sibling
@@ -217,17 +217,17 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             {
                 "race_id": race.inc_code,
                 "date": dt.strftime("%Y-%m-%d"),
-                "race_name": getattr(race, "race_name", "TBD"),
-                "track": getattr(track, "inc_name", "Unknown") if track else "Unknown",
+                "race_name": race.race_name or "TBD",
+                "track": track.inc_name if track else "Unknown",
                 "track_type": track.track_type if track else "Unknown",
                 "track_miles": track.length if track else None,
                 "track_loc": _track_loc(track),
-                "pole_winner": getattr(pole, "Full_Name", None) if pole else None,
+                "pole_winner": pole.Full_Name if pole else None,
                 # Race's own conv_dict (nascar_fantasy.py / pipeline.json)
                 # already promotes NASCAR's 0.0-as-missing sentinel to None
                 # at Race's build time via speed_or_none().
                 "pole_speed": race.pole_winner_speed,
-                "winner": getattr(winner, "Full_Name", None) if winner else None,
+                "winner": winner.Full_Name if winner else None,
                 "cars": race.number_of_cars_in_field,
                 "tv": race.television_broadcaster,
                 "playoff": bool(race.playoff_round),
@@ -246,8 +246,8 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         team_cd = team.team_id
         league_teams[team_cd] = {}
         for pick in team.roster or []:
-            sid = int(getattr(pick, "series_id", 0))
-            did = int(getattr(pick, "driver_id", 0))
+            sid = int(pick.series_id)
+            did = int(pick.driver_id)
             driver_obj = drivers.inc_dict.get(did)
             if driver_obj is not None and sid in (1, 2, 3):
                 league_teams[team_cd].setdefault(sid, []).append(driver_obj)
@@ -302,7 +302,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 mfg = mfg.strip() or "Unknown"
                 mfg_counter[mfg] += 1
 
-                driver_name = getattr(driver, "inc_name", "Unknown").strip()
+                driver_name = driver.inc_name.strip()
                 row: dict[str, Any] = {
                     "series": series_name,
                     "car_idx": car_idx,
@@ -371,7 +371,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "total_points": sum(s.points for s in rows),
                 "total_wins": sum(s.wins for s in rows),
                 "playoff_seats": sum(1 for s in rows if s.playoff_eligible),
-                "top_driver": getattr(top, "inc_name", "Unknown"),
+                "top_driver": top.inc_name,
                 "top_points": top.points,
             }
         )
