@@ -27,7 +27,7 @@ Both halves share the same primitives — Penstock throttling at the HTTP and ed
 
 ### ✨ Highlights
 * **Works with unpredictable JSON APIs** — digests XML, CSV, NDJSON, SQLite, Parquet, Avro without a line of schema; missing keys and mutating types absorbed without validation errors.
-* **Joins that don't depend on fetch order** — `link_to()` / `link_to_list()` re-read the target's registry on every lookup instead of snapshotting it once, so a join built before its target populates starts resolving the moment it does; `calc()` / `calc_all()` skip coercion outright on `None`, killing spurious per-row warnings. *Both ship in the next release — current PyPI is v1.4.0.*
+* **Joins that don't depend on fetch order** — `link_to()` / `link_to_list()` re-read the target's registry on every lookup instead of snapshotting it once, so a join built before its target populates starts resolving the moment it does; `calc()` / `calc_all()` skip coercion outright on `None`, killing spurious per-row warnings. *Shipped in v1.4.1.*
 * **The pipeline tells you what to tune** — after a Tideweaver run, `architect.tune()` consumes the accumulated rejects, tides, and waves and emits a `TuningReport` of severity-sorted hints.
 * **Disk-backed observability for orchestration** — `LoggedTideweaver` routes every `Tide` and `RejectEntry` through a `QueueHandler` pipeline, replayable with `get_tides()` / `get_rejects()`.
 
