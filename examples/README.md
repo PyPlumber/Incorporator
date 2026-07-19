@@ -30,8 +30,8 @@ The curriculum alternates CoinGecko-heavy steps with non-CoinGecko domain exampl
 | [`appendix/crypto-graph-mapping/`](./appendix/crypto-graph-mapping/) | T10 | `link_to`-based in-memory join — T10's pattern as a one-shot. |
 | [`appendix/nascar-tideweaver/`](./appendix/nascar-tideweaver/) | T11 | Tideweaver diamond on race telemetry (laps + pits + flags). |
 | [`appendix/mlb-pulse/`](./appendix/mlb-pulse/) | T11 + T5 | Live sports analytics: four MLB Stats API endpoints joined inside a Tideweaver window. |
-| [`appendix/tideweaver-parquet-snapshots/`](./appendix/tideweaver-parquet-snapshots/) | T11 | Safe Parquet writes inside a Tideweaver window. |
-| [`appendix/tideweaver-vs-prefect/`](./appendix/tideweaver-vs-prefect/) | T11 | In-process vs cloud orchestration decision matrix. |
+| [`appendix/tideweaver-parquet-snapshots/`](./appendix/tideweaver-parquet-snapshots/) | T11 | Doc-only — Parquet writes inside Tideweaver window. |
+| [`appendix/tideweaver-vs-prefect/`](./appendix/tideweaver-vs-prefect/) | T11 | Doc-only — in-process vs cloud matrix. |
 
 ## CLI templates
 
