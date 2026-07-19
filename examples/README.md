@@ -18,7 +18,7 @@ The curriculum alternates CoinGecko-heavy steps with non-CoinGecko domain exampl
 | **T8** | [`08-streaming-daemon/`](./08-streaming-daemon/) | CoinGecko + Binance.us | ~30 s | 🌊 `stream()` for paginated bulk export at O(1) memory — plus the `stateful_polling=True` single-source shim. |
 | **T9** | [`09-nascar-fantasy-fjord/`](./09-nascar-fantasy-fjord/) | NASCAR (7) | ~8 s | 🏁 Fantasy-sports scoring fjord across Cup, Busch, Truck series. |
 | **T10** | [`10-multi-source-fjord/`](./10-multi-source-fjord/) | CG + Binance | continuous | 🌊 `fjord()` fuses two live sources into a derived spread. |
-| **T11** | [`11-tideweaver/`](./11-tideweaver/) | local fixtures | ~5 s | 🧵 Capstone — declarative diamond orchestration across three exchanges. |
+| **T11** | [`11-tideweaver/`](./11-tideweaver/) | local fixtures | ~90 s | 🧵 Capstone — declarative diamond orchestration across three exchanges. |
 
 > **Why the alternating rhythm?**  CoinGecko's free public tier is 5–15 calls per minute, server-side.  Each CG-touching tutorial calls `register_host_penstock("api.coingecko.com", rate_per_sec=0.2)` near the top of its script (the framework ships with no implicit per-host throttle).  Interleaving non-CG steps between CG-heavy ones lets the per-minute window refresh while you learn a complementary pattern.
 

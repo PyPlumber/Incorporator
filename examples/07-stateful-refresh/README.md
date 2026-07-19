@@ -281,23 +281,6 @@ structured retry orchestration via `RejectEntry`.
 
 ---
 
-## Where to Next
-
-The next tutorial wraps `refresh()` in a daemon — and that's where
-you'll learn the `stateful_polling` choice:
-
-* **`stateful_polling=True`** keeps doing what we did in this tutorial:
-  one live registry, refreshed every N seconds. This is the
-  mark-to-market dashboard / portfolio NAV / slow-indicator pattern.
-* **`stateful_polling=False`** (the default) turns `stream()` into a
-  paginator-driven ingestion loop for bulk data that doesn't fit
-  in memory — historical backfills, warehouse seeds, multi-page pulls.
-
-Same verb (`stream()`), two engines. T8 walks both modes
-back-to-back with a decision matrix at the close.
-
----
-
 ## Run it
 
 ```bash
@@ -313,7 +296,7 @@ the three `refresh()` shapes shown here stay in Python.
 
 ## Where to Go Next
 
-> **Up next: [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md).** T7 ran `refresh()` manually three ways; T8 wraps it in a long-lived daemon with periodic export — the production shape for live dashboards.
+> **Up next: [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md).** T7 ran `refresh()` manually three ways; T8 wraps it in a long-lived daemon and introduces the `stateful_polling` choice: `True` keeps doing what this tutorial did — one live registry, refreshed every N seconds (mark-to-market dashboard / portfolio NAV / slow-indicator pattern); `False` (the default) turns `stream()` into a paginator-driven ingestion loop for bulk data that doesn't fit in memory (historical backfills, warehouse seeds, multi-page pulls). Same verb, two engines — T8 walks both back-to-back with a decision matrix at the close.
 
 | Goal | Read |
 |---|---|

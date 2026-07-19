@@ -235,9 +235,12 @@ spread, and flags any opportunity where the spread crosses a threshold (basis po
 ```python
 import asyncio
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from incorporator import Incorporator, Fjord, Stream, Tideweaver, Watershed
 from incorporator.schema.converters import calc
+
+SNAPSHOT_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
 class BinanceBook(Incorporator):
@@ -267,7 +270,7 @@ async def main() -> None:
             cls=BinanceBook,
             interval=15,
             incorp_params={
-                "inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
+                "inc_file": str(SNAPSHOT_DIR / "binance_book.json"),
                 "inc_code": "symbol",
                 "conv_dict": {
                     "asset": calc(normalize_asset, "symbol", default=None),
@@ -282,7 +285,7 @@ async def main() -> None:
                 cls=CoinbaseTicker,
                 interval=30,
                 incorp_params={
-                    "inc_url": "https://api.exchange.coinbase.com/products/BTC-USD/ticker",
+                    "inc_file": str(SNAPSHOT_DIR / "coinbase_ticker.json"),
                     "inc_code": "trade_id",
                     "conv_dict": {
                         "asset": calc(normalize_asset, "product_id", default=None),
@@ -296,8 +299,7 @@ async def main() -> None:
                 cls=KrakenTicker,
                 interval=30,
                 incorp_params={
-                    "inc_url": "https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD",
-                    "rec_path": "result",
+                    "inc_file": str(SNAPSHOT_DIR / "kraken_ticker.json"),
                     # Kraken's raw pair key is "_key"; Pydantic V2 rejects
                     # leading-underscore field names, so rename before Pk-bind.
                     "inc_code": "pair",
@@ -364,20 +366,17 @@ drills list index 0: `calc(float, "b.0", ...)`).  `outflow(state)` then reads
 per-venue field-name params, no `getattr(..., default)`, no `try/except`.
 
 > **Bug fix, not a regression.**  Before this pass, Kraken's raw `_key` PK field
-> crashed Pydantic V2 schema build (leading-underscore field names are rejected)
-> and its `b` / `a` list-shaped bid/ask were silently dropped by the read-time
+> crashed Pydantic V2 schema build (leading-underscore names are rejected), and
+> its `b` / `a` list-shaped bid/ask were silently dropped by the read-time
 > `float(getattr(...))` coercion — so Kraken never participated and the example
-> emitted zero arb opportunities. With `name_chg` renaming `_key` → `pair` and the
-> build-time `conv_dict` drilling `b.0` / `a.0`, Kraken now joins the cross-venue
-> best-bid/best-ask computation. The result: `BTC` stays below the 5 bps threshold
-> (~0.74 bps) but `ETH` now shows a real `arb_opportunity=true` at ~5.29 bps —
-> Kraken's higher bid (`3211.80`) crossing Binance's lower ask (`3210.10`). This is
-> the example working correctly for the first time, not a behavior change to guard
-> against.
+> emitted zero arb opportunities. `name_chg` renames `_key` → `pair`; the
+> build-time `conv_dict` drills `b.0` / `a.0`. Kraken now joins the cross-venue
+> computation: `BTC` stays below the 5 bps threshold (~0.74 bps), but `ETH`
+> shows a real `arb_opportunity=true` at ~5.29 bps — Kraken's higher bid
+> (`3211.80`) crossing Binance's lower ask (`3210.10`).
 >
 > **Sidecar naming convention.**  All fjord/Tideweaver tutorials use the bare
-> semantic name `outflow.py` — matching the `incorporator init --type fjord`
-> scaffold and the DX convention established in T9/T10.
+> semantic name `outflow.py` — matching `incorporator init --type fjord` and the T9/T10 convention.
 >
 > **Output class is inferred here.**  `outflow(state)` returns a list of
 > dicts; `flush()` infers the output class fields from the dict keys.  The
@@ -484,15 +483,16 @@ higher than the best ask on another* — classic cross-venue arb signal.
 
 > **Missing-peer `KeyError` in `outflow(state)`?**  Same as the fjord verbs (T9, T10):
 > fjord's seed-error formatter rewrites the failed-sources entry to a copy-pasteable
-> diagnostic suggesting `state.get('X')` for soft access.  In Tideweaver, the `Fjord`
-> current's flush respects the same contract — every `state.get(...)` defaults to
-> `[]`, no manual guard needed.
+> diagnostic suggesting `state.get('X')` for soft access — Tideweaver's `Fjord`
+> flush respects the same contract, defaulting every `state.get(...)` to `[]`.
 
-> **Production:** real arb scanners drive symbol normalization off each exchange's
-> `/exchangeInfo` (or equivalent) feed instead of hard-coded dicts.  CCXT does this
-> implicitly via its `markets` cache; with Incorporator, you'd add a 4th Stream
-> current pulling `/exchangeInfo` and let `outflow(state)` build the normalization
-> table dynamically per tick.
+> **Production:** this walkthrough reads `fixtures/*.json` to stay runnable
+> without live quota or geo-blocks; swap `inc_file` for `inc_url` against each
+> exchange's real endpoint to run it live, unchanged otherwise. Real scanners
+> also drive symbol normalization off each exchange's `/exchangeInfo` feed
+> instead of hard-coded dicts — CCXT does this via its `markets` cache; add a
+> 4th Stream current pulling `/exchangeInfo` and let `outflow(state)` build the
+> table per tick.
 
 ---
 

@@ -316,7 +316,7 @@ Also runs in Docker via the [central mount pattern](../README.md#running-a-tutor
 
 ## Where to Go Next
 
-> **Up next: [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md).**  T9 previews the multi-source `fjord()` shape — the canonical stateful-daemon pattern that supersedes the `stateful_polling=True` shim shown above — on a real fantasy-sports scoring problem before T10 introduces `fjord()` formally.  T9 has you pull driver standings concurrently from Cup, Xfinity, and Truck series; join with track + driver master data; and produce a weekly fantasy-points table.  Its state-aware `inflow()` even previews T10's `depends_on` graph.  Runs in ~8 s.
+> **Up next: [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md).**  T9 walks the full multi-source `fjord()` production shape — schema-free ingestion, parallel seed, read-time cross-source joins — on a real fantasy-sports scoring problem, before T10 introduces `fjord()` formally on the minimum-viable two-source case.  T9 has you pull driver standings concurrently from Cup, Busch, and Truck series; join with track + driver master data; and produce a weekly fantasy-points table.  Runs in ~8 s.
 
 | Goal | Read |
 |---|---|

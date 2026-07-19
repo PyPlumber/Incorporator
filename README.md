@@ -27,6 +27,7 @@ Both halves share the same primitives — Penstock throttling at the HTTP and ed
 
 ### ✨ Highlights
 * **Works with unpredictable JSON APIs** — digests XML, CSV, NDJSON, SQLite, Parquet, Avro without a line of schema; missing keys and mutating types absorbed without validation errors.
+* **Joins that don't depend on fetch order** — `link_to()` / `link_to_list()` re-read the target's registry on every lookup instead of snapshotting it once, so a join built before its target populates starts resolving the moment it does; `calc()` / `calc_all()` skip coercion outright on `None`, killing spurious per-row warnings. *Both ship in the next release — current PyPI is v1.4.0.*
 * **The pipeline tells you what to tune** — after a Tideweaver run, `architect.tune()` consumes the accumulated rejects, tides, and waves and emits a `TuningReport` of severity-sorted hints.
 * **Disk-backed observability for orchestration** — `LoggedTideweaver` routes every `Tide` and `RejectEntry` through a `QueueHandler` pipeline, replayable with `get_tides()` / `get_rejects()`.
 
@@ -308,7 +309,7 @@ Secrets stay out of config — `${API_KEY}` for env vars, `${file:/run/secrets/a
 
 ## 📚 Tutorials (in order)
 
-The eleven-tutorial curriculum.  Each slot introduces one new verb or technique, alternating CoinGecko-heavy steps with non-CG domain examples so per-minute rate-limit windows refresh between CG calls and each Incorporator pattern lands across multiple real-world verticals.  Runnable code under [`/examples`](./examples).
+The eleven-tutorial curriculum — rewritten this cycle to one converged style (each class defined exactly once, no incidental `getattr`) and revalidated against live API output along the way.  Each slot introduces one new verb or technique, alternating CoinGecko-heavy steps with non-CG domain examples so per-minute rate-limit windows refresh between CG calls and each Incorporator pattern lands across multiple real-world verticals.  Runnable code under [`/examples`](./examples).
 
 1. [🌱 **First Steps + DX Inspector**](./examples/01-first-steps/README.md) — discovery-first flow: `test()` profiles a CoinGecko endpoint, then `incorp()` applies its recommendations.
 2. [🔁 **Data Lake Pivot**](./examples/02-data-lake-pivot/README.md) — SaaS roster → BI-ready columnar; pivot a `/users` endpoint into Avro + SQLite.
@@ -334,8 +335,9 @@ The eleven-tutorial curriculum.  Each slot introduces one new verb or technique,
 ## 📎 Appendices — optional side-quests
 
 * [🧬 **Pokémon ETL**](./examples/appendix/pokeapi-etl/README.md) — paginated HATEOAS drill + array reductions with `calc` / `sum_attributes`.  Mirrors T5.
-* [🕸️ **Crypto Graph Mapping** (static)](./examples/appendix/crypto-graph-mapping/README.md) — `link_to`-based in-memory join; T10's fjord pattern as a one-shot.
+* [🕸️ **Crypto Graph Mapping**](./examples/appendix/crypto-graph-mapping/README.md) — `link_to`-based live in-memory join; T10's fjord pattern as a one-shot.
 * [🏁 **NASCAR Tideweaver**](./examples/appendix/nascar-tideweaver/README.md) — T11's diamond shape against race telemetry (laps + pits + flags → driver state).
+* [⚾ **MLB Pulse**](./examples/appendix/mlb-pulse/README.md) — four MLB Stats API endpoints fused inside a Tideweaver window; mirrors T11's diamond shape and T5's drill pattern.
 * [🧵 **Tideweaver Deep Dives**](./examples/appendix/tideweaver-parquet-snapshots/README.md) — [Parquet at window close](./examples/appendix/tideweaver-parquet-snapshots/README.md) and [Tideweaver vs. Prefect](./examples/appendix/tideweaver-vs-prefect/README.md) — columnar artifacts plus the in-process-vs-cloud orchestration decision.
 
 ---

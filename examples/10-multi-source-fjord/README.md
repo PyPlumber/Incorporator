@@ -392,8 +392,8 @@ async for wave in Incorporator.fjord(
 ```
 
 `Person.homeworld` arrives as a fully-typed `Planet` object instead
-of a URL string — so an outflow function can `getattr(person.homeworld,
-"inc_name")` directly.
+of a URL string — so an outflow function can read `person.homeworld.inc_name`
+directly, no lookup required.
 
 If `inflow.py` exists but defines *no* `inflow` function, fjord keeps
 the legacy parallel-seed path (zero overhead) — the sidecar simply
@@ -413,8 +413,8 @@ def outflow(state):
     people = list(state["Person"])
     by_planet = {}
     for p in people:
-        hw = getattr(p, "homeworld", None)
-        hw_name = getattr(hw, "inc_name", "Unknown") if hw else "Unknown"
+        hw = p.homeworld
+        hw_name = hw.inc_name if hw else "Unknown"
         by_planet.setdefault(hw_name, []).append(p.inc_name)
 
     return {
@@ -486,7 +486,7 @@ Also runs in Docker via the [central mount pattern](../README.md#running-a-tutor
 | Capstone: orchestrate a diamond graph in a window | [Tutorial 11 — Tideweaver](../11-tideweaver/README.md) |
 | Master single-source stateful polling first | [Tutorial 7 — Stateful Refresh](../07-stateful-refresh/README.md) |
 | Master the single-source `stream()` daemon | [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md) |
-| See the 7-source production fjord with state-aware `inflow()` | [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md) |
+| See the 8-source production fjord with read-time cross-source joins | [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md) |
 | Run the static (non-daemon) join variant | [Appendix — Crypto Graph Mapping](../appendix/crypto-graph-mapping/README.md) |
 | Configure fjord from JSON for the CLI | [CLI & Configuration Guide](../../docs/cli_and_configuration.md) |
 
