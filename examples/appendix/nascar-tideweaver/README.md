@@ -20,15 +20,17 @@ The cadence map:
 * **Flag events** fire on no fixed cadence (green / yellow / red / white).
 * **Driver state** — the fused output — wants all three combined on a steady interval so a downstream dashboard sees a coherent per-driver snapshot.
 
-Three Stream currents feed one Fjord tail. Same shape as the crypto arb scanner; different sources, different outflow logic, same five-name vocabulary. Verified: a 15-second window emits ~15 Tides and writes ~20-25 driver-state rows to NDJSON.
+Three Stream currents feed one Fjord tail. Same shape as the crypto arb scanner; different sources, different outflow logic, same five-name vocabulary. The fixture demo uses one uniform 3-second interval across all four currents for simplicity — a real telemetry feed would tune each source's interval to its own update rhythm. Verified: a 15-second window emits ~15 Tides and writes ~20-25 driver-state rows to NDJSON, identically from both entry forms.
 
-> **One shared sidecar.** Both `nascar_tideweaver.py` (Python runner)
-> and `watershed.json` (CLI entry) load their class definitions and
-> `outflow(state)` logic from the same `outflow.py` sidecar. The
-> Python runner imports `LapData`, `PitStops`, `FlagEvents`, and
-> `DriverState` directly; `watershed.json` references the file via
-> `"outflow": "outflow.py"`. Both entry points stay in lockstep — a
-> change to `outflow.py` is reflected in both immediately.
+> **Classes live in the main entry file.** `LapData`, `PitStops`,
+> `FlagEvents`, `DriverState`, and `outflow()` are defined ONCE, in
+> `nascar_tideweaver.py`. The `outflow.py` sidecar only re-imports
+> them (plus the CLI-only `window_start`/`window_end` tokens) so the
+> CLI's class/token resolvers see the same canonical objects the
+> Python runner's own `main()` uses. `watershed.json` references the
+> sidecar via `"outflow": "outflow.py"`. Both entry points stay in
+> lockstep — a change to `nascar_tideweaver.py` is reflected in both
+> immediately.
 
 ---
 
@@ -40,7 +42,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from incorporator import Fjord, Stream, Tideweaver, Watershed
+from incorporator import Fjord, Incorporator, Stream, Tideweaver, Watershed
+from incorporator.schema.converters import inc
 
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
@@ -48,10 +51,24 @@ OUTFLOW_PATH = HERE / "outflow.py"
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
 
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
+if __name__ == "__main__":
+    sys.modules.setdefault("nascar_tideweaver", sys.modules[__name__])
 
-from outflow import LAPDATA_CONV_DICT, DriverState, FlagEvents, LapData, PitStops  # noqa: E402
+
+class LapData(Incorporator):
+    """Head source — per-driver lap data."""
+
+
+class PitStops(Incorporator):
+    """Middle source — per-driver pit-stop counts."""
+
+
+class FlagEvents(Incorporator):
+    """Middle source — race-flag colour timeline."""
+
+
+class DriverState(Incorporator):
+    """Derived output class for the tail Fjord flush -- bare row class."""
 
 
 async def main() -> None:
@@ -68,7 +85,7 @@ async def main() -> None:
             incorp_params={
                 "inc_file": str(FIXTURES / "laps.json"),
                 "inc_code": "driver",
-                "conv_dict": LAPDATA_CONV_DICT,
+                "conv_dict": {"lap_number": inc(int, default=0)},
             },
         ),
         middle=[
@@ -108,7 +125,7 @@ async def main() -> None:
 
 The runnable version is at [`examples/appendix/nascar-tideweaver/nascar_tideweaver.py`](./nascar_tideweaver.py).
 
-> **`DriverState` is declared in the sidecar — don't instantiate it.** The tail Fjord's output class lives in `outflow.py` and is passed via `cls=DriverState`. `flush()` infers the output class fields from the dict keys that `outflow(state)` returns — the declaration gives the class its name, but the schema comes from the rows. `DriverState` is a bare class (no declared fields, no `extra='allow'`), so if the rows carry undeclared keys the framework emits one WARNING and falls through to inference, preserving every field. Never call `DriverState(...)` yourself; let the Fjord build the records from the `outflow(state)` return rows.
+> **`DriverState` is a bare row class — don't instantiate it.** The tail Fjord's output class is declared once in `nascar_tideweaver.py` and passed via `cls=DriverState`. `flush()` infers the output class fields from the dict keys that `outflow(state)` returns — the declaration gives the class its name, but the schema comes from the rows. `DriverState` carries no declared fields (`Incorporator`'s base is `extra='allow'`), so the rows' keys ARE the export shape. Never call `DriverState(...)` yourself; let the Fjord build the records from the `outflow(state)` return rows.
 
 ---
 
@@ -118,48 +135,33 @@ The tail Fjord current's `outflow(state)` joins laps + pits + flags into one row
 
 ```python
 def outflow(state):
-    laps  = state.get("LapData", [])
-    pits  = state.get("PitStops", [])
+    laps = state.get("LapData", [])
+    pits = state.get("PitStops", [])
     flags = state.get("FlagEvents", [])
 
     by_driver = {}
     for lap in laps:
-        d = getattr(lap, "driver", None) or getattr(lap, "inc_code", None)
-        if d is None:
-            continue
-        row = by_driver.setdefault(d, {"driver": d, "laps": 0, "pits": 0, "flag": None})
+        row = by_driver.setdefault(lap.driver, {"driver": lap.driver, "laps": 0, "pits": 0, "flag": None})
         row["laps"] = max(row["laps"], lap.lap_number)
 
     for pit in pits:
-        d = getattr(pit, "driver", None) or getattr(pit, "inc_code", None)
-        if d is None:
-            continue
-        row = by_driver.setdefault(d, {"driver": d, "laps": 0, "pits": 0, "flag": None})
+        row = by_driver.setdefault(pit.driver, {"driver": pit.driver, "laps": 0, "pits": 0, "flag": None})
         row["pits"] += 1
 
     if flags:
-        latest = flags[-1]
+        latest_color = flags[-1].color
         for row in by_driver.values():
-            row["flag"] = getattr(latest, "color", None)
+            row["flag"] = latest_color
 
     return list(by_driver.values())
 ```
 
-> **Guard against missing keys.** `outflow(state)` is called every Fjord tick — the first tick may fire before pits or flags have populated. Every `state.get(...)` defaults to `[]`, and every per-record read uses `getattr(..., None)` with an explicit fallback. Reading `state["PitStops"]` directly would `KeyError` on the first tide.
-
-> **Build-time coercion, read-time selection.** `lap.lap_number` reads as a plain
-> `int` above because the `laps` Stream's own `conv_dict` — `LAPDATA_CONV_DICT =
-> {"lap_number": inc(int, default=0)}` in `outflow.py` — coerces it at build
-> time; `outflow()` no longer needs `int(getattr(lap, "lap_number", 0) or 0)`.
->
-> **Why the driver-or-inc_code fallback stays read-time.** `getattr(lap,
-> "driver", None) or getattr(lap, "inc_code", None)` is field SELECTION, not
-> coercion — there's no earlier point at which a conv_dict callable could read
-> "what `inc_code` will resolve to," because `inc_code` is the framework-assigned
-> PK bound from `incorp_params={"inc_code": "driver"}` *after* conv_dict
-> resolution runs. This is a genuine framework boundary (same shape as
-> mlb-pulse's honest-boundary note on its cross-current join), not a missed DX
-> opportunity — so it stays a plain read-time expression.
+> **Build-time coercion.** `lap.lap_number` reads as a plain `int` above because
+> the `laps` Stream's own `conv_dict` — `{"lap_number": inc(int, default=0)}` —
+> coerces it at build time; `outflow()` never needs a read-time `int(...)` call.
+> `lap.driver`, `pit.driver`, and `flags[-1].color` are plain fixture fields,
+> always present on every row, so a plain dot read is correct — no defensive
+> fallback is guarding a case that can't occur.
 
 Same structure as Tutorial 11's `outflow.outflow()` — snapshot upstream registries, build a per-key composite, return as a list of dicts.
 
@@ -196,7 +198,7 @@ group per-driver / per-edge to see which feed caused the skip.
 ## Why this domain works well for Tideweaver
 
 * **Bounded race window** — the orchestrator runs for the race duration and exits clean. No daemon to babysit between sessions.
-* **Mixed cadences** — laps are fast, pits are medium, flags are bursty. Per-current intervals match the source's actual update rhythm.
+* **Mixed cadences in a real feed** — laps are fast, pits are medium, flags are bursty; a live pipeline would tune each Stream's `interval` to match. This fixture demo uses one uniform interval across all four currents for simplicity.
 * **One coherent fused output** — the dashboard wants one driver-state record per N seconds carrying the latest from all three sources. The Fjord tail does exactly that via `outflow(state)`.
 
 ---
@@ -208,10 +210,16 @@ group per-driver / per-edge to see which feed caused the skip.
 python examples/appendix/nascar-tideweaver/nascar_tideweaver.py
 
 # Same diamond, from the CLI
+cd examples/appendix/nascar-tideweaver
 incorporator tideweaver run watershed.json --json-output
 ```
 
-Also runs in Docker via the [central mount pattern](../../README.md#running-a-tutorial-in-docker) (not run or verified). Both entry points load the same classes and `outflow(state)` (see [`watershed.json`](watershed.json)); row counts differ by design — the two forms use different window lengths, so each flushes a different number of tide snapshots.
+Run the CLI form from this directory (not the repo root) so
+`out/driver_state.ndjson` lands in `examples/appendix/nascar-tideweaver/out/`
+— its `file_path` is resolved relative to the current working directory, not
+`watershed.json`'s own location.
+
+Also runs in Docker via the [central mount pattern](../../README.md#running-a-tutorial-in-docker) (not run or verified). Both entry points now describe the identical watershed — same 15-second window, same 3.0s intervals on every current, same 10.0s `drain_timeout` — so row counts match between the two forms.
 
 ---
 

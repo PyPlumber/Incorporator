@@ -1,12 +1,4 @@
 {
-  "_comment_1_": "Sample watershed.json for the NASCAR diamond pattern.",
-  "_comment_2_": "Relative inc_file / outflow paths are resolved against this JSON's parent directory,",
-  "_comment_3_": "so the example runs from any working directory:",
-  "_comment_4_": "  incorporator validate examples/appendix/nascar-tideweaver/watershed.json",
-  "_comment_5_": "  incorporator tideweaver run examples/appendix/nascar-tideweaver/watershed.json --json-output",
-  "_comment_6_": "Window is dateless: 'window_start' / 'window_end' are public names defined in",
-  "_comment_6b_": "outflow.py, evaluated at sidecar-import time -- no env vars needed.",
-
   "window": {
     "start": "@window_start",
     "end": "@window_end"
@@ -14,9 +6,7 @@
 
   "shape": "diamond",
   "outflow": "outflow.py",
-  "drain_timeout": 30,
-
-  "_flow_note_": "Full FlowControl literal on every diamond edge — same runtime semantics as the gate_mode='hard' shorthand, but adds a LoggingObserver so per-edge fire / skip / spillway events emit through Python logging.  Switch any field's `type` value to swap strategies (see docs/api_atlas.md#canal-toolkit-primitives).",
+  "drain_timeout": 10.0,
 
   "flow": {
     "gate":      {"type": "hard"},
@@ -29,7 +19,7 @@
     "name": "laps",
     "class": "LapData",
     "verb": "stream",
-    "interval": 30,
+    "interval": 3.0,
     "incorp_params": {
       "inc_file": "fixtures/laps.json",
       "inc_code": "driver",
@@ -44,7 +34,7 @@
       "name": "pits",
       "class": "PitStops",
       "verb": "stream",
-      "interval": 30,
+      "interval": 3.0,
       "incorp_params": {
         "inc_file": "fixtures/pits.json",
         "inc_code": "driver"
@@ -54,7 +44,7 @@
       "name": "flags",
       "class": "FlagEvents",
       "verb": "stream",
-      "interval": 30,
+      "interval": 3.0,
       "incorp_params": {
         "inc_file": "fixtures/flags.json",
         "inc_code": "color"
@@ -66,7 +56,7 @@
     "name": "state",
     "class": "DriverState",
     "verb": "fjord",
-    "interval": 30,
+    "interval": 3.0,
     "export_params": {
       "file_path": "out/driver_state.ndjson",
       "format": "ndjson",

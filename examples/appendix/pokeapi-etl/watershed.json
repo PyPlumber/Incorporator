@@ -1,20 +1,4 @@
 {
-  "_comment_1_": "CLI-declarative form of the two-phase PokeAPI drill (pokeapi_etl_calc.py).",
-  "_comment_2_": "Relative inflow path is resolved against this JSON's parent directory,",
-  "_comment_3_": "so the example runs from any working directory:",
-  "_comment_4_": "  incorporator validate examples/appendix/pokeapi-etl/watershed.json",
-  "_comment_5_": "  incorporator tideweaver run examples/appendix/pokeapi-etl/watershed.json",
-  "_comment_6_": "Window is dateless: 'window_start' / 'window_end' are public names defined in",
-  "_comment_6b_": "inflow.py, evaluated at sidecar-import time (a few minutes wide) -- no env vars needed.",
-  "_comment_7_": "'nav' discovers 150 HATEOAS urls; 'pokemon' is a Stream(parent_current='nav') T5 drill",
-  "_comment_8_": "against each url's real /pokemon/{id}/ payload -- this is where base_stat_total becomes",
-  "_comment_9_": "real (not the shallow list, which has no per-Pokemon stats). 'export_pokemon' is required:",
-  "_comment_10_": "Stream(parent_current=...)'s own export_params is never consumed by the scheduler, so a",
-  "_comment_11_": "separate Export current is the only thing that writes the drilled rows to disk.",
-  "_comment_12_": "'nav' fetches limit=150 in ONE call (not 3 paginated limit=50 pages) and sets inc_code",
-  "_comment_13_": "so a Stream current's implicit refresh-per-chunk upserts in place -- see inflow.py's",
-  "_comment_14_": "module docstring and this appendix's README 'Suspected framework gap' note.",
-
   "window": {
     "start": "@window_start",
     "end": "@window_end"
@@ -49,6 +33,7 @@
       "interval": 300,
       "on_error": "isolate",
       "incorp_params": {
+        "inc_child": "url",
         "inc_code": "id",
         "inc_name": "name",
         "excl_lst": ["sprites", "moves", "game_indices", "held_items"],

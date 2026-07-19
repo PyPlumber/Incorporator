@@ -85,6 +85,7 @@ Copy the suggested keys, swap `test()` for `incorp()`, and paste the kwargs.
 
 ```python
 import asyncio
+import operator
 from typing import Any
 from incorporator import Incorporator, NextUrlPaginator, calc, register_host_penstock
 
@@ -96,22 +97,19 @@ class Nav(Incorporator): pass
 class Pokemon(Incorporator): pass
 
 # --- DECLARATIVE REDUCTION FUNCTIONS ---
-def calculate_bst(stats_array: Any) -> int:
-    """Calculates Base Stat Total by summing the 'base_stat' of all entries."""
-    if not isinstance(stats_array, list): return 0
-    return sum(stat_obj.get("base_stat", 0) for stat_obj in stats_array if isinstance(stat_obj, dict))
+def calculate_bst(stats_array: list[dict[str, Any]]) -> int:
+    """Base Stat Total — sum each stat entry's base_stat."""
+    return sum(stat["base_stat"] for stat in stats_array)
 
-def format_typing(types_array: Any) -> str:
-    """Formats a nested types array into a clean string (e.g., 'Grass / Poison')."""
-    if not isinstance(types_array, list): return "Unknown"
-    type_names =[t.get("type", {}).get("name", "").capitalize() for t in types_array if isinstance(t, dict)]
-    return " / ".join(type_names)
+def format_typing(types_array: list[dict[str, Any]]) -> str:
+    """Format the nested types array as 'Grass / Poison'."""
+    return " / ".join(t["type"]["name"].capitalize() for t in types_array)
 
 # --- MAIN EXECUTION ---
 async def main() -> None:
     BASE_URL = "https://pokeapi.co/api/v2"
 
-    print("⏳ Shallow discovery: fetching 150 records...")
+    print("Shallow discovery: fetching 150 records...")
     pokemon_nav = await Nav.incorp(
         inc_url=f"{BASE_URL}/pokemon/?limit=50&offset=0",
         rec_path="results",
@@ -123,7 +121,7 @@ async def main() -> None:
         requests_per_second=1.5,  # 90 req/min — under PokéAPI's 100/min ceiling
     )
 
-    print(f"✅ Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
+    print(f"Discovered {len(pokemon_nav)} Pokémon. Commencing deep scan...")
 
     # pokemon_nav carries the inc_child="url" state from the discovery call;
     # passing it as inc_parent triggers 150 concurrent detail requests.
@@ -139,14 +137,13 @@ async def main() -> None:
         },
         name_chg=[("stats", "base_stat_total")],
         requests_per_second=1.5,
-    )    
-    
-    if isinstance(enriched_pokemon, list):
-        # Sort by our newly calculated integer!
-        enriched_pokemon.sort(key=lambda p: getattr(p, "base_stat_total", 0), reverse=True)
+    )
 
-        for p in enriched_pokemon[:5]:
-            print(f"{p.inc_name.capitalize():<12} | Types: {p.types:<15} | Total Stats: {p.base_stat_total}")
+    # incorp() always returns an IncorporatorList — sort in place.
+    enriched_pokemon.sort(key=operator.attrgetter("base_stat_total"), reverse=True)
+
+    for p in enriched_pokemon[:5]:
+        print(f"{p.inc_name.capitalize():<12} | Types: {p.types:<15} | Total Stats: {p.base_stat_total}")
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -222,8 +219,24 @@ You aren't just ingesting APIs — you are sculpting them. The explicit `inc_chi
 python examples/appendix/pokeapi-etl/pokeapi_etl_calc.py
 
 # Same two-phase drill, from the CLI
+cd examples/appendix/pokeapi-etl
 incorporator tideweaver run watershed.json
 ```
+
+Run the CLI form from this directory (not the repo root) so
+`out/pokemon.ndjson` lands in `examples/appendix/pokeapi-etl/out/` — its
+`file_path` is resolved relative to the current working directory, not
+`watershed.json`'s own location.
+
+`inflow.py` re-imports `Nav`/`Pokemon`/`calculate_bst`/`format_typing` from
+`pokeapi_etl_calc.py` rather than redefining them, so both entry forms
+operate on the exact same class/function objects (same pattern as
+[Tutorial 5's `inflow.py`](../../05-parent-child-drilling/inflow.py)).
+`watershed.json`'s `"pokemon"` current is a `Stream(parent_current="nav")`
+T5-style drill; its own export is never consumed by the scheduler, so a
+separate `export_pokemon` current (`verb: "export"`, `depends_on:
+["pokemon"]`) is what actually writes the 150 drilled rows to
+`out/pokemon.ndjson`.
 
 Also runs in Docker via the [central mount pattern](../../README.md#running-a-tutorial-in-docker) (not run or verified). Verified live: both forms drill all 150 Pokémon and agree on Mewtwo's base stat total (680) (see [`watershed.json`](watershed.json) + [`inflow.py`](inflow.py)).
 
