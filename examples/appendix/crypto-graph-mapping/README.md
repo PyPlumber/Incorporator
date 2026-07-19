@@ -219,8 +219,7 @@ dicts keyed `inc_code`, `symbol`, `current_price`, `market_cap_rank`,
 the Fjord instantiates `CryptoLiquidity` directly from each returned row
 regardless — the returned dict *is* the export shape; no separate
 `transform()` hook, and no matching field list, is needed. The numeric
-typing that a declared `float | None` field used to provide now lives one
-hop upstream, in `BinanceStat`/`BinanceBook`'s own `conv_dict` entries
+typing lives one hop upstream, in `BinanceStat`/`BinanceBook`'s own `conv_dict` entries
 (`quoteVolume`/`bidPrice` coerced to `float` at their own `incorp()` time) —
 `outflow(state)` reads already-typed floats off those linked objects, it
 does no coercion of its own.

@@ -277,9 +277,9 @@ if __name__ == "__main__":
 > nothing is specified.
 
 > **CoinGecko is rate-limited — register the host throttle at startup.**
-> The free tier allows roughly 5–15 calls per *minute*; v1.2.0 removed
-> the implicit per-host registry that used to auto-pace it.  One line
-> at process start re-engages the cap:
+> The free tier allows roughly 5–15 calls per *minute*, and there is no
+> implicit per-host registry that auto-paces it.  One line
+> at process start engages the cap:
 >
 > ```python
 > from incorporator import register_host_penstock

@@ -203,12 +203,12 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             continue
         # track / pole / winner are read-time joins against live sibling
         # snapshots: race.track_id / pole_winner_driver_id / winner_driver_id
-        # are Race's own RAW FK ints (no rename, no build-time resolution
-        # anymore). The `if race.pole_winner_driver_id else None` guard is
-        # the relocated 0-as-missing sentinel filter -- NASCAR returns 0 for
-        # a driver-ID field whose event hasn't happened yet, and 0
-        # coincidentally resolves to a real driver, so this must run before
-        # the lookup, not after.
+        # are Race's own raw FK ints, unrenamed and unresolved at build time.
+        # The `if race.pole_winner_driver_id else None` guard is a
+        # 0-as-missing sentinel filter -- NASCAR returns 0 for a driver-ID
+        # field whose event hasn't happened yet, and 0 coincidentally
+        # resolves to a real driver, so this must run before the lookup,
+        # not after.
         track = tracks.inc_dict.get(race.track_id) if tracks else None
         pole = drivers.inc_dict.get(race.pole_winner_driver_id) if race.pole_winner_driver_id else None
         winner = drivers.inc_dict.get(race.winner_driver_id) if race.winner_driver_id else None

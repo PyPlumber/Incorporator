@@ -6,7 +6,7 @@ receiver class both paths share.
 instances `incorp()`/`refresh()` produced (an identity pass-through);
 that only round-trips when the receiver class declares real fields -- a
 bare class crashes at export time with `Outflow Error: 1 validation error
-for BinancePair ... input_type=DynamicModel` (confirmed live).
+for BinancePair ... input_type=DynamicModel`.
 """
 
 from incorporator import LoggedIncorporator

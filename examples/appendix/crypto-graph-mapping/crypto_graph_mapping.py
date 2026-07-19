@@ -88,8 +88,7 @@ class CryptoLiquidity(Incorporator):
     field declarations. ``Incorporator``'s ``extra='allow'`` means the
     returned row keys ARE the export shape (see
     ``examples/appendix/nascar-tideweaver/outflow.py``'s ``DriverState``
-    for the same pattern). The numeric typing that used to live in this
-    class's declared ``float | None`` fields now lives at the source --
+    for the same pattern). The numeric typing lives at the source --
     ``BinanceStat``/``BinanceBook``'s own ``conv_dict`` entries coerce
     ``quoteVolume``/``bidPrice`` to ``float`` before ``outflow(state)``
     ever reads them. ``main()`` below never builds one of these directly --
@@ -111,10 +110,10 @@ def print_dashboard(assets: IncorporatorList) -> None:
     `BinanceBook` objects onto each `CryptoAsset` at build time and
     stopped there -- this loop traverses those linked objects at the
     point of use (`asset.stats_usdt.quoteVolume if asset.stats_usdt
-    else None`), the same idiom the framework's original real-API
-    examples used to traverse `p.homeworld.inc_name` /
-    `actor.location.inc_name`. A missed link is a real `None`, guarded
-    with a conditional dot -- no `getattr` anywhere in this file."""
+    else None`), the same idiom other framework examples use to traverse
+    `p.homeworld.inc_name` / `actor.location.inc_name`. A missed link is
+    a real `None`, guarded with a conditional dot -- no `getattr`
+    anywhere in this file."""
     assets.sort(key=operator.attrgetter("market_cap_rank"))
 
     print("=" * 115)

@@ -198,9 +198,7 @@ def link_to(dataset: Any, extractor: Callable[[Any], Any] | None = None) -> Op:
     :class:`Incorporator` subclass target, row liveness depends on
     *something else* holding a strong reference to each instance — the
     same class-level :class:`weakref.WeakValueDictionary` race that
-    already applies anywhere ``Cls.inc_dict`` is read directly — but this
-    is strictly better than the old build-time-snapshot behavior, which
-    was permanently empty for any target that hadn't populated yet. A
+    already applies anywhere ``Cls.inc_dict`` is read directly. A
     garbage-collected or absent key resolves to ``None``, never raises.
 
     For lists of foreign keys (e.g. tags → tag objects) use
