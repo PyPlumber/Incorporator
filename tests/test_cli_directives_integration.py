@@ -8,6 +8,7 @@ Verifies that the wrapper directives flow through:
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from incorporator.cli.validate import (
     validate_watershed_config,
 )
 from incorporator.io.config_paths import resolve_config_paths
+from incorporator.io.penstock import _HOST_PENSTOCKS
 from incorporator.schema.directives import Ex, Nm, Pk, _normalize_etl_kwargs
 from incorporator.tideweaver.config import load_watershed
 from incorporator.usercode import merge_sidecar_extra_names
@@ -32,6 +34,32 @@ from incorporator.usercode import merge_sidecar_extra_names
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).parent.parent
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _restore_host_penstock_registry() -> Iterator[None]:
+    """Snapshot/restore the process-global penstock registry around this module.
+
+    The fjord/watershed template-validation tests below deliberately exec
+    example sidecars (crypto-graph-mapping, pokeapi-etl, 04-xml-post-audit,
+    mlb-pulse) whose entry modules call ``register_host_penstock(...)`` at
+    module scope as a load-bearing side effect — that's correct behavior for
+    proving the templates import cleanly. But those calls mutate the shared
+    ``_HOST_PENSTOCKS`` dict with no restore, which otherwise leaks into
+    later-running modules (e.g. ``test_penstock_registry.py``'s "a fresh
+    process has an empty registry" assertion). Same snapshot/restore idiom as
+    ``test_penstock_registry.py``'s per-test ``monkeypatch.setattr``, just at
+    module scope since the mutation happens deep inside library code this
+    module never calls ``monkeypatch`` from directly.
+
+    Mutates ``_HOST_PENSTOCKS`` in place (never reassigns) — every importer,
+    including ``resolve_penstock``, holds a direct reference to this exact
+    dict object.
+    """
+    snapshot = dict(_HOST_PENSTOCKS)
+    yield
+    _HOST_PENSTOCKS.clear()
+    _HOST_PENSTOCKS.update(snapshot)
 
 
 def test_excl_lst_mixed_bare_and_wrapped() -> None:
