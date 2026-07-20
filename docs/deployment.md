@@ -336,29 +336,45 @@ is the smallest install that gets you the `incorporator` CLI entry point.
 ### Deploying a flow
 
 The pre-built `run_incorporator_flow` entry point loads your
-`pipeline.json` and executes the stream as a Prefect task. Each Wave's
-`chunk_index`, `rows_processed`, and `processing_time_sec` are logged
-through Prefect's run logger, making them visible in the Prefect UI
-run log. Waves with `failed_sources` emit as warnings.
+`pipeline.json` through the same config pipeline the CLI uses —
+`${VAR}` / `${file:...}` env expansion, config-dir input-path rebasing,
+and inflow/outflow sidecar + token resolution all run before the stream
+starts, so a config that works under `incorporator stream` behaves
+identically here. It then executes the stream as a Prefect task. Each
+Wave's `chunk_index`, `rows_processed`, and `processing_time_sec` are
+logged through Prefect's run logger as they arrive, making them visible
+in the Prefect UI run log. Waves with `failed_sources` emit as warnings.
+
+`run_incorporator_flow` (and the underlying `run_incorporator_stream`
+task wrapper) don't accumulate every `Wave` in memory — they return a
+bounded summary dict once the stream completes:
 
 ```python
 import asyncio
 from incorporator.integrations.prefect import run_incorporator_flow
 
 async def deploy():
-    results = await run_incorporator_flow(
+    summary = await run_incorporator_flow(
         config_path="pipeline.json",
         poll_interval=600.0
     )
-    print(f"Flow completed. Processed {len(results)} chunks.")
+    print(f"Flow completed. Processed {summary['chunks']} chunks, "
+          f"{summary['rows_processed']} rows.")
 
 if __name__ == "__main__":
     asyncio.run(deploy())
 ```
 
-The integration routes Wave telemetry through Prefect's logger rather
-than Incorporator's disk-logging queues — omit `enable_logging=True`
-in the task call to avoid double-writing.
+`summary` carries `chunks`, `rows_processed`, `failed_chunks`, a capped
+sample of `failed_sources`, and `elapsed_sec`.
+
+`run_incorporator_stream` also accepts `enable_logging: bool = False`
+and `retries` / `retry_delay_seconds` passthrough for Prefect's task
+retry machinery (both default to no-retry, matching today's behaviour).
+The integration already routes Wave telemetry through Prefect's run
+logger; setting `enable_logging=True` ALSO wires up Incorporator's own
+JSON-line disk logger — a genuine double-write you're opting into, not
+a bug. Leave it `False` (the default) unless you specifically want both.
 
 ---
 

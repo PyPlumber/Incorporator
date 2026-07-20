@@ -3,15 +3,16 @@
 import importlib
 import json
 import sys
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any, AsyncGenerator, List
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from prefect.testing.utilities import prefect_test_harness
 
-from incorporator.observability.logger import Wave
 from incorporator.integrations.prefect import run_incorporator_flow, run_incorporator_stream
+from incorporator.observability.logger import Wave
 
 
 @pytest.fixture(scope="session")
@@ -38,7 +39,7 @@ async def test_prefect_flow_missing_file(prefect_test_fixture: None) -> None:
 
 @pytest.mark.asyncio
 async def test_prefect_flow_success(tmp_path: Path, prefect_test_fixture: None) -> None:
-    """Ensures the Prefect flow executes the stream task and aggregates results."""
+    """Ensures the Prefect flow executes the stream task and returns a summary dict."""
     config_file = tmp_path / "prefect_pipeline.json"
     config_file.write_text(
         json.dumps({"incorp_params": {"inc_file": "dummy.csv"}, "export_params": {"file_path": "out.db"}}),
@@ -46,18 +47,57 @@ async def test_prefect_flow_success(tmp_path: Path, prefect_test_fixture: None) 
     )
 
     with patch("incorporator.integrations.prefect.LoggedIncorporator.stream", new=mock_stream):
-        results: List[Wave] = await run_incorporator_flow(config_path=str(config_file), poll_interval=None)
+        summary = await run_incorporator_flow(config_path=str(config_file), poll_interval=None)
 
-        assert len(results) == 1
-        assert results[0].chunk_index == 1
-        assert results[0].rows_processed == 1000
+        assert summary["chunks"] == 1
+        assert summary["rows_processed"] == 1000
+        assert summary["failed_chunks"] == 0
 
 
 @pytest.mark.asyncio
-async def test_prefect_run_incorporator_stream_task_returns_list_of_wave(prefect_test_fixture: None) -> None:
-    """Platform-review Stage 0 pin: the task body directly returns a list of Wave objects.
+async def test_prefect_flow_env_expansion_and_path_rebasing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prefect_test_fixture: None
+) -> None:
+    """P3: the flow now resolves ``${VAR}`` env references and rebases INPUT paths, like the CLI.
 
-    Calls ``run_incorporator_stream`` (the ``@task``-decorated function)
+    A config using ``${VAR}`` in ``inc_url`` and a relative ``inc_file``
+    silently lost both resolutions before this fix (plain ``json.load`` +
+    manual key-plucking). Proves ``expand_env`` and ``resolve_config_paths``
+    now run inside ``run_incorporator_flow``.
+    """
+    monkeypatch.setenv("PREFECT_TEST_SOURCE_URL", "https://example.com/data.csv")
+    config_file = tmp_path / "prefect_pipeline.json"
+    (tmp_path / "dummy.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    config_file.write_text(
+        json.dumps(
+            {
+                "incorp_params": {"inc_url": "${PREFECT_TEST_SOURCE_URL}", "inc_file": "dummy.csv"},
+                "export_params": {"file_path": "out.db"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, Any] = {}
+
+    async def spy_stream(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
+        captured.update(kwargs)
+        async for wave in mock_stream(*args, **kwargs):
+            yield wave
+
+    with patch("incorporator.integrations.prefect.LoggedIncorporator.stream", new=spy_stream):
+        await run_incorporator_flow(config_path=str(config_file), poll_interval=None)
+
+    incorp_params = captured["incorp_params"]
+    assert incorp_params["inc_url"] == "https://example.com/data.csv"
+    assert incorp_params["inc_file"] == str((tmp_path / "dummy.csv").resolve())
+
+
+@pytest.mark.asyncio
+async def test_prefect_run_incorporator_stream_task_returns_summary_dict(prefect_test_fixture: None) -> None:
+    """Platform-review Stage 0 pin: the task body returns an O(1) summary dict, not a Wave list.
+
+    Calls ``run_incorporator_stream`` (the public task-wrapper function)
     DIRECTLY — not through ``run_incorporator_flow`` — so a later change to
     the flow's aggregation/summary shape only touches the flow-level test
     (``test_prefect_flow_success``), not this task-level return-shape pin.
@@ -66,13 +106,64 @@ async def test_prefect_run_incorporator_stream_task_returns_list_of_wave(prefect
     flow wrapper is needed.
     """
     with patch("incorporator.integrations.prefect.LoggedIncorporator.stream", new=mock_stream):
-        results = await run_incorporator_stream(incorp_params={"inc_file": "dummy.csv"})
+        summary = await run_incorporator_stream(incorp_params={"inc_file": "dummy.csv"})
 
-    assert isinstance(results, list)
-    assert len(results) == 1
-    assert isinstance(results[0], Wave)
-    assert results[0].chunk_index == 1
-    assert results[0].rows_processed == 1000
+    assert isinstance(summary, dict)
+    assert summary["chunks"] == 1
+    assert summary["rows_processed"] == 1000
+    assert summary["failed_chunks"] == 0
+    assert summary["failed_sources"] == []
+    assert isinstance(summary["elapsed_sec"], float)
+
+
+@pytest.mark.asyncio
+async def test_prefect_stream_enable_logging_forwarded(prefect_test_fixture: None) -> None:
+    """``enable_logging=True`` is forwarded through to ``LoggedIncorporator.stream``, not hardcoded False."""
+    captured: dict[str, Any] = {}
+
+    async def spy_stream(*args: Any, **kwargs: Any) -> AsyncGenerator[Wave, None]:
+        captured.update(kwargs)
+        async for wave in mock_stream(*args, **kwargs):
+            yield wave
+
+    with patch("incorporator.integrations.prefect.LoggedIncorporator.stream", new=spy_stream):
+        await run_incorporator_stream(incorp_params={"inc_file": "dummy.csv"}, enable_logging=True)
+
+    assert captured["enable_logging"] is True
+
+
+@pytest.mark.asyncio
+async def test_prefect_stream_retries_default_skips_with_options(prefect_test_fixture: None) -> None:
+    """Default ``retries=0``/``retry_delay_seconds=0`` still returns the summary dict unchanged.
+
+    Guards against the ``.with_options`` branch being invoked unconditionally,
+    which would needlessly re-configure the task even in the common no-retry
+    case.
+    """
+    with patch("incorporator.integrations.prefect.LoggedIncorporator.stream", new=mock_stream):
+        summary = await run_incorporator_stream(incorp_params={"inc_file": "dummy.csv"})
+
+    assert summary["chunks"] == 1
+    assert summary["rows_processed"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_prefect_stream_retries_passthrough(prefect_test_fixture: None) -> None:
+    """``retries``/``retry_delay_seconds`` route through ``Task.with_options`` when non-zero."""
+    import incorporator.integrations.prefect as prefect_mod
+
+    fake_summary = {"chunks": 1, "rows_processed": 1000, "failed_chunks": 0, "failed_sources": [], "elapsed_sec": 0.1}
+    fake_task_with_retries = AsyncMock(return_value=fake_summary)
+    fake_with_options = MagicMock(return_value=fake_task_with_retries)
+
+    with patch.object(prefect_mod._run_incorporator_stream_task, "with_options", fake_with_options):
+        summary = await run_incorporator_stream(
+            incorp_params={"inc_file": "dummy.csv"}, retries=1, retry_delay_seconds=2.5
+        )
+
+    fake_with_options.assert_called_once_with(retries=1, retry_delay_seconds=2.5)
+    fake_task_with_retries.assert_called_once()
+    assert summary == fake_summary
 
 
 @pytest.mark.asyncio

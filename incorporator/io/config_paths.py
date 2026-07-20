@@ -13,9 +13,10 @@ on for Docker/CLI deployments:
   (heartbeat file, log directory, etc.) that must land in the writable
   runtime directory (CWD/WORKDIR), not alongside the config file.
 
-These helpers are called ONLY by CLI/JSON loaders
-(:func:`incorporator.cli.runners._load_pipeline_config` and
-:func:`incorporator.tideweaver.config.build_watershed`).
+These helpers are called by CLI/JSON loaders
+(:func:`incorporator.cli.runners._load_pipeline_config`,
+:func:`incorporator.tideweaver.config.build_watershed`) and by the Prefect
+integration's flow entry point (:func:`incorporator.integrations.prefect.run_incorporator_flow`).
 The in-process Python API (``Incorporator.incorp`` / ``export`` /
 ``refresh``) stays CWD-relative and does NOT call these functions.
 """
