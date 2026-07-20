@@ -316,6 +316,26 @@ def _fallback_bool(value: Any) -> bool:
     return str(value).strip().lower() in truthy_values
 
 
+# Ranked strptime formats tried after the fromisoformat() fast path misses.
+# Hoisted to module scope so _fallback_date doesn't rebuild this list on every call.
+_DATE_FALLBACK_FORMATS: tuple[str, ...] = (
+    "%B %d, %Y",
+    "%Y-%m-%d %H:%M:%S",
+    "%m/%d/%Y",
+    "%d/%m/%Y",
+    "%Y/%m/%d",
+    "%d %b %Y",
+    "%b %d, %Y",
+    "%Y-%m-%dT%H:%M:%S.%f",
+    # ISO with compact (no-colon) timezone offset, e.g. "+0000".  Python
+    # 3.11+'s fromisoformat() accepts this; 3.9/3.10 do not, so we catch
+    # it via strptime+%z which is permissive across all 3.x versions.
+    "%Y-%m-%dT%H:%M:%S.%f%z",
+    "%Y-%m-%dT%H:%M:%S%z",
+    "%a, %d %b %Y %H:%M:%S %Z",
+)
+
+
 def _fallback_date(value: Any) -> datetime:
     safe_str = str(value).strip().replace("Z", "+00:00")
 
@@ -325,23 +345,7 @@ def _fallback_date(value: Any) -> datetime:
     except ValueError:
         pass
 
-    fallback_formats = [
-        "%B %d, %Y",
-        "%Y-%m-%d %H:%M:%S",
-        "%m/%d/%Y",
-        "%d/%m/%Y",
-        "%Y/%m/%d",
-        "%d %b %Y",
-        "%b %d, %Y",
-        "%Y-%m-%dT%H:%M:%S.%f",
-        # ISO with compact (no-colon) timezone offset, e.g. "+0000".  Python
-        # 3.11+'s fromisoformat() accepts this; 3.9/3.10 do not, so we catch
-        # it via strptime+%z which is permissive across all 3.x versions.
-        "%Y-%m-%dT%H:%M:%S.%f%z",
-        "%Y-%m-%dT%H:%M:%S%z",
-        "%a, %d %b %Y %H:%M:%S %Z",
-    ]
-    for fmt in fallback_formats:
+    for fmt in _DATE_FALLBACK_FORMATS:
         try:
             return datetime.strptime(safe_str, fmt)
         except ValueError:
