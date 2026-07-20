@@ -38,6 +38,21 @@ def _get_attr(node: Any, part: str) -> Any:
     return getattr(node, part, None)
 
 
+def _append_or_flatten(next_layer: list[Any], val: Any, is_last: bool) -> None:
+    """Append ``val`` to ``next_layer``, flattening one level for a terminal list leaf.
+
+    A list-valued leaf reached by the *last* path segment (e.g. a parent field
+    ``team_paths: list[str]`` drilled via ``inc_child="team_paths"``) must extend
+    ``next_layer`` rather than nest, or ``extract_parent_data`` silently returns a
+    list-of-lists that downstream URL formatting can't consume. Non-terminal segments
+    keep appending whole — the next loop iteration's list-fanout branch handles those.
+    """
+    if is_last and isinstance(val, list):
+        next_layer.extend(val)
+    else:
+        next_layer.append(val)
+
+
 def extract_parent_data(parents: Any, child_path: str) -> list[Any]:
     """Iterative BFS to safely drill into dynamic structures without recursion.
 
@@ -50,10 +65,16 @@ def extract_parent_data(parents: Any, child_path: str) -> list[Any]:
     take ``results[0]``, then ``.url``" while ``inc_child="results.url"``
     still means "for each parent, for each item in ``results``, take
     ``.url``".
+
+    A terminal (last) segment that resolves to a list is flattened one level
+    into ``next_layer`` instead of appended whole, so a bare list-valued leaf
+    (e.g. ``team_paths: list[str]``) doesn't produce a list-of-lists.
     """
     current_layer = parents if isinstance(parents, list) else [parents]
+    parts = child_path.split(".")
 
-    for part in child_path.split("."):
+    for i, part in enumerate(parts):
+        is_last = i == len(parts) - 1
         next_layer: list[Any] = []
 
         for node in current_layer:
@@ -65,17 +86,17 @@ def extract_parent_data(parents: Any, child_path: str) -> list[Any]:
                     # Positional index: treat the list as the target, not as items to fan out.
                     val = _get_attr(node, part)
                     if val is not None:
-                        next_layer.append(val)
+                        _append_or_flatten(next_layer, val, is_last)
                 else:
                     # Non-digit segment: fanout across all list items (existing behaviour).
                     for item in node:
                         val = _get_attr(item, part)
                         if val is not None:
-                            next_layer.append(val)
+                            _append_or_flatten(next_layer, val, is_last)
             else:
                 val = _get_attr(node, part)
                 if val is not None:
-                    next_layer.append(val)
+                    _append_or_flatten(next_layer, val, is_last)
 
         current_layer = next_layer
         if not current_layer:

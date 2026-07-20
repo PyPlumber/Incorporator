@@ -501,6 +501,18 @@ def test_extract_parent_data_non_digit_fanout_unchanged() -> None:
     assert extract_parent_data(parents, "results.url") == ["x", "y"]
 
 
+def test_extract_parent_data_terminal_list_leaf_flattens() -> None:
+    """A terminal segment resolving to a list is flattened into one list, not nested."""
+    parents = [{"team_paths": ["a1", "a2"]}, {"team_paths": ["b1"]}]
+    assert extract_parent_data(parents, "team_paths") == ["a1", "a2", "b1"]
+
+
+def test_extract_parent_data_terminal_list_leaf_after_fanout_flattens() -> None:
+    """A terminal list leaf reached through a mid-path fanout segment still flattens fully."""
+    parents = [{"teams": [{"team_paths": ["a1", "a2"]}, {"team_paths": ["b1"]}]}]
+    assert extract_parent_data(parents, "teams.team_paths") == ["a1", "a2", "b1"]
+
+
 # ==========================================
 # 12. DataPath — int segment on dict uses string key
 # ==========================================
