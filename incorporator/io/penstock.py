@@ -528,7 +528,12 @@ def register_host_penstock(
       ``burst`` builds a :class:`BurstPenstock` instead.
 
     Args:
-        host: Lowercase hostname (e.g. ``"api.internal.acme.com"``).
+        host: Hostname to throttle; matching is case-insensitive — the
+            registry normalizes ``host`` to lowercase on registration so
+            it matches :func:`resolve_penstock`'s urlparse-derived lookup
+            key regardless of the casing you pass in (e.g. both
+            ``"api.internal.acme.com"`` and ``"API.Internal.Acme.com"``
+            resolve to the same registry entry).
         penstock: Either a :class:`Penstock` instance (preferred) or a
             zero-arg callable returning a fresh :class:`Penstock`
             (alternative form, e.g. ``lambda: BurstPenstock(rate_per_sec=50.0, burst=200)``).
@@ -562,6 +567,7 @@ def register_host_penstock(
         register_host_penstock("api.internal.acme.com", rate_per_sec=50.0)
         register_host_penstock("api.internal.acme.com", rate_per_sec=50.0, burst=200)
     """
+    host = host.lower()
     if penstock is not None and (rate_per_sec is not None or burst is not None):
         raise TypeError(
             "register_host_penstock got both a penstock instance and rate_per_sec/burst "

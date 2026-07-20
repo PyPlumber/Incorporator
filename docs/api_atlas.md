@@ -296,7 +296,7 @@ register_host_penstock("api.internal.acme.com", rate_per_sec=50.0, burst=200)
 ```
 
 **Common kwargs**
-- `host` — lowercase hostname; `urllib.parse` extracts this from URLs at resolve time.
+- `host` — hostname to throttle; casing doesn't matter — the registry lowercases it on registration to match the lowercase hostname `urllib.parse` extracts from URLs at resolve time.
 - `penstock` — a `Penstock` instance (preferred for non-Sustained/Burst policies) or a zero-arg callable returning one.  The `Penstock` config is frozen Pydantic; the per-call binding owns the mutable state + lock.  Mutually exclusive with `rate_per_sec`/`burst`.
 - `rate_per_sec` / `burst` — keyword-only shorthand that builds a `SustainedPenstock` (bare `rate_per_sec`) or `BurstPenstock` (`rate_per_sec` + `burst`) inline, skipping the explicit import + instantiation.
 

@@ -195,6 +195,42 @@ def test_register_re_registration_replaces(monkeypatch: pytest.MonkeyPatch) -> N
     assert bound.penstock.rate_per_sec == 99.0
 
 
+def test_register_mixed_case_host_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mixed-case registration still resolves — urlparse always lowercases lookup hosts.
+
+    Pins the fix: registering "API.Acme.example.com" must not silently fall
+    through to DEFAULT_RPS when a request to "https://api.acme.example.com/..."
+    comes in, since resolve_penstock's urlparse(source).hostname lowercases.
+    """
+    monkeypatch.setattr("incorporator.io.penstock._HOST_PENSTOCKS", dict(_HOST_PENSTOCKS), raising=False)
+    register_host_penstock("API.Acme.example.com", rate_per_sec=42.0)
+    bound = resolve_penstock("https://api.acme.example.com/x")
+    assert isinstance(bound.penstock, SustainedPenstock)
+    assert bound.penstock.rate_per_sec == 42.0
+
+
+def test_register_mixed_case_re_registration_replaces(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Re-registering the same host under a different casing overwrites the same key.
+
+    Mirrors test_register_re_registration_replaces, but proves the collision
+    holds across casing now that registration keys are lowercase-normalized.
+    """
+    monkeypatch.setattr("incorporator.io.penstock._HOST_PENSTOCKS", dict(_HOST_PENSTOCKS), raising=False)
+    register_host_penstock("Api.Example.com", rate_per_sec=0.5)
+    register_host_penstock("API.EXAMPLE.COM", rate_per_sec=99.0)
+    bound = resolve_penstock("https://api.example.com/x")
+    assert isinstance(bound.penstock, SustainedPenstock)
+    assert bound.penstock.rate_per_sec == 99.0
+    # Both registrations collided onto the same normalized key, not two entries.
+    from incorporator.io.penstock import _HOST_PENSTOCKS as live_registry
+
+    assert "api.example.com" in live_registry
+    assert "Api.Example.com" not in live_registry
+    assert "API.EXAMPLE.COM" not in live_registry
+    assert "Api.Example.com" not in _HOST_PENSTOCKS
+    assert "API.EXAMPLE.COM" not in _HOST_PENSTOCKS
+
+
 def test_top_level_import_surface() -> None:
     """``from incorporator import register_host_penstock`` works.
 

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`register_host_penstock` now normalizes the `host` argument to
+  lowercase on registration** (`incorporator/io/penstock.py`): mixed-case
+  registrations (e.g. `register_host_penstock("API.Acme.com", ...)`)
+  previously stored the raw casing while `resolve_penstock` always looks
+  up the lowercase hostname `urllib.parse` extracts from the request URL,
+  so the registered penstock silently never matched and traffic fell
+  through to `DEFAULT_RPS`. Registration now lowercases once at the
+  entry point, so mixed-case registration resolves correctly and a
+  same-host-different-case re-registration overwrites the same entry.
+
 ## [1.4.1] - 2026-07-19
 
 ### Fixed
