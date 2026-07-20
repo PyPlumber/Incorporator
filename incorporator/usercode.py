@@ -67,8 +67,8 @@ def load_user_module(path: str | Path) -> ModuleType:
     hook for export).
 
     **Per-path caching, keyed on identity alone.** The loader registers
-    each module under ``sys.modules`` keyed SOLELY by a digest of the
-    resolved absolute path — no caller-supplied name enters the key — so
+    each module under ``sys.modules`` keyed by the resolved absolute path
+    string itself — no caller-supplied name enters the key — so
     the SAME physical file loaded through two different framework entry
     points (e.g. :func:`load_outflow_module` and then
     :func:`apply_code_transform` against the same ``outflow.py``) returns
@@ -109,7 +109,7 @@ def load_user_module(path: str | Path) -> ModuleType:
     if not code_path.is_file():
         raise FileNotFoundError(f"[Incorporator] sidecar file not found: {code_path}")
 
-    cache_key = f"_inc_user_module_{abs(hash(str(code_path)))}"
+    cache_key = f"_inc_user_module_{code_path}"
     cached = sys.modules.get(cache_key)
     if cached is not None:
         return cached
