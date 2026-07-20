@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -516,6 +516,41 @@ def test_route_wave_to_log_skips_zero_row_no_failure(
     # Neither path should have been triggered by this no-op wave.
     assert not info_log.exists() or info_log.read_text(encoding="utf-8").strip() == ""
     assert not error_log.exists() or error_log.read_text(encoding="utf-8").strip() == ""
+
+
+def test_route_to_log_skips_model_dump_when_logger_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A disabled logger short-circuits _route_to_log before any model_dump call.
+
+    Pins the isEnabledFor-before-serialization ordering: model_dump is the
+    expensive Pydantic-JSON pass this hoist exists to avoid paying for on a
+    suppressed logger. Also proves the enabled path still dumps exactly once.
+    """
+    from incorporator.observability.logger import Wave, _route_to_log
+
+    call_count = {"n": 0}
+    original_model_dump = Wave.model_dump
+
+    def counting_model_dump(self: Wave, *args: object, **kwargs: object) -> dict[str, object]:
+        call_count["n"] += 1
+        return original_model_dump(self, *args, **kwargs)
+
+    monkeypatch.setattr(Wave, "model_dump", counting_model_dump)
+
+    wave = Wave(chunk_index=1, operation="chunk", rows_processed=10, processing_time_sec=0.01)
+
+    disabled_logger = MagicMock(spec=logging.Logger)
+    disabled_logger.isEnabledFor.return_value = False
+    with patch("logging.getLogger", return_value=disabled_logger):
+        _route_to_log("DisabledLogger", wave)
+    assert call_count["n"] == 0, "model_dump must not run when the logger is disabled for the derived level"
+    disabled_logger.log.assert_not_called()
+
+    enabled_logger = MagicMock(spec=logging.Logger)
+    enabled_logger.isEnabledFor.return_value = True
+    with patch("logging.getLogger", return_value=enabled_logger):
+        _route_to_log("EnabledLogger", wave)
+    assert call_count["n"] == 1, "model_dump must run exactly once when the logger is enabled"
+    enabled_logger.log.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

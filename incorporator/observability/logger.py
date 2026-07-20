@@ -72,6 +72,7 @@ def _emit_payload(
     *,
     is_api: bool = False,
     is_tide: bool = False,
+    logger: logging.Logger | None = None,
 ) -> None:
     """Shared emission tail for _route_wave / _route_tide / _route_reject.
 
@@ -91,11 +92,16 @@ def _emit_payload(
             :class:`APIFilter`.
         is_tide: When ``True``, adds ``is_tide=True`` so :class:`TideFilter`
             routes the record to ``tide.log``.
+        logger: Pre-fetched logger to reuse — passed by :func:`_route_to_log`,
+            which already looked it up to gate its own serialization work.
+            When ``None`` (all other callers), resolved via
+            :func:`logging.getLogger` as before.
     """
     extra: dict[str, Any] = {"meta": meta, payload_key: payload, "_payload_key": payload_key, "is_api": is_api}
     if is_tide:
         extra["is_tide"] = True
-    logger = logging.getLogger(logger_name)
+    if logger is None:
+        logger = logging.getLogger(logger_name)
     if logger.isEnabledFor(level):
         logger.log(level, msg, extra=extra)
 
@@ -145,48 +151,72 @@ def _route_to_log(logger_name: str, record: Wave | Tide | RejectEntry, *, extra_
     is_api: bool = False
     is_tide: bool = False
 
+    # Level is derived from cheap, already-realized pydantic attributes (never a
+    # model_dump) so the isEnabledFor gate below runs before any serialization work.
+    if isinstance(record, Wave):
+        if record.failed_sources:
+            level = logging.ERROR
+        elif record.rows_processed > 0:
+            level = logging.INFO
+        else:
+            # Zero-row / zero-failure — no-op, nothing to emit. Return before any dump.
+            return
+    elif isinstance(record, _Tide):
+        has_error_skips = any(reason in ("surge_halted", "skip_ahead") for _, reason in record.skipped)
+        if record.canal_rejects_added > 0 or has_error_skips:
+            level = logging.ERROR
+        elif len(record.fired) > 0:
+            level = logging.INFO
+        else:
+            level = logging.DEBUG
+    elif isinstance(record, RejectEntry):
+        level = logging.ERROR
+    else:
+        raise TypeError(
+            f"_route_to_log: unsupported record type {type(record).__name__!r}. "
+            "Expected Wave, Tide, or RejectEntry. "
+            "For scheduler events use _route_scheduler_event_to_log directly."
+        )
+
+    logger = logging.getLogger(logger_name)
+    if not logger.isEnabledFor(level):
+        return
+
     if isinstance(record, Wave):
         dump = record.model_dump(mode="json")
         dump["failed_sources"] = [_redact(s) for s in dump.get("failed_sources", [])]
         base_meta = record.log_meta()
         payload_key = "wave"
         payload = dump
-        if record.failed_sources:
+        if level == logging.ERROR:
             msg = f"{record.operation} chunk {record.chunk_index} encountered failures: {dump['failed_sources']}"
-            level = logging.ERROR
-        elif record.rows_processed > 0:
+        else:
             msg = (
                 f"{record.operation} chunk {record.chunk_index} complete: "
                 f"{record.rows_processed} rows in {record.processing_time_sec:.3f}s."
             )
-            level = logging.INFO
-        else:
-            # Zero-row / zero-failure — no-op, nothing to emit.
-            return
     elif isinstance(record, _Tide):
         dump = record.model_dump(mode="json")
         base_meta = record.log_meta()
         payload_key = "tide"
         payload = dump
         is_tide = True
-        has_error_skips = any(reason in ("surge_halted", "skip_ahead") for _, reason in record.skipped)
-        if record.canal_rejects_added > 0 or has_error_skips:
+        if level == logging.ERROR:
             error_reasons = [reason for _, reason in record.skipped if reason in ("surge_halted", "skip_ahead")]
             msg = (
                 f"tide {record.tide_number}: {record.canal_rejects_added} canal reject(s), "
                 f"skipped reasons {error_reasons}"
             )
-            level = logging.ERROR
-        elif len(record.fired) > 0:
+        elif level == logging.INFO:
             msg = (
                 f"tide {record.tide_number}: fired {len(record.fired)}, skipped {len(record.skipped)}, "
                 f"rejects {record.canal_rejects_added}, duration {record.duration_sec:.3f}s"
             )
-            level = logging.INFO
         else:
             msg = f"tide {record.tide_number}: no-op pass (nothing fired), duration {record.duration_sec:.3f}s"
-            level = logging.DEBUG
-    elif isinstance(record, RejectEntry):
+    else:
+        # RejectEntry — the only remaining member of the Wave | Tide | RejectEntry union;
+        # unknown types were already rejected by the level-derivation dispatch above.
         base_meta = (
             f'class:"{logger_name}", source:"{record.source}", error_kind:"{record.error_kind}", '
             f'from:"{record.from_name}", to:"{record.to_name}", host:"{record.host}", '
@@ -195,17 +225,10 @@ def _route_to_log(logger_name: str, record: Wave | Tide | RejectEntry, *, extra_
         payload_key = "reject"
         payload = record.model_dump(mode="json")
         msg = str(record)
-        level = logging.ERROR
         is_api = record.is_url_traffic_error
-    else:
-        raise TypeError(
-            f"_route_to_log: unsupported record type {type(record).__name__!r}. "
-            "Expected Wave, Tide, or RejectEntry. "
-            "For scheduler events use _route_scheduler_event_to_log directly."
-        )
 
     meta = f"{base_meta}, {extra_meta}" if (base_meta and extra_meta) else (base_meta or extra_meta)
-    _emit_payload(logger_name, level, msg, payload_key, payload, meta, is_api=is_api, is_tide=is_tide)
+    _emit_payload(logger_name, level, msg, payload_key, payload, meta, is_api=is_api, is_tide=is_tide, logger=logger)
 
 
 def _route_wave_to_log(cls_name: str, wave: Wave) -> None:
