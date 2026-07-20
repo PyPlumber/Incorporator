@@ -435,7 +435,7 @@ async def test_per_subclass_isolation_walks_mro(tmp_path: Path) -> None:
 async def test_schema_union_captures_late_arriving_key_across_incorp_calls(tmp_path: Path) -> None:
     """A NEW field appearing in a LATER ``incorp()`` call must still land in ``_schema_union``.
 
-    Regression guard for the D-perf ``_schema_union`` scan optimization
+    Regression guard for the ``_schema_union`` set-algebra scan optimization
     (set-algebra ``new_keys = item.keys() - schema_keys`` replacing the
     nested Python loop): the union must never "stabilize" in a way that
     stops discovering genuinely new keys on a later, structurally-different
