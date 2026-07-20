@@ -796,7 +796,11 @@ async def _process_single_source(
         if client is None:
             raise IncorporatorNetworkError("HTTP client is uninitialized during pagination.")
 
-        merged_params = {**base_params, **(request_params or {})}
+        # Skip the copy when there's nothing to merge — execute_request only
+        # ever reads params via httpx's read-only copy_merge_params/QueryParams.merge,
+        # so aliasing base_params across repeated bound_fetch calls (e.g. one
+        # per paginator page) never leaks a mutation across pages.
+        merged_params = base_params if not request_params else {**base_params, **request_params}
         payload_type = kwargs.get("payload_type", "json")
 
         j_override = kwargs_override.get("json_payload")
