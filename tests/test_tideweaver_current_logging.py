@@ -27,6 +27,7 @@ from pydantic import ConfigDict
 from incorporator import Incorporator
 from incorporator.observability.logger import current_meta, setup_class_logger
 from incorporator.tideweaver import LoggedTideweaver, Stream, Tideweaver, Watershed
+from incorporator.tideweaver import scheduler as scheduler_module
 from incorporator.tideweaver.current import Stream as StreamCurrent
 from incorporator.tideweaver.scheduler import Tideweaver as TideweaverBase
 from incorporator.observability.wave import Wave
@@ -623,3 +624,57 @@ async def test_source_load_failure_reject_not_double_emitted(
     assert all('code:"prices"' in r.get("meta", "") for r in log_slf), (
         f"surviving SourceLoadFailure records must be code-tagged; metas={[r.get('meta') for r in log_slf]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 11: current_meta is built once per _tick_stream call, not per wave/reject
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_current_meta_built_once_per_tick_stream_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_active_listeners: None,
+) -> None:
+    """``current_meta`` is invoked exactly once per ``_tick_stream`` call.
+
+    Drains two waves (one carrying a reject) in a single tick — a run that
+    would call ``current_meta`` three times (once per wave, once per reject)
+    without the per-tick hoist. Proves the hoist collapses that to one call
+    regardless of how many waves/rejects are routed within the tick.
+    """
+    monkeypatch.chdir(tmp_path)
+    _reset_registries(PriceClass)
+
+    session = "TestCurrentMetaCallCount"
+    setup_class_logger(session)
+
+    success_wave = _make_success_wave(chunk_index=0)
+    reject_wave = _make_wave_with_reject(chunk_index=1)
+
+    async def _mock_stream(*args: Any, **kwargs: Any) -> Any:
+        yield success_wave
+        yield reject_wave
+
+    monkeypatch.setattr(PriceClass, "stream", _mock_stream)
+
+    call_count = 0
+    real_current_meta = scheduler_module.current_meta
+
+    def _counting_current_meta(*args: Any, **kwargs: Any) -> str:
+        nonlocal call_count
+        call_count += 1
+        return real_current_meta(*args, **kwargs)
+
+    monkeypatch.setattr(scheduler_module, "current_meta", _counting_current_meta)
+
+    current = StreamCurrent(name="prices", cls=PriceClass, interval=10.0, incorp_params={})
+    scheduler = _make_scheduler_stub(logger_name=session, log_currents=True)
+    scheduler._currents_by_name = {"prices": current}
+
+    await TideweaverBase._tick_stream(scheduler, current)
+
+    _wait_flush()
+
+    assert call_count == 1, f"current_meta must be built exactly once per _tick_stream call; got {call_count}"

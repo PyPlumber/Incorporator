@@ -1249,6 +1249,14 @@ class Tideweaver:
             pooled = self._get_or_create_client(incorp_params)
             params_with_client = {**incorp_params, "_client": pooled}
 
+        # current_meta(current) is a pure function of this current's identity
+        # fields (name/cls), which are immutable for the lifetime of one tick;
+        # build it once here instead of on every wave/reject routed below.
+        # ("" when logging is off — never read; keeps the type plain ``str``
+        # for _route_to_log's signature instead of threading Optional through.)
+        _log_currents_active = isinstance(self.logger_name, str) and self.log_currents
+        _current_meta_str: str = current_meta(current) if _log_currents_active else ""
+
         if current.parent_current is not None:
             upstream_current = self._currents_by_name[current.parent_current]
             pre_snap = getattr(upstream_current.cls, "_tideweaver_snapshot", None)
@@ -1278,10 +1286,10 @@ class Tideweaver:
             inc_parent = _wrap_snapshot(upstream_current.cls, list(pre_snap), inherited_child_path)
             incorp_call_params = {**params_with_client, "inc_parent": cast(Any, inc_parent)}
             _pc_result = await current.cls.incorp(**incorp_call_params)
-            if isinstance(self.logger_name, str) and self.log_currents:
+            if isinstance(self.logger_name, str) and _log_currents_active:
                 _pc_rejects = getattr(_pc_result, "rejects", None) or []
                 for _reject in _pc_rejects:
-                    _route_to_log(self.logger_name, _reject, extra_meta=current_meta(current))
+                    _route_to_log(self.logger_name, _reject, extra_meta=_current_meta_str)
             cast(Any, current.cls)._tideweaver_snapshot = _wrap_snapshot(
                 current.cls, list(current.cls.inc_dict.values()), _pc_result.inc_child_path
             )
@@ -1302,10 +1310,10 @@ class Tideweaver:
         accumulated: dict[Any, Any] = {}
         async for _wave in current.cls.stream(**kwargs):
             accumulated.update(current.cls.inc_dict)
-            if isinstance(self.logger_name, str) and self.log_currents:
-                _route_to_log(self.logger_name, _wave, extra_meta=current_meta(current))
+            if isinstance(self.logger_name, str) and _log_currents_active:
+                _route_to_log(self.logger_name, _wave, extra_meta=_current_meta_str)
                 for _reject in _wave.rejects:
-                    _route_to_log(self.logger_name, _reject, extra_meta=current_meta(current))
+                    _route_to_log(self.logger_name, _reject, extra_meta=_current_meta_str)
         # A stream that produces zero rows while its configured inc_file is absent
         # is a source-load failure, not legitimately empty data: record a
         # SourceLoadFailure reject so the run can surface it (incorp() logs the
@@ -1334,9 +1342,9 @@ class Tideweaver:
             # Route immediately with current_meta so the session log carries the
             # per-current code tag, and record its id so the LoggedTideweaver.run
             # finally-sweep skips it (single emission, not doubled).
-            if isinstance(self.logger_name, str) and self.log_currents:
+            if isinstance(self.logger_name, str) and _log_currents_active:
                 _slf_reject = self._canal_rejects[-1]
-                _route_to_log(self.logger_name, _slf_reject, extra_meta=current_meta(current))
+                _route_to_log(self.logger_name, _slf_reject, extra_meta=_current_meta_str)
                 self._routed_reject_ids.add(id(_slf_reject))
         # Strong-ref snapshot — keeps the WeakValueDictionary entries alive.
         # Runtime-only escape-hatch attribute (no field on Incorporator itself).
