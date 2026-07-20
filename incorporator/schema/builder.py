@@ -252,11 +252,18 @@ def apply_etl_transformations(
                 default = operation.default
                 target_type = operation.target_type if callable(operation.target_type) else None
                 all_inputs: list[DataPath] = operation.input_list if operation.input_list else [DataPath.parse(key)]
-                col_args = [[dep.resolve(d) for d in dict_items] for dep in all_inputs]
                 # Same pre-check as CalcOp, applied across the full column matrix:
                 # if every cell of every input column is garbage, skip func and
-                # default every output row.
-                if all(is_garbage_value(v) for col in col_args for v in col):
+                # default every output row.  Folded into the build pass so the
+                # matrix isn't walked a second time just to test for garbage.
+                any_real = False
+                col_args: list[list[Any]] = []
+                for dep in all_inputs:
+                    col = [dep.resolve(d) for d in dict_items]
+                    if not any_real:
+                        any_real = any(not is_garbage_value(v) for v in col)
+                    col_args.append(col)
+                if not any_real:
                     results = [default] * len(dict_items)
                 else:
                     try:
