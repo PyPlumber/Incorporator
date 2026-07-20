@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +19,7 @@ pytest.importorskip("typer")
 from typer.testing import CliRunner
 
 from incorporator.cli import app
+from incorporator.io.penstock import _HOST_PENSTOCKS
 from incorporator.tideweaver import Tide
 
 runner = CliRunner()
@@ -276,3 +278,70 @@ def test_cli_tideweaver_run_clean_empty_run_exits_zero(tmp_path: Path) -> None:
     cfg = _write_watershed_fixture(tmp_path)
     result = runner.invoke(app, ["tideweaver", "run", str(cfg), "--json-output"])
     assert result.exit_code == 0, f"Expected exit 0 for clean empty run; got {result.exit_code}: {result.stdout}"
+
+
+# ---------------------------------------------------------------------------
+# Platform-review Stage 0 pin: build_watershed / host-penstock invocation count
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _restore_host_penstock_registry() -> Iterator[None]:
+    """Snapshot/restore the process-global penstock registry around each test.
+
+    Mutates ``_HOST_PENSTOCKS`` in place; never reassigns — every importer,
+    including ``resolve_penstock``, holds a direct reference to this exact
+    dict object (see ``tests/public/api/test_crypto_graph_etl.py``'s
+    identical idiom). The fixture watershed used in this file carries no
+    ``host_penstocks`` block today, but this is cheap insurance against a
+    future fixture edit leaking state into ``tests/test_penstock_registry.py``
+    or ``tests/test_security.py``.
+    """
+    snapshot = dict(_HOST_PENSTOCKS)
+    yield
+    _HOST_PENSTOCKS.clear()
+    _HOST_PENSTOCKS.update(snapshot)
+
+
+def test_cli_tideweaver_run_calls_register_host_penstocks_twice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`tideweaver run` currently invokes host-penstock registration TWICE per run.
+
+    ``_run_tideweaver`` (cli/tideweaver.py) calls ``_run_validation`` ->
+    ``validate_watershed_config`` -> ``build_watershed`` (validate pass), and
+    then calls ``build_watershed`` AGAIN directly to construct the Watershed
+    it actually runs.  ``_register_host_penstocks`` fires inside
+    ``build_watershed`` on both passes, so the current invocation count is 2.
+
+    Stage 2C of the platform-review program will fix ``_run_tideweaver`` to
+    build the Watershed once, dropping this count to 1 — when that lands,
+    update this pin's expected count rather than deleting it.
+
+    Counts INVOCATIONS via a wrapping monkeypatch, not end-registry-state,
+    because ``_register_host_penstocks`` is a plain dict overwrite — an
+    idempotent second call would be invisible to a state-based assertion.
+    """
+    from incorporator.tideweaver import config as tw_config
+
+    cfg = _write_watershed_fixture(tmp_path)
+
+    call_count = 0
+    real_register = tw_config._register_host_penstocks
+
+    def _counting_register(raw: Any) -> None:
+        nonlocal call_count
+        call_count += 1
+        real_register(raw)
+
+    monkeypatch.setattr(tw_config, "_register_host_penstocks", _counting_register)
+
+    result = runner.invoke(app, ["tideweaver", "run", str(cfg), "--json-output"])
+
+    assert result.exit_code == 0, result.stdout
+    assert call_count == 2, (
+        f"Expected 2 build_watershed/_register_host_penstocks invocations per "
+        f"`tideweaver run` (validate pass + run pass); got {call_count}. "
+        "If this dropped to 1, Stage 2C's build-once fix has landed — update "
+        "this pin's expected count instead of deleting it."
+    )

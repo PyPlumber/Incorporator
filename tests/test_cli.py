@@ -419,10 +419,11 @@ def test_cli_init_refuses_overwrite(tmp_path: Path) -> None:
 def test_cli_stream_json_output_emits_ndjson(tmp_path: Path) -> None:
     """--json-output emits one NDJSON Wave line per chunk.
 
-    The runner's default behaviour merges stderr into stdout, so we filter
-    for lines that look like JSON objects. In real terminal use the
-    NDJSON-only stream lands on stdout and banners on stderr — that
-    redirection is verified manually via the Docker smoke verification.
+    Under the installed Click version (8.2+), ``CliRunner`` always captures
+    stdout and stderr independently, so ``result.stdout`` is already pure
+    NDJSON here — the line filter below is retained for robustness rather
+    than necessity. See ``test_cli_stream_json_output_stdout_is_pure_ndjson``
+    for the pin that asserts the stdout/stderr split directly.
     """
     cfg = tmp_path / "pipeline.json"
     cfg.write_text(json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8")
@@ -483,6 +484,54 @@ def test_cli_fjord_json_output_emits_ndjson(tmp_path: Path) -> None:
         assert isinstance(record["http_retry_count"], int)
         assert isinstance(record["validation_error_count"], int)
         assert isinstance(record["schema_cache_hit"], bool)
+
+
+def test_cli_stream_json_output_stdout_is_pure_ndjson(tmp_path: Path) -> None:
+    """--json-output routes the startup banner to stderr, leaving stdout pure NDJSON.
+
+    Platform-review Stage 0 pin: under Click 8.2+ (confirmed installed here),
+    ``CliRunner.invoke`` always captures stdout and stderr independently —
+    ``result.stdout`` is real stdout, not the interleaved mix. ``_err(...)``
+    (incorporator/cli/runners.py) routes to stderr exactly when
+    ``set_json_output_mode(True)`` has been called, which the ``stream``
+    command does before invoking ``_run_stream``. Every non-blank stdout
+    line must therefore be a parseable JSON object, and the banner text
+    must appear on stderr instead.
+    """
+    cfg = tmp_path / "pipeline.json"
+    cfg.write_text(json.dumps({"incorp_params": {"inc_url": "https://x"}}), encoding="utf-8")
+
+    with patch("incorporator.cli.LoggedIncorporator.stream", new=mock_stream):
+        result = runner.invoke(app, ["stream", str(cfg), "--json-output"])
+
+    assert result.exit_code == 0, result.stdout
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert lines, f"expected at least one NDJSON line on stdout; got: {result.stdout!r}"
+    for line in lines:
+        assert line.startswith("{"), f"stdout must carry ONLY NDJSON under --json-output; got line: {line!r}"
+        json.loads(line)
+    assert "Starting Incorporator Stream" in result.stderr
+
+
+def test_cli_fjord_json_output_stdout_is_pure_ndjson(tmp_path: Path) -> None:
+    """--json-output routes the startup banner to stderr for `fjord`, mirroring the stream pin.
+
+    See ``test_cli_stream_json_output_stdout_is_pure_ndjson`` for the
+    mechanism (``_err`` + ``set_json_output_mode``); this pin exercises the
+    ``fjord`` command's identical wiring in ``cli/__init__.py``.
+    """
+    config, _ = _write_fjord_fixture(tmp_path)
+
+    with patch("incorporator.cli.LoggedIncorporator.fjord", new=mock_fjord):
+        result = runner.invoke(app, ["fjord", str(config), "--json-output"])
+
+    assert result.exit_code == 0, result.stdout
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert lines, f"expected at least one NDJSON line on stdout; got: {result.stdout!r}"
+    for line in lines:
+        assert line.startswith("{"), f"stdout must carry ONLY NDJSON under --json-output; got line: {line!r}"
+        json.loads(line)
+    assert "Starting Incorporator Fjord" in result.stderr
 
 
 # ==========================================

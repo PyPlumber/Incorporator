@@ -140,3 +140,25 @@ def test_load_sidecar_helper_imports_sibling_without_manual_syspath_guard(tmp_pa
     module = load_sidecar(sidecar_py, "some_unique_key")
 
     assert module.sibling.VALUE == 42
+
+
+def test_load_user_module_repeated_call_returns_same_object(tmp_path: Path) -> None:
+    """Loading the SAME file path twice via `load_user_module` returns the IDENTICAL module object.
+
+    Platform-review Stage 0 pin: `load_user_module`'s cache key is currently
+    ``f"_inc_user_module_{abs(hash(str(code_path)))}"`` (usercode.py). A
+    planned Stage 1 change swaps the key to the path string itself — this
+    pin proves the cache-hit contract (identity on repeated calls) is
+    unchanged by that swap. Distinct from
+    `test_same_file_multiple_entry_points_share_one_module_object`, which
+    pins cross-entry-point identity (`load_user_module` vs
+    `load_outflow_module`); this is the literal `load_user_module(p) is
+    load_user_module(p)` shape, not previously covered.
+    """
+    sidecar_py = tmp_path / "sidecar.py"
+    sidecar_py.write_text("VALUE = 1\n", encoding="utf-8")
+
+    first = load_user_module(sidecar_py)
+    second = load_user_module(sidecar_py)
+
+    assert first is second
