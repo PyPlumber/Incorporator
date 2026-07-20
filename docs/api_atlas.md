@@ -28,6 +28,7 @@ Incorporator reads as a river system. Eight **verbs** act on one class — the c
 - [Part II — Conv_dict & data shaping](#part-ii--conv_dict--data-shaping)
   - [Shared kwargs glossary](#shared-kwargs-glossary)
   - [DATA-SHAPE directives](#data-shape-directives)
+  - [Conv_dict primitives](#conv_dict-primitives)
   - [Schema utilities](#schema-utilities)
   - [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive)
   - [Build-time vs read-time: where coercion + joins belong](#build-time-vs-read-time-where-coercion--joins-belong)
@@ -504,7 +505,7 @@ The REPL spot-check. Use it when you're tabbing through `launches.inc_dict` inte
 
 ## Part II — Conv_dict & data shaping
 
-The verbs share one vocabulary for shaping rows: the forwarded kwargs below, the `Ex → conv_dict → Nm → Pk` build passes, and the conv_dict primitives (`inc`, `calc`, `calc_all`, `pluck`, `link_to`, …) shown inline throughout this atlas — exhaustive parameter tables live in `library_reference.md`, narrative walkthroughs in Tutorial 6.
+The verbs share one vocabulary for shaping rows: the forwarded kwargs below, the `Ex → conv_dict → Nm → Pk` build passes, and the conv_dict primitives (`inc`, `calc`, `calc_all`, `pluck`, `link_to`, …) cataloged per-entry below — exhaustive parameter tables live in `library_reference.md`, narrative walkthroughs in Tutorial 6.
 
 ### Shared kwargs glossary
 
@@ -620,6 +621,70 @@ canonical destination slot for it.  Continue to use `code_attr` /
 [Library Reference](./library_reference.md) ·
 `incorporator/schema/directives.py` ·
 `incorporator/schema/builder.py`
+
+---
+
+### Conv_dict primitives
+
+The purpose axis: **`inc` converts to a TYPE; `calc` applies a FUNCTION
+(valid even in place, output key == source key); `pluck` extracts a
+NESTED value.**  All accept dot-notation paths with integer list
+indices (`"stats.0.value"`).  Full entries for the sentinels and
+reducers (`new`, `each`, `sum_attributes`, `join_all`, `as_list`) live
+under [Schema utilities](#schema-utilities) below.
+
+**`inc(target_type, default=None)`** — type coercion for the field
+named by the conv_dict KEY (`"price": inc(float)`, `"created_at":
+inc(datetime)`; `inc(new)` accepts any shape unchanged).  Garbage
+values (`None`, `""`, `"n/a"`, `"null"`, …) become `default`.
+Cached: `lru_cache(128)` on `(type, default)` — `default` must be
+hashable.  Gotcha: `inc` reads the OUTPUT key, so it only works when
+output and source key match; passing a *callable* (`inc(str.upper)`)
+silently no-ops through the identity failsafe (a build-time warning
+fires since v1.4.0) — reach for `calc` when you mean a function.
+
+**`calc(func, *input_keys, default=None, target_type=None, pure=True)`**
+— per-row derived field: `func(*resolved_inputs)` with inputs drawn
+from the named source paths, writing the conv_dict KEY (which may
+equal a source key — in-place transforms are the canonical use).
+`pure=True` (default) wraps `func` in `lru_cache(10_000)` — opt out
+with `pure=False` for side-effectful or time-dependent functions.
+Null contract: `target_type` coercion is skipped whenever the result
+is `None`, however it got there (clean `None`, garbage short-circuit,
+exception fallback).
+
+**`calc_all(func, *input_keys, default=None, target_type=None, pure=True)`**
+— whole-COLUMN pass: one call receives every row's values as full
+lists and returns one value per row (ranks, z-scores, shares-of-total).
+No lru cache (lists are unhashable; `pure` is accepted for signature
+symmetry).  All-garbage input columns short-circuit to `default` per
+row without calling `func`.
+
+**`pluck(key, chain=None)`** — lift a nested field by dot-path
+(`pluck("data.attributes.price")`, `pluck("splits.0.stat")`); missing
+segments yield `None`; `chain` (a callable) is applied only to
+non-garbage hits.  Whole-row op — it receives the record, so the
+conv_dict key is purely the OUTPUT name.
+
+**`link_to(dataset, extractor=None)`** — the SQL-JOIN primitive:
+resolves a foreign key to a live instance via `dataset.inc_dict`
+(O(1); tries the key, then `str(key)`; misses are real `None`s).
+**Lazy/live** (`is_pure=False` is load-bearing): every lookup re-reads
+the registry, so rows attached after this class builds still resolve —
+JSON class tokens resolve once the peer current ticks.  `extractor`
+pre-transforms the raw value into the lookup key.  Raises `TypeError`
+if `dataset` has no `inc_dict`.  Doctrine: `link_to` lives in
+conv_dicts ONLY — never in `outflow(state)`, which reads the graph map
+directly.
+
+**`link_to_list(dataset, extractor=None)`** — the 1-to-N join:
+element-wise `link_to` over a list value; unmatched elements are
+dropped; a non-list input yields `[]`.
+
+**`split_and_get(delimiter="/", index=-1, cast_type=None, pure=True)`**
+— extract an ID from a delimited string, the HATEOAS staple
+(`.../pokemon/25/` → `25`): split, index, optionally cast.  Garbage
+input or out-of-range index yields `None`.
 
 ---
 
