@@ -392,10 +392,27 @@ def build_instances(
             # setattr keeps mypy strict happy — ``_cached_json_properties`` is a
             # dynamic cache attribute, not a declared class field.
             setattr(ActualClass, "_cached_json_properties", declared)  # noqa: B010
+        # Still a full per-row key scan every call — no identity-based skip is
+        # safe here (refresh()'s target_class= path reuses the same ActualClass
+        # tick after tick with zero registry-level "did the shape change"
+        # signal, so a fold-once-per-ActualClass short-circuit would silently
+        # swallow a genuinely new field arriving in later refresh() data — see
+        # commit message for the full rejected-alternative analysis). The win
+        # is replacing the nested Python-level ``for item: for k in item: if k
+        # not in cls._schema_union`` (rows x cols individual dict membership
+        # checks + branches) with bulk C-level set algebra over the same
+        # data: ``dict_keys - dict_keys`` and ``set |=`` run as hash-table
+        # bulk ops, not interpreted per-key branches. When the union is
+        # stable, ``new_keys`` is empty and the write loop below never runs —
+        # zero writes after stabilization, same as before, but without paying
+        # the per-cell interpreted-loop cost to discover that.
+        schema_keys = cls._schema_union.keys()
+        new_keys: set[str] = set()
         for item in transformed_data:
-            for k in item:
-                if k not in cls._schema_union:
-                    cls._schema_union[k] = declared.get(k, {"type": "string"})
+            new_keys |= item.keys() - schema_keys
+        if new_keys:
+            for k in new_keys:
+                cls._schema_union[k] = declared.get(k, {"type": "string"})
 
         # Batch-validate the full payload through a per-class-cached
         # ``TypeAdapter(List[Cls])``, mirroring ``_cached_json_properties``

@@ -431,6 +431,58 @@ async def test_per_subclass_isolation_walks_mro(tmp_path: Path) -> None:
     assert alpha_dyn._schema_union is not beta_dyn._schema_union
 
 
+@pytest.mark.asyncio
+async def test_schema_union_captures_late_arriving_key_across_incorp_calls(tmp_path: Path) -> None:
+    """A NEW field appearing in a LATER ``incorp()`` call must still land in ``_schema_union``.
+
+    Regression guard for the D-perf ``_schema_union`` scan optimization
+    (set-algebra ``new_keys = item.keys() - schema_keys`` replacing the
+    nested Python loop): the union must never "stabilize" in a way that
+    stops discovering genuinely new keys on a later, structurally-different
+    batch — this is the superset-semantics requirement (a) from the brief.
+    """
+    json_1 = tmp_path / "call_1.json"
+    json_2 = tmp_path / "call_2.json"
+    json_1.write_text(json.dumps([{"stable_field": 1}]), encoding="utf-8")
+    json_2.write_text(json.dumps([{"stable_field": 2, "late_arriving_field": "new"}]), encoding="utf-8")
+
+    class LateKeyModel(Incorporator):
+        pass
+
+    await LateKeyModel.incorp(inc_file=str(json_1))
+    assert "stable_field" in LateKeyModel._schema_union  # type: ignore[attr-defined]
+    assert "late_arriving_field" not in LateKeyModel._schema_union  # type: ignore[attr-defined]
+
+    await LateKeyModel.incorp(inc_file=str(json_2))
+    assert "late_arriving_field" in LateKeyModel._schema_union  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_schema_union_captures_late_arriving_key_via_refresh(tmp_path: Path) -> None:
+    """A NEW field arriving via ``refresh()`` must still land in ``_schema_union``.
+
+    ``refresh()`` supplies ``target_class=`` and reuses the same
+    ``ActualClass`` object every call, bypassing ``infer_dynamic_schema`` /
+    ``SCHEMA_REGISTRY`` entirely — the exact path that made a
+    fold-once-per-``ActualClass`` short-circuit design unsafe (rejected
+    alternative, see ``build_instances`` comment). This locks in that the
+    chosen full-rescan-every-call design has no such gap.
+    """
+    json_1 = tmp_path / "refresh_1.json"
+    json_2 = tmp_path / "refresh_2.json"
+    json_1.write_text(json.dumps([{"stable_field": 1}]), encoding="utf-8")
+    json_2.write_text(json.dumps([{"stable_field": 2, "refreshed_new_field": "new"}]), encoding="utf-8")
+
+    class RefreshLateKeyModel(Incorporator):
+        pass
+
+    instances = await RefreshLateKeyModel.incorp(inc_file=str(json_1))
+    assert "refreshed_new_field" not in RefreshLateKeyModel._schema_union  # type: ignore[attr-defined]
+
+    await RefreshLateKeyModel.refresh(instance=instances, new_file=str(json_2))
+    assert "refreshed_new_field" in RefreshLateKeyModel._schema_union  # type: ignore[attr-defined]
+
+
 # ==========================================
 # 5. DYNAMIC MODEL IN-STATE EXPORT
 # ==========================================
