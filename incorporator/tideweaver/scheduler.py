@@ -158,6 +158,85 @@ class _CurrentState(BaseModel):
     current keeps re-firing on its own cadence."""
 
 
+def _resolve_current_snapshot(cls: type[Any], *, treat_empty_snapshot_as_missing: bool = False) -> list[Any]:
+    """Resolve the strong-ref rows for ``cls`` — parked snapshot, or live ``inc_dict`` fallback.
+
+    Incorporator's ``inc_dict`` is a ``WeakValueDictionary``; the Tideweaver
+    scheduler parks a strong-ref snapshot on ``_tideweaver_snapshot`` after
+    each tick so downstream reads survive garbage collection between ticks.
+    This helper is the single place that resolves "snapshot, or fall back to
+    ``inc_dict.values()``" — but the fallback trigger differs by call site,
+    so it isn't one expression:
+
+    * Default (``treat_empty_snapshot_as_missing=False``): an explicitly
+      parked snapshot is authoritative even when empty (``[]``) — a
+      deliberately parked-but-empty snapshot must NOT be silently replaced
+      by a possibly-nonempty ``inc_dict.values()``.  Used everywhere a
+      snapshot may have been legitimately parked as empty by an upstream
+      Stream/Fjord tick (Fjord's ``parent_currents`` rows, its direct- and
+      transitive-upstream state resolution, Export's ``instance``
+      resolution).
+    * ``treat_empty_snapshot_as_missing=True``: an empty parked snapshot is
+      treated the same as "no snapshot parked at all" and falls through to
+      ``inc_dict.values()``.  This is the wave-push site's pre-existing
+      behavior (see ``_tick_wrapper``'s ``finally`` block) — it preserves
+      legacy support for custom tick factories / test doubles that mutate
+      ``inc_dict`` directly instead of parking a snapshot.
+
+    These are genuine, pre-existing semantic differences between call
+    sites, not an oversight — do not collapse them into a single branch.
+    """
+    snapshot = getattr(cls, "_tideweaver_snapshot", None)
+    if treat_empty_snapshot_as_missing:
+        return list(snapshot) if snapshot else list(cls.inc_dict.values())
+    return list(snapshot) if snapshot is not None else list(cls.inc_dict.values())
+
+
+def _route_scheduler_event(
+    logger_name: str | None,
+    tide_number: int,
+    event_type: str,
+    current_name: str | None,
+    detail: str,
+    *,
+    cls_name: str | None,
+    fallback: Callable[[], None],
+) -> None:
+    """Route one scheduler diagnostic event to the session log, or fall back to the bare module logger.
+
+    Every scheduler diagnostic event (isolated-tick failure,
+    restart-exhaustion parking, empty-output warning,
+    empty-parent-snapshot guard, fjord-flush failure) shares the same
+    two-branch shape: when a session ``logger_name`` is configured, route
+    through :func:`_route_scheduler_event_to_log` for session-file routing;
+    otherwise call ``fallback``, a zero-arg closure built verbatim from the
+    call site's original bare ``logger.warning``/``logger.error`` call (same
+    format string, same lazy ``%s``/``%r`` args, same level) — this
+    guarantees byte-identical output without collapsing differing arg
+    shapes into one.
+
+    A plain module-level function taking ``logger_name``/``tide_number``
+    explicitly (rather than a ``Tideweaver`` bound method reading
+    ``self.logger_name``/``self._tide_number``) so it executes identically
+    whether ``self`` is a real :class:`Tideweaver` or a ``unittest.mock``
+    stub used by the scheduler's tick-body unit tests — a bound-method call
+    through a mocked ``self`` would resolve to an auto-generated Mock
+    attribute instead of running this logic, silently dropping the
+    fallback log call.
+    """
+    if isinstance(logger_name, str):
+        _route_scheduler_event_to_log(
+            logger_name,
+            event_type,
+            current_name,
+            detail,
+            cls_name=cls_name,
+            tide_number=tide_number,
+        )
+    else:
+        fallback()
+
+
 def _build_canal_reject(
     source: str,
     error_kind: str,
@@ -861,17 +940,18 @@ class Tideweaver:
                 try:
                     await self._invoke_tick(current)
                 except Exception as exc:  # noqa: BLE001
-                    if isinstance(self.logger_name, str):
-                        _route_scheduler_event_to_log(
-                            self.logger_name,
-                            "isolated_tick_failure",
-                            current.name,
-                            f"Tideweaver: isolated tick failure on {current.name}: {exc}",
-                            cls_name=current.cls.__name__,
-                            tide_number=self._tide_number,
-                        )
-                    else:
-                        logger.warning("Tideweaver: isolated tick failure on %s: %s", current.name, exc)
+                    _isolated_exc = exc
+                    _route_scheduler_event(
+                        self.logger_name,
+                        self._tide_number,
+                        "isolated_tick_failure",
+                        current.name,
+                        f"Tideweaver: isolated tick failure on {current.name}: {exc}",
+                        cls_name=current.cls.__name__,
+                        fallback=lambda: logger.warning(
+                            "Tideweaver: isolated tick failure on %s: %s", current.name, _isolated_exc
+                        ),
+                    )
                     _tick_raised = True
             else:  # fail_watershed
                 await self._invoke_tick(current)
@@ -900,17 +980,17 @@ class Tideweaver:
             # So this is unconditionally restart-exhaustion: really park the
             # current so the log message ("current parked") reflects reality.
             self._state[current.name].parked = True
-            if isinstance(self.logger_name, str):
-                _route_scheduler_event_to_log(
-                    self.logger_name,
-                    "tick_parked",
-                    current.name,
-                    f"Tideweaver: tick failed for {current.name} after retries; current parked.",
-                    cls_name=current.cls.__name__,
-                    tide_number=self._tide_number,
-                )
-            else:
-                logger.error("Tideweaver: tick failed for %s after retries; current parked.", current.name)
+            _route_scheduler_event(
+                self.logger_name,
+                self._tide_number,
+                "tick_parked",
+                current.name,
+                f"Tideweaver: tick failed for {current.name} after retries; current parked.",
+                cls_name=current.cls.__name__,
+                fallback=lambda: logger.error(
+                    "Tideweaver: tick failed for %s after retries; current parked.", current.name
+                ),
+            )
         finally:
             # This block is partitioned into an ALWAYS-run half and a
             # success-only half gated on ``not _tick_raised``.  A failed
@@ -993,8 +1073,7 @@ class Tideweaver:
             # custom tick factories that mutate ``inc_dict`` directly
             # (e.g. test doubles).  Empty waves are skipped to avoid
             # polluting the reservoir with no-op ticks.
-            snapshot_attr = getattr(current.cls, "_tideweaver_snapshot", None)
-            wave_snapshot = list(snapshot_attr) if snapshot_attr else list(current.cls.inc_dict.values())
+            wave_snapshot = _resolve_current_snapshot(current.cls, treat_empty_snapshot_as_missing=True)
             if not wave_snapshot and not _tick_raised and isinstance(current, CustomCurrent):
                 upstream_had_data = any(
                     getattr(self._currents_by_name[up_name].cls, "_tideweaver_snapshot", None)
@@ -1007,24 +1086,22 @@ class Tideweaver:
                         f"upstream snapshot(s) ({upstream_names}); check the tick body / predicate / "
                         f"missing conv_dict on the upstream (fires each tick while the condition persists)."
                     )
-                    if isinstance(self.logger_name, str):
-                        _route_scheduler_event_to_log(
-                            self.logger_name,
-                            "empty_output",
-                            current.name,
-                            _empty_detail,
-                            cls_name=current.cls.__name__,
-                            tide_number=self._tide_number,
-                        )
-                    else:
-                        logger.warning(
+                    _route_scheduler_event(
+                        self.logger_name,
+                        self._tide_number,
+                        "empty_output",
+                        current.name,
+                        _empty_detail,
+                        cls_name=current.cls.__name__,
+                        fallback=lambda: logger.warning(
                             "Tideweaver: %s tick produced empty output despite non-empty "
                             "upstream snapshot(s) (%s); check the tick body / predicate / "
                             "missing conv_dict on the upstream (fires each tick while the "
                             "condition persists).",
                             current.name,
                             upstream_names,
-                        )
+                        ),
+                    )
             if wave_snapshot and not _tick_raised:
                 for downstream_name, edge_flow in self._downstream[current.name]:
                     edge_key = (current.name, downstream_name)
@@ -1163,23 +1240,21 @@ class Tideweaver:
                     f"empty; skipping tick (no rows to drill). Fires each tick while the condition persists "
                     f"-- confirm the parent's tick is firing."
                 )
-                if isinstance(self.logger_name, str):
-                    _route_scheduler_event_to_log(
-                        self.logger_name,
-                        "empty_parent_snapshot",
-                        current.name,
-                        _snap_detail,
-                        cls_name=current.cls.__name__,
-                        tide_number=self._tide_number,
-                    )
-                else:
-                    logger.warning(
+                _route_scheduler_event(
+                    self.logger_name,
+                    self._tide_number,
+                    "empty_parent_snapshot",
+                    current.name,
+                    _snap_detail,
+                    cls_name=current.cls.__name__,
+                    fallback=lambda: logger.warning(
                         "Tideweaver: Stream %r parent_current=%r snapshot is empty; "
                         "skipping tick (no rows to drill). Fires each tick while the "
                         "condition persists -- confirm the parent's tick is firing.",
                         current.name,
                         current.parent_current,
-                    )
+                    ),
+                )
                 return
             incorp_call_params = {**params_with_client, "inc_parent": cast(Any, list(pre_snap))}
             _pc_result = await current.cls.incorp(**incorp_call_params)
@@ -1294,46 +1369,45 @@ class Tideweaver:
                 # parent_currents semantics: name an upstream by current-name and read its
                 # registry snapshot directly — bypasses the reservoir/wave path because
                 # parent-child drills want full per-current state, not the last edge wave.
-                snapshot = getattr(dep.cls, "_tideweaver_snapshot", None)
-                rows: list[Any] = list(snapshot) if snapshot is not None else list(dep.cls.inc_dict.values())
+                rows = _resolve_current_snapshot(dep.cls)
                 state[dep.cls.__name__] = rows
                 if not rows:
                     _fjord_snap_detail = (
                         f"Tideweaver: Fjord {current.name!r} parent_currents={up_name!r} upstream snapshot is "
                         f"empty; state[{dep.cls.__name__!r}] is [] this tick -- confirm the parent's tick is firing."
                     )
-                    if isinstance(self.logger_name, str):
-                        _route_scheduler_event_to_log(
-                            self.logger_name,
-                            "empty_parent_snapshot",
-                            current.name,
-                            _fjord_snap_detail,
-                            cls_name=dep.cls.__name__,
-                            tide_number=self._tide_number,
-                        )
-                    else:
-                        logger.warning(
+                    _route_scheduler_event(
+                        self.logger_name,
+                        self._tide_number,
+                        "empty_parent_snapshot",
+                        current.name,
+                        _fjord_snap_detail,
+                        cls_name=dep.cls.__name__,
+                        # This lambda is invoked synchronously inside
+                        # ``_route_scheduler_event`` before the loop advances to its
+                        # next iteration, so the late-binding hazard B023 flags for
+                        # closures over loop variables cannot occur here.
+                        fallback=lambda: logger.warning(
                             "Tideweaver: Fjord %r parent_currents=%r upstream snapshot is empty; "
                             "state[%r] is [] this tick -- confirm the parent's tick is firing.",
                             current.name,
-                            up_name,
-                            dep.cls.__name__,
-                        )
+                            up_name,  # noqa: B023
+                            dep.cls.__name__,  # noqa: B023
+                        ),
+                    )
                 continue
             edge_state = self._edge_state.get((up_name, current.name))
             if edge_state is not None and edge_state.waves:
                 state[dep.cls.__name__] = list(edge_state.waves[-1])
                 continue
-            snapshot = getattr(dep.cls, "_tideweaver_snapshot", None)
-            state[dep.cls.__name__] = list(snapshot) if snapshot is not None else list(dep.cls.inc_dict.values())
+            state[dep.cls.__name__] = _resolve_current_snapshot(dep.cls)
 
         # Transitive (non-direct) upstreams — class snapshot only.
         for up_name in all_upstreams:
             if up_name in direct_upstreams:
                 continue
             dep = self._currents_by_name[up_name]
-            snapshot = getattr(dep.cls, "_tideweaver_snapshot", None)
-            state[dep.cls.__name__] = list(snapshot) if snapshot is not None else list(dep.cls.inc_dict.values())
+            state[dep.cls.__name__] = _resolve_current_snapshot(dep.cls)
 
         async for derived_name, _count, err in flush(
             outflow_fn,
@@ -1347,22 +1421,22 @@ class Tideweaver:
                 _flush_detail = (
                     f"Tideweaver: Fjord flush {current.name!r} raised on derived class {derived_name!r}: {err}"
                 )
-                if isinstance(self.logger_name, str):
-                    _route_scheduler_event_to_log(
-                        self.logger_name,
-                        "fjord_flush_failure",
-                        current.name,
-                        _flush_detail,
-                        cls_name=derived_name,
-                        tide_number=self._tide_number,
-                    )
-                else:
-                    logger.warning(
+                _route_scheduler_event(
+                    self.logger_name,
+                    self._tide_number,
+                    "fjord_flush_failure",
+                    current.name,
+                    _flush_detail,
+                    cls_name=derived_name,
+                    # See the analogous comment in the parent_currents branch above —
+                    # this lambda is invoked synchronously before the loop advances.
+                    fallback=lambda: logger.warning(
                         "Tideweaver: Fjord flush %r raised on derived class %r: %s",
                         current.name,
-                        derived_name,
-                        err,
-                    )
+                        derived_name,  # noqa: B023
+                        err,  # noqa: B023
+                    ),
+                )
 
     async def _tick_export(self, current: Export) -> None:
         """One ``cls.export(...)`` call against the upstream class's registry.
@@ -1375,11 +1449,7 @@ class Tideweaver:
         otherwise fall back to ``cls.inc_dict.values()`` for sources that
         naturally hold strong refs.
         """
-        snapshot = getattr(current.cls, "_tideweaver_snapshot", None)
-        if snapshot is not None:
-            instance = list(snapshot)
-        else:
-            instance = list(current.cls.inc_dict.values())
+        instance = _resolve_current_snapshot(current.cls)
         if not instance:
             return
         params = dict(current.export_params)
