@@ -7,6 +7,8 @@ import ipaddress
 import logging
 import re
 import socket
+import ssl
+import threading
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -308,6 +310,48 @@ def _make_http_wait(method: str) -> Callable[[RetryCallState], float]:
 # ==========================================
 # 2. HTTPX CONFIGURATION & FACTORY
 # ==========================================
+
+# Lazily-built, process-lifetime-shared default verify SSLContext.  httpx
+# rebuilds a fresh context (``ssl.create_default_context(cafile=certifi.where())``)
+# on *every* ``httpx.AsyncClient(verify=True)`` construction — measured at
+# ~1.1s vs ~54ms for ``ignore_ssl=True`` (2026-07-06), the root cause of the
+# scheduler-test flakes previously papered over test-side with
+# ``ignore_ssl=True``. Sharing one context is safe: ``ssl.SSLContext`` is
+# documented by the stdlib as reusable across concurrent connections, and
+# reading httpx's ``_config.create_ssl_context`` shows a pre-built context
+# passed as ``verify=<SSLContext>`` takes its ``else: ctx = verify`` branch —
+# identical semantics to the ``verify=True`` path today, just not rebuilt.
+# ``ignore_ssl=True`` is untouched: it still passes ``verify=False`` and
+# httpx builds its own cheap throwaway ``CERT_NONE`` context per call.
+#
+# HTTP/2 safety: ``create_ssl_context`` never receives ``http2`` — ALPN
+# negotiation happens later at the httpcore connection layer, driven by the
+# separate ``http2=`` kwarg on the transport/pool, not baked into the
+# SSLContext at creation time. So sharing one context across clients built
+# with different ``http2``/``concurrency_limit``/``headers`` values is safe.
+_default_ssl_context: ssl.SSLContext | None = None
+_default_ssl_context_lock = threading.Lock()
+
+
+def _get_default_ssl_context() -> ssl.SSLContext:
+    """Return the process-shared default verify ``SSLContext``, building it once.
+
+    Not evaluated at import time — the first call happens lazily from inside
+    ``HTTPClientBuilder.build_client``, so it never sits on the critical
+    import path. Double-checked locking guards concurrent first-builds; in
+    practice all production call sites invoke ``build_client`` synchronously
+    from within a single event-loop coroutine, so this is defensive
+    insurance for embedding scenarios (multiple event loops in separate
+    threads within one process) rather than a fix for an observed race.
+    """
+    global _default_ssl_context
+    if _default_ssl_context is None:
+        with _default_ssl_context_lock:
+            if _default_ssl_context is None:
+                _default_ssl_context = httpx.create_ssl_context()
+    return _default_ssl_context
+
+
 class HTTPClientBuilder:
     """Centralizes httpx client configuration limits and parameters."""
 
@@ -349,7 +393,7 @@ class HTTPClientBuilder:
             follow_redirects=True,
             timeout=timeout,
             limits=client_limits,
-            verify=not ignore_ssl,
+            verify=False if ignore_ssl else _get_default_ssl_context(),
             headers=headers,
             event_hooks=event_hooks if event_hooks else None,
         )
