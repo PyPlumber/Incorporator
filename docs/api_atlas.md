@@ -32,13 +32,20 @@ Incorporator reads as a river system. Eight **verbs** act on one class — the c
   - [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive)
   - [Build-time vs read-time: where coercion + joins belong](#build-time-vs-read-time-where-coercion--joins-belong)
 - [Part III — Currents](#part-iii--currents)
+  - [Current — base fields](#current--base-fields)
+  - [Stream current](#stream-current)
+  - [Fjord current](#fjord-current)
+  - [Export current](#export-current)
   - [`CustomCurrent`](#customcurrent)
+  - [Snapshot parking and the two-path rule](#snapshot-parking-and-the-two-path-rule)
 - [Part IV — Watersheds](#part-iv--watersheds)
   - [Tideweaver orchestration surface](#tideweaver-orchestration-surface)
   - [`Tideweaver.summary` / `tune` / `TuningReport`](#tideweaversummary--tune--tuningreport)
   - [Scheduler-event enums — `SkipReason` / `WakeReason` / `GateMode`](#scheduler-event-enums--skipreason--wakereason--gatemode)
+  - [watershed.json — declarative form](#watershedjson--declarative-form)
 - [Part V — Canal engineering](#part-v--canal-engineering)
   - [`register_host_penstock`](#register_host_penstock)
+  - [host_penstocks — watershed.json host-level rate limits](#host_penstocks--watershedjson-host-level-rate-limits)
   - [Canal toolkit primitives](#canal-toolkit-primitives)
 - [Part VI — Branches](#part-vi--branches)
   - [Telemetry](#telemetry): [`Wave.log_meta`](#wavelog_meta)
@@ -503,6 +510,7 @@ The verbs share one vocabulary for shaping rows: the forwarded kwargs below, the
 
 - `inflow=` — sidecar `.py` exposing public symbols for `conv_dict` token resolution; in fjord, may also define `inflow(state)` for sequential dependent seeding (see [the `inflow(state)` contract](#fjord) under the fjord entry for call cadence, guard requirements, and return shape).
 - `outflow=` — sidecar `.py` whose stem becomes the dynamic output class name; must define `outflow(state) -> list[dict]` (or `dict[ClassName, list[dict]]` for multi-output fjord).
+  Sidecar loading is identity-safe: the loader caches modules by resolved file path (the same file loaded through any entry point is ONE module object), short-circuits to the running `__main__` when the paths match, and puts the sidecar's own directory on `sys.path` — so sidecars use bare sibling imports with no `sys.path` or `sys.modules` guards.
 - `inc_page=` — `AsyncPaginator` subclass (`PageNumberPaginator`, `CursorPaginator`, `OffsetPaginator`, `NextUrlPaginator`, `LinkHeaderPaginator` for web; `SQLitePaginator`, `CSVPaginator`, `AvroPaginator` for local) that drives chunking-mode `stream()` or paginated `incorp()`. Every paginator subclass accepts a keyword-only `penstock=` argument (defaults to `NullPenstock()`); pass a `SustainedPenstock(rate_per_sec=...)` / `BurstPenstock` / `WindowPenstock` / `SignalPenstock` to throttle the yield rate at the paginator layer. Web paginators compose additively with host-level throttles registered via `register_host_penstock`; local paginators have no other throttle path, so the per-paginator penstock is the only way to bound their disk-speed iteration. See [Streaming & Pagination §6](./streaming_and_pagination.md#6-throttling-paginators) for worked examples.
 - `format_type=` — `FormatType` enum forcing a writer when the file extension is ambiguous; otherwise auto-detected from extension.
 - `enable_logging=` — on `LoggedIncorporator` only; wires the call into per-class rotating JSONL handlers (`logs/<ClassName>_{api,error,debug}.log`).
@@ -878,6 +886,67 @@ Both patterns are worked through in [Tutorial 9 — NASCAR Fantasy Fjord](../exa
 
 A Current is a declarative node in a watershed: a class + a verb + a cadence.  `Stream` wraps the chunking `cls.stream()` drain (or a parent-snapshot drill), `Fjord` is a per-tick flush through `outflow(state)`, `Export` wraps `cls.export()`, and `CustomCurrent` is the escape hatch with a user `tick()`.  Streams and fjords inside a watershed are **currents** — scheduled by a Tideweaver — not daemons; the self-driving daemon path lives in Part I.
 
+### Current — base fields
+
+Every current shares these fields (`extra="forbid"` — typos raise at construction):
+
+```python
+class Current(BaseModel):
+    name: str                        # unique within the watershed
+    cls: type[Incorporator]          # the class this current drives
+    interval: float                  # > 0 — MINIMUM seconds between ticks
+    depends_on: list[str] = []       # upstream names; folded into hard-gate Edges
+    on_error: Literal["restart", "isolate", "fail_watershed"] = "restart"
+    phase_offset_sec: float = 0.0    # delay the FIRST tick only
+    inflow: Path | None = None       # per-current sidecar override
+    outflow: Path | None = None      # per-current sidecar override
+```
+
+- `on_error` — `"restart"` retries the tick (tenacity-backed exponential backoff, 5 attempts); `"isolate"` logs the failure and lets sibling currents continue; `"fail_watershed"` re-raises and cancels the whole graph.
+- `phase_offset_sec` — green-wave coordination: offset a downstream current's first tick to land just after the upstream's expected first wave, so fewer `awaiting_upstream` gating skips fire on the warm-up pass.  `0.0` (default) fires on pass 1.
+- `depends_on` — the declarative dependency list; the `Watershed` validator folds each name into a hard-gate `Edge`.  `Stream.parent_current` / `Fjord.parent_currents` auto-derive the same edges and ALSO wire snapshot delivery.
+- The old `skip_threshold` field moved to the per-edge [`SurgeBarrier`](#canal-toolkit-primitives).
+
+---
+
+### Stream current
+
+```python
+Stream(
+    name="binance", cls=BinanceBook, interval=15,
+    incorp_params={"inc_url": "https://api.binance.us/api/v3/ticker/bookTicker",
+                   "inc_code": "symbol"},
+    refresh_params=None, export_params=None,   # optional
+    parent_current=None,                       # optional: drill mode
+)
+```
+
+**When to reach for it** — one source pulled fresh on every tick.  Two tick models under one field: with no `parent_current`, each tick runs a chunking-mode `cls.stream()` drain (`incorp_params` forwarded as the stream's `incorp_params`); with `parent_current="name"`, each tick reads that upstream's parked snapshot and calls `cls.incorp(inc_parent=<snapshot>, **incorp_params)` — the T5 drill as a scheduled node.  `Stream(stateful_polling=True)` is rejected at construction: inside a watershed the `interval` IS the polling cadence (the standalone daemon verb in Part I is the alternative).  `parent_current` and `inc_parent`-in-`incorp_params` are mutually exclusive.
+
+### Fjord current
+
+```python
+Fjord(
+    name="best_market", cls=BestMarket, interval=30,
+    export_params={"file_path": "arb_signals.ndjson"},
+    parent_currents=[],                        # optional: explicit state feed
+)
+```
+
+**When to reach for it** — the multi-source join at the tail of a shape.  Each tick is a **flush**: snapshot the upstream registries, hand them to the sidecar's `outflow(state)`, materialise the returned rows into the dynamic output class, export per `export_params` (single-output dict, or multi-output keyed by derived class name).  **It does NOT call `cls.fjord()`** — that verb is the self-driving daemon in Part I, ill-suited to windowed orchestration.  `parent_currents=[...]` writes each named upstream's snapshot rows into `state` before the flush and auto-derives one hard-gate edge per name.
+
+### Export current
+
+```python
+Export(
+    name="daily_parquet", cls=BinanceBook, interval=86400,
+    depends_on=["binance"],
+    export_params={"file_path": "binance_daily.parquet"},
+)
+```
+
+**When to reach for it** — persist an upstream's registry on a DIFFERENT cadence than it is produced (a close-of-window Parquet snapshot over a 30-second Stream).  Each tick calls `cls.export(instance=<registry rows>, **export_params)`.  `export_params` MUST contain `file_path` or `sql_table` — enforced at construction, because without one `export()` falls into its in-state one-liner mode and misreads the row-list `repr` as a path.  The simplest verb-typed current: no sidecar, no snapshotting.
+
 ### CustomCurrent
 
 **Import path** *(load-bearing — not top-level)*
@@ -932,6 +1001,20 @@ Use `CustomCurrent` only when the standard verb-typed Currents genuinely cannot 
 
 ---
 
+### Snapshot parking and the two-path rule
+
+Between ticks, every class's registry (`cls.inc_dict`) is a `WeakValueDictionary` — rows survive only while something holds a strong reference.  The scheduler therefore **parks** a strong-ref snapshot on the class after each producing tick: `cls._tideweaver_snapshot`, an `IncorporatorList` copy of the rows.  Downstream consumers read the snapshot, never the live registry: `None` means "never ran", `[]` means "ran, produced zero rows".  `CustomCurrent` auto-parks unless its `tick()` assigned a snapshot itself (`auto_park_snapshot = False` opts out).
+
+Because the parked container is an `IncorporatorList`, **drill metadata inherits**: when a parent current was itself drilled via `inc_child`, its snapshot carries `inc_child_path`, and a child `Stream(parent_current=...)` without its own `inc_child` inherits it — routing warning-free through the same path `incorp()` computed.  An explicit `inc_child` in the child's own `incorp_params` always wins.  Inheritance only has something to carry in 3+ level drill chains; a child under a plain head Stream declares its own `inc_child` as before.
+
+**The two-path rule.**  The same watershed can be expressed two ways, and class placement follows the path:
+- **Watershed path** (`watershed.json` + `Watershed`/`Tideweaver` entry): `Stream`/`Fjord`/`Export` currents tick on a window; classes live in the main entry file; sidecars re-import them with a bare import (the loader owns module identity and `sys.path`).
+- **Daemon runner path** (`cls.fjord()` / `cls.stream(stateful_polling=True)` + `pipeline.json`): one class drives itself; the CLI resolves the class from the `outflow.py` sidecar's namespace, so classes live IN the sidecar on this path.
+
+Fjord-current `state` values are plain snapshot lists — traverse rows with class-handle reads (`PeerClass.inc_dict.get(key)`) and conditional dots; the `state["Peer"].inc_dict` form belongs to the daemon path only.
+
+---
+
 ## Part IV — Watersheds
 
 A Watershed composes currents into a windowed DAG; the Tideweaver scheduler runs it tick by tick, emitting `Tide` and `Wave` telemetry.  For logged runs see `LoggedTideweaver` in Part VI.
@@ -948,6 +1031,8 @@ class Tideweaver:
         tick_factory: TickFactory | None = None,
         pass_interval: float | None = None,
         backlog_backoff_factor: float = 1.0,        # v1.2.1+, opt-in 2.0
+        logger_name: str | None = None,             # v1.3.3: route scheduler events to <name>_error.log
+        log_currents: bool = True,                  # v1.3.3: per-wave/reject telemetry emission
     ) -> None: ...
     async def run(self) -> AsyncIterator[Tide]: ...
     def summary(
@@ -983,7 +1068,7 @@ below for the full per-edge FlowControl surface.
 2. The validator folds `Current.depends_on` declarations into `Edge`s, checks unique names, validates the time window, runs a toposort to reject cycles.
 3. Pass the `Watershed` to `Tideweaver(watershed)`; the scheduler computes `pass_interval` (default `min(interval)/2`, clamped `[0.05, 1.0]`).
 4. `async for tide in Tideweaver(...).run()` — on every scheduler pass, walk the topological order; for each `Current`, gate on interval + upstream wave freshness, then fire the per-tick body.
-5. Verb-typed `Current` subclasses dispatch differently: `Stream` runs chunking `cls.stream(...)` and parks a strong-ref snapshot on `_tideweaver_snapshot`; when `Stream.parent_current` is set, it instead reads the parent's snapshot and calls `cls.incorp(inc_parent=snapshot, ...)` directly (parent-child drill mode — see [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive) for how to scope the parent's rows at the source); `Fjord` is a per-tick flush (`outflow(state)` → build → export); `Export` runs `cls.export(...)`.
+5. Verb-typed `Current` subclasses dispatch differently: `Stream` runs chunking `cls.stream(...)` and parks a strong-ref snapshot on `_tideweaver_snapshot`; when `Stream.parent_current` is set, it instead reads the parent's snapshot and calls `cls.incorp(inc_parent=snapshot, ...)` directly (parent-child drill mode — see [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive) for how to scope the parent's rows at the source); `Fjord` is a per-tick flush (`outflow(state)` → build → export); `Export` runs `cls.export(...)`.  The parked snapshot is an `IncorporatorList`, so drill metadata rides along: a child whose parent was itself drilled inherits the parent's `inc_child` path automatically (see [Snapshot parking and the two-path rule](#snapshot-parking-and-the-two-path-rule)).
 6. When the window closes, the scheduler drains in-flight ticks (`drain_timeout` seconds), then exits.
 
 **When to reach for it**
@@ -999,6 +1084,8 @@ The windowed orchestration verb — when one source's `stream()` isn't enough, w
 - `drain_timeout` — seconds the scheduler waits for in-flight ticks at window close.
 - `pass_interval` (`Tideweaver`) — override the auto-derived scheduler tick.
 - `backlog_backoff_factor` (`Tideweaver`, v1.2.1+) — multiplicatively extend the next-pass wait when the scheduler is consistently saturated.  Default `1.0` is disabled; set to `2.0` (or larger) to opt in.  See [Post-run tuning](#tideweaversummary--tune--tuningreport) for the diagnostic side.
+- `logger_name` (`Tideweaver`, v1.3.3) — when a `str`, scheduler diagnostics (isolated tick failures, parked currents, empty-output warnings, spillway events) route to `<name>_error.log` instead of the bare module logger; `LoggedTideweaver` sets it from `Watershed.name` automatically.
+- `log_currents` (`Tideweaver`, v1.3.3, default `True`) — emit per-wave and per-reject telemetry through the logger mixins when `logger_name` is active; set `False` to keep only scheduler-level events.
 
 **Yields / returns**
 `Tideweaver.run()` yields one `Tide` per scheduler pass, carrying `tide_number`, `fired`, `skipped: list[(name, reason)]`, `duration_sec`, plus the v1.2.1 outcome-record fields: `wake_reason`, `heap_depth`, `current_outcomes: list[CurrentOutcome]`, `in_flight_count_at_start`, `canal_rejects_added`, `next_due_in_sec`.
@@ -1111,6 +1198,25 @@ The source-of-truth module is `incorporator/tideweaver/reasons.py` (`SkipReason`
 
 ---
 
+### watershed.json — declarative form
+
+Every watershed can be declared as JSON and run with
+`incorporator tideweaver run watershed.json` (validate first with
+`incorporator tideweaver validate`).  Top-level keys: `shape`
+(`chain` / `diamond` / `fanout` / `parallel` / `custom`), `window{start,end}`,
+the shape's current slots (`currents` / `head` + `middle` + `tail` /
+`source` + `sinks`), `gate_mode` OR `flow` (same mutex as the Python
+constructors), `drain_timeout`, `inflow` / `outflow` sidecar paths,
+`host_penstocks` (host-layer rate limits — see
+[Part V](#host_penstocks--watershedjson-host-level-rate-limits)), and
+per-current `verb` / `class` / `interval` / `incorp_params` /
+`export_params` / `parent_current(s)` / `depends_on` / `on_error` /
+`phase_offset_sec`.  `${VAR}` env expansion, `${file:...}` secrets, and
+`@name` sidecar tokens resolve before parsing; `verb: "custom"` is
+Python-only.  Full grammar: `cli_and_configuration.md` §9.
+
+---
+
 ## Part V — Canal engineering
 
 Rate and flow control live at two independent layers: the **host layer** (a per-hostname penstock registry consulted by every HTTP request any verb makes) and the **edge layer** (a `FlowControl` on each watershed edge governing when a downstream current may consume).  They compose — one request can be paced by both — and never deduplicate across layers.
@@ -1163,6 +1269,32 @@ register_host_penstock("api.internal.acme.com", rate_per_sec=50.0, burst=200)
 **See also**
 [Tutorial 1](../examples/01-first-steps/README.md) — CoinGecko example with explicit registration ·
 [Library Reference](./library_reference.md)
+
+---
+
+### host_penstocks — watershed.json host-level rate limits
+
+```json
+{
+  "host_penstocks": {
+    "statsapi.mlb.com": {"rate_per_sec": 1.0},
+    "api.example.com":  {"rate_per_sec": 5.0, "burst": 10}
+  }
+}
+```
+
+The declarative twin of `register_host_penstock`: `build_watershed`
+registers each entry at config-load time (`rate_per_sec` alone →
+`SustainedPenstock`; with `burst` → `BurstPenstock`), so the CLI form
+is self-contained instead of relying on a sidecar import side effect.
+Host keys are case-insensitive (lowercased on registration).  Loading
+the same watershed twice is harmless — re-registration overwrites the
+same key.  This is the **host layer**: structurally distinct from the
+per-edge `flow.penstock` block below, and a per-current
+`requests_per_second` in `incorp_params` still short-circuits the
+registry entirely for that current's requests (the layers never
+stack).  Custom `Penstock` instances (Window / Signal / Backpressure)
+remain Python-only via `register_host_penstock`.
 
 ---
 
@@ -1778,7 +1910,7 @@ When `enable_logging=True`, the runner writes four rotating JSONL files under `l
 | `Tideweaver.rejects` | attribute on the instance | `list[RejectEntry]` | structured canal-layer reject list — same `RejectEntry` type, but `error_kind` can be one of four canal-layer literals (`"PenstockLimited"` / `"SurgeHalted"` / `"SkipAhead"` / `"GateBlocked"`) for scheduler-level skips that never reached a tick body.  `from_name` / `to_name` / `cooldown_sec` populated for per-edge attribution. |
 | `RejectEntry` (top-level export) | frozen Pydantic | failure record | `from incorporator import RejectEntry`.  Populated by HTTP error sites in `io/fetch.py`, fjord seed errors, and the `Tideweaver` scheduler (canal-layer skips). v1.2.1 added `from_name`, `to_name`, `host`, `status_code`, `attempt_number`, `duration_sec`, `cooldown_sec`. v1.3.3 added `is_url_traffic_error: bool` (always present, `True` when the underlying exception is an httpx `HTTPStatusError` or `RequestError`, or an `IncorporatorNetworkError` wrapping one via `__cause__`; `False` for parse/schema/canal errors) and `session: str | None` (set from `logger_name` in Tideweaver sessions). `__str__` now includes HTTP reason phrases: `[HTTP 429 Too Many Requests]`; `[HTTP 522]` for non-standard codes (httpx `codes.get_reason_phrase()` lookup, graceful fallback for unknown codes). |
 | `SourceRef` (`incorporator.io.SourceRef`) | frozen dataclass | source value type | Five factories (`from_url` / `from_file` / `from_parent` / `from_payload` / `from_kwargs`) plus an auto-detect `parse()` classmethod.  Internal scaffolding for `incorp()` / `architect()` source dispatch; opt-in public API for callers wanting explicit source typing. |
-| `Stream.parent_current` | `Stream` field | declarative parent-child dependency | `parent_current: str` names an upstream `Stream` current in the same watershed. The framework auto-derives a `HardLock` Watershed edge from the parent, drives the snapshot read on every dependent tick, and injects the parent's `_tideweaver_snapshot` as `inc_parent` into the child's `cls.incorp(...)` call. **The parent declares its row scope at the URL / SQL / outflow level — the framework does not post-filter at the child.** See [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive) for how to scope the parent. |
+| `Stream.parent_current` | `Stream` field | declarative parent-child dependency | `parent_current: str` names an upstream `Stream` current in the same watershed. The framework auto-derives a `HardLock` Watershed edge from the parent, drives the snapshot read on every dependent tick, and injects the parent's `_tideweaver_snapshot` as `inc_parent` into the child's `cls.incorp(...)` call. The snapshot is an `IncorporatorList`, so when the parent was itself drilled via `inc_child`, the child inherits that drill path automatically — an explicit `inc_child` in the child's own `incorp_params` still wins. **The parent declares its row scope at the URL / SQL / outflow level — the framework does not post-filter at the child.** See [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive) for how to scope the parent. |
 | `Fjord.parent_currents` | `Fjord` field | declarative multi-parent dependency | `parent_currents: list[str]` names one or more upstream `Stream` (or `Fjord`) currents. Same semantics as `Stream.parent_current` — auto-derived `HardLock` edges, snapshot reads on every tick — broadcast across all named parents into the fjord's `state` dict before `outflow(state)` runs. Each parent declares its own row scope at the URL / SQL / outflow level. See [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive). |
 | `CustomCurrent` (`incorporator.tideweaver.CustomCurrent`) | abstract `Current` subclass | escape hatch | Subclass and override `async tick(self, scheduler: Tideweaver) -> None` for non-verb tick logic (cron-style cleanups, custom side-effects, externally-driven publishers). The scheduler auto-parks `list(cls.inc_dict.values())` as `cls._tideweaver_snapshot` after every tick when the body didn't assign one (v1.2.3+) — downstream `HardLock` edges see fresh upstream waves without manual snapshot wiring. Set `auto_park_snapshot: ClassVar[bool] = False` to opt out (rare — only when the tick is a pure side-effect that shouldn't gate downstream). Also v1.2.3+: the scheduler emits a one-line WARNING per pass when a CustomCurrent tick succeeds but produces an empty `_tideweaver_snapshot` while upstream snapshots are non-empty — surfaces silent predicate / conv_dict mismatches without needing a debugger. |
 | `GateContext` / `SurgeContext` / `FlowState` | frozen dataclasses | narrow value types | What custom `Gate.gate_reason(ctx)` / `SurgeBarrier.is_tripped(ctx)` / `Penstock.consume_reason(state, flow, now)` overrides read.  Authoring a custom strategy?  Subclass against these — never the scheduler. |
