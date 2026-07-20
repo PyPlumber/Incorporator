@@ -23,6 +23,7 @@ from typing import Any, cast
 
 from ..base import Incorporator
 from ..io.config_paths import resolve_config_paths
+from ..io.penstock import register_host_penstock
 from ..usercode import load_user_module, merge_sidecar_extra_names
 from .current import Current, Export, Fjord, Stream
 from .flow import FlowControl, GateMode, flow_from_mode
@@ -100,6 +101,7 @@ def build_watershed(raw: dict[str, Any], base_dir: Path) -> Watershed:
     # the tideweaver-specific nested current entries are also covered.
     # Idempotent: already-absolute paths from a prior call pass through.
     raw = resolve_config_paths(raw, base_dir)
+    _register_host_penstocks(raw.get("host_penstocks"))
     window = _parse_window(raw.get("window"))
     inflow_val = raw.get("inflow")
     outflow_val = raw.get("outflow")
@@ -201,6 +203,54 @@ def build_watershed(raw: dict[str, Any], base_dir: Path) -> Watershed:
         return Watershed(currents=currents, edges=edges, **common)
 
     raise ValueError(f"Unknown shape: {shape!r}. Expected one of: 'chain', 'diamond', 'fanout', 'parallel', 'custom'.")
+
+
+def _register_host_penstocks(raw: Any) -> None:
+    """Register the ``host_penstocks`` block against the HOST-layer registry.
+
+    Shape: ``{"<host>": {"rate_per_sec": <float>, "burst": <int, optional>}, ...}``
+    — shorthand only.  Full :class:`~incorporator.io.penstock.Penstock` subclass
+    declarations (``WindowPenstock`` / ``SignalPenstock`` / ``BackpressurePenstock``)
+    are not expressible from JSON; call :func:`register_host_penstock` directly
+    from a sidecar module (which already runs at load time) for those.
+
+    This configures the HOST layer (:mod:`incorporator.io.penstock`'s global
+    registry, keyed by hostname) — distinct from the per-edge ``flow.penstock``
+    block (:func:`_build_flow`), which configures one edge's own throttling.
+    The two layers do not stack: a current's ``incorp_params.requests_per_second``
+    short-circuits the registry entirely for that source (see
+    :func:`incorporator.io.penstock.resolve_penstock`'s precedence order).
+
+    Registration is a plain dict overwrite (see
+    :func:`~incorporator.io.penstock.register_host_penstock`), so calling this
+    (and therefore :func:`build_watershed`) more than once on the same config —
+    e.g. ``validate`` followed by ``run`` — is harmless; the second call just
+    re-writes identical values.  No dedup/guard logic is needed or added.
+
+    Args:
+        raw: The top-level ``host_penstocks`` value (``None`` when absent).
+
+    Raises:
+        ValueError: ``raw`` is not a dict, a per-host spec is not a dict, or
+            a per-host spec is missing ``rate_per_sec``.
+    """
+    if raw is None:
+        return
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"watershed.json 'host_penstocks' must be an object keyed by hostname; got {type(raw).__name__}."
+        )
+    for host, spec in raw.items():
+        if not isinstance(spec, dict):
+            raise ValueError(f"watershed.json host_penstocks[{host!r}] must be an object; got {type(spec).__name__}.")
+        if "rate_per_sec" not in spec:
+            raise ValueError(f"watershed.json host_penstocks[{host!r}] is missing required key 'rate_per_sec'.")
+        burst = spec.get("burst")
+        register_host_penstock(
+            host,
+            rate_per_sec=float(spec["rate_per_sec"]),
+            burst=int(burst) if burst is not None else None,
+        )
 
 
 def _parse_window(raw: Any) -> tuple[datetime, datetime]:

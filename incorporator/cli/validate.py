@@ -44,6 +44,10 @@ ConfigType = Literal["stream", "fjord", "tideweaver"]
 
 # All recognised per-current keys. Keys not in this set and not starting with
 # '_' trigger a WARNING so users discover typos before they become silent no-ops.
+# NOTE: there is no equivalent top-level-key allow-list — top-level keys
+# (window, shape, host_penstocks, ...) are validated structurally by
+# build_watershed itself (via validate_watershed_config's delegation below),
+# not via a lookup table here.
 _KNOWN_CURRENT_KEYS: frozenset[str] = frozenset(
     {
         # Current base

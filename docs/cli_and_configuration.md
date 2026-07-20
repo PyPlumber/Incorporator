@@ -685,6 +685,48 @@ for the full walk-through plus the Python-API equivalents.
 > The sidecar module(s) are loaded before token resolution, so this works
 > identically to the Python `Stream(conv_dict=...)` / `incorp()` form.
 
+### `host_penstocks` — declarative HOST-layer rate limits
+
+A top-level `"host_penstocks"` block registers per-host outbound-request
+throttling against `register_host_penstock` at config-load time — the
+declarative equivalent of calling it yourself in a sidecar module (which
+`architect.tune()` currently advises but has no config-file counterpart for):
+
+```json
+{
+  "host_penstocks": {
+    "api.example.com": {"rate_per_sec": 5.0},
+    "bursty.example.com": {"rate_per_sec": 10.0, "burst": 50}
+  }
+}
+```
+
+This is the **HOST layer** (`incorporator.io.penstock`'s global registry,
+keyed by hostname) — structurally distinct from the **per-edge**
+`flow.penstock` block documented below, which throttles one edge's own
+traffic. Keep the two mental models separate: `host_penstocks` says "no
+matter which current talks to this host, cap it at N req/sec"; `flow.penstock`
+says "this specific upstream→downstream edge fires at most N times/sec."
+
+Only the shorthand form is supported from JSON: `rate_per_sec` alone builds
+a `SustainedPenstock`; adding `burst` builds a `BurstPenstock` instead
+(same precedence as `register_host_penstock`'s own keyword shorthand). Full
+`Penstock` subclass declarations (`WindowPenstock`, `SignalPenstock`,
+`BackpressurePenstock`) aren't expressible from JSON — call
+`register_host_penstock` directly from your `inflow`/`outflow` sidecar
+module (which already runs at load time) for those.
+
+Hostnames are case-insensitive — the registry lowercases on registration,
+so `"API.Example.com"` and `"api.example.com"` resolve to the same entry.
+Registration is a plain dict overwrite, so loading the same `watershed.json`
+more than once (e.g. `validate` then `run`) is harmless.
+
+> **Precedence — this does NOT stack with per-call overrides.** A current's
+> `incorp_params.requests_per_second` short-circuits the host registry
+> entirely for that source — the two do not compose. If you set both, the
+> per-call value wins and the `host_penstocks` entry for that host is
+> ignored for that current.
+
 ### Per-edge flow control
 
 Beyond `gate_mode`, watershed.json supports the full per-edge **canal

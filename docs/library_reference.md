@@ -63,6 +63,9 @@ For a paste-ready lookup map of every public callable — signature, 3-7 step ps
   SustainedPenstock(rate_per_sec=0.2))`).  The framework ships
   penstock-agnostic; this is the one-line registration users add at
   startup if they want a host respected across every `incorp()` call.
+  Also settable declaratively via `watershed.json`'s `host_penstocks`
+  block (shorthand `rate_per_sec`/`burst` only) — see
+  [§9](./cli_and_configuration.md#host_penstocks--declarative-host-layer-rate-limits).
   See the [API Atlas entry](./api_atlas.md#register_host_penstock).
 - `refresh()` — stateful update of an existing object graph. Same
   `inflow=` semantics as `incorp()`.

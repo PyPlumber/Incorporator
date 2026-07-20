@@ -312,6 +312,124 @@ def test_watershed_window_token_requires_sidecar_merge_not_resolve_tokens_alone(
 
 
 # ---------------------------------------------------------------------------
+# host_penstocks — declarative HOST-layer registration at config-load time
+# ---------------------------------------------------------------------------
+
+
+def _minimal_chain_config(tmp_path: Path, *, host_penstocks: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Write a minimal one-current outflow sidecar and return a matching chain config dict.
+
+    ``_build_current`` always resolves ``class`` against the outflow/inflow
+    sidecar modules regardless of verb, so every ``load_watershed`` call in
+    this section needs a real sidecar file on disk, not just a bare dict.
+    """
+    outflow_body = "from incorporator import Incorporator\nclass LapData(Incorporator):\n    pass\ndef outflow(state):\n    return []\n"
+    (tmp_path / "outflow.py").write_text(outflow_body, encoding="utf-8")
+    body: dict[str, Any] = {
+        "window": {"start": "2099-01-01T00:00:00+00:00", "end": "2099-01-01T00:01:00+00:00"},
+        "shape": "chain",
+        "outflow": "outflow.py",
+        "drain_timeout": 5,
+        "gate_mode": "hard",
+        "currents": [
+            {"name": "laps", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        ],
+    }
+    if host_penstocks is not None:
+        body["host_penstocks"] = host_penstocks
+    return body
+
+
+def test_host_penstocks_block_registers_mixed_case_host(tmp_path: Path) -> None:
+    """A ``host_penstocks`` block registers via ``register_host_penstock``,
+    resolving mixed-case hostnames to the lowercase registry key (f2f111b).
+    """
+    from incorporator.io.penstock import resolve_penstock
+
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(
+        json.dumps(_minimal_chain_config(tmp_path, host_penstocks={"API.Internal.Acme.com": {"rate_per_sec": 42.0}})),
+        encoding="utf-8",
+    )
+
+    load_watershed(cfg)
+
+    assert "api.internal.acme.com" in _HOST_PENSTOCKS
+    bound = resolve_penstock("https://API.Internal.Acme.com/v1/thing")
+    assert bound.penstock.rate_per_sec == 42.0  # type: ignore[union-attr]
+
+
+def test_host_penstocks_burst_shorthand_selects_burst_penstock(tmp_path: Path) -> None:
+    """``rate_per_sec`` + ``burst`` together select a ``BurstPenstock``, mirroring
+    ``register_host_penstock``'s own keyword shorthand.
+    """
+    from incorporator.io.penstock import BurstPenstock
+
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(
+        json.dumps(
+            _minimal_chain_config(tmp_path, host_penstocks={"burstyhost.example": {"rate_per_sec": 10.0, "burst": 50}})
+        ),
+        encoding="utf-8",
+    )
+
+    load_watershed(cfg)
+
+    registered = _HOST_PENSTOCKS["burstyhost.example"]
+    assert isinstance(registered, BurstPenstock)
+    assert registered.burst == 50
+
+
+def test_host_penstocks_double_load_is_idempotent(tmp_path: Path) -> None:
+    """Loading the same watershed twice overwrites with identical values —
+    load-time registration must be harmless to repeat (e.g. ``validate`` then ``run``).
+    """
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(
+        json.dumps(_minimal_chain_config(tmp_path, host_penstocks={"idempotent.example": {"rate_per_sec": 7.5}})),
+        encoding="utf-8",
+    )
+
+    load_watershed(cfg)
+    load_watershed(cfg)
+
+    assert _HOST_PENSTOCKS["idempotent.example"].rate_per_sec == 7.5  # type: ignore[union-attr]
+
+
+def test_host_penstocks_absent_key_is_a_noop(tmp_path: Path) -> None:
+    """No ``host_penstocks`` key at all is a silent no-op — every existing
+    template with no such key must keep working unmodified.
+    """
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(_minimal_chain_config(tmp_path)), encoding="utf-8")
+
+    before = dict(_HOST_PENSTOCKS)
+    load_watershed(cfg)
+    assert _HOST_PENSTOCKS == before
+
+
+def test_host_penstocks_non_dict_block_raises(tmp_path: Path) -> None:
+    """A ``host_penstocks`` value that isn't an object raises ``ValueError``."""
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(_minimal_chain_config(tmp_path, host_penstocks=["not", "a", "dict"])), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="host_penstocks"):
+        load_watershed(cfg)
+
+
+def test_host_penstocks_missing_rate_per_sec_raises(tmp_path: Path) -> None:
+    """A per-host spec missing ``rate_per_sec`` raises ``ValueError``."""
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(
+        json.dumps(_minimal_chain_config(tmp_path, host_penstocks={"nocap.example": {"burst": 10}})),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="rate_per_sec"):
+        load_watershed(cfg)
+
+
+# ---------------------------------------------------------------------------
 # Nested-path Nm token + bare-tuple forms
 # ---------------------------------------------------------------------------
 
