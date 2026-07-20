@@ -53,6 +53,7 @@ from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_random_
 
 from ..io.fetch import HTTPClientBuilder
 from ..io.penstock import FlowState
+from ..list import IncorporatorList
 from ..observability.logger import _route_scheduler_event_to_log, _route_to_log, current_meta
 from ..pipeline.outflow import flush
 from ..rejects import RejectEntry
@@ -190,6 +191,23 @@ def _resolve_current_snapshot(cls: type[Any], *, treat_empty_snapshot_as_missing
     if treat_empty_snapshot_as_missing:
         return list(snapshot) if snapshot else list(cls.inc_dict.values())
     return list(snapshot) if snapshot is not None else list(cls.inc_dict.values())
+
+
+def _wrap_snapshot(model_class: type[Any], items: list[Any], inc_child_path: str | None) -> IncorporatorList[Any]:
+    """Wrap a strong-ref row list into an :class:`IncorporatorList` carrying an optional drill path.
+
+    ``_tick_stream``'s parking sites used to park a bare ``list``, which
+    silently stripped ``IncorporatorList.inc_child_path`` — the metadata
+    ``schema.factory.child_incorp`` reads via
+    ``getattr(inc_parent, "inc_child_path", None)`` to let a drilled child
+    current inherit its parent's ``inc_child`` route instead of re-declaring
+    it.  ``inc_child_path`` is only set when truthy — never fabricate a path
+    the verb didn't itself produce.
+    """
+    wrapped: IncorporatorList[Any] = IncorporatorList(model_class, items)
+    if inc_child_path:
+        wrapped.inc_child_path = inc_child_path
+    return wrapped
 
 
 def _route_scheduler_event(
@@ -1256,13 +1274,17 @@ class Tideweaver:
                     ),
                 )
                 return
-            incorp_call_params = {**params_with_client, "inc_parent": cast(Any, list(pre_snap))}
+            inherited_child_path = getattr(pre_snap, "inc_child_path", None)
+            inc_parent = _wrap_snapshot(upstream_current.cls, list(pre_snap), inherited_child_path)
+            incorp_call_params = {**params_with_client, "inc_parent": cast(Any, inc_parent)}
             _pc_result = await current.cls.incorp(**incorp_call_params)
             if isinstance(self.logger_name, str) and self.log_currents:
                 _pc_rejects = getattr(_pc_result, "rejects", None) or []
                 for _reject in _pc_rejects:
                     _route_to_log(self.logger_name, _reject, extra_meta=current_meta(current))
-            cast(Any, current.cls)._tideweaver_snapshot = list(current.cls.inc_dict.values())
+            cast(Any, current.cls)._tideweaver_snapshot = _wrap_snapshot(
+                current.cls, list(current.cls.inc_dict.values()), _pc_result.inc_child_path
+            )
             return
 
         kwargs: dict[str, Any] = {
@@ -1322,7 +1344,9 @@ class Tideweaver:
         # classes, so downstream readers walk Stream and Fjord upstreams
         # uniformly via ``getattr(dep.cls, "_tideweaver_snapshot", None)``.
         cls_any = cast(Any, current.cls)
-        cls_any._tideweaver_snapshot = list(accumulated.values())
+        cls_any._tideweaver_snapshot = _wrap_snapshot(
+            current.cls, list(accumulated.values()), incorp_params.get("inc_child")
+        )
 
     async def _tick_fjord(self, current: Fjord) -> None:
         """One fjord flush: snapshot upstream → outflow(state) → build → export.

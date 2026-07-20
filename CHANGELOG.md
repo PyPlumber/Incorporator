@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tideweaver's `_tick_stream` now preserves `IncorporatorList.inc_child_path`
+  through snapshot parking** (`incorporator/tideweaver/scheduler.py`): the
+  scheduler previously downcast every parked `_tideweaver_snapshot` (and
+  the drill-consumption `inc_parent` it builds from an upstream's snapshot)
+  to a bare `list`, silently stripping the `inc_child_path` the
+  `IncorporatorList` container carries. A `Stream(parent_current=...)`
+  child that didn't redeclare its own `inc_child` therefore fell through to
+  the deprecated implicit `.url`/`.detail_url` HATEOAS read on every tick.
+  Both parking sites (the parent-drill branch's `cls.incorp()` result and
+  the accumulate branch's chunked-stream rows) and the drill-consumption
+  site now wrap rows in an `IncorporatorList` via a new `_wrap_snapshot`
+  helper, propagating `inc_child_path` only when the verb actually
+  produced one. An explicit `inc_child` on the child current's own
+  `incorp_params` still wins over an inherited path — no behavior change
+  for currents that already declare it.
+
 - **`register_host_penstock` now normalizes the `host` argument to
   lowercase on registration** (`incorporator/io/penstock.py`): mixed-case
   registrations (e.g. `register_host_penstock("API.Acme.com", ...)`)
