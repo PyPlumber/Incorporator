@@ -49,12 +49,12 @@ Incorporator reads as a river system. Eight **verbs** act on one class — the c
   - [host_penstocks — watershed.json host-level rate limits](#host_penstocks--watershedjson-host-level-rate-limits)
   - [Canal toolkit primitives](#canal-toolkit-primitives)
 - [Part VI — Branches](#part-vi--branches)
-  - [Telemetry](#telemetry): [`Wave.log_meta`](#wavelog_meta)
+  - [Telemetry records](#telemetry-records): [`Wave.log_meta`](#wavelog_meta)
   - [Observability layer (`LoggedIncorporator` + `LoggedTideweaver`)](#observability-layer-loggedincorporator--loggedtideweaver)
   - [Class-attribute reference](#class-attribute-reference)
   - [FormatType](#formattype) / [CompressionType](#compressiontype)
   - [Exception hierarchy](#exception-hierarchy)
-  - [Optional-dependency introspection](#optional-dependency-introspection)
+  - [Optional-dependency introspection](#optional-dependency-introspection): [`list_deps`](#list_deps---listdepinfo) / [`install_hint`](#install_hintdep_name-str---str)
 - [Where to Go Next](#where-to-go-next)
 
 ---
@@ -1493,7 +1493,7 @@ Pass `flow=FlowControl(...)` explicitly to control the SurgeBarrier independentl
 
 The leaves: telemetry records, the observability layer, reference tables, and introspection helpers.
 
-### Telemetry
+### Telemetry records
 
 #### Wave.log_meta
 
