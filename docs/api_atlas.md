@@ -605,7 +605,7 @@ await Invoice.incorp(
 }
 ```
 
-`Pk` is allow-listed at `incorporator/cli/tokens.py:125-127` for
+`Pk` is allow-listed at `incorporator/config/tokens.py:128-130` for
 forward-compat — a token string like `"Pk('id', target='code')"`
 resolves to a `Pk` instance — but JSON pipelines today have no
 canonical destination slot for it.  Continue to use `code_attr` /

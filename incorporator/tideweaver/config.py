@@ -22,6 +22,8 @@ from types import ModuleType
 from typing import Any, cast
 
 from ..base import Incorporator
+from ..config.envexpand import expand_env
+from ..config.tokens import resolve_tokens
 from ..io.config_paths import resolve_config_paths
 from ..io.penstock import register_host_penstock
 from ..usercode import load_user_module, merge_sidecar_extra_names
@@ -52,12 +54,6 @@ def load_watershed(path: Path) -> Watershed:
         ValueError: The JSON is malformed, the ``shape`` is unknown, or a
             referenced class can't be resolved.
     """
-    # Lazy imports so loading this module never triggers cli/__init__.py,
-    # which would create a circular import (cli registers a tideweaver sub-app
-    # that imports back into this module).
-    from ..cli.envexpand import expand_env
-    from ..cli.tokens import resolve_tokens
-
     if not path.is_file():
         raise FileNotFoundError(f"watershed config not found: {path}")
 

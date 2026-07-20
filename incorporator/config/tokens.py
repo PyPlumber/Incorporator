@@ -1,4 +1,4 @@
-"""JSON-text → Python-callable token resolution for the CLI.
+"""JSON-text → Python-callable token resolution for pipeline/watershed configs.
 
 Users write Incorporator pipelines as ``pipeline.json``. JSON can carry
 strings, numbers, lists, and dicts — but not Python callables. The
@@ -18,8 +18,10 @@ file.
 
 Tokens that require user Python (``calc(my_function)``, ``link_to(MyClass)``)
 need an ``inflow.py`` sidecar whose public symbols extend the allow-list.
-The CLI loader handles this automatically when a top-level ``inflow``
-key is present in ``pipeline.json``.
+The verb layer (:func:`incorporator.usercode.apply_inflow_resolution`) and the
+watershed layer (:func:`incorporator.tideweaver.config.load_watershed`) both
+handle this automatically when a top-level ``inflow`` key is present in
+``pipeline.json`` / ``watershed.json``.
 
 ## Syntax
 

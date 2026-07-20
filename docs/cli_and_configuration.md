@@ -213,7 +213,7 @@ secrets:
   - api_key
 ```
 
-Source: `incorporator/cli/envexpand.py:124-182`.
+Source: `incorporator/config/envexpand.py:126-184`.
 
 ---
 

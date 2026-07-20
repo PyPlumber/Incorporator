@@ -1,4 +1,4 @@
-"""Unit tests for ``incorporator.cli.tokens.resolve_tokens``.
+"""Unit tests for ``incorporator.config.tokens.resolve_tokens``.
 
 The resolver turns JSON-text Python-call expressions (e.g.
 ``"NextUrlPaginator('next')"``, ``"inc(datetime)"``) into real callables /
@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from incorporator.cli.tokens import TokenResolutionError, resolve_tokens
+from incorporator.config.tokens import TokenResolutionError, resolve_tokens
 from incorporator.io.pagination import (
     AvroPaginator,
     NextUrlPaginator,

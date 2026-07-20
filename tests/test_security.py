@@ -180,7 +180,7 @@ async def test_host_is_internal_uses_async_dns(monkeypatch: pytest.MonkeyPatch) 
 def test_token_rejects_ex_class_access() -> None:
     """Attribute-access forms on Ex are rejected; the new allow-list entry does not
     expand the attack surface beyond direct construction."""
-    from incorporator.cli.tokens import TokenResolutionError, resolve_tokens
+    from incorporator.config.tokens import TokenResolutionError, resolve_tokens
 
     with pytest.raises(TokenResolutionError, match="unsupported call form"):
         resolve_tokens({"x": "Ex('a').__init__('b')"})
@@ -188,7 +188,7 @@ def test_token_rejects_ex_class_access() -> None:
 
 def test_token_rejects_nm_attribute_access() -> None:
     """Dotted-name call on Nm is rejected by the AST walker before any code runs."""
-    from incorporator.cli.tokens import TokenResolutionError, resolve_tokens
+    from incorporator.config.tokens import TokenResolutionError, resolve_tokens
 
     with pytest.raises(TokenResolutionError, match="unsupported call form"):
         resolve_tokens({"x": "Nm.__class__('c', 'd')"})
@@ -196,7 +196,7 @@ def test_token_rejects_nm_attribute_access() -> None:
 
 def test_token_rejects_pk_attribute_access() -> None:
     """Dotted-name call on Pk is rejected by the AST walker before any code runs."""
-    from incorporator.cli.tokens import TokenResolutionError, resolve_tokens
+    from incorporator.config.tokens import TokenResolutionError, resolve_tokens
 
     with pytest.raises(TokenResolutionError, match="unsupported call form"):
         resolve_tokens({"x": "Pk.__class__('id', 'code')"})

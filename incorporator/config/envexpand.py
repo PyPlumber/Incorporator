@@ -1,7 +1,9 @@
 """Environment-variable and file-based secret expansion for pipeline.json.
 
-Applied by :func:`incorporator.cli._load_pipeline_config` after JSON parse,
-before any validation runs. Supports a small, bash-inspired syntax:
+Applied by :func:`incorporator.cli.runners._load_pipeline_config` (stream/fjord
+configs) and :func:`incorporator.tideweaver.config.load_watershed` (watershed
+configs) after JSON parse, before any validation runs. Supports a small,
+bash-inspired syntax:
 
 - ``${VAR}``                  — value of ``os.environ["VAR"]``; raises
   ``RuntimeError`` if unset.

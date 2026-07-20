@@ -19,10 +19,10 @@ from typing import Any, cast
 from incorporator._deps.typer import TYPER as _typer
 
 from .. import Incorporator, LoggedIncorporator
+from ..config.envexpand import EnvExpansionError, expand_env
+from ..config.tokens import TokenResolutionError, resolve_tokens
 from ..io.config_paths import resolve_config_paths
 from ._pipeline_config import parse_pipeline_config
-from .envexpand import EnvExpansionError, expand_env
-from .tokens import TokenResolutionError, resolve_tokens
 from .validate import validate_config
 
 logger = logging.getLogger(__name__)

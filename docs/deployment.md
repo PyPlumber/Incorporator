@@ -77,7 +77,7 @@ control — copy yours into `config/` per environment.
 > expansion time. Set `INCORPORATOR_SECRETS_ROOT` to an absolute
 > directory and **any `${file:...}` reference resolving outside
 > that root is rejected** with a clear diagnostic before any file
-> is opened (`incorporator/cli/envexpand.py:124-182`).
+> is opened (`incorporator/config/envexpand.py:126-184`).
 >
 > The canonical `docker-compose.yml` sets it to `/run/secrets` to
 > match Docker Swarm / Kubernetes Secrets mount conventions:

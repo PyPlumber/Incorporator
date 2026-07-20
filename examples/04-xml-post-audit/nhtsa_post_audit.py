@@ -38,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 def to_upper(value: str) -> str:
     """Named wrapper for ``str.upper``. ``str.upper`` is attribute access,
     rejected by the JSON token grammar's safe-eval walker (see
-    ``incorporator/cli/tokens.py``); a named module-level function resolves
+    ``incorporator/config/tokens.py``); a named module-level function resolves
     as a bare ``ast.Name`` instead. Shared by both entry forms so the same
     token name works in ``pipeline.json`` and here.
     """

@@ -283,7 +283,10 @@ def apply_inflow_resolution(
     Real Python callables already present in ``conv_dict`` pass through
     unchanged — the resolver only touches strings.
     """
-    from .cli.tokens import resolve_tokens
+    # Deferred rather than module-top-level to keep this refactor stage's diff
+    # minimal; incorporator.config has no edge back into base.py/usercode.py,
+    # so promoting is safe whenever that tidy-up is scoped in.
+    from .config.tokens import resolve_tokens
 
     module = load_user_module(inflow)
     extra_names = extract_public_names(module)

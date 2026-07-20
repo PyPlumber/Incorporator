@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from incorporator.cli.envexpand import expand_env
-from incorporator.cli.tokens import TokenResolutionError, resolve_tokens
+from incorporator.config.envexpand import expand_env
+from incorporator.config.tokens import TokenResolutionError, resolve_tokens
 from incorporator.cli.validate import (
     autodetect_type,
     validate_fjord_config,

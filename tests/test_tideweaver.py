@@ -3613,7 +3613,7 @@ def test_init_tideweaver_scaffold_validates(tmp_path: Path) -> None:
     """
     import json as _json
 
-    from incorporator.cli.envexpand import expand_env
+    from incorporator.config.envexpand import expand_env
     from incorporator.cli.scaffold import write_scaffold
     from incorporator.cli.validate import autodetect_type, validate_watershed_config
 

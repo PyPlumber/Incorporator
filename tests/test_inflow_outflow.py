@@ -60,7 +60,7 @@ def test_inflow_calc_reducer_lands_in_csv(tmp_path: Path) -> None:
     must appear in the CSV cell.  If conv_dict only worked for JSON, the
     raw list of stat dicts would land in the CSV instead.
     """
-    from incorporator.cli.tokens import resolve_tokens
+    from incorporator.config.tokens import resolve_tokens
     from incorporator.usercode import extract_public_names, load_user_module
 
     inflow_py = tmp_path / "inflow.py"

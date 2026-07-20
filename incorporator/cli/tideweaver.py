@@ -180,11 +180,9 @@ def build_app() -> Any:
         ),
     ) -> None:
         """Execute a Tideweaver watershed from a JSON configuration file."""
-        from .runners import set_json_output_mode
+        from .runners import configure_logs_option, set_json_output_mode
 
         set_json_output_mode(json_output)
-        from .runners import configure_logs_option
-
         configure_logs_option(logs)
         if not config.is_file():
             _typer.secho(f"Error: Configuration file not found at {config}", fg=_typer.colors.RED)
