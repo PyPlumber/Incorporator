@@ -137,8 +137,10 @@ minutes, the container is reported unhealthy — your orchestrator
 ### Custom Dockerfile
 
 If you prefer a standalone Dockerfile, the repo's blueprint runs as a
-non-root user and installs `.[all]` to include the optional orjson /
-cramjam native-code accelerators:
+non-root user, installs `.[speedups,avro,xlsx,cli]` (the orjson / cramjam
+native-code accelerators plus the Typer CLI entry point — everything
+`[all]` gives you except Prefect), and layer-splits the install so
+`incorporator/` source edits don't bust the dependency-download layer:
 
 ```dockerfile
 FROM python:3.11-slim
@@ -148,14 +150,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN useradd -m -s /bin/bash appuser
 WORKDIR /app
 
-RUN mkdir -p /app/config /app/data /app/logs && \
+RUN mkdir -p /app/config /app/data /app/logs /app/out && \
     chown -R appuser:appuser /app
 
+# Dependency layer: cache-keyed on pyproject.toml + README.md only.
 COPY pyproject.toml README.md ./
-COPY incorporator/ ./incorporator/
+RUN mkdir incorporator && touch incorporator/__init__.py
 
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir .[all]
+    pip install --no-cache-dir .[speedups,avro,xlsx,cli]
+
+# Source layer: only this layer is invalidated by incorporator/ edits.
+COPY incorporator/ ./incorporator/
+RUN pip install --no-cache-dir --no-deps .
 
 USER appuser
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
@@ -168,6 +175,10 @@ CMD ["stream", "/app/config/pipeline.json", \
      "--logs", \
      "--heartbeat-file", "/tmp/incorporator.heartbeat"]
 ```
+
+Want Prefect baked into your own custom image too? Swap
+`.[speedups,avro,xlsx,cli]` for `.[orchestrate]` (typer + prefect) or
+`.[all]` (every extra except `[parquet]`/`[docs]`, including Prefect).
 
 ### Production HTTP throttling — `register_host_penstock`
 

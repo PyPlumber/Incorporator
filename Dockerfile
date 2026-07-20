@@ -11,18 +11,36 @@ RUN useradd -m -s /bin/bash appuser
 # Set the working directory
 WORKDIR /app
 
-# Create directories for mounted configurations, logs, and exported data
-# We do this first so we can cleanly assign ownership to the appuser
-RUN mkdir -p /app/config /app/data /app/logs && \
+# Create directories for mounted configurations, logs, exported data, and
+# fjord/window-close Parquet exports (the `/app/out` mount pattern in
+# examples/README.md). We do this first so we can cleanly assign ownership
+# to the appuser.
+RUN mkdir -p /app/config /app/data /app/logs /app/out && \
     chown -R appuser:appuser /app
 
-# Copy dependency mappings and the core framework
+# --- Dependency layer: cache-keyed on pyproject.toml + README.md only ---
+# A stub `incorporator/` package (just enough for [tool.setuptools.packages.find]
+# to resolve) lets `pip install .[extras]` download and resolve every
+# third-party dependency before any real source is copied in, so editing
+# incorporator/*.py does not bust this (expensive) layer's cache.
 COPY pyproject.toml README.md ./
-COPY incorporator/ ./incorporator/
+RUN mkdir incorporator && touch incorporator/__init__.py
 
-# Install with[all] to bake in the Rust/C speedups (orjson, cramjam)
+# Install [speedups]+[avro]+[xlsx]+[cli] — the Rust/C accelerators (orjson,
+# cramjam, lxml), Avro/xlsx format support, and the Typer CLI entry point.
+# This is equivalent to [all] minus Prefect: Prefect is intentionally NOT
+# baked into this image (see docs/deployment.md's Prefect-integration
+# section) — users who want incorporator.integrations.prefect available in
+# their own image should swap this extras set for [orchestrate].
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir .[all]
+    pip install --no-cache-dir .[speedups,avro,xlsx,cli]
+
+# --- Source layer: only this layer is invalidated by incorporator/ edits ---
+# Overwrites the stub package with the real source, then reinstalls it with
+# --no-deps — every third-party dependency already landed in the layer
+# above, so this reinstall does no network/resolver work.
+COPY incorporator/ ./incorporator/
+RUN pip install --no-cache-dir --no-deps .
 
 # Switch to the secure non-root user
 USER appuser
