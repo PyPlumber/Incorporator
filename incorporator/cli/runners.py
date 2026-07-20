@@ -14,7 +14,7 @@ import logging
 import signal
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from incorporator._deps.typer import TYPER as _typer
 
@@ -25,6 +25,9 @@ from ..config.tokens import TokenResolutionError
 from ..io.config_paths import resolve_config_paths
 from ._pipeline_config import parse_pipeline_config
 from .validate import validate_config
+
+if TYPE_CHECKING:
+    from ..tideweaver.watershed import Watershed
 
 logger = logging.getLogger(__name__)
 
@@ -151,16 +154,24 @@ def _load_pipeline_config(config_path: Path) -> dict[str, Any]:
         sys.exit(1)
 
 
-def _run_validation(config: dict[str, Any], config_dir: Path, type_override: str | None) -> str:
-    """Run validators, print results, and return the detected type. Exits on error."""
+def _run_validation(
+    config: dict[str, Any], config_dir: Path, type_override: str | None
+) -> tuple[str, Watershed | None]:
+    """Run validators, print results, and return (detected type, watershed). Exits on error.
+
+    ``watershed`` is the already-built
+    :class:`~incorporator.tideweaver.watershed.Watershed` when the detected
+    type is ``"tideweaver"`` (so ``tideweaver run`` can reuse it instead of
+    building a second one), otherwise ``None``.
+    """
     requested_type = cast(Any, type_override) if type_override else None
-    detected, errors = validate_config(config, config_dir, requested_type)
+    detected, errors, watershed = validate_config(config, config_dir, requested_type)
     if errors:
         _err(f"Config invalid (detected type: {detected}):", fg=_red())
         for err in errors:
             _err(f"  - {err}", fg=_red())
         sys.exit(1)
-    return detected
+    return detected, watershed
 
 
 # ---------------------------------------------------------------------------

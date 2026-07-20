@@ -407,24 +407,22 @@ def _restore_host_penstock_registry() -> Iterator[None]:
     _HOST_PENSTOCKS.update(snapshot)
 
 
-def test_cli_tideweaver_run_calls_register_host_penstocks_twice(
+def test_cli_tideweaver_run_calls_register_host_penstocks_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`tideweaver run` currently invokes host-penstock registration TWICE per run.
+    """`tideweaver run` invokes host-penstock registration exactly ONCE per run.
 
-    ``_run_tideweaver`` (cli/tideweaver.py) calls ``_run_validation`` ->
-    ``validate_watershed_config`` -> ``build_watershed`` (validate pass), and
-    then calls ``build_watershed`` AGAIN directly to construct the Watershed
-    it actually runs.  ``_register_host_penstocks`` fires inside
-    ``build_watershed`` on both passes, so the current invocation count is 2.
-
-    Stage 2C of the platform-review program will fix ``_run_tideweaver`` to
-    build the Watershed once, dropping this count to 1 — when that lands,
-    update this pin's expected count rather than deleting it.
+    Stage 2C of the platform-review program fixed ``_run_tideweaver``
+    (cli/tideweaver.py) to build the Watershed exactly once: it now reuses
+    the ``Watershed`` returned by ``_run_validation`` ->
+    ``validate_config`` -> ``_validate_and_build_watershed`` ->
+    ``build_watershed`` instead of calling ``build_watershed`` a second time
+    to construct the Watershed it runs.  ``_register_host_penstocks`` fires
+    inside ``build_watershed``, so the invocation count is now 1.
 
     Counts INVOCATIONS via a wrapping monkeypatch, not end-registry-state,
-    because ``_register_host_penstocks`` is a plain dict overwrite — an
-    idempotent second call would be invisible to a state-based assertion.
+    because ``_register_host_penstocks`` is a plain dict overwrite — a
+    second call would be invisible to a state-based assertion.
     """
     from incorporator.tideweaver import config as tw_config
 
@@ -443,9 +441,7 @@ def test_cli_tideweaver_run_calls_register_host_penstocks_twice(
     result = runner.invoke(app, ["tideweaver", "run", str(cfg), "--json-output"])
 
     assert result.exit_code == 0, result.stdout
-    assert call_count == 2, (
-        f"Expected 2 build_watershed/_register_host_penstocks invocations per "
-        f"`tideweaver run` (validate pass + run pass); got {call_count}. "
-        "If this dropped to 1, Stage 2C's build-once fix has landed — update "
-        "this pin's expected count instead of deleting it."
+    assert call_count == 1, (
+        f"Expected exactly 1 build_watershed/_register_host_penstocks invocation per "
+        f"`tideweaver run` (the Watershed is now built once and reused); got {call_count}."
     )

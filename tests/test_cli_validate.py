@@ -121,7 +121,7 @@ def test_validate_fjord_unknown_cls_name(tmp_path: Path) -> None:
 
 def test_validate_config_dispatches_to_fjord(tmp_path: Path) -> None:
     cfg, _ = _write_fjord(tmp_path)
-    detected, errs = validate_config(cfg, tmp_path)
+    detected, errs, _ = validate_config(cfg, tmp_path)
     assert detected == "fjord"
     assert errs == []
 

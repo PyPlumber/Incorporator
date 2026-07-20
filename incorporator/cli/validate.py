@@ -30,13 +30,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ValidationError
 
 from ..base import Incorporator
 from ..io.config_paths import resolve_config_paths
 from ._pipeline_config import parse_pipeline_config
+
+if TYPE_CHECKING:
+    from ..tideweaver.watershed import Watershed
 
 logger = logging.getLogger(__name__)
 
@@ -92,18 +95,22 @@ def validate_config(
     config: dict[str, Any],
     config_dir: Path,
     config_type: ConfigType | None = None,
-) -> tuple[ConfigType, list[str]]:
+) -> tuple[ConfigType, list[str], Watershed | None]:
     """Run the right validator for ``config`` (auto-detect type if not given).
 
-    Returns (detected_type, errors). An empty error list means the config is
-    valid and ready to execute.
+    Returns (detected_type, errors, watershed). An empty error list means the
+    config is valid and ready to execute. ``watershed`` is the already-built
+    :class:`~incorporator.tideweaver.watershed.Watershed` for the
+    ``"tideweaver"`` branch (so callers like ``tideweaver run`` don't have to
+    build it a second time) and ``None`` for ``"stream"``/``"fjord"``.
     """
     detected = config_type or autodetect_type(config)
     if detected == "fjord":
-        return detected, validate_fjord_config(config, config_dir)
+        return detected, validate_fjord_config(config, config_dir), None
     if detected == "tideweaver":
-        return detected, validate_watershed_config(config, config_dir)
-    return detected, validate_stream_config(config, config_dir)
+        errors, watershed = _validate_and_build_watershed(config, config_dir)
+        return detected, errors, watershed
+    return detected, validate_stream_config(config, config_dir), None
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +254,7 @@ def _collect_current_entries(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return entries
 
 
-def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[str]:
+def _validate_and_build_watershed(config: dict[str, Any], config_dir: Path) -> tuple[list[str], Watershed | None]:
     """Structural validation for an ``incorporator tideweaver`` watershed.json.
 
     Delegates to
@@ -260,9 +267,16 @@ def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[
     enforce arity; the arity check is in
     ``incorporator.usercode.load_outflow_module``).
 
-    Returns one error per failure — usually the first one
-    ``build_watershed`` hits.  Multi-error reports are not promised; the
-    caller is expected to fix one issue at a time.
+    Returns ``(errors, watershed)``.  ``watershed`` is ``None`` only when
+    ``build_watershed`` itself raised; when it succeeds, ``watershed`` is
+    populated even if the arity/unknown-key checks below still append to
+    ``errors`` (those are advisory, not build failures) — callers must gate
+    on ``errors`` being empty, not on ``watershed is not None`` alone,
+    before trusting it's safe to run.
+
+    Errors are usually just the first one ``build_watershed`` hits;
+    multi-error reports are not promised — the caller is expected to fix
+    one issue at a time.
     """
     errors: list[str] = []
 
@@ -274,7 +288,7 @@ def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[
         watershed = build_watershed(config, config_dir)
     except (FileNotFoundError, ValueError, KeyError, TypeError, ValidationError) as exc:
         errors.append(str(exc))
-        return errors
+        return errors, None
 
     # Unknown-key WARNING: walk every current entry and warn on keys that are
     # not in _KNOWN_CURRENT_KEYS and do not start with '_' (comment/doc keys).
@@ -302,6 +316,18 @@ def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[
         except (FileNotFoundError, ImportError, ValueError) as exc:
             errors.append(str(exc))
 
+    return errors, watershed
+
+
+def validate_watershed_config(config: dict[str, Any], config_dir: Path) -> list[str]:
+    """Structural validation for an ``incorporator tideweaver`` watershed.json.
+
+    Thin wrapper around :func:`_validate_and_build_watershed` that discards
+    the built :class:`~incorporator.tideweaver.watershed.Watershed` —
+    preserved for the standalone validate commands and existing test call
+    sites that only need the error list.
+    """
+    errors, _ = _validate_and_build_watershed(config, config_dir)
     return errors
 
 

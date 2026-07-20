@@ -21,7 +21,6 @@ from incorporator._deps.typer import TYPER as _typer
 
 from ..io.config_paths import resolve_output_path
 from ..tideweaver import LoggedTideweaver, Tide, Tideweaver
-from ..tideweaver.config import build_watershed
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +85,12 @@ async def _run_tideweaver(
     from .runners import _load_pipeline_config, _run_validation
 
     raw_config = _load_pipeline_config(config_path)
-    _run_validation(raw_config, config_path.parent.resolve(), type_override="tideweaver")
-    watershed = build_watershed(raw_config, config_path.parent.resolve())
+    _, watershed = _run_validation(raw_config, config_path.parent.resolve(), type_override="tideweaver")
+    if watershed is None:
+        # Unreachable: type_override="tideweaver" makes _run_validation either
+        # sys.exit(1) on error or return a built Watershed — never both-None-and-no-exit.
+        # Narrows the type for mypy below.
+        raise RuntimeError("Watershed validation returned no errors but no built Watershed.")
     if drain_timeout_override is not None:
         # Watershed is not frozen — direct assignment is the contract here.
         watershed.drain_timeout = drain_timeout_override

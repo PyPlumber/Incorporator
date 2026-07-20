@@ -206,7 +206,7 @@ if typer:
         Exits 0 if the config is valid, 1 with a diagnostic report otherwise.
         """
         pipeline_config = _load_pipeline_config(config)
-        detected = _run_validation(pipeline_config, config.parent.resolve(), type_override=type_)
+        detected, _ = _run_validation(pipeline_config, config.parent.resolve(), type_override=type_)
         typer.secho(f"{config} is valid ({detected}).", fg=typer.colors.GREEN)
 
     @app.command()  # type: ignore[untyped-decorator]
