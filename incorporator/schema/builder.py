@@ -177,7 +177,16 @@ def apply_etl_transformations(
     if not items:
         return parsed_data
 
-    dict_items: list[dict[str, Any]] = [i for i in items if isinstance(i, dict)]
+    dict_items: list[dict[str, Any]]
+    if all(isinstance(i, dict) for i in items):
+        # All-dict is the overwhelmingly common path; alias directly instead of
+        # allocating a parallel ref-list — safe because nothing below mutates
+        # the structure of `items` (no append/remove), only in-place dict
+        # mutation via shared references, and the final `return` below returns
+        # `items`, not `dict_items`.
+        dict_items = items
+    else:
+        dict_items = [i for i in items if isinstance(i, dict)]
     if not dict_items:
         return items if isinstance(parsed_data, list) else items[0]
 
