@@ -58,7 +58,7 @@ from typing import Any, cast
 from .io.pagination.base import AsyncPaginator
 
 
-def load_user_module(path: str | Path, *, name_hint: str = "_inc_user_module") -> ModuleType:
+def load_user_module(path: str | Path) -> ModuleType:
     """Import a path-anchored ``.py`` file and return its module object.
 
     Single-source loader for every sidecar file the framework accepts:
@@ -66,18 +66,35 @@ def load_user_module(path: str | Path, *, name_hint: str = "_inc_user_module") -
     subclasses + fjord ``outflow(state)`` plus optional ``transform()``
     hook for export).
 
-    **Per-path caching.** The loader registers each module under
-    ``sys.modules`` keyed by a hash of the resolved absolute path, so
-    repeated calls with the same path return the cached module object
-    without re-executing the file.  Stream and fjord daemons therefore
-    pay the import cost exactly once per session even when ``inflow=``
-    is threaded through every chunk.
+    **Per-path caching, keyed on identity alone.** The loader registers
+    each module under ``sys.modules`` keyed SOLELY by a digest of the
+    resolved absolute path — no caller-supplied name enters the key — so
+    the SAME physical file loaded through two different framework entry
+    points (e.g. :func:`load_outflow_module` and then
+    :func:`apply_code_transform` against the same ``outflow.py``) returns
+    the IDENTICAL module object with IDENTICAL class objects. This matters
+    because downstream consumers (the Tideweaver Fjord current, the token
+    resolver, class-name lookups) all resolve classes by getattr-ing a
+    loaded sidecar module; two module copies of one file would mean two
+    non-interchangeable copies of every class it defines.
+
+    **``__main__`` short-circuit.** When ``path`` is the SAME file already
+    running as ``__main__`` (a user's direct ``python entry.py`` run that
+    also calls into the framework, e.g. via ``asyncio.run(main())``), this
+    returns that ``__main__`` module directly instead of ``exec``-ing a
+    second copy — so the classes the framework resolves from the file ARE
+    the classes the user's own top-level code declared, and share the
+    same (non-weak-ref-orphaned) ``inc_dict``.
+
+    **Sidecar-relative imports.** Before executing a freshly loaded file
+    (first load only — cached and ``__main__`` returns skip this), its own
+    parent directory is inserted at ``sys.path[0]`` if not already present,
+    so a bare top-level ``import sibling`` inside the sidecar resolves
+    without the file having to hand-roll its own
+    ``sys.path.insert(0, str(Path(__file__).parent))`` guard.
 
     Args:
         path: Absolute or relative path to a ``.py`` file.
-        name_hint: A unique module name prefix used in ``sys.modules``.
-            The final cache key combines this with a digest of the
-            resolved path so different sidecar files don't collide.
 
     Returns:
         The loaded module object.
@@ -92,10 +109,19 @@ def load_user_module(path: str | Path, *, name_hint: str = "_inc_user_module") -
     if not code_path.is_file():
         raise FileNotFoundError(f"[Incorporator] sidecar file not found: {code_path}")
 
-    cache_key = f"{name_hint}_{abs(hash(str(code_path)))}"
+    cache_key = f"_inc_user_module_{abs(hash(str(code_path)))}"
     cached = sys.modules.get(cache_key)
     if cached is not None:
         return cached
+
+    main_module = sys.modules.get("__main__")
+    if main_module is not None:
+        main_file = getattr(main_module, "__file__", None)
+        if main_file is not None and Path(main_file).resolve() == code_path:
+            # Same file as the running entry point — share its class
+            # objects rather than exec-ing a disconnected second copy.
+            sys.modules[cache_key] = main_module
+            return main_module
 
     spec = importlib.util.spec_from_file_location(cache_key, code_path)
     if spec is None or spec.loader is None:
@@ -106,6 +132,15 @@ def load_user_module(path: str | Path, *, name_hint: str = "_inc_user_module") -
     # user file and ensures the cache check above sees the module on the
     # next call.
     sys.modules[cache_key] = module
+
+    # Mirror how `python entry.py` itself prepends the script's own
+    # directory to sys.path for the life of the process — a sidecar's
+    # bare `import sibling` should work the same way, without the user
+    # hand-writing a sys.path guard.
+    sidecar_dir = str(code_path.parent)
+    if sidecar_dir not in sys.path:
+        sys.path.insert(0, sidecar_dir)
+
     try:
         spec.loader.exec_module(module)
     except Exception:
@@ -250,7 +285,7 @@ def apply_inflow_resolution(
     """
     from .cli.tokens import resolve_tokens
 
-    module = load_user_module(inflow, name_hint="_inc_trinity_inflow")
+    module = load_user_module(inflow)
     extra_names = extract_public_names(module)
     resolved_conv = cast(
         dict[str, Any] | None,
@@ -291,7 +326,7 @@ def apply_code_transform(
         ValueError: If ``transform`` is defined but takes the wrong number
             of parameters.
     """
-    module = load_user_module(outflow, name_hint="_inc_code_transform")
+    module = load_user_module(outflow)
     transform_fn = _extract_user_callable(
         module, name="transform", required=False, param_label="instances", source_path=outflow
     )
@@ -320,7 +355,7 @@ def load_outflow_module(outflow: str | Path) -> tuple[Callable[[Any], Any], Modu
         ValueError: ``outflow`` is missing the top-level ``outflow(state)``
             function or it has the wrong arity.
     """
-    module = load_user_module(outflow, name_hint="_inc_fjord_outflow")
+    module = load_user_module(outflow)
     outflow_fn = _extract_user_callable(module, name="outflow", required=True, param_label="state", source_path=outflow)
     # ``required=True`` guarantees a non-None return; mypy needs the cast.
     return cast(Callable[[Any], Any], outflow_fn), module
@@ -351,7 +386,7 @@ def load_inflow_callable(inflow: str | Path) -> Callable[[Any], Any] | None:
         ImportError: The file cannot be loaded as a Python module.
         ValueError: ``inflow`` is defined but has the wrong arity.
     """
-    module = load_user_module(inflow, name_hint="_inc_fjord_inflow")
+    module = load_user_module(inflow)
     return _extract_user_callable(module, name="inflow", required=False, param_label="state", source_path=inflow)
 
 

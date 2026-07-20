@@ -71,7 +71,7 @@ def test_inflow_calc_reducer_lands_in_csv(tmp_path: Path) -> None:
 
     # Simulate the CLI's load-and-resolve pipeline: load inflow → resolve
     # the conv_dict text token → pass real callables to incorp().
-    module = load_user_module(inflow_py, name_hint="_test_inflow")
+    module = load_user_module(inflow_py)
     extra_names = extract_public_names(module)
     raw_conv = {"stats": "calc(calculate_bst, 'stats', default=0, target_type=int)"}
     resolved_conv = resolve_tokens(raw_conv, extra_names=extra_names)

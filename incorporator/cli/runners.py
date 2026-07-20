@@ -286,15 +286,13 @@ def _load_user_module(outflow_path: Path) -> Any:
     subclasses and to make the ``outflow(state)`` function available to
     :meth:`Incorporator.fjord`.
 
-    Deliberately omits a custom ``name_hint`` so this hits the SAME
-    ``sys.modules`` cache entry that ``_load_pipeline_config``'s earlier
-    ``merge_sidecar_extra_names(...)`` call already populated for this path
-    (default hint).  A diverging hint would ``exec`` a second, independent
-    module object — so a token-resolved ``conv_dict`` helper referencing a
-    class by name (e.g. ``Coin``) would close over a phantom ``Coin`` whose
-    ``inc_dict`` never receives the rows the engine actually seeds into the
-    class resolved here.  Mirrors the same-hint precedent in
-    :func:`incorporator.tideweaver.config.build_watershed`.
+    ``load_user_module`` caches purely on the resolved absolute path, so
+    this call always hits the SAME ``sys.modules`` entry that
+    ``_load_pipeline_config``'s earlier ``merge_sidecar_extra_names(...)``
+    call already populated for this path — a token-resolved ``conv_dict``
+    helper referencing a class by name (e.g. ``Coin``) closes over the
+    exact class object the engine seeds rows into, regardless of which
+    entry point loaded the file first.
     """
     from ..usercode import load_user_module as _ucm_load_user_module
 

@@ -1389,7 +1389,7 @@ class Incorporator(BaseModel):
         if outflow is not None:
             from .usercode import load_user_module, pascal_case_from_stem
 
-            outflow_user_module = load_user_module(outflow, name_hint="_inc_stream_outflow")
+            outflow_user_module = load_user_module(outflow)
             preferred_name = pascal_case_from_stem(outflow)
             candidate = getattr(outflow_user_module, preferred_name, None)
             if not (isinstance(candidate, type) and issubclass(candidate, Incorporator)):
