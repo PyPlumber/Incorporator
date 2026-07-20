@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import ipaddress
 import logging
 import re
@@ -215,6 +216,21 @@ def _is_retryable_error(exc: BaseException, method: str) -> bool:
     return _is_network_class_error(exc, method)
 
 
+# Both builders below return closures that read ONLY the ``retry_state``
+# argument tenacity passes in at call time (plus the immutable ``method``
+# str and, for ``_make_http_wait``, two ``wait_random_exponential``
+# instances whose own ``__call__`` reads only ``retry_state.attempt_number``
+# and its own construction-time-frozen multiplier/min/max) — no per-call
+# mutable state, so the callables are safe to build once per HTTP method
+# and share across every concurrent/sequential ``execute_request`` call.
+# ``AsyncRetrying`` itself is deliberately NOT memoized here: its
+# ``.statistics`` dict and ``.iter_state`` (a ``threading.local``, shared
+# across coroutines cooperatively scheduled on the same event-loop thread)
+# are per-instance mutable state that ``execute_request`` reads after the
+# loop completes — sharing one ``AsyncRetrying`` object across concurrent
+# requests would corrupt those reads. Do not "complete" this optimization
+# by extending the cache to ``AsyncRetrying``.
+@functools.cache
 def _make_http_stop(method: str) -> Callable[[RetryCallState], bool]:
     """Return a tenacity stop callable that dispatches per-class attempt caps.
 
@@ -251,6 +267,7 @@ def _make_http_stop(method: str) -> Callable[[RetryCallState], bool]:
     return _stop
 
 
+@functools.cache
 def _make_http_wait(method: str) -> Callable[[RetryCallState], float]:
     """Return a tenacity wait callable that dispatches per-class backoff bounds.
 
@@ -609,8 +626,8 @@ async def execute_request(
         httpx.RequestError: For network-layer failures after all retries are exhausted.
     """
     retrying = AsyncRetrying(
-        stop=_make_http_stop(method),
-        wait=_make_http_wait(method),
+        stop=_make_http_stop(method.upper()),
+        wait=_make_http_wait(method.upper()),
         retry=retry_if_exception(lambda exc: _is_retryable_error(exc, method)),
         reraise=True,
     )
