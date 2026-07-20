@@ -59,18 +59,17 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
 
     Returns:
         Up to 100 rows, one per CoinGecko asset, sorted by ``market_cap_rank``
-        ascending, or an empty list before ``crypto_assets`` has fired.
-        ``usdt_*``/``usdc_*`` are legitimately ``None`` for assets not listed
-        on binance.us under that quote currency -- real sparse data, not a
-        bug (newer tokens may only have a USDT book, no USDC book yet).
+        ascending. ``usdt_*``/``usdc_*`` are legitimately ``None`` for assets
+        not listed on binance.us under that quote currency -- real sparse
+        data, not a bug (newer tokens may only have a USDT book, no USDC
+        book yet).
 
-    The readiness guard only checks ``assets`` -- ``liquidity``'s
-    ``parent_currents`` already hard-gates this current's first wave behind
-    all three upstreams having ticked at least once, so ``binance_stats``/
-    ``binance_books`` have always fired by the time this function runs at
-    all. Any residual per-symbol miss is a real sparse-data case, resolved
-    per-row by the ``.get(...)`` lookups below returning ``None``, not
-    something a broader readiness check would catch.
+    ``liquidity``'s ``parent_currents`` hard-gates this current's first wave
+    behind all three upstreams having ticked at least once, so
+    ``binance_stats``/``binance_books``/``crypto_assets`` have always fired
+    by the time this function runs at all -- no readiness guard needed here.
+    Any per-symbol miss is a real sparse-data case, resolved per-row by the
+    ``.get(...)`` lookups below returning ``None``.
 
     ``symbol`` arrives pre-uppercased (``crypto_assets``' own static
     ``conv_dict`` in ``watershed.json`` runs ``calc(upper_symbol, ...)``),
@@ -93,8 +92,6 @@ def outflow(state: dict[str, Any]) -> list[dict[str, Any]]:
     keys returned below ARE its export shape.
     """
     assets = state["CryptoAsset"]
-    if not assets:
-        return []
 
     rows: list[dict[str, Any]] = []
     for asset in assets:

@@ -8,12 +8,13 @@ defined ONCE, in ``pokeapi_etl_calc.py``. This module only re-exports them
 (``"calc(calculate_bst, 'stats', ...)"``), so the reflective resolver needs
 these names importable from this file even though the logic lives elsewhere.
 
-``incorporator tideweaver run watershed.json`` imports this module at
-config-load time (unlike the Python entry, which is never imported by the
-CLI path), so the host-throttle registration in ``pokeapi_etl_calc.py`` --
-which runs as an import side effect the moment the line below executes -- is
-the ONLY thing that paces the CLI path's 150 concurrent detail requests;
-this file must not register its own, redundant throttle.
+``watershed.json``'s own ``host_penstocks`` block is what paces the CLI
+path's 150 concurrent detail requests -- a declarative registration at
+config-load time, no sidecar import side effect required. Importing
+``pokeapi_etl_calc`` below still re-registers the same host at the same
+rate as a side effect (it serves the Python entry, which never reads
+``watershed.json``); registration is a plain dict overwrite, so the
+duplicate is a harmless no-op, not a conflict.
 
 ``nav`` fetches all 150 rows in one ``?limit=150`` call rather than 3
 paginated ``?limit=50`` pages (unlike the Python entry's ``NextUrlPaginator``

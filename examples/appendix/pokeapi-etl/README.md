@@ -232,6 +232,11 @@ Run the CLI form from this directory (not the repo root) so
 `pokeapi_etl_calc.py` rather than redefining them, so both entry forms
 operate on the exact same class/function objects (same pattern as
 [Tutorial 5's `inflow.py`](../../05-parent-child-drilling/inflow.py)).
+`watershed.json`'s top-level `host_penstocks` block declares the same
+`pokeapi.co` 1.5 req/sec limit the Python entry sets via
+`register_host_penstock` — the CLI form paces itself from config, no
+sidecar side effect required (the Python entry keeps its own call; that
+path never reads `watershed.json`).
 `watershed.json`'s `"pokemon"` current is a `Stream(parent_current="nav")`
 T5-style drill; its own export is never consumed by the scheduler, so a
 separate `export_pokemon` current (`verb: "export"`, `depends_on:

@@ -8,6 +8,9 @@
   "inflow": "inflow.py",
   "gate_mode": "hard",
   "drain_timeout": 45,
+  "host_penstocks": {
+    "pokeapi.co": {"rate_per_sec": 1.5}
+  },
 
   "currents": [
     {
@@ -21,8 +24,7 @@
         "rec_path": "results",
         "inc_code": "name",
         "inc_name": "name",
-        "inc_child": "url",
-        "requests_per_second": 1.5
+        "inc_child": "url"
       }
     },
     {
@@ -41,8 +43,7 @@
           "stats": "calc(calculate_bst, 'stats', default=0, target_type=int)",
           "types": "calc(format_typing, 'types', default='Unknown', target_type=str)"
         },
-        "name_chg": [["stats", "base_stat_total"]],
-        "requests_per_second": 1.5
+        "name_chg": [["stats", "base_stat_total"]]
       }
     },
     {

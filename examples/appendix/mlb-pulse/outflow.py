@@ -15,31 +15,15 @@ JSON config needs (``window_start``/``window_end``) and the fjord's
 READ-TIME, once per wave, directly against the live class-level graph maps
 (``MLBAllTeam.inc_dict`` / ``MLBHitting.inc_dict`` / ``MLBPitching.inc_dict``),
 no intermediate link ops.
-
-**Why the ``sys.path.insert`` below is still here.** A real
-``incorporator tideweaver run watershed.json`` load goes through
-``load_user_module``, which since ``e6ab772`` caches purely on resolved
-file path, short-circuits to an already-running ``__main__``, and
-auto-inserts each sidecar's own directory onto ``sys.path`` -- no guard
-needed there. This file's guard survives only because
-``tests/public/api/test_mlb_pulse_etl.py`` loads it through
-``tests/helpers.py``'s ``load_sidecar``, a separate, bespoke
-``importlib`` loader that never got that fix.
 """
 
 from __future__ import annotations
 
 import operator
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
-HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-
-from mlb_pulse import (  # noqa: E402
+from mlb_pulse import (
     MLBAllTeam,
     MLBHitting,
     MLBPitching,

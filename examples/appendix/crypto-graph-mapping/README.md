@@ -119,7 +119,7 @@ Look at the execution order. **Incorporator makes 3 API calls total:**
 
 When it hits the `link_to` configuration, **it disconnects from the network.** It synthesizes the target string (e.g., `"BTCUSDT"`) and searches Incorporator's internal RAM registry (`inc_dict`). All 400 mappings execute as `O(1)` dict lookups, completely bypassing server rate limits.
 
-The single live source that *does* hit the network — CoinGecko — is paced by a `register_host_penstock("api.coingecko.com", rate_per_sec=0.2)` registered up top, keeping it under the 5-15/min free-tier ceiling. The penstock guards the one real call; `link_to` makes the other 400 mappings free.
+The single live source that *does* hit the network — CoinGecko — is paced by a `register_host_penstock("api.coingecko.com", rate_per_sec=0.2)` registered up top, keeping it under the 5-15/min free-tier ceiling. The penstock guards the one real call; `link_to` makes the other 400 mappings free. `watershed.json`'s `host_penstocks` block declares the same limit declaratively for the CLI form, which paces itself from config at load time rather than relying on the transitive import side effect (harmless if both fire — registration is a plain dict overwrite).
 
 > **Strong-ref note.** `inc_dict` is a `WeakValueDictionary` ([T1's runtime contract](../../01-first-steps/README.md#step-3-apply-the-recommendations-with-incorp) has the canonical lifecycle treatment). As long as `binance_stats` and `binance_books` are held as `main()`'s own locals for the duration of the `CryptoAsset.incorp()` call (they are — both are awaited a few lines above and stay in scope), every record stays resident and `link_to` resolves cleanly. Drop those references and the registries can be garbage-collected mid-traversal.
 
@@ -226,21 +226,11 @@ does no coercion of its own.
 `BinanceStat`/`BinanceBook`/`CryptoAsset`/`CryptoLiquidity` and the
 join-token helper the `conv_dict`/`outflow(state)` reference (`upper_symbol`)
 are defined exactly once, in `crypto_graph_mapping.py`. `outflow.py` does not
-redefine them — it `import`s them and re-exports the names, so the CLI's
-class/token resolvers see the same class objects the Python entry point
-uses. This matters because `outflow.py` gets loaded (`exec_module`'d)
-multiple times per run under distinct `sys.modules` keys; a class *defined
-inside* `outflow.py` would become a different class object on each load,
-while a plain `import` of `crypto_graph_mapping` always resolves through
-Python's own module cache to the same object. `outflow.py`'s docstring
-spells this out in full.
-
-Because `outflow.py` needs to `import crypto_graph_mapping` — the mirror
-image of every other tutorial sidecar, which gets imported *from* the
-main script — `outflow.py` inserts its own directory onto `sys.path`
-before that import (guarded against a double insert). See
-[Tutorial 11](../../11-tideweaver/README.md)'s `arb_scanner.py` for the
-standard direction of this idiom, which this appendix deliberately flips.
+redefine them — it `import`s them and re-exports the names (a bare
+`from crypto_graph_mapping import (...)`, no `sys.path` boilerplate: the
+loader auto-inserts each sidecar's own directory on `sys.path` and keys
+module identity on the resolved file path), so the CLI's class/token
+resolvers see the same class objects the Python entry point uses.
 
 **Why the two entry points join differently, on purpose.** `main()` in
 `crypto_graph_mapping.py` uses `link_to` inside a build-time `conv_dict` — it

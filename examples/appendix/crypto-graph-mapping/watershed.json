@@ -7,6 +7,9 @@
   "shape": "parallel",
   "outflow": "outflow.py",
   "drain_timeout": 25,
+  "host_penstocks": {
+    "api.coingecko.com": {"rate_per_sec": 0.2}
+  },
 
   "currents": [
     {

@@ -160,7 +160,7 @@ class-level `inc_dict` graph map because the join needs O(1) lookups by
 | **Read-time join in the tail Fjord** | `outflow(state)` joins 4 graph maps (`MLBStandings` list + `MLBAllTeam`/`MLBHitting`/`MLBPitching` class-handle lookups) into ranked Pulse Cards — exactly the verb doctrine's "fjords manipulate the export." |
 | **Bare fjord row class** | `TeamPulseCard` declares no fields; `outflow(state)`'s returned dict keys are its export shape. |
 | **`LoggedTideweaver` + `architect.tune()`** | Disk-JSONL telemetry (`logs/MLBPulse_*.log`) plus post-run tuning feedback closing the probe → run → tune loop. |
-| **Polite host throttle** | `register_host_penstock("statsapi.mlb.com", rate_per_sec=1.0)` — MLB Stats API is unauthenticated and undocumented; 1 req/sec is the polite default. |
+| **Polite host throttle** | `register_host_penstock("statsapi.mlb.com", rate_per_sec=1.0)` in the Python entry; the CLI form declares the same limit declaratively via `watershed.json`'s `host_penstocks` block — MLB Stats API is unauthenticated and undocumented, 1 req/sec is the polite default. |
 
 ---
 

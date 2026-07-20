@@ -8,6 +8,9 @@
   "outflow": "outflow.py",
   "drain_timeout": 15,
   "gate_mode": "weir",
+  "host_penstocks": {
+    "statsapi.mlb.com": {"rate_per_sec": 1.0}
+  },
 
   "head": {
     "name": "al_teams",

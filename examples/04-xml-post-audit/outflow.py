@@ -11,37 +11,17 @@ own loop via ``asyncio.run()`` -- the host throttle registered in
 ``nhtsa_post_audit.py`` still applies correctly, since importing that
 module runs its module-level ``register_host_penstock(...)`` call as a
 side effect.
-
-**Why the ``sys.path.insert`` below is still here.** Real framework/CLI
-loads (``incorporator fjord run`` via :meth:`Incorporator.fjord`) go
-through ``load_user_module``, which since ``e6ab772`` caches purely on
-resolved file path, short-circuits to an already-running ``__main__``,
-and auto-inserts each sidecar's own directory onto ``sys.path`` -- no
-guard needed there. This file's guard survives only because
-``incorporator fjord validate`` / ``incorporator tideweaver validate``
-route ``pipeline.json`` through a *different*, bespoke loader
-(``incorporator/cli/validate.py``'s ``_import_module``) that hand-rolls
-its own ``importlib.util.spec_from_file_location`` call and never got
-that fix. Until that validation path is unified onto
-``load_user_module``, this sidecar needs its own sibling-dir insert to
-survive ``incorporator fjord validate pipeline.json``.
 """
 
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 from typing import Any
 
-HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
+from nhtsa_post_audit import Invoice, NHTSASpec, to_upper
 
-from nhtsa_post_audit import Invoice, NHTSASpec, to_upper  # noqa: E402
-
-from incorporator.schema.converters import calc  # noqa: E402
-from incorporator.schema.extractors import join_all  # noqa: E402
+from incorporator.schema.converters import calc
+from incorporator.schema.extractors import join_all
 
 __all__ = ["Invoice", "NHTSASpec", "to_upper", "outflow"]
 
