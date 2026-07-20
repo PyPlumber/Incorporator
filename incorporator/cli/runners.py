@@ -41,6 +41,20 @@ def set_json_output_mode(enabled: bool) -> None:
     _JSON_OUTPUT_MODE = enabled
 
 
+def configure_logs_option(enabled: bool) -> None:
+    """Configure the root logger for ``--logs``, shared by ``stream``/``fjord``/``tideweaver run``.
+
+    When ``enabled`` is ``True``, installs an INFO-level root handler via
+    ``logging.basicConfig`` so module-logger diagnostics (drain-timeout parse
+    warnings, unknown-current-key typos, source-load-failure summaries) reach
+    the console instead of being swallowed by Python's default "no handler"
+    behavior.  A no-op when ``enabled`` is ``False`` — preserves the current
+    default (no root handler installed) exactly.
+    """
+    if enabled:
+        logging.basicConfig(level=logging.INFO)
+
+
 def _err(msg: str, fg: Any = None) -> None:
     """Print a status or error message.
 

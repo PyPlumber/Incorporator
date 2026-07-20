@@ -183,6 +183,9 @@ def build_app() -> Any:
         from .runners import set_json_output_mode
 
         set_json_output_mode(json_output)
+        from .runners import configure_logs_option
+
+        configure_logs_option(logs)
         if not config.is_file():
             _typer.secho(f"Error: Configuration file not found at {config}", fg=_typer.colors.RED)
             sys.exit(1)

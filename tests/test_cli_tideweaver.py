@@ -176,6 +176,43 @@ def test_cli_tideweaver_run_json_output_stdout_is_pure_ndjson_on_config_error(tm
     assert result.stdout.strip() == "", f"stdout must stay empty under --json-output on error; got: {result.stdout!r}"
 
 
+def test_cli_tideweaver_run_logs_flag_wires_configure_logs_option(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PIN: --logs fires the shared `configure_logs_option` helper.
+
+    Monkeypatches the shared helper (rather than asserting on real log
+    output, which would fight pytest's own root-logger handler) and confirms
+    it is called with ``enabled=True`` under ``--logs``.
+    """
+    from incorporator.cli import runners as runners_mod
+
+    calls: list[bool] = []
+    monkeypatch.setattr(runners_mod, "configure_logs_option", calls.append)
+    cfg = _write_watershed_fixture(tmp_path)
+
+    result = runner.invoke(app, ["tideweaver", "run", str(cfg), "--logs"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [True]
+
+
+def test_cli_tideweaver_run_without_logs_flag_calls_helper_with_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without --logs, `configure_logs_option` is still called, but with `enabled=False` (a no-op)."""
+    from incorporator.cli import runners as runners_mod
+
+    calls: list[bool] = []
+    monkeypatch.setattr(runners_mod, "configure_logs_option", calls.append)
+    cfg = _write_watershed_fixture(tmp_path)
+
+    result = runner.invoke(app, ["tideweaver", "run", str(cfg)])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [False]
+
+
 # ---------------------------------------------------------------------------
 # Heartbeat file
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ from .runners import (
     _run_fjord,
     _run_stream,
     _run_validation,
+    configure_logs_option,
     set_json_output_mode,
 )
 from .scaffold import write_scaffold
@@ -53,6 +54,7 @@ __all__ = [
     "_run_fjord",
     "_run_stream",
     "_run_validation",
+    "configure_logs_option",
 ]
 
 if typer:
@@ -120,6 +122,7 @@ if typer:
         Execute an Autonomous Pipeline Stream from a JSON configuration file.
         """
         set_json_output_mode(json_output)
+        configure_logs_option(logs)
 
         pipeline_config = _load_pipeline_config(config)
         _run_validation(pipeline_config, config.parent.resolve(), type_override="stream")
@@ -166,12 +169,10 @@ if typer:
           - refresh_interval / export_interval (floats, optional): daemon cadence.
         """
         set_json_output_mode(json_output)
+        configure_logs_option(logs)
 
         pipeline_config = _load_pipeline_config(config)
         _run_validation(pipeline_config, config.parent.resolve(), type_override="fjord")
-
-        if logs:
-            logging.basicConfig(level=logging.INFO)
 
         try:
             asyncio.run(

@@ -534,6 +534,49 @@ def test_cli_fjord_json_output_stdout_is_pure_ndjson(tmp_path: Path) -> None:
     assert "Starting Incorporator Fjord" in result.stderr
 
 
+def test_cli_stream_logs_flag_wires_configure_logs_option(tmp_path: Path) -> None:
+    """PIN: `stream --logs` fires the shared `configure_logs_option` helper.
+
+    Before this fix, `stream` never configured a root logging handler on
+    `--logs` at all. Monkeypatches the shared helper (rather than asserting
+    on real log output, which would fight pytest's own root-logger handler)
+    and confirms it is called with `enabled=True` under `--logs`.
+    """
+    config_file = tmp_path / "pipeline.json"
+    config_file.write_text(json.dumps({"incorp_params": {"inc_url": "https://dummy.api"}}), encoding="utf-8")
+
+    calls: list[bool] = []
+    with (
+        patch("incorporator.cli.configure_logs_option", new=calls.append),
+        patch("incorporator.cli.LoggedIncorporator.stream", new=mock_stream),
+    ):
+        result = runner.invoke(app, ["stream", str(config_file), "--logs"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [True]
+
+
+def test_cli_fjord_logs_flag_wires_configure_logs_option(tmp_path: Path) -> None:
+    """PIN: `fjord --logs` fires the shared `configure_logs_option` helper.
+
+    Before this fix, `fjord`'s inline `logging.basicConfig` call ran AFTER
+    `_run_validation`, missing any warning emitted during validation.
+    Monkeypatches the shared helper and confirms it is called with
+    `enabled=True` under `--logs`.
+    """
+    config, _ = _write_fjord_fixture(tmp_path)
+
+    calls: list[bool] = []
+    with (
+        patch("incorporator.cli.configure_logs_option", new=calls.append),
+        patch("incorporator.cli.LoggedIncorporator.fjord", new=mock_fjord),
+    ):
+        result = runner.invoke(app, ["fjord", str(config), "--logs"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [True]
+
+
 # ==========================================
 # HEARTBEAT FILE
 # ==========================================
