@@ -10,9 +10,9 @@ functions on them, and flatten them into simple strings and integers.
 
 ``Nav``/``Pokemon`` and the ``calculate_bst``/``format_typing`` reducers are
 defined ONCE, here. ``inflow.py`` (the sibling CLI sidecar for
-``watershed.json``) re-exports them via a guarded ``sys.path.insert`` + plain
-import, rather than redefining them, so both entry forms operate on the exact
-same class/function objects -- see ``inflow.py``'s own docstring. This file
+``watershed.json``) re-exports them via a plain import, rather than
+redefining them, so both entry forms operate on the exact same
+class/function objects -- see ``inflow.py``'s own docstring. This file
 never builds a Watershed in-process -- ``incorporator tideweaver run
 watershed.json`` is a separate CLI process that imports FROM here, the same
 direction as ``examples/05-parent-child-drilling``.

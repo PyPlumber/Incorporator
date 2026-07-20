@@ -30,7 +30,6 @@ Outputs (in ``out/`` next to this script — gitignored, inspect with any tool):
 """
 
 import asyncio
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -38,12 +37,6 @@ from incorporator import Incorporator, calc, inc
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "out"  # examples/09-nascar-fantasy-fjord/out/
-
-# Sibling sidecar import — Python only auto-adds HERE to sys.path for the
-# bare ``python <script>`` invocation; explicit insert covers ``python -m``
-# and other launch paths.
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
 
 from outflow import (  # noqa: E402
     BuschStanding,

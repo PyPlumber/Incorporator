@@ -12,22 +12,19 @@ own loop via ``asyncio.run()`` -- the host throttle registered in
 module runs its module-level ``register_host_penstock(...)`` call as a
 side effect.
 
-**Identity safety, and why this arrangement is required, not cosmetic.**
-This file gets ``exec_module``'d under the CLI's default ``name_hint``
-(``incorporator/usercode.py``'s ``load_user_module``), invoked once for
-``merge_sidecar_extra_names`` (token/``cls_name`` resolution) and again
-for :meth:`Incorporator.fjord`'s own load -- both share the same cache
-key here, so there's only one exec in this daemon's case. Importing
-``Invoice``/``NHTSASpec`` (rather than redefining them) still matters:
-Python's own ``sys.modules['nhtsa_post_audit']`` cache guarantees this
-module and ``nhtsa_post_audit.py``'s own code always see the SAME
-canonical class objects, with no risk of drift between the two files'
-conv_dicts.
-
-**The one gap this file works around.** ``load_user_module`` does not add
-this file's own parent directory to ``sys.path`` before running it (unlike
-``python <script>.py``, which auto-prepends the script's directory) -- the
-``sys.path.insert`` below is required, guarded against a double insert.
+**Why the ``sys.path.insert`` below is still here.** Real framework/CLI
+loads (``incorporator fjord run`` via :meth:`Incorporator.fjord`) go
+through ``load_user_module``, which since ``e6ab772`` caches purely on
+resolved file path, short-circuits to an already-running ``__main__``,
+and auto-inserts each sidecar's own directory onto ``sys.path`` -- no
+guard needed there. This file's guard survives only because
+``incorporator fjord validate`` / ``incorporator tideweaver validate``
+route ``pipeline.json`` through a *different*, bespoke loader
+(``incorporator/cli/validate.py``'s ``_import_module``) that hand-rolls
+its own ``importlib.util.spec_from_file_location`` call and never got
+that fix. Until that validation path is unified onto
+``load_user_module``, this sidecar needs its own sibling-dir insert to
+survive ``incorporator fjord validate pipeline.json``.
 """
 
 from __future__ import annotations

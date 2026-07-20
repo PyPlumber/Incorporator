@@ -9,10 +9,10 @@ batched POST via `join_all`, and an O(1) `.inc_dict` join.
 
 ``Invoice``/``NHTSASpec`` and the ``to_upper`` helper are defined ONCE,
 here. ``outflow.py`` (the sibling CLI sidecar for ``pipeline.json``)
-re-exports them via a guarded ``sys.path.insert`` + plain import, rather
-than redefining them, so both entry forms operate on the exact same
-class objects and conv_dict logic (see ``outflow.py``'s docstring for
-why that matters). This file never runs a Fjord/Watershed in-process --
+re-exports them via a plain import, rather than redefining them, so
+both entry forms operate on the exact same class objects and conv_dict
+logic (see ``outflow.py``'s docstring for why that matters). This file
+never runs a Fjord/Watershed in-process --
 ``incorporator fjord pipeline.json`` is a separate CLI process that
 imports FROM here, the same direction as
 ``examples/appendix/crypto-graph-mapping``.

@@ -13,35 +13,14 @@ tokens the JSON config needs (``window_start``/``window_end``) and the
 fjord's ``outflow(state)`` fusion hook -- the cross-venue best-bid/best-ask
 join happens READ-TIME, once per flush, directly against the plain lists
 Tideweaver's Fjord current hands in ``state``.
-
-**Identity safety, and why this arrangement is required, not cosmetic.**
-This file gets ``exec_module``'d 2-3x under distinct ``sys.modules`` keys
-(``usercode.py``'s ``load_user_module``, invoked once each for the class/
-token resolver, and any fjord-outflow path). A class DEFINED here would
-become a distinct class object on every such exec -- an ``issubclass``/
-identity check spanning two of those execs could then silently disagree.
-Because this file only IMPORTS ``arb_scanner``, Python's own module cache
-(``sys.modules['arb_scanner']``, set on first import) guarantees every
-re-exec of this sidecar binds the SAME canonical class objects.
-
-**The one gap this file works around.** ``load_user_module`` does not add
-this file's own parent directory to ``sys.path`` before running it (unlike
-``python <script>.py``, which auto-prepends the script's directory), so the
-guarded ``sys.path.insert`` below is required.
 """
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
-HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-
-from arb_scanner import (  # noqa: E402
+from arb_scanner import (
     BestMarket,
     BinanceBook,
     CoinbaseTicker,

@@ -428,7 +428,7 @@ The three dict keys land verbatim as fjord-built class names and match the keys 
 
 > The full file is [`nascar_fantasy.py`](nascar_fantasy.py) — this walkthrough excerpts the parts that matter.  The module's own docstring (enumerating the advanced fjord capabilities this tutorial demonstrates) is worth reading directly in the file rather than duplicated here.
 
-Three exclusion lists (`_OWNER_EXCL`, `_STANDINGS_EXCL`, `_DRIVER_EXCL`) drop noisy API fields before `conv_dict` runs — see the file for the full lists.  The sibling-sidecar import idiom (`sys.path.insert(0, str(HERE))` before `from outflow import ...`) is also in the file, unchanged from a standard Python script layout.
+Three exclusion lists (`_OWNER_EXCL`, `_STANDINGS_EXCL`, `_DRIVER_EXCL`) drop noisy API fields before `conv_dict` runs — see the file for the full lists.
 
 Static reference data that never refreshes:
 

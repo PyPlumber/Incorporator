@@ -19,35 +19,13 @@ this file must not register its own, redundant throttle.
 paginated ``?limit=50`` pages (unlike the Python entry's ``NextUrlPaginator``
 + ``call_lim=3``), preserving the currently-verified single-tick behavior of
 this watershed.
-
-**Identity safety, and why this arrangement is required, not cosmetic.**
-This file gets ``exec_module``'d under at least two distinct
-``sys.modules`` cache keys within one ``tideweaver run`` invocation --
-``load_watershed``'s config-load-time resolution and each ``Stream``
-tick's own ``apply_inflow_resolution`` call use different ``name_hint``s
-(see ``incorporator/usercode.py``). Because this file only IMPORTS
-``pokeapi_etl_calc`` rather than redefining ``Nav``/``Pokemon``, Python's
-own ``sys.modules['pokeapi_etl_calc']`` cache guarantees every such re-exec
-binds the SAME canonical class objects, so a ``pokemon`` row seeded under
-one exec is visible via ``Pokemon`` resolved under the other.
-
-**The one gap this file works around.** ``load_user_module`` does not add
-this file's own parent directory to ``sys.path`` before running it (unlike
-``python <script>.py``, which auto-prepends the script's directory) -- the
-``sys.path.insert`` below is required, guarded against a double insert.
 """
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-
-from pokeapi_etl_calc import Nav, Pokemon, calculate_bst, format_typing  # noqa: E402
+from pokeapi_etl_calc import Nav, Pokemon, calculate_bst, format_typing
 
 __all__ = ["Nav", "Pokemon", "calculate_bst", "format_typing", "window_start", "window_end"]
 

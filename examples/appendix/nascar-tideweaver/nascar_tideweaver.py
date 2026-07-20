@@ -31,7 +31,6 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -44,23 +43,6 @@ FIXTURES = HERE / "fixtures"
 OUTFLOW_PATH = HERE / "outflow.py"
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
-
-# When run as `python nascar_tideweaver.py`, this module executes as
-# "__main__", so the classes below are NOT registered under
-# sys.modules["nascar_tideweaver"]. The Tideweaver scheduler lazily loads
-# outflow.py from inside the state Fjord's first tick, and outflow.py's
-# "from nascar_tideweaver import ..." would otherwise re-execute this
-# entire file under a fresh "nascar_tideweaver" module name -- a SECOND,
-# DISTINCT copy of LapData/PitStops/FlagEvents/DriverState whose inc_dict
-# graph maps are never populated by the real Streams. Aliasing
-# sys.modules["nascar_tideweaver"] to this already-executed module (before
-# the Watershed's first Fjord tick) makes outflow.py's import resolve to
-# these SAME canonical class objects instead. Only needed for direct
-# script execution -- the CLI form never runs this file as __main__, so
-# outflow.py's import is the first-ever import of "nascar_tideweaver"
-# there and needs no alias.
-if __name__ == "__main__":
-    sys.modules.setdefault("nascar_tideweaver", sys.modules[__name__])
 
 
 # ---------------------------------------------------------------------------

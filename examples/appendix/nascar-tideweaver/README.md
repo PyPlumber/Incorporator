@@ -38,7 +38,6 @@ Three Stream currents feed one Fjord tail. Same shape as the crypto arb scanner;
 
 ```python
 import asyncio
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -50,9 +49,6 @@ FIXTURES = HERE / "fixtures"
 OUTFLOW_PATH = HERE / "outflow.py"
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
-
-if __name__ == "__main__":
-    sys.modules.setdefault("nascar_tideweaver", sys.modules[__name__])
 
 
 class LapData(Incorporator):

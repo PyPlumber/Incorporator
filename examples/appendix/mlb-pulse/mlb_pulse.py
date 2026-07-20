@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -44,21 +43,6 @@ HERE = Path(__file__).resolve().parent
 OUTFLOW_PATH = HERE / "outflow.py"
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
-
-# When run as `python mlb_pulse.py`, this module executes as "__main__", so
-# the classes below are NOT registered under sys.modules["mlb_pulse"]. The
-# Tideweaver scheduler lazily loads outflow.py from inside the pulse Fjord's
-# first tick, and outflow.py's "from mlb_pulse import ..." would otherwise
-# re-execute this entire file under a fresh "mlb_pulse" module name -- a
-# SECOND, DISTINCT copy of MLBAllTeam/MLBHitting/MLBPitching/TeamPulseCard
-# whose inc_dict graph maps are never populated by the real Streams. Aliasing
-# sys.modules["mlb_pulse"] to this already-executed module (before the
-# Watershed's first Fjord tick) makes outflow.py's import resolve to these
-# SAME canonical class objects instead. Only needed for direct script
-# execution -- the CLI form never runs this file as __main__, so outflow.py's
-# import is the first-ever import of "mlb_pulse" there and needs no alias.
-if __name__ == "__main__":
-    sys.modules.setdefault("mlb_pulse", sys.modules[__name__])
 
 # MLB Stats API is unauthenticated and publishes no rate limit; 1 req/sec
 # (60 req/min) is the polite default used elsewhere in this repo for it.

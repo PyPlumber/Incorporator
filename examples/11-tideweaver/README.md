@@ -393,20 +393,13 @@ per-venue field-name params, no `getattr(..., default)`, no `try/except`.
 `normalize_asset`/`_venue_quotes` helpers are defined **once**, in
 `arb_scanner.py` — right next to `main()`'s own `Watershed.diamond(...)` call
 that references them.  `outflow.py` is a pure sidecar: it re-imports those
-same objects via a guarded `sys.path.insert` + `from arb_scanner import
-(...)`, and only defines the CLI-only `window_start`/`window_end` tokens plus
-`outflow(state)` itself:
+same objects via a bare `from arb_scanner import (...)`, and only defines the
+CLI-only `window_start`/`window_end` tokens plus `outflow(state)` itself:
 
 ```python
 # outflow.py
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
-
-HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
 
 from arb_scanner import (
     BestMarket,
@@ -464,22 +457,6 @@ respects the underscore).
 
 A positive `spread_bps` with `arb_opportunity=True` means *the best bid on one venue is
 higher than the best ask on another* — classic cross-venue arb signal.
-
-> **Direct script execution and class identity.**  `arb_scanner.py` defines
-> every `Incorporator` subclass exactly once; `outflow.py` re-imports them, so
-> the CLI's class/token resolvers and the Python entry's own `Watershed` share
-> the same canonical class objects. That sharing depends on
-> `sys.modules["arb_scanner"]` already existing by the time `outflow.py` first
-> imports it — true automatically for the CLI form (which never runs
-> `arb_scanner.py` itself), but **not** true for `python arb_scanner.py`,
-> where this file executes as `sys.modules["__main__"]` rather than
-> `sys.modules["arb_scanner"]`. Without the one-line alias in
-> `arb_scanner.py` (`sys.modules.setdefault("arb_scanner",
-> sys.modules[__name__])`), the Tideweaver scheduler's lazy `outflow.py` load
-> would re-execute this whole file under a second, distinct `arb_scanner`
-> module — its own fresh copies of `BinanceBook`/`CoinbaseTicker`/
-> `KrakenTicker`, with empty `inc_dict` graph maps the real Streams never
-> populate.
 
 > **Missing-peer `KeyError` in `outflow(state)`?**  Same as the fjord verbs (T9, T10):
 > fjord's seed-error formatter rewrites the failed-sources entry to a copy-pasteable

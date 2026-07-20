@@ -32,7 +32,6 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -45,24 +44,6 @@ SNAPSHOT_DIR = HERE / "fixtures"
 OUTFLOW_PATH = HERE / "outflow.py"
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
-
-# Make the sidecar importable when this script is run via ``python -m`` or
-# from a working directory other than HERE.  Python only auto-adds the
-# script's directory to sys.path for ``python <script>`` invocations.
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-
-# When run as `python arb_scanner.py`, this module executes as "__main__", so
-# it is NOT registered under sys.modules["arb_scanner"]. Tideweaver lazily
-# loads outflow.py from inside the best_market Fjord's first tick, and
-# outflow.py's "from arb_scanner import ..." would otherwise re-execute this
-# whole file under a fresh "arb_scanner" module name. Aliasing
-# sys.modules["arb_scanner"] to this already-executed module (before the
-# Watershed's first Fjord tick) makes outflow.py's import resolve to these
-# SAME canonical class objects instead. Only needed for direct script
-# execution — the CLI form never runs this file as __main__.
-if __name__ == "__main__":
-    sys.modules.setdefault("arb_scanner", sys.modules[__name__])
 
 
 # ---------------------------------------------------------------------------

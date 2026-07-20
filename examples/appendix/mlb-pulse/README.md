@@ -150,35 +150,6 @@ class-level `inc_dict` graph map because the join needs O(1) lookups by
 
 ---
 
-## Direct script execution and class identity
-
-`mlb_pulse.py` defines every `Incorporator` subclass exactly once;
-`outflow.py` re-imports them via a guarded `sys.path.insert` +
-`from mlb_pulse import (...)`, so the CLI's class/token resolvers and the
-Python entry's own `Watershed` share the same canonical class objects.
-That sharing depends on `sys.modules["mlb_pulse"]` already existing by
-the time `outflow.py` first imports it — true automatically for the CLI
-form (which never runs `mlb_pulse.py` itself), but **not** true for
-`python mlb_pulse.py`, where this file executes as `sys.modules["__main__"]`
-rather than `sys.modules["mlb_pulse"]`. Without the one-line alias below,
-the Tideweaver scheduler's lazy `outflow.py` load re-executes this whole
-file under a second, distinct `mlb_pulse` module — its own fresh copies
-of `MLBAllTeam`/`MLBHitting`/`MLBPitching`, with empty `inc_dict` graph
-maps that the real Streams never populate, silently producing a 0-row
-`outflow(state)` result on every tick even though `state` itself is
-correctly populated:
-
-```python
-if __name__ == "__main__":
-    sys.modules.setdefault("mlb_pulse", sys.modules[__name__])
-```
-
-Verified live: removing this line reproduces a clean run with `fired:`
-lines for every current and `(no output file produced)` at the end — no
-exception, no warning, just an empty export every tick.
-
----
-
 ## What this appendix demonstrates
 
 | Capability | How |

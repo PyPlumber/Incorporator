@@ -10,20 +10,15 @@ are defined ONCE, in ``nascar_tideweaver.py``. This module only re-exports
 them (via a plain ``import``) plus the CLI-only tokens the JSON config needs
 (``window_start``/``window_end``).
 
-**Identity safety, and why this arrangement is required, not cosmetic.**
-This file gets ``exec_module``'d 2-3x under distinct ``sys.modules`` keys
-(``usercode.py``'s ``load_user_module``, invoked once each for the class/
-token resolver, and any fjord-outflow path). A class DEFINED here would
-become a distinct class object on every such exec -- an ``issubclass``/
-identity check spanning two of those execs could then silently disagree.
-Because this file only IMPORTS ``nascar_tideweaver``, Python's own module
-cache (``sys.modules['nascar_tideweaver']``, set on first import) guarantees
-every re-exec of this sidecar binds the SAME canonical class objects.
-
-**The one gap this file works around.** ``load_user_module`` does not add
-this file's own parent directory to ``sys.path`` before running it (unlike
-``python <script>.py``, which auto-prepends the script's directory), so the
-guarded ``sys.path.insert`` below is required.
+**Why the ``sys.path.insert`` below is still here.** A real
+``incorporator tideweaver run watershed.json`` load goes through
+``load_user_module``, which since ``e6ab772`` caches purely on resolved
+file path, short-circuits to an already-running ``__main__``, and
+auto-inserts each sidecar's own directory onto ``sys.path`` -- no guard
+needed there. This file's guard survives only because
+``tests/public/api/test_nascar_tideweaver_etl.py`` loads it through
+``tests/helpers.py``'s ``load_sidecar``, a separate, bespoke
+``importlib`` loader that never got that fix.
 """
 
 from __future__ import annotations

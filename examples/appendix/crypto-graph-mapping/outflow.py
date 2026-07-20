@@ -14,40 +14,15 @@ join helper (``upper_symbol``) are defined ONCE, in
 hook -- the join happens READ-TIME, once per wave, directly against the
 live class-level graph map (``BinanceStat.inc_dict`` /
 ``BinanceBook.inc_dict``), no intermediate link ops.
-
-**Identity safety, and why this arrangement is required, not cosmetic.**
-This file gets ``exec_module``'d 2-3x under distinct ``sys.modules`` keys
-(``usercode.py``'s ``load_user_module``, invoked once each for the class/
-token resolver, and any fjord-outflow path). A class DEFINED here would
-become a distinct class object on every such exec -- an ``issubclass``/
-identity check spanning two of those execs could then silently disagree.
-Because this file only IMPORTS ``crypto_graph_mapping``, Python's own
-module cache (``sys.modules['crypto_graph_mapping']``, set on first
-import) guarantees every re-exec of this sidecar binds the SAME canonical
-class objects.
-
-**The one gap this file works around.** ``load_user_module`` does not add
-this file's own parent directory to ``sys.path`` before running it (unlike
-``python <script>.py``, which auto-prepends the script's directory). Every
-other shipped sidecar avoids needing this because the MAIN script imports
-FROM the sidecar (T9/T10/T11's direction); this example deliberately flips
-it, so the ``sys.path.insert`` below is required, guarded against a double
-insert.
 """
 
 from __future__ import annotations
 
 import operator
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
-HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-
-from crypto_graph_mapping import (  # noqa: E402
+from crypto_graph_mapping import (
     BinanceBook,
     BinanceStat,
     CryptoAsset,

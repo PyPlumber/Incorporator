@@ -20,7 +20,6 @@ Run with:
 """
 
 import asyncio
-import sys
 from pathlib import Path
 
 from incorporator import Incorporator, inc, register_host_penstock
@@ -34,13 +33,6 @@ register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
-
-# Make the sidecar importable when this script is run via ``python -m`` /
-# pytest / any path other than ``python examples/10-multi-source-fjord/crypto_spread.py``
-# (Python only adds the script's directory to sys.path automatically in the
-# bare-script case).
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
 
 # Bring the source classes into scope so fjord() can register them.
 from outflow import BinancePair, CoinGecko, strip_usdt_suffix, to_binance_key  # noqa: E402
