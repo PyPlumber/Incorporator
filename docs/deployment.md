@@ -329,9 +329,11 @@ pip install "incorporator[orchestrate]"
 ```
 
 Note: `[orchestrate]` pulls in `prefect>=2.10.0` AND `typer>=0.9.0` as
-hard dependencies — `typer` is not in the base package; it ships only
-with `[orchestrate]` and `[all]`. `pip install incorporator[orchestrate]`
-is the smallest install that gets you the `incorporator` CLI entry point.
+hard dependencies — `typer` is not in the base package; it ships with
+`[cli]`, `[orchestrate]`, and `[all]`. If you only need the
+`incorporator` CLI entry point (no Prefect), `pip install
+incorporator[cli]` is the smallest install that gets you that —
+see `installation.md`.
 
 ### Deploying a flow
 

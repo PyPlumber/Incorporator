@@ -87,6 +87,10 @@ parquet =[
     "pyarrow>=14.0",
     "tzdata>=2024.1; sys_platform == 'win32'"
 ]
+# The bare CLI entry point (typer only, no Prefect) — see [orchestrate] for the Prefect @flow wrapper
+cli =[
+    "typer>=0.9.0"
+]
 # The v2.0 Pipeline Orchestration Upgrades
 orchestrate =[
     "typer>=0.9.0",

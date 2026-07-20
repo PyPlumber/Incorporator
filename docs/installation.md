@@ -58,12 +58,19 @@ pip install incorporator[parquet]
 **What this installs:** `pyarrow` (~30 MB — heavyweight; deliberately **not** in `[all]`), plus `tzdata` on Windows (pyarrow's ORC reader hardcodes `/usr/share/zoneinfo` lookups, which Windows lacks).
 * **Use this for:** Apache Parquet, Feather / Arrow IPC, and ORC read/write. Required for data-lake and warehouse interoperability.
 
+### ⌨️ The CLI Flag
+```bash
+pip install incorporator[cli]
+```
+**What this installs:** `typer` (only).
+* **Use this for:** The `incorporator stream`, `incorporator fjord`, `incorporator tideweaver`, `incorporator validate`, `incorporator init`, and `incorporator deps` CLI subcommands — without pulling in Prefect. This is the smallest install that gets you the `incorporator` CLI entry point.
+
 ### 🛠️ The Orchestration Flag
 ```bash
 pip install incorporator[orchestrate]
 ```
 **What this installs:** `typer`, `prefect`.
-* **Use this for:** The `incorporator stream`, `incorporator fjord`, `incorporator tideweaver`, `incorporator validate`, `incorporator init`, and `incorporator deps` CLI subcommands, plus the pre-built Prefect `@flow` wrappers (see `deployment.md`).
+* **Use this for:** Everything `[cli]` gives you, plus the pre-built Prefect `@flow` wrappers (see `deployment.md`). Only reach for this if you actually use `incorporator.integrations.prefect` — otherwise `[cli]` is enough.
 
 ### 📖 The Docs Flag (Contributors Only)
 ```bash
@@ -94,7 +101,7 @@ incorporator deps
 ```
 Prints a table of every optional dependency — its category, extra, install status (`✓`/`✗`), and the `pip install` hint to fix anything missing. Filter with `--missing` (only what's absent), `--category speedup|format|orchestrate|platform_fix`, or `--json` for scripting.
 
-*(This subcommand rides on Typer, so it requires `[orchestrate]` like the rest of the CLI.)*
+*(This subcommand rides on Typer, so it requires `[cli]` — or its superset `[orchestrate]` — like the rest of the CLI.)*
 
 ---
 

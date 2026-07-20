@@ -5,17 +5,16 @@ The Incorporator CLI runs the same `stream` / `fjord` / `tideweaver` verbs from 
 Define your extraction, enrichment, and loading rules in a JSON file and run long-running polling daemons in the background — suited for Docker containers, systemd services, or scheduled scraping jobs.
 
 ## 1. Prerequisites
-To use the CLI, install Incorporator with the `[orchestrate]` extra:
+To use the CLI, install Incorporator with the `[cli]` extra:
 ```bash
-pip install "incorporator[orchestrate]"
+pip install "incorporator[cli]"
 ```
 
-> **What `[orchestrate]` installs.** This extra bundles two dependencies:
-> `typer>=0.9.0` (required for the CLI entry point) and `prefect>=2.10.0`
-> (required only if you use `incorporator.integrations.prefect` — the Prefect
-> flow wrapper). Both are hard deps of the extra. If you use Prefect elsewhere
-> in the same env, pin them together; if you don't need Prefect, consider
-> installing typer directly and importing the CLI integration separately.
+> **What `[cli]` installs.** This extra bundles `typer>=0.9.0`, the only
+> dependency required for the `incorporator` CLI entry point. If you also
+> want the Prefect `@flow` wrapper (`incorporator.integrations.prefect`),
+> install `incorporator[orchestrate]` instead — it bundles `typer>=0.9.0`
+> and `prefect>=2.10.0` together.
 
 ---
 

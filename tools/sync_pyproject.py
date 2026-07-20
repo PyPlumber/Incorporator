@@ -46,7 +46,7 @@ _DEP_MODULE_NAMES: list[str] = [
 
 # Canonical extra ordering in pyproject.toml.
 # Extras not listed here (or not in _deps) are appended after in declaration order.
-_EXTRA_ORDER: list[str] = ["dev", "speedups", "avro", "xlsx", "parquet", "orchestrate", "docs", "all"]
+_EXTRA_ORDER: list[str] = ["dev", "speedups", "avro", "xlsx", "parquet", "cli", "orchestrate", "docs", "all"]
 
 # Hard-coded comments per extra (mirrors existing pyproject.toml style exactly)
 _EXTRA_COMMENTS: dict[str, str] = {
@@ -56,16 +56,17 @@ _EXTRA_COMMENTS: dict[str, str] = {
     "xlsx": "# Business spreadsheets — pure Python, ~250 KB, fits the microclient identity",
     "parquet": (
         "# Columnar format for data lakes / warehouses. Pyarrow is ~30 MB — deliberately\n"
-        "# NOT included in [all] to keep the \"everything reasonable\" install lean.\n"
+        '# NOT included in [all] to keep the "everything reasonable" install lean.\n'
         "# tzdata is required on Windows for pyarrow's ORC reader, which hardcodes\n"
         "# /usr/share/zoneinfo lookups regardless of platform. Linux/macOS ship the\n"
         "# IANA data natively, so the marker keeps the wheel weight off non-Windows\n"
         "# installs."
     ),
+    "cli": "# The bare CLI entry point (typer only, no Prefect) — see [orchestrate] for the Prefect @flow wrapper",
     "orchestrate": "# The v2.0 Pipeline Orchestration Upgrades",
     "docs": "# Documentation generation (contributor-only — NOT added to [all])",
     "all": (
-        "# The developer \"install everything reasonable\" flag.\n"
+        '# The developer "install everything reasonable" flag.\n'
         "# NOTE: heavyweight deps (e.g. pyarrow for Parquet, ~50 MB) are intentionally\n"
         "# excluded — users opt into those explicitly via incorporator[parquet] etc."
     ),
@@ -85,6 +86,13 @@ _FIXED_EXTRAS: dict[str, list[str]] = {
     ],
     "docs": [
         '"pdoc>=14.0"',
+    ],
+    # Matches typer's version_spec in incorporator/_deps/typer.py's META verbatim.
+    # Fixed here (rather than a new _deps module) because typer already has a
+    # `_deps` entry keyed to `extra="orchestrate"` for [all] inclusion, and a single
+    # DepInfo can't participate in two extras at once.
+    "cli": [
+        '"typer>=0.9.0"',
     ],
 }
 
@@ -152,7 +160,7 @@ def _generate_block(metas: list[object]) -> list[str]:
                 if platform_marker:
                     # Strip the trailing quote from spec, add marker, re-close
                     bare = spec[:-1]  # remove trailing "
-                    lines.append(f"    {bare}; {platform_marker}\"{comma}\n")
+                    lines.append(f'    {bare}; {platform_marker}"{comma}\n')
                 else:
                     lines.append(f"    {spec}{comma}\n")
             lines.append("]\n")
@@ -230,8 +238,7 @@ def main() -> None:
     if args.check:
         if new_text != original_text:
             print(
-                "ERROR: pyproject.toml optional-dependencies are out of sync.\n"
-                "Run: python tools/sync_pyproject.py",
+                "ERROR: pyproject.toml optional-dependencies are out of sync.\nRun: python tools/sync_pyproject.py",
                 file=sys.stderr,
             )
             sys.exit(1)
