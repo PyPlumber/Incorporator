@@ -13,10 +13,11 @@ exactly one job: read a ``.py`` off disk and surface its symbols.
   resolver to extend its allow-list with the inflow module's symbols.
 - :func:`merge_sidecar_extra_names` — union public names from the
   outflow and inflow sidecars into one token-resolver allow-list
-  (inflow wins on name collision). Shared by
+  (inflow wins on name collision). Both
   :func:`incorporator.tideweaver.config.load_watershed` and the CLI's
-  ``_load_pipeline_config`` so both paths resolve ``conv_dict`` tokens
-  against the same sidecar symbols.
+  ``_load_pipeline_config`` reach this indirectly via
+  :func:`incorporator.config.pipeline.resolve_sidecar_tokens`, so both
+  paths resolve ``conv_dict`` tokens against the same sidecar symbols.
 - :func:`apply_inflow_resolution` — load the inflow sidecar and
   resolve string-form tokens in ``conv_dict`` / ``inc_page`` against
   its public symbols (shared by :meth:`Incorporator.incorp` and
@@ -171,11 +172,13 @@ def merge_sidecar_extra_names(
     """Union public names from the outflow and inflow sidecar modules.
 
     Single source of truth for "which sidecar symbols may a JSON config's
-    ``conv_dict`` (or other token-resolved field) reference by name" — shared
-    by :func:`incorporator.tideweaver.config.load_watershed` and
-    :func:`incorporator.cli.runners._load_pipeline_config` so the Tideweaver
-    CLI path (``incorporator tideweaver run``) and the direct Python
-    ``load_watershed`` path resolve tokens against the exact same allow-list.
+    ``conv_dict`` (or other token-resolved field) reference by name" — reached
+    by both :func:`incorporator.tideweaver.config.load_watershed` and
+    :func:`incorporator.cli.runners._load_pipeline_config` via
+    :func:`incorporator.config.pipeline.resolve_sidecar_tokens`, so the
+    Tideweaver CLI path (``incorporator tideweaver run``) and the direct
+    Python ``load_watershed`` path resolve tokens against the exact same
+    allow-list.
 
     Loads ``outflow`` first, then ``inflow``, and updates outflow's dict with
     inflow's — an inflow helper wins over an outflow helper of the same name.

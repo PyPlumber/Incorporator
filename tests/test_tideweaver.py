@@ -3165,6 +3165,34 @@ def test_json_env_interpolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert ws.window[0].isoformat() == "2026-05-16T00:00:00+00:00"
 
 
+def test_json_env_interpolation_unset_var_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unset ``${VAR}`` (no default) in watershed.json raises ``EnvExpansionError`` via ``load_watershed``.
+
+    ``test_config_envexpand.py`` covers ``expand_env`` directly and
+    ``test_cli.py`` covers the CLI's ``_load_pipeline_config`` front-end;
+    this pins the same failure class through the ``load_watershed`` library
+    entry point, which shares the underlying ``expand_env`` call but had no
+    dedicated regression test of its own.
+    """
+    from incorporator.config.envexpand import EnvExpansionError
+    from incorporator.tideweaver.config import load_watershed
+
+    _write_outflow_with_classes(tmp_path)
+    monkeypatch.delenv("TW_MISSING_START", raising=False)
+    body = {
+        "window": {"start": "${TW_MISSING_START}", "end": "2026-05-16T01:00:00+00:00"},
+        "shape": "parallel",
+        "outflow": "outflow.py",
+        "currents": [
+            {"name": "a", "class": "LapData", "verb": "stream", "interval": 30, "incorp_params": {}},
+        ],
+    }
+    cfg = tmp_path / "ws.json"
+    cfg.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(EnvExpansionError, match="TW_MISSING_START"):
+        load_watershed(cfg)
+
+
 def test_json_bad_shape_raises(tmp_path: Path) -> None:
     """An unknown ``shape`` key raises a clear ``ValueError``."""
     from incorporator.tideweaver.config import load_watershed

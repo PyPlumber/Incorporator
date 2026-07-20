@@ -20,7 +20,8 @@ from incorporator._deps.typer import TYPER as _typer
 
 from .. import Incorporator, LoggedIncorporator
 from ..config.envexpand import EnvExpansionError, expand_env
-from ..config.tokens import TokenResolutionError, resolve_tokens
+from ..config.pipeline import resolve_sidecar_tokens
+from ..config.tokens import TokenResolutionError
 from ..io.config_paths import resolve_config_paths
 from ._pipeline_config import parse_pipeline_config
 from .validate import validate_config
@@ -126,13 +127,11 @@ def _load_pipeline_config(config_path: Path) -> dict[str, Any]:
     config_dir = config_path.parent.resolve()
     rebased = resolve_config_paths(expanded, config_dir)
 
-    # Load the optional inflow=/outflow= sidecars once.  Their public symbols
-    # extend the token resolver's allow-list, so JSON strings like
-    # "@calc_bst" or "calc(my_reducer, 'stats')" resolve to real callables
-    # before the engine ever sees the config — matching load_watershed's
-    # behavior via the same shared helper.  importlib's sys.modules cache
-    # absorbs any later re-load via the same path.  Both paths are already
-    # config-dir-absolute after the resolve_config_paths call above.
+    # Load the optional inflow=/outflow= sidecars, union their public names
+    # into the token resolver's allow-list, and resolve every JSON-text token
+    # — the same shared step load_watershed routes through, so both paths
+    # resolve conv_dict tokens against the same sidecar symbols.  importlib's
+    # sys.modules cache absorbs any later re-load via the same path.
     #
     # strict_outflow=False: a missing/broken outflow sidecar is NOT a hard
     # error here — `_run_validation` (via `validate_config`) is the canonical
@@ -142,25 +141,11 @@ def _load_pipeline_config(config_path: Path) -> dict[str, Any]:
     # short-circuit that friendlier, aggregated diagnostic.  The inflow=
     # field has no such deferred path, so it remains a hard error.
     inflow_field = rebased.get("inflow")
-    outflow_field = rebased.get("outflow")
     try:
-        from ..usercode import merge_sidecar_extra_names
-
-        extra_names: dict[str, Any] = merge_sidecar_extra_names(
-            Path(str(inflow_field)) if inflow_field else None,
-            Path(str(outflow_field)) if outflow_field else None,
-            strict_outflow=False,
-        )
+        return resolve_sidecar_tokens(rebased, strict_outflow=False)
     except (FileNotFoundError, ImportError, SyntaxError) as e:
         _err(f"Error: failed to load inflow file {inflow_field!r}: {e}", fg=_red())
         sys.exit(1)
-
-    # Resolve JSON-text tokens (e.g. "@my_pager", "inc(datetime)",
-    # "join_all(';')") into real Python objects before the config reaches
-    # the engine.  Tokens needing user-defined classes still require an
-    # outflow file (fjord pattern).
-    try:
-        return cast(dict[str, Any], resolve_tokens(rebased, extra_names=extra_names))
     except TokenResolutionError as e:
         _err(f"Error: token resolution failed: {e}", fg=_red())
         sys.exit(1)

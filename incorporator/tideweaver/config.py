@@ -23,10 +23,10 @@ from typing import Any, cast
 
 from ..base import Incorporator
 from ..config.envexpand import expand_env
-from ..config.tokens import resolve_tokens
+from ..config.pipeline import resolve_sidecar_tokens
 from ..io.config_paths import resolve_config_paths
 from ..io.penstock import register_host_penstock
-from ..usercode import load_user_module, merge_sidecar_extra_names
+from ..usercode import load_user_module
 from .current import Current, Export, Fjord, Stream
 from .flow import FlowControl, GateMode, flow_from_mode
 from .watershed import Edge, Watershed
@@ -72,18 +72,11 @@ def load_watershed(path: Path) -> Watershed:
     base_dir = path.parent.resolve()
     raw = resolve_config_paths(raw, base_dir)
 
-    inflow_val = raw.get("inflow")
-    outflow_val = raw.get("outflow")
-    inflow = Path(inflow_val) if isinstance(inflow_val, str) and inflow_val else None
-    outflow = Path(outflow_val) if isinstance(outflow_val, str) and outflow_val else None
-
-    # Union outflow-then-inflow public names into one allow-list extension —
-    # shared with the CLI's _load_pipeline_config via merge_sidecar_extra_names
-    # so both paths resolve conv_dict tokens against the same sidecar symbols.
-    # An inflow helper wins over an outflow helper of the same name.
-    extra_names = merge_sidecar_extra_names(inflow, outflow)
-
-    raw = resolve_tokens(raw, extra_names=extra_names or None)
+    # Union outflow-then-inflow public names into one allow-list extension,
+    # then resolve every JSON-text token against it — the same shared step
+    # the CLI's _load_pipeline_config routes through, so both paths resolve
+    # conv_dict tokens against the same sidecar symbols.
+    raw = resolve_sidecar_tokens(raw)
     if not isinstance(raw, dict):
         raise ValueError(f"watershed.json must be a JSON object at the top level; got {type(raw).__name__}.")
 
