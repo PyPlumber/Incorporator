@@ -343,8 +343,9 @@ def calculate_bst(stats):
 > the integer from `calculate_bst` ends up as a number in the CSV cell,
 > not the raw list of dicts.
 
-The CLI imports `inflow.py` **once** per pipeline run (cached via
-`sys.modules`); per-chunk operations don't re-import anything.
+The CLI imports `inflow.py` **once** per pipeline run (cached by
+resolved file path in the shared user-module loader); per-chunk
+operations don't re-import anything.
 
 > **`outflow` sidecar names count too.** Every verb that shares the CLI's
 > config loader — `stream`, `fjord`, and `tideweaver run`/`validate` — unions

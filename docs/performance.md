@@ -91,7 +91,10 @@ process that sees 1,000+ shapes won't leak memory.
 
 **The HTTP layer is shared across calls.** A single `httpx.AsyncClient`
 with HTTP/2 multiplexing carries every concurrent request — one TLS
-handshake serves the lifetime of the process. The connection pool
+handshake serves the lifetime of the process. The default-verify
+`SSLContext` is also process-cached, so constructing additional clients
+(fresh standalone calls, per-config scheduler pool entries) skips the
+CA-bundle load and is near-free after the first build. The connection pool
 keeps up to 10 idle sockets ready and scales out under concurrent
 load. Retries (HTTP 429, 5xx) use Tenacity's exponential backoff
 with jitter; fatal 4xx errors break the loop immediately so you don't

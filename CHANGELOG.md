@@ -7,7 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **watershed.json accepts a top-level `host_penstocks` block for
+  declarative per-host rate limits**
+  (`incorporator/tideweaver/config.py`): each entry maps a hostname to a
+  `rate_per_sec` (SustainedPenstock) or `rate_per_sec` + `burst`
+  (BurstPenstock) shorthand and is registered via `register_host_penstock`
+  at config-load time — the CLI form no longer depends on a sidecar
+  import side effect for host throttling. Host keys are case-insensitive;
+  loading the same watershed twice is an idempotent overwrite; a
+  per-current `requests_per_second` still short-circuits the registry for
+  that current's requests.
+
 ### Fixed
+
+- **Sidecar module identity is now framework-owned**
+  (`incorporator/usercode.py`, `incorporator/cli/validate.py`,
+  `tests/helpers.py`): `load_user_module` caches loaded modules by
+  resolved file path alone (previously the cache key included a
+  per-entry-point name hint, so the same file could execute 2-3 times as
+  distinct module objects), short-circuits to the already-running
+  `__main__` module when paths match (eliminating the silent
+  0-row-export trap when `python entry.py` and a framework load shared
+  one file), and inserts each sidecar's own directory on `sys.path`
+  (sidecars use bare sibling imports). The template validator and the
+  test sidecar helper delegate to the same loader. Hand-written
+  `sys.path.insert` / `sys.modules.setdefault` guards in user code are
+  obsolete no-ops.
+
+- **`extract_parent_data` flattens terminal list leaves**
+  (`incorporator/schema/router.py`): a drill path whose final segment
+  resolves to a list (e.g. a bare `inc_child="team_paths"` on a
+  `list[str]` field) previously appended the whole list, producing a
+  list-of-lists that downstream URL formatting could not consume.
+  Terminal list leaves now extend the result flat; non-terminal fanout
+  and positional-index semantics are unchanged.
 
 - **Tideweaver's `_tick_stream` now preserves `IncorporatorList.inc_child_path`
   through snapshot parking** (`incorporator/tideweaver/scheduler.py`): the
@@ -34,6 +69,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through to `DEFAULT_RPS`. Registration now lowercases once at the
   entry point, so mixed-case registration resolves correctly and a
   same-host-different-case re-registration overwrites the same entry.
+
+### Performance
+
+- Internal, no API change: the default-verify `SSLContext` is now built
+  once per process and shared across every httpx client construction
+  (warm client builds drop from ~1.1 s to sub-millisecond); tenacity
+  retry stop/wait builders are memoized per HTTP method; the schema-union
+  scan uses bulk set algebra; `build_instances` caches the declared-field
+  frozenset per class. Benchmarks in `tests/benchmarks/` pin each change.
 
 ## [1.4.1] - 2026-07-19
 
