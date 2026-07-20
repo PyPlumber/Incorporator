@@ -180,6 +180,9 @@ def build_app() -> Any:
         ),
     ) -> None:
         """Execute a Tideweaver watershed from a JSON configuration file."""
+        from .runners import set_json_output_mode
+
+        set_json_output_mode(json_output)
         if not config.is_file():
             _typer.secho(f"Error: Configuration file not found at {config}", fg=_typer.colors.RED)
             sys.exit(1)
@@ -210,8 +213,9 @@ def build_app() -> Any:
         any Fjord current's outflow(state) function arity.  Exits 0 if
         valid, 1 with a diagnostic report otherwise.
         """
-        from .runners import _load_pipeline_config, _run_validation
+        from .runners import _load_pipeline_config, _run_validation, set_json_output_mode
 
+        set_json_output_mode(False)
         if not config.is_file():
             _typer.secho(f"Error: Configuration file not found at {config}", fg=_typer.colors.RED)
             sys.exit(1)

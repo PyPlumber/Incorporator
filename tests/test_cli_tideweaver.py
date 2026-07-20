@@ -24,6 +24,23 @@ from incorporator.tideweaver import Tide
 
 runner = CliRunner()
 
+
+@pytest.fixture(autouse=True)
+def _reset_json_output_mode() -> Iterator[None]:
+    """Reset the module-level ``_JSON_OUTPUT_MODE`` global after every test.
+
+    Mirrors the identical fixture in ``tests/test_cli.py``. This file's new
+    stdout-purity pin (below) flips ``set_json_output_mode(True)`` via
+    `tideweaver run --json-output`; under randomized ordering a leaked
+    ``True`` would route later tests' ``_err`` output to stderr, breaking
+    their ``result.stdout`` assertions.
+    """
+    yield
+    from incorporator.cli.runners import set_json_output_mode
+
+    set_json_output_mode(False)
+
+
 # ---------------------------------------------------------------------------
 # Shared watershed fixture helpers
 # ---------------------------------------------------------------------------
@@ -75,6 +92,36 @@ def _write_watershed_fixture(tmp_path: Path) -> Path:
     return cfg
 
 
+def _write_invalid_watershed_fixture(tmp_path: Path) -> Path:
+    """Write a watershed.json referencing a class absent from outflow.py.
+
+    ``build_watershed`` raises ``ValueError`` while resolving the current's
+    ``class`` string, which ``_run_validation`` reports as "Config invalid".
+    """
+    (tmp_path / "outflow.py").write_text(_OUTFLOW_SRC, encoding="utf-8")
+    cfg = tmp_path / "watershed.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "window": _PAST_WINDOW,
+                "shape": "parallel",
+                "outflow": "outflow.py",
+                "currents": [
+                    {
+                        "name": "laps",
+                        "class": "NoSuchClass",
+                        "verb": "stream",
+                        "interval": 30,
+                        "incorp_params": {},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return cfg
+
+
 # ---------------------------------------------------------------------------
 # NDJSON output shape
 # ---------------------------------------------------------------------------
@@ -107,6 +154,26 @@ def test_cli_tideweaver_run_json_output_emits_ndjson(tmp_path: Path) -> None:
         assert isinstance(record["current_outcomes"], list)
         for outcome in record["current_outcomes"]:
             assert isinstance(outcome, dict), f"current_outcomes entry must be a dict; got {type(outcome)}"
+
+
+def test_cli_tideweaver_run_json_output_stdout_is_pure_ndjson_on_config_error(tmp_path: Path) -> None:
+    """PIN: --json-output keeps stdout pure even on a config error.
+
+    Before this fix, `tideweaver run`/`validate` never called
+    `set_json_output_mode`, so `_err`'s "Config invalid" diagnostic printed
+    to stdout instead of stderr, contaminating the NDJSON stream. A bad
+    watershed.json (a `class` string that resolves to no Incorporator
+    subclass in outflow.py) must exit 1 with the report on stderr and
+    nothing on stdout.
+    """
+    cfg = _write_invalid_watershed_fixture(tmp_path)
+
+    result = runner.invoke(app, ["tideweaver", "run", str(cfg), "--json-output"])
+
+    assert result.exit_code == 1, result.stdout
+    assert "Config invalid" in result.stderr
+    assert "Config invalid" not in result.stdout
+    assert result.stdout.strip() == "", f"stdout must stay empty under --json-output on error; got: {result.stdout!r}"
 
 
 # ---------------------------------------------------------------------------
