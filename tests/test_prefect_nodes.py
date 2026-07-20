@@ -75,6 +75,22 @@ async def test_prefect_run_incorporator_stream_task_returns_list_of_wave(prefect
     assert results[0].rows_processed == 1000
 
 
+@pytest.mark.asyncio
+async def test_prefect_absent_flow_raises_runtime_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`run_incorporator_flow` raises `RuntimeError` (not `SystemExit`) when Prefect is absent.
+
+    The guard used to call ``sys.exit(1)``
+    inside a library function; monkeypatches ``HAS_PREFECT`` to ``False`` and
+    asserts the flow raises instead of exiting the process.
+    """
+    import incorporator.integrations.prefect as prefect_mod
+
+    monkeypatch.setattr(prefect_mod, "HAS_PREFECT", False)
+
+    with pytest.raises(RuntimeError, match="Prefect is not installed"):
+        await prefect_mod.run_incorporator_flow(config_path="unused_prefect_config.json")
+
+
 def test_prefect_absent_dummy_branch_exposes_both_symbols() -> None:
     """`incorporator.integrations.prefect` imports cleanly with Prefect ABSENT.
 

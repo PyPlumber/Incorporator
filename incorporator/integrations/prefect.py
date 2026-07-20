@@ -10,7 +10,6 @@ module can be imported without raising.
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -92,10 +91,13 @@ async def run_incorporator_stream(
 
 @flow(name="incorporator_pipeline_flow")
 async def run_incorporator_flow(config_path: str, poll_interval: float | None = None) -> list[Wave]:
-    """Prefect flow entry point: load ``pipeline.json`` and run the stream task."""
+    """Prefect flow entry point: load ``pipeline.json`` and run the stream task.
+
+    Raises ``RuntimeError`` instead of exiting the process when Prefect is
+    absent — this is a library function, not a CLI entry point.
+    """
     if not HAS_PREFECT:
-        print("Prefect is not installed. Run: pip install incorporator[orchestrate]")
-        sys.exit(1)
+        raise RuntimeError("Prefect is not installed. Run: pip install incorporator[orchestrate]")
 
     path = Path(config_path).resolve()
     if not path.is_file():
