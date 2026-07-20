@@ -336,7 +336,20 @@ def build_instances(
     # recompute, never a wrong value.  Exercised by
     # ``tests/test_validation.py::test_schema_union_concurrent_gather_safety``.
     schema_union = getattr(cls, "_schema_union", {})
-    declared_field_names = frozenset(cls.model_fields.keys())
+    # ``cls.model_fields`` is fixed at class-creation time — Pydantic V2's
+    # metaclass populates it once and nothing in this codebase mutates it
+    # post-creation (dynamic classes are built exactly once via
+    # ``create_model`` in ``infer_dynamic_schema`` and reused thereafter via
+    # SCHEMA_REGISTRY). ``frozenset(cls.model_fields.keys())`` is therefore a
+    # pure, permanently-stable function of ``cls``'s identity — cache it on
+    # ``cls`` itself, same tolerated-race single-slot pattern as
+    # ``_cached_effective_conv`` / ``_cached_json_properties`` above.
+    declared_field_names = getattr(cls, "_cached_declared_field_names", None)
+    if declared_field_names is None:
+        declared_field_names = frozenset(cls.model_fields.keys())
+        # setattr keeps mypy strict happy — ``_cached_declared_field_names``
+        # is a dynamic cache attribute, not a declared class field.
+        setattr(cls, "_cached_declared_field_names", declared_field_names)  # noqa: B010
     cache_key = _effective_conv_cache_key(conv_dict, schema_union, declared_field_names)
     cached = getattr(cls, "_cached_effective_conv", None)
     if cached is not None and cached[0][0] is cache_key[0] and cached[0][1:] == cache_key[1:]:
