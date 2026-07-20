@@ -28,7 +28,6 @@ sidecar-file existence, sidecar-module import, and ``outflow(state)`` arity /
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -367,12 +366,9 @@ def _try_import(code_path: Path) -> str | None:
 
 
 def _import_module(code_path: Path) -> Any:
-    spec = importlib.util.spec_from_file_location("_inc_validate_user_module", code_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load module spec from {code_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from ..usercode import load_user_module
+
+    return load_user_module(code_path)
 
 
 def _validate_sidecar_file(

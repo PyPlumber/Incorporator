@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from incorporator.usercode import load_outflow_module, load_user_module
+from tests.helpers import load_sidecar
 
 
 @pytest.fixture(autouse=True)
@@ -115,5 +116,27 @@ def test_sidecar_imports_sibling_without_manual_syspath_guard(tmp_path: Path) ->
     )
 
     module = load_user_module(sidecar_py)
+
+    assert module.sibling.VALUE == 42
+
+
+def test_load_sidecar_helper_imports_sibling_without_manual_syspath_guard(tmp_path: Path) -> None:
+    """`tests.helpers.load_sidecar` delegates to `load_user_module`, gaining the sys.path auto-insert.
+
+    Mirrors `test_sidecar_imports_sibling_without_manual_syspath_guard` but
+    goes through the test-suite's own sidecar-loading helper, pinning that
+    the delegation actually plumbs the auto sys.path insert through rather
+    than reverting to a hand-rolled loader that would need a guard.
+    """
+    sibling_py = tmp_path / "sibling.py"
+    sibling_py.write_text("VALUE = 42\n", encoding="utf-8")
+
+    sidecar_py = tmp_path / "sidecar.py"
+    sidecar_py.write_text(
+        "import sibling\n\ndef outflow(state):\n    return {'value': sibling.VALUE}\n",
+        encoding="utf-8",
+    )
+
+    module = load_sidecar(sidecar_py, "some_unique_key")
 
     assert module.sibling.VALUE == 42

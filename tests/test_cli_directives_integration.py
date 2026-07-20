@@ -189,6 +189,37 @@ def test_fjord_template_validates(rel_path: str) -> None:
     assert errors == [], f"Config {rel_path} failed: {errors}"
 
 
+def test_fjord_template_validates_without_sidecar_syspath_guard(tmp_path: Path) -> None:
+    """Fjord outflow sidecars resolve bare sibling imports with no ``sys.path`` guard.
+
+    Regression for the hand-rolled loader in ``validate.py``'s
+    ``_import_module`` that used to bypass ``usercode.load_user_module``'s
+    ``sys.path`` auto-insert — a sidecar doing a plain ``import sibling``
+    (no ``sys.path.insert(0, str(Path(__file__).parent))`` guard) used to
+    fail validation with ``ModuleNotFoundError``.
+    """
+    (tmp_path / "sibling.py").write_text("VALUE = 42\n", encoding="utf-8")
+    (tmp_path / "outflow.py").write_text(
+        "import sibling\n"
+        "from incorporator import Incorporator\n\n"
+        "class Widget(Incorporator):\n    pass\n\n"
+        "def outflow(state):\n    return {'value': sibling.VALUE}\n",
+        encoding="utf-8",
+    )
+
+    raw = {
+        "outflow": "outflow.py",
+        "stream_params": [
+            {"cls_name": "Widget", "incorp_params": {"payload_list": [{"id": 1}]}},
+        ],
+        "export_params": {"file_path": "out.ndjson"},
+    }
+
+    errors = validate_fjord_config(raw, tmp_path)
+
+    assert errors == []
+
+
 @pytest.mark.parametrize("rel_path", _WATERSHED_TEMPLATES)
 def test_watershed_template_validates(rel_path: str) -> None:
     """Every in-repo watershed config passes full build_watershed validation.

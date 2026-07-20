@@ -6,45 +6,40 @@ fixture discovery does not try to auto-use them.
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 from types import ModuleType
 
+from incorporator.usercode import load_user_module
+
 
 def load_sidecar(path: Path, unique_key: str) -> ModuleType:
-    """Load a Python sidecar file via importlib, registered under *unique_key*.
+    """Load a Python sidecar file, delegating to ``usercode.load_user_module``.
 
-    Registering the module under a unique ``sys.modules`` key prevents the
-    ``sys.modules['outflow']`` collision that occurs when multiple test files
-    each load their own ``outflow.py`` — the second loader silently receives
-    the first test's module.  Using a distinct key per sidecar (e.g.
-    ``"nascar_fantasy_outflow"``, ``"mlb_pulse_outflow"``) isolates them
-    completely.
+    ``unique_key`` is accepted for backward-compatibility with existing call
+    sites but is otherwise unused — module identity is now governed entirely
+    by :func:`incorporator.usercode.load_user_module`'s own contract:
+    a session-wide cache keyed on the *resolved path* (so two calls with the
+    same physical file return the SAME module object and only exec once), a
+    ``__main__`` short-circuit, and an automatic ``sys.path`` insert of the
+    sidecar's parent directory so a bare sibling ``import`` resolves without
+    a hand-rolled ``sys.path.insert`` guard in the sidecar file.
 
-    If the key is already present in ``sys.modules`` (e.g. from a previous
-    test session in the same process), it is returned directly — importlib
-    already cached it under the unique key.
+    No two sidecar files loaded through this helper across the test suite
+    currently share a physical path, so this delegation is behavior-preserving
+    for existing tests. A future test file loading an already-loaded sidecar
+    path will now share the cached module object (and its exec-time side
+    effects fire once, not per call) — unlike the old per-key registration
+    scheme, which always re-executed under a fresh key.
 
     Args:
         path: Absolute path to the ``.py`` file to load.
-        unique_key: The ``sys.modules`` registration key.  Must be globally
-            unique across all sidecar loads in the test suite.
+        unique_key: Unused; retained for call-site compatibility.
 
     Returns:
         The loaded module object.
 
     Raises:
-        ImportError: If importlib cannot build a module spec from *path*.
+        ImportError: If the file cannot be loaded as a Python module.
         FileNotFoundError: If *path* does not exist.
     """
-    cached = sys.modules.get(unique_key)
-    if cached is not None:
-        return cached
-    spec = importlib.util.spec_from_file_location(unique_key, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot build module spec from {path}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[unique_key] = mod
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod
+    return load_user_module(path)
