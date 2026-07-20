@@ -641,7 +641,7 @@ Cached: `lru_cache(128)` on `(type, default)` — `default` must be
 hashable.  Gotcha: `inc` reads the OUTPUT key, so it only works when
 output and source key match; passing a *callable* (`inc(str.upper)`)
 silently no-ops through the identity failsafe (a build-time warning
-fires since v1.4.0) — reach for `calc` when you mean a function.
+fires since v1.3.6) — reach for `calc` when you mean a function.
 
 **`calc(func, *input_keys, default=None, target_type=None, pure=True)`**
 — per-row derived field: `func(*resolved_inputs)` with inputs drawn
@@ -967,7 +967,7 @@ class Current(BaseModel):
     outflow: Path | None = None      # per-current sidecar override
 ```
 
-- `on_error` — `"restart"` retries the tick (tenacity-backed exponential backoff, 5 attempts); `"isolate"` logs the failure and lets sibling currents continue; `"fail_watershed"` re-raises and cancels the whole graph.
+- `on_error` — `"restart"` retries the tick (tenacity-backed randomized exponential backoff, 5 attempts); `"isolate"` logs the failure and lets sibling currents continue; `"fail_watershed"` re-raises and cancels the whole graph.
 - `phase_offset_sec` — green-wave coordination: offset a downstream current's first tick to land just after the upstream's expected first wave, so fewer `awaiting_upstream` gating skips fire on the warm-up pass.  `0.0` (default) fires on pass 1.
 - `depends_on` — the declarative dependency list; the `Watershed` validator folds each name into a hard-gate `Edge`.  `Stream.parent_current` / `Fjord.parent_currents` auto-derive the same edges and ALSO wire snapshot delivery.
 - The old `skip_threshold` field moved to the per-edge [`SurgeBarrier`](#canal-toolkit-primitives).
