@@ -1,4 +1,4 @@
-# API Atlas
+﻿# API Atlas
 
 The map you open when you know which verb you want but forget its kwargs.
 `library_reference.md` is the auto-generated pdoc HTML for exhaustive
@@ -7,7 +7,7 @@ and runnable. This atlas sits between them: paste-ready signatures,
 3-7 step pseudocode, and one-line "when to reach for it" narrative for
 every public callable.
 
-The same eight verbs — `incorp / test / architect / refresh / export / stream / fjord / display` — work on any source (JSON, XML, CSV, NDJSON, SQLite, Parquet, Avro, and more) without class declarations or validation schemas.  The same `Penstock / Wave / RejectEntry` primitives that govern a single `incorp()` call govern a multi-source `Tideweaver` window: you are not learning two tools.
+Incorporator reads as a river system. Eight **verbs** act on one class — the core verbs `incorp` (build) / `refresh` (update) / `export` (persist), the probe verbs `test` / `architect`, the runner-mode verbs `stream()` / `fjord()`, and the REPL verb `display` — on any source (JSON, XML, CSV, NDJSON, SQLite, Parquet, Avro, and more) without class declarations or validation schemas.  **Currents** wrap verbs as declarative nodes; **watersheds** compose currents into a windowed graph; **canal engineering** governs flow at the host and edge layers.  The same `Penstock / Wave / RejectEntry` primitives that govern a single `incorp()` call govern a multi-source `Tideweaver` window: you are not learning two tools.
 
 > Every code block here is copy-paste runnable assuming
 > `from incorporator import Incorporator, LoggedIncorporator` and
@@ -17,60 +17,222 @@ The same eight verbs — `incorp / test / architect / refresh / export / stream 
 
 ## Table of Contents
 
-- [Discovery & ingestion](#discovery--ingestion)
+- [Part I — Verbs](#part-i--verbs)
+  - [`incorp`](#incorp)
+  - [`refresh`](#refresh)
+  - [`export`](#export)
   - [`test`](#test)
   - [`architect`](#architect)
-  - [`incorp`](#incorp)
-  - [`register_host_penstock`](#register_host_penstock)
-- [Live updates](#live-updates)
-  - [`refresh`](#refresh)
-- [Persistence](#persistence)
-  - [`export`](#export)
-- [Daemons](#daemons)
-  - [`stream`](#stream)
-  - [`fjord`](#fjord)
-  - [Build-time vs read-time: where coercion + joins belong](#build-time-vs-read-time-where-coercion--joins-belong)
-- [REPL](#repl)
+  - [The daemon runner path](#the-daemon-runner-path): [`stream`](#stream) / [`fjord`](#fjord)
   - [`display`](#display)
-- [Orchestration](#orchestration)
+- [Part II — Conv_dict & data shaping](#part-ii--conv_dict--data-shaping)
+  - [Shared kwargs glossary](#shared-kwargs-glossary)
+  - [DATA-SHAPE directives](#data-shape-directives)
+  - [Schema utilities](#schema-utilities)
+  - [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive)
+  - [Build-time vs read-time: where coercion + joins belong](#build-time-vs-read-time-where-coercion--joins-belong)
+- [Part III — Currents](#part-iii--currents)
+  - [`CustomCurrent`](#customcurrent)
+- [Part IV — Watersheds](#part-iv--watersheds)
   - [Tideweaver orchestration surface](#tideweaver-orchestration-surface)
   - [`Tideweaver.summary` / `tune` / `TuningReport`](#tideweaversummary--tune--tuningreport)
   - [Scheduler-event enums — `SkipReason` / `WakeReason` / `GateMode`](#scheduler-event-enums--skipreason--wakereason--gatemode)
+- [Part V — Canal engineering](#part-v--canal-engineering)
+  - [`register_host_penstock`](#register_host_penstock)
   - [Canal toolkit primitives](#canal-toolkit-primitives)
-  - [`CustomCurrent`](#customcurrent)
-- [Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive)
-- [Telemetry](#telemetry)
-  - [`Wave.log_meta`](#wavelog_meta)
-- [Observability layer (`LoggedIncorporator` + `LoggedTideweaver`)](#observability-layer-loggedincorporator--loggedtideweaver)
-  - [`LoggedIncorporator` — shared `enable_logging=` note](#loggedincorporator--shared-enable_logging-note)
-  - [`get_error`](#loggedincorporator-get_error)
-  - [`get_api`](#loggedincorporator-get_api)
-  - [`get_rejects`](#loggedincorporator-get_rejects)
-  - [`get_current`](#loggedincorporator-get_current)
-  - [`log_debug` / `log_info` / `log_error`](#loggedincorporator-log_debug--log_info--log_error)
-  - [`log_api`](#loggedincorporator-log_api)
-  - [`log_meta`](#loggedincorporator-log_meta)
-  - [`log_cls_info` / `log_cls_error`](#loggedincorporator-log_cls_info--log_cls_error)
-  - [`LoggingMixin`](#loggingmixin)
-  - [`setup_class_logger`](#setup_class_logger)
-  - [`LoggedTideweaver`](#loggedtideweaver)
-- [Schema utilities](#schema-utilities)
-- [Shared kwargs glossary](#shared-kwargs-glossary)
-- [DATA-SHAPE directives](#data-shape-directives)
-- [Class-attribute reference](#class-attribute-reference)
-- [FormatType](#formattype)
-- [CompressionType](#compressiontype)
-- [Exception hierarchy](#exception-hierarchy)
-- [Optional-dependency introspection](#optional-dependency-introspection)
-  - [`list_deps`](#list_deps---listdepinfo)
-  - [`install_hint`](#install_hintdep_name-str---str)
-  - [`Category` enum](#category-enum)
-  - [`DepInfo` fields](#depinfo-fields)
+- [Part VI — Branches](#part-vi--branches)
+  - [Telemetry](#telemetry): [`Wave.log_meta`](#wavelog_meta)
+  - [Observability layer (`LoggedIncorporator` + `LoggedTideweaver`)](#observability-layer-loggedincorporator--loggedtideweaver)
+  - [Class-attribute reference](#class-attribute-reference)
+  - [FormatType](#formattype) / [CompressionType](#compressiontype)
+  - [Exception hierarchy](#exception-hierarchy)
+  - [Optional-dependency introspection](#optional-dependency-introspection)
 - [Where to Go Next](#where-to-go-next)
 
 ---
 
-## Discovery & ingestion
+## Part I — Verbs
+
+Everything in Incorporator starts as a verb on your class.  The core verbs — `incorp` (build), `refresh` (update), `export` (persist) — act once and return.  The probe verbs — `test`, `architect` — hit a source and report before you commit to a shape.  `stream()` and `fjord()` are the same machinery in runner mode: one class driving itself on its own loop.  `display` is the REPL verb.  Currents (Part III) wrap these verbs as schedulable nodes; nothing in a watershed does anything a verb cannot do alone.
+
+### incorp
+
+**Signature**
+```python
+@classmethod
+async def incorp(
+    cls: Type[TIncorporator],
+    inc_url: str | list[str] | None = None,
+    inc_file: str | "os.PathLike[str]" | list[str | "os.PathLike[str]"] | None = None,
+    inc_parent: TIncorporator | "IncorporatorList[TIncorporator]" | None = None,
+    inc_child: str | None = None,
+    inc_code: str | None = None,
+    inc_name: str | None = None,
+    excl_lst: list[str] | None = None,
+    conv_dict: dict[str, Any] | None = None,
+    name_chg: list[tuple[str, str]] | None = None,
+    inc_page: AsyncPaginator | None = None,
+    inflow: str | Path | None = None,
+    **kwargs: Any,
+) -> TIncorporator | "IncorporatorList[TIncorporator]":
+```
+
+**What it does (pseudocode)**
+1. If `inflow=` is set, load the sidecar and resolve string-form tokens in `conv_dict` / `inc_page`.
+2. If `inc_parent=` is given, hand off to the Parent-Child router (HATEOAS drill via `inc_child` JSONPath).
+3. Normalise `inc_url` / `inc_file` into a source list; remember the seed kwargs on the class so `refresh()` can replay them.
+4. Fan out the source list concurrently through the network engine (sliding window of 50, rate-limited, exponential-backoff retries).
+5. Hand the parsed payload to the schema factory; build a dynamic Pydantic model and instantiate one record per row.
+6. Register every instance into `cls.inc_dict`; always return an `IncorporatorList` (carrying `.failed_sources`) — even a single-record result is wrapped in a length-1 list, never a bare instance.
+
+**When to reach for it**
+This is the cold-start verb — the one you call when a new endpoint hits your radar and you want a working object graph in three lines. Backtest data prep, one-shot CSV-to-Pydantic conversions, the seed call before any daemon takes over. **Memory note (v1.2.1+):** `incorp()` validates each chunk as a whole via `TypeAdapter(list[Cls]).validate_python(rows)` — peak memory scales with the source row count, not streaming row-by-row. For large pulls reach for `stream()` (chunking mode) instead so each chunk releases before the next is fetched.
+
+**Common kwargs**
+- `inc_url` / `inc_file` — single string or list; list triggers concurrent fan-out.
+- `inc_code` — field name to use as the primary key in `inc_dict`.
+- `inc_parent` + `inc_child` — drill a parent list's URLs into child fetches (HATEOAS).
+- `conv_dict` — `{field_name: converter}` pre-validation coercion (`inc`, `calc`, `calc_all`, `pluck`, `link_to`, `link_to_list`, `split_and_get`).  **Null-handling contract:** every converter short-circuits on garbage input (`None`, `""`, `"N/A"`, `"null"`, `"unknown"`, `"nan"`, `"undefined"`) before invoking the user callable — defensive null guards in lambdas are unnecessary.  Idioms: `calc(str.lower, "title", default="", target_type=str)` · `calc(str.upper, "code", default="", target_type=str)` · `calc(str.strip, "name", default="", target_type=str)` · `calc(len, "body", default=0, target_type=int)` · `calc("Alive".__eq__, "status", default=False)`.  **`inc(TYPE)`** coerces the field's existing value to a standard Python type (`int` / `float` / `bool` / `str` / `datetime` / a Pydantic type / `new` for pass-through) — the argument is always a TYPE, never a function; passing a callable (e.g. `inc(str.upper)`) is a build-time misuse: `inc()` coerces to a TYPE (int/float/bool/str/datetime or a Pydantic type) and will pass values through UNCHANGED here, and the `incorporator.schema.converters` logger emits a WARNING. **`calc(fn, *keys)`** builds the field by applying a FUNCTION to one or more source values — this is correct even when the output key equals the source key: an in-place transform like `calc(str.upper, "Make")` writing back to `"Make"` is a valid, common idiom, not an exception case. **`pluck(key, chain=fn)`** lifts a nested value out via a dot-notation path (e.g. `"data.attributes.price"`), with an optional `chain=` callable applied to the extracted value before assignment.  **v1.2.3 purity default flip:** `calc()` and `calc_all()` now default `pure=True`. For `calc()`/`CalcOp` the wrapped callable is memoised via `functools.lru_cache(maxsize=10_000)` at Op construction, so identical input tuples are computed once per process — pass `pure=False` explicitly for side-effecting callables (`datetime.now()`, `uuid.uuid4()`, logging, DB writes, mutable counters) so the side effects fire on every row rather than only on cache miss. `calc_all()` accepts the same `pure` flag for API symmetry but does **not** wrap the callable at construction: it runs as a single whole-column pass, so there is no per-input cache to populate.
+- `params` — dict merged **onto** the URL's existing query string, not substituted for it. Prior to 1.3.5, request-level `params` replaced the URL's query outright, silently dropping any embedded or paginator-carried query keys (e.g. a paginator's cursor token) — the practical symptom was a page-1 refetch loop on paginated endpoints. `params` now merges via `httpx.URL.copy_merge_params()`; on key collision, your `params` value wins, matching the existing base/request-params precedence.
+- `payload_list` — list of per-request POST bodies, one per resolved source (`inc_url` entry or `each()`-expanded slot). Length must equal the resolved source list exactly — no silent truncation, no auto-expansion. A length mismatch now raises `ValueError` naming both counts and the three valid idioms: (1) pass `inc_url` as a list of N URLs, one per `payload_list` entry; (2) use the declarative `each()` token via `inc_parent` routing, which auto-expands `inc_url` to match; or (3) omit `inc_url` (`source=None`) for payload-only mode, which auto-matches placeholder length to `payload_list`. **Payload-only passthrough (idiom 3):** each `payload_list[i]` IS the source payload — it is parsed/`conv_dict`-transformed/validated exactly like a fetched body, but with no network call, no HTTP client, no SSRF check, and no rate limiting; `http_method` / `payload_type` are read but inert. **Declarative guard:** the `each()` router branch (reached via `inc_parent` + declarative POST tokens) requires a real target URL — `each()` with no `inc_url` and no parent-extracted URLs raises the same `ValueError("Missing Target URL...")` the bulk POST branch already raises. This guard is scoped to the declarative seam only; direct `incorp(source=None, payload_list=[...])` remains legal.
+- `inc_page` — `AsyncPaginator` subclass for paginated endpoints.
+- `rec_path` — dot-notation drill into a wrapper response; supports integer indices for list segments (e.g. `"results"` or `"dates.0.games"`).
+- **Dot-notation coverage (Bundle G).** All six path-string surfaces accept `"a.b.0.c"` form (dict keys and integer list indices): `rec_path`, `pluck()`, `calc()` input keys, `calc_all()` input keys, `inc_code=`, `inc_name=`, and `inc_child=`. The authoritative implementation is `DataPath` (`incorporator/schema/path.py`) — behaviour is identical across all surfaces.
+- `concurrency_limit`, `requests_per_second`, `timeout`, `headers` — network knobs.
+
+**Yields / returns**
+Always returns an `IncorporatorList[TIncorporator]` — a one-record source yields a length-1 list, never a bare instance (`is_single` removed). `.failed_sources: list[str]` is the legacy flat reject-list view.  For structured access — exception type, `is_url_traffic_error` flag, `Retry-After` hints, wave index — read `.rejects: list[RejectEntry]` (fields: `source`, `error_kind`, `is_url_traffic_error`, `message`, `retry_after`, `wave_index`).
+
+**Parent-child short-circuit (v1.3.3 correctness).** When `inc_parent` is supplied and the parent snapshot is empty, `incorp()` returns an empty `IncorporatorList` without making a network request. This prevents malformed ``.../{}`` requests on endpoints that interpolate parent IDs into the URL. Existing code that checks `len(result) == 0` or `result.failed_sources` is unaffected.
+
+#### Build rows from memory — the payload-only passthrough
+
+**Reach for `incorp(payload_list=[...])` with no `inc_url`/`inc_file` whenever the rows you want already sit in memory** — a nested array inside an already-fetched row (e.g. a roster row's `athletes` list), a reshape between two calls, or fixture data. One dict entry = one row; every entry flows through the FULL build pipeline (`conv_dict` converters, `excl_lst`, `name_chg`, PK-binding, schema inference) with zero network, no HTTP client, no rate limiting:
+
+```python
+payload = [
+    {**athlete.model_dump(), "team_name": team.inc_name}   # stamp parent context
+    for team in rosters for athlete in team.athletes
+    if athlete.active                                       # row filter = plain comprehension
+]
+players = await Player.incorp(
+    payload_list=payload,
+    inc_code="id", inc_name="fullName",
+    conv_dict={
+        "salary": pluck("contract.salary"),
+        "salary_per_year": calc(salary_per_year, "contract.salary", "experience.years"),
+    },
+)
+```
+
+Prefer this passthrough over a `calc()` helper that walks a nested array and emits a list of per-element dicts inside `conv_dict`.
+
+**Ordering:** the build pipeline runs `excl_lst` before `conv_dict` (`Ex -> conv_dict -> Nm -> Pk`) — a field cannot be both read by a converter and excluded in the same call. To consume-and-rename, use an in-place `calc` (output key == source key) followed by `name_chg`.
+
+**See also**
+[Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md) ·
+[Tutorial 5 — Parent → Child Drilling](../examples/05-parent-child-drilling/README.md) ·
+[Library Reference](./library_reference.md)
+
+---
+
+### refresh
+
+**Signature**
+```python
+@classmethod
+async def refresh(
+    cls: Type[TIncorporator],
+    instance: str | Path | TIncorporator | list[TIncorporator] | None = None,
+    new_url: str | list[str] | None = None,
+    new_file: str | list[str] | None = None,
+    inc_child: str | None = None,
+    inc_code: str | None = None,
+    inc_name: str | None = None,
+    excl_lst: list[str] | None = None,
+    conv_dict: dict[str, Any] | None = None,
+    name_chg: list[tuple[str, str]] | None = None,
+    inc_page: AsyncPaginator | None = None,
+    inflow: str | Path | None = None,
+    **kwargs: Any,
+) -> TIncorporator | "IncorporatorList[TIncorporator]":
+```
+
+**What it does (pseudocode)**
+1. Replay the seed call's persisted kwargs (`cls._incorp_kwargs`) so `params`, `headers`, `rec_path`, `conv_dict` apply automatically.
+2. Resolve instance mode: `None` → every live instance in `inc_dict`; `str | Path` → re-source against a new URL/file; `list` / `obj` → targeted partial update.
+3. Deduplicate origin URLs across the resolved instance set (1000 instances sharing 20 URLs ⇒ 20 fetches).
+4. Optionally drill a parent → child path via `inc_child` and dedupe the extracted child URLs.
+5. Fan out the deduplicated source list concurrently through the network engine.
+6. Rebuild instances in a worker thread; Pydantic field updates mutate existing Python references in-place — callers holding the old list see fresh values without reassignment.
+
+**When to reach for it**
+The one-shot re-fetch verb — call it from a REPL or wrap it in your own scheduler when you want fresh field values mutated into the existing object graph without rebuilding the world. For daemonised live mark-to-market reach for `fjord()` (Tutorial 10) instead; `refresh()` itself is manual.
+
+**Common kwargs**
+- `instance` — mode selector (`None`, new URL string, or specific instances).
+- `new_url` / `new_file` — explicit source override; also updates `cls.inc_url` / `cls.inc_file` so subsequent in-state refreshes hit the new source.
+- `inc_child` — drill nested child URLs for re-enrichment.
+- `conv_dict`, `excl_lst`, `name_chg` — override the seed call's persisted settings on this refresh tick.
+- `**kwargs` — anything `incorp()` accepts; user-supplied keys win on conflict with persisted seed kwargs.
+
+**Yields / returns**
+Same as `incorp()` — always an `IncorporatorList[TIncorporator]`, even for a single-record refresh. Existing references are mutated in-place.
+
+**See also**
+[Tutorial 7 — Stateful Refresh](../examples/07-stateful-refresh/README.md) ·
+[Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md)
+
+---
+
+### export
+
+**Signature**
+```python
+@classmethod
+async def export(
+    cls: Type[TIncorporator],
+    *,
+    instance: str | Path | TIncorporator | list[TIncorporator],
+    file_path: str | Path | None = None,
+    format_type: FormatType | None = None,
+    compression: str | None = None,
+    sql_table: str | None = None,
+    if_exists: str = "replace",
+    outflow: str | Path | None = None,
+    **kwargs: Any,
+) -> None:
+```
+
+**What it does (pseudocode)**
+1. Resolve mode: if `file_path=None`, `instance` is treated as the output path and the data source is `cls.inc_dict.values()`; otherwise `instance` is the data and `file_path` is the destination.
+2. If `outflow=` is set, run `transform(instances)` in a worker thread and peek the first row to learn the post-transform field shape.
+3. Infer the writer format from the extension (or honour `format_type=`); look up the matching handler under `io/handlers/`.
+4. Wrap the source in a lazy generator — `model_dump()` runs per row, not per list — so 10M-row exports stay flat on RSS.
+5. JSON/NDJSON fast-path: yield Pydantic instances directly so the handler can call `model_dump_json()` (~15-25% throughput win).
+6. Hand the lazy iterator to the format writer; optionally compress the output file in a background thread.
+
+**When to reach for it**
+The fan-out write verb — point `incorp()`'s result at a Parquet warehouse, a SQLite analytics DB, an NDJSON tail file. Cross-format pivots ("JSON API in, Parquet out") cost one extra `await` and zero schema declarations.
+
+**Common kwargs**
+- `instance` — in-state mode (path string) or explicit data (list / model).
+- `file_path` — destination; omit to enter in-state mode.
+- `format_type` — `FormatType` enum override when the extension is ambiguous.
+- `compression` — `"gz"`, `"bz2"`, `"xz"`, `"zip"`, `"tar"`, `"zstd"`, `"lz4"`, `"snappy"`, `"brotli"`.
+- `sql_table`, `if_exists` — SQLite knobs (`"replace"` / `"append"` / `"fail"`).
+- `outflow` — sidecar `.py` defining `transform(instances) -> Iterable`.
+- `delimiter` (CSV/TSV/PSV), `xml_root`, `json_indent` — handler-specific overrides.
+
+**Yields / returns**
+`None`. Side effect: the file is written; failures raise `IncorporatorFormatError`.
+
+**See also**
+[Tutorial 2 — Data Lake Pivot](../examples/02-data-lake-pivot/README.md) ·
+[Tutorial 3 — Universal Formats](../examples/03-universal-formats/README.md) ·
+[Formats & Compression](./formats_and_compression.md)
+
+---
 
 ### test
 
@@ -182,243 +344,11 @@ async for tide in Tideweaver(watershed).run():
 
 ---
 
-### incorp
+### The daemon runner path
 
-**Signature**
-```python
-@classmethod
-async def incorp(
-    cls: Type[TIncorporator],
-    inc_url: str | list[str] | None = None,
-    inc_file: str | "os.PathLike[str]" | list[str | "os.PathLike[str]"] | None = None,
-    inc_parent: TIncorporator | "IncorporatorList[TIncorporator]" | None = None,
-    inc_child: str | None = None,
-    inc_code: str | None = None,
-    inc_name: str | None = None,
-    excl_lst: list[str] | None = None,
-    conv_dict: dict[str, Any] | None = None,
-    name_chg: list[tuple[str, str]] | None = None,
-    inc_page: AsyncPaginator | None = None,
-    inflow: str | Path | None = None,
-    **kwargs: Any,
-) -> TIncorporator | "IncorporatorList[TIncorporator]":
-```
+`stream()` and `fjord()` are runner-mode verbs: one class drives itself on an internal loop (`refresh_interval` / `export_interval`), typically under the CLI (`incorporator stream|fjord pipeline.json`).  That is the *daemon runner path*.  Inside a watershed the same work is done by `Stream` and `Fjord` **currents** (Part III) — declarative nodes the Tideweaver scheduler ticks on a window.  Streams and fjords inside a watershed are currents, not daemons; the daemon path is what you reach for when one class *is* the whole job.
 
-**What it does (pseudocode)**
-1. If `inflow=` is set, load the sidecar and resolve string-form tokens in `conv_dict` / `inc_page`.
-2. If `inc_parent=` is given, hand off to the Parent-Child router (HATEOAS drill via `inc_child` JSONPath).
-3. Normalise `inc_url` / `inc_file` into a source list; remember the seed kwargs on the class so `refresh()` can replay them.
-4. Fan out the source list concurrently through the network engine (sliding window of 50, rate-limited, exponential-backoff retries).
-5. Hand the parsed payload to the schema factory; build a dynamic Pydantic model and instantiate one record per row.
-6. Register every instance into `cls.inc_dict`; always return an `IncorporatorList` (carrying `.failed_sources`) — even a single-record result is wrapped in a length-1 list, never a bare instance.
-
-**When to reach for it**
-This is the cold-start verb — the one you call when a new endpoint hits your radar and you want a working object graph in three lines. Backtest data prep, one-shot CSV-to-Pydantic conversions, the seed call before any daemon takes over. **Memory note (v1.2.1+):** `incorp()` validates each chunk as a whole via `TypeAdapter(list[Cls]).validate_python(rows)` — peak memory scales with the source row count, not streaming row-by-row. For large pulls reach for `stream()` (chunking mode) instead so each chunk releases before the next is fetched.
-
-**Common kwargs**
-- `inc_url` / `inc_file` — single string or list; list triggers concurrent fan-out.
-- `inc_code` — field name to use as the primary key in `inc_dict`.
-- `inc_parent` + `inc_child` — drill a parent list's URLs into child fetches (HATEOAS).
-- `conv_dict` — `{field_name: converter}` pre-validation coercion (`inc`, `calc`, `calc_all`, `pluck`, `link_to`, `link_to_list`, `split_and_get`).  **Null-handling contract:** every converter short-circuits on garbage input (`None`, `""`, `"N/A"`, `"null"`, `"unknown"`, `"nan"`, `"undefined"`) before invoking the user callable — defensive null guards in lambdas are unnecessary.  Idioms: `calc(str.lower, "title", default="", target_type=str)` · `calc(str.upper, "code", default="", target_type=str)` · `calc(str.strip, "name", default="", target_type=str)` · `calc(len, "body", default=0, target_type=int)` · `calc("Alive".__eq__, "status", default=False)`.  **`inc(TYPE)`** coerces the field's existing value to a standard Python type (`int` / `float` / `bool` / `str` / `datetime` / a Pydantic type / `new` for pass-through) — the argument is always a TYPE, never a function; passing a callable (e.g. `inc(str.upper)`) is a build-time misuse: `inc()` coerces to a TYPE (int/float/bool/str/datetime or a Pydantic type) and will pass values through UNCHANGED here, and the `incorporator.schema.converters` logger emits a WARNING. **`calc(fn, *keys)`** builds the field by applying a FUNCTION to one or more source values — this is correct even when the output key equals the source key: an in-place transform like `calc(str.upper, "Make")` writing back to `"Make"` is a valid, common idiom, not an exception case. **`pluck(key, chain=fn)`** lifts a nested value out via a dot-notation path (e.g. `"data.attributes.price"`), with an optional `chain=` callable applied to the extracted value before assignment.  **v1.2.3 purity default flip:** `calc()` and `calc_all()` now default `pure=True`. For `calc()`/`CalcOp` the wrapped callable is memoised via `functools.lru_cache(maxsize=10_000)` at Op construction, so identical input tuples are computed once per process — pass `pure=False` explicitly for side-effecting callables (`datetime.now()`, `uuid.uuid4()`, logging, DB writes, mutable counters) so the side effects fire on every row rather than only on cache miss. `calc_all()` accepts the same `pure` flag for API symmetry but does **not** wrap the callable at construction: it runs as a single whole-column pass, so there is no per-input cache to populate.
-- `params` — dict merged **onto** the URL's existing query string, not substituted for it. Prior to 1.3.5, request-level `params` replaced the URL's query outright, silently dropping any embedded or paginator-carried query keys (e.g. a paginator's cursor token) — the practical symptom was a page-1 refetch loop on paginated endpoints. `params` now merges via `httpx.URL.copy_merge_params()`; on key collision, your `params` value wins, matching the existing base/request-params precedence.
-- `payload_list` — list of per-request POST bodies, one per resolved source (`inc_url` entry or `each()`-expanded slot). Length must equal the resolved source list exactly — no silent truncation, no auto-expansion. A length mismatch now raises `ValueError` naming both counts and the three valid idioms: (1) pass `inc_url` as a list of N URLs, one per `payload_list` entry; (2) use the declarative `each()` token via `inc_parent` routing, which auto-expands `inc_url` to match; or (3) omit `inc_url` (`source=None`) for payload-only mode, which auto-matches placeholder length to `payload_list`. **Payload-only passthrough (idiom 3):** each `payload_list[i]` IS the source payload — it is parsed/`conv_dict`-transformed/validated exactly like a fetched body, but with no network call, no HTTP client, no SSRF check, and no rate limiting; `http_method` / `payload_type` are read but inert. **Declarative guard:** the `each()` router branch (reached via `inc_parent` + declarative POST tokens) requires a real target URL — `each()` with no `inc_url` and no parent-extracted URLs raises the same `ValueError("Missing Target URL...")` the bulk POST branch already raises. This guard is scoped to the declarative seam only; direct `incorp(source=None, payload_list=[...])` remains legal.
-- `inc_page` — `AsyncPaginator` subclass for paginated endpoints.
-- `rec_path` — dot-notation drill into a wrapper response; supports integer indices for list segments (e.g. `"results"` or `"dates.0.games"`).
-- **Dot-notation coverage (Bundle G).** All six path-string surfaces accept `"a.b.0.c"` form (dict keys and integer list indices): `rec_path`, `pluck()`, `calc()` input keys, `calc_all()` input keys, `inc_code=`, `inc_name=`, and `inc_child=`. The authoritative implementation is `DataPath` (`incorporator/schema/path.py`) — behaviour is identical across all surfaces.
-- `concurrency_limit`, `requests_per_second`, `timeout`, `headers` — network knobs.
-
-**Yields / returns**
-Always returns an `IncorporatorList[TIncorporator]` — a one-record source yields a length-1 list, never a bare instance (`is_single` removed). `.failed_sources: list[str]` is the legacy flat reject-list view.  For structured access — exception type, `is_url_traffic_error` flag, `Retry-After` hints, wave index — read `.rejects: list[RejectEntry]` (fields: `source`, `error_kind`, `is_url_traffic_error`, `message`, `retry_after`, `wave_index`).
-
-**Parent-child short-circuit (v1.3.3 correctness).** When `inc_parent` is supplied and the parent snapshot is empty, `incorp()` returns an empty `IncorporatorList` without making a network request. This prevents malformed ``.../{}`` requests on endpoints that interpolate parent IDs into the URL. Existing code that checks `len(result) == 0` or `result.failed_sources` is unaffected.
-
-#### Build rows from memory — the payload-only passthrough
-
-**Reach for `incorp(payload_list=[...])` with no `inc_url`/`inc_file` whenever the rows you want already sit in memory** — a nested array inside an already-fetched row (e.g. a roster row's `athletes` list), a reshape between two calls, or fixture data. One dict entry = one row; every entry flows through the FULL build pipeline (`conv_dict` converters, `excl_lst`, `name_chg`, PK-binding, schema inference) with zero network, no HTTP client, no rate limiting:
-
-```python
-payload = [
-    {**athlete.model_dump(), "team_name": team.inc_name}   # stamp parent context
-    for team in rosters for athlete in team.athletes
-    if athlete.active                                       # row filter = plain comprehension
-]
-players = await Player.incorp(
-    payload_list=payload,
-    inc_code="id", inc_name="fullName",
-    conv_dict={
-        "salary": pluck("contract.salary"),
-        "salary_per_year": calc(salary_per_year, "contract.salary", "experience.years"),
-    },
-)
-```
-
-Prefer this passthrough over a `calc()` helper that walks a nested array and emits a list of per-element dicts inside `conv_dict`.
-
-**Ordering:** the build pipeline runs `excl_lst` before `conv_dict` (`Ex -> conv_dict -> Nm -> Pk`) — a field cannot be both read by a converter and excluded in the same call. To consume-and-rename, use an in-place `calc` (output key == source key) followed by `name_chg`.
-
-**See also**
-[Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md) ·
-[Tutorial 5 — Parent → Child Drilling](../examples/05-parent-child-drilling/README.md) ·
-[Library Reference](./library_reference.md)
-
----
-
-### register_host_penstock
-
-**Signature**
-```python
-def register_host_penstock(
-    host: str,
-    penstock: Penstock | Callable[[], Penstock] | None = None,
-    *,
-    rate_per_sec: float | None = None,
-    burst: int | None = None,
-) -> None:
-```
-
-**What it does (pseudocode)**
-1. Registers a per-host `Penstock` keyed by lowercase hostname.  Accepts a `Penstock` instance, a zero-arg factory callable (legacy back-compat), or the `rate_per_sec=`/`burst=` shorthand — a bare `rate_per_sec` builds a `SustainedPenstock`; adding `burst` builds a `BurstPenstock` instead.
-2. Each `resolve_penstock()` invocation builds a fresh `BoundPenstock` (sharing the registered config, with its own `FlowState` + `asyncio.Lock`) so fan-out legs run independently.
-3. Re-registering the same host replaces the previous penstock.
-
-**When to reach for it**
-The framework ships with **no implicit per-host throttling**.  Use this to attach a penstock for an in-house API or any public host that imposes a documented rate ceiling.  The alternative — `incorp(..., requests_per_second=X)` per call — is fine for one-shot scripts; the registry is the right tool when you have many call sites against the same host and want one source of truth.
-
-**Worked example**
-```python
-from incorporator import register_host_penstock
-
-# Conservative rate for CoinGecko's anon tier (5-15 req/min documented).
-register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
-
-# Bursty in-house API: 50 req/s sustained, 200-burst tolerance.
-register_host_penstock("api.internal.acme.com", rate_per_sec=50.0, burst=200)
-```
-
-**Common kwargs**
-- `host` — hostname to throttle; casing doesn't matter — the registry lowercases it on registration to match the lowercase hostname `urllib.parse` extracts from URLs at resolve time.
-- `penstock` — a `Penstock` instance (preferred for non-Sustained/Burst policies) or a zero-arg callable returning one.  The `Penstock` config is frozen Pydantic; the per-call binding owns the mutable state + lock.  Mutually exclusive with `rate_per_sec`/`burst`.
-- `rate_per_sec` / `burst` — keyword-only shorthand that builds a `SustainedPenstock` (bare `rate_per_sec`) or `BurstPenstock` (`rate_per_sec` + `burst`) inline, skipping the explicit import + instantiation.
-
-**Yields / returns**
-`None`.  Side-effect-only: mutates the module-level `_HOST_PENSTOCKS` dict.
-
-**Related**
-- `incorporator.io.penstock.resolve_penstock(source, requests_per_second=, burst=)` — the resolver every `incorp()` call routes through.  Five-tier precedence: env-var bypass > `rps<=0` > caller rps > registered host > `DEFAULT_RPS=15` fallback.
-- `incorporator.io.penstock.known_host_rates()` — diagnostic view of `host → float` rates currently registered.
-- `incorporator.io.penstock.Penstock` — the unified rate-control primitive shared by both the HTTP host registry and the Tideweaver edge layer.  Subclasses: `NullPenstock`, `SustainedPenstock`, `BurstPenstock`, `WindowPenstock`, `SignalPenstock` (and `BackpressurePenstock` at the edge layer only).
-
-**See also**
-[Tutorial 1](../examples/01-first-steps/README.md) — CoinGecko example with explicit registration ·
-[Library Reference](./library_reference.md)
-
----
-
-## Live updates
-
-### refresh
-
-**Signature**
-```python
-@classmethod
-async def refresh(
-    cls: Type[TIncorporator],
-    instance: str | Path | TIncorporator | list[TIncorporator] | None = None,
-    new_url: str | list[str] | None = None,
-    new_file: str | list[str] | None = None,
-    inc_child: str | None = None,
-    inc_code: str | None = None,
-    inc_name: str | None = None,
-    excl_lst: list[str] | None = None,
-    conv_dict: dict[str, Any] | None = None,
-    name_chg: list[tuple[str, str]] | None = None,
-    inc_page: AsyncPaginator | None = None,
-    inflow: str | Path | None = None,
-    **kwargs: Any,
-) -> TIncorporator | "IncorporatorList[TIncorporator]":
-```
-
-**What it does (pseudocode)**
-1. Replay the seed call's persisted kwargs (`cls._incorp_kwargs`) so `params`, `headers`, `rec_path`, `conv_dict` apply automatically.
-2. Resolve instance mode: `None` → every live instance in `inc_dict`; `str | Path` → re-source against a new URL/file; `list` / `obj` → targeted partial update.
-3. Deduplicate origin URLs across the resolved instance set (1000 instances sharing 20 URLs ⇒ 20 fetches).
-4. Optionally drill a parent → child path via `inc_child` and dedupe the extracted child URLs.
-5. Fan out the deduplicated source list concurrently through the network engine.
-6. Rebuild instances in a worker thread; Pydantic field updates mutate existing Python references in-place — callers holding the old list see fresh values without reassignment.
-
-**When to reach for it**
-The one-shot re-fetch verb — call it from a REPL or wrap it in your own scheduler when you want fresh field values mutated into the existing object graph without rebuilding the world. For daemonised live mark-to-market reach for `fjord()` (Tutorial 10) instead; `refresh()` itself is manual.
-
-**Common kwargs**
-- `instance` — mode selector (`None`, new URL string, or specific instances).
-- `new_url` / `new_file` — explicit source override; also updates `cls.inc_url` / `cls.inc_file` so subsequent in-state refreshes hit the new source.
-- `inc_child` — drill nested child URLs for re-enrichment.
-- `conv_dict`, `excl_lst`, `name_chg` — override the seed call's persisted settings on this refresh tick.
-- `**kwargs` — anything `incorp()` accepts; user-supplied keys win on conflict with persisted seed kwargs.
-
-**Yields / returns**
-Same as `incorp()` — always an `IncorporatorList[TIncorporator]`, even for a single-record refresh. Existing references are mutated in-place.
-
-**See also**
-[Tutorial 7 — Stateful Refresh](../examples/07-stateful-refresh/README.md) ·
-[Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md)
-
----
-
-## Persistence
-
-### export
-
-**Signature**
-```python
-@classmethod
-async def export(
-    cls: Type[TIncorporator],
-    *,
-    instance: str | Path | TIncorporator | list[TIncorporator],
-    file_path: str | Path | None = None,
-    format_type: FormatType | None = None,
-    compression: str | None = None,
-    sql_table: str | None = None,
-    if_exists: str = "replace",
-    outflow: str | Path | None = None,
-    **kwargs: Any,
-) -> None:
-```
-
-**What it does (pseudocode)**
-1. Resolve mode: if `file_path=None`, `instance` is treated as the output path and the data source is `cls.inc_dict.values()`; otherwise `instance` is the data and `file_path` is the destination.
-2. If `outflow=` is set, run `transform(instances)` in a worker thread and peek the first row to learn the post-transform field shape.
-3. Infer the writer format from the extension (or honour `format_type=`); look up the matching handler under `io/handlers/`.
-4. Wrap the source in a lazy generator — `model_dump()` runs per row, not per list — so 10M-row exports stay flat on RSS.
-5. JSON/NDJSON fast-path: yield Pydantic instances directly so the handler can call `model_dump_json()` (~15-25% throughput win).
-6. Hand the lazy iterator to the format writer; optionally compress the output file in a background thread.
-
-**When to reach for it**
-The fan-out write verb — point `incorp()`'s result at a Parquet warehouse, a SQLite analytics DB, an NDJSON tail file. Cross-format pivots ("JSON API in, Parquet out") cost one extra `await` and zero schema declarations.
-
-**Common kwargs**
-- `instance` — in-state mode (path string) or explicit data (list / model).
-- `file_path` — destination; omit to enter in-state mode.
-- `format_type` — `FormatType` enum override when the extension is ambiguous.
-- `compression` — `"gz"`, `"bz2"`, `"xz"`, `"zip"`, `"tar"`, `"zstd"`, `"lz4"`, `"snappy"`, `"brotli"`.
-- `sql_table`, `if_exists` — SQLite knobs (`"replace"` / `"append"` / `"fail"`).
-- `outflow` — sidecar `.py` defining `transform(instances) -> Iterable`.
-- `delimiter` (CSV/TSV/PSV), `xml_root`, `json_indent` — handler-specific overrides.
-
-**Yields / returns**
-`None`. Side effect: the file is written; failures raise `IncorporatorFormatError`.
-
-**See also**
-[Tutorial 2 — Data Lake Pivot](../examples/02-data-lake-pivot/README.md) ·
-[Tutorial 3 — Universal Formats](../examples/03-universal-formats/README.md) ·
-[Formats & Compression](./formats_and_compression.md)
-
----
-
-## Daemons
-
-### stream
+#### stream
 
 **Signature**
 ```python
@@ -473,7 +403,7 @@ The chunking daemon — unattended overnight drain of a paginated source, one pa
 
 ---
 
-### fjord
+#### fjord
 
 **Signature**
 ```python
@@ -538,6 +468,346 @@ def outflow(state):
 Three lessons: iterate the registry as a list; look up by `inc_dict[key]`; trust foreign keys that `link_to(state["..."])` resolved during inflow (don't re-look them up).
 
 > The `nht` lookup above is a read-time `inc_dict.get(...)` — one join that stayed read-time in this worked example, alongside `inv.Vehicle.VIN` which resolved at build time via `inflow()`.  See "Build-time vs read-time: where coercion + joins belong" below for the general rule and why both patterns coexist honestly rather than one replacing the other everywhere.
+
+### display
+
+**Signature**
+```python
+def display(self) -> None:
+```
+
+**What it does (pseudocode)**
+1. Read `self.__class__.__name__`, falling back to `"UnknownClass"` if absent.
+2. Print one line containing `class`, `inc_code`, `inc_name`, and `last_rcd`.
+3. Return `None`.
+
+**When to reach for it**
+The REPL spot-check. Use it when you're tabbing through `launches.inc_dict` interactively and want a one-liner identity dump without typing `model_dump_json(indent=2)`. For structured output in production, use `model_dump_json()` directly.
+
+**Common kwargs**
+- None — `display()` is parameter-free.
+
+**Yields / returns**
+`None`. The line is printed to stdout.
+
+**See also**
+[Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md)
+
+---
+
+## Part II — Conv_dict & data shaping
+
+The verbs share one vocabulary for shaping rows: the forwarded kwargs below, the `Ex → conv_dict → Nm → Pk` build passes, and the conv_dict primitives (`inc`, `calc`, `calc_all`, `pluck`, `link_to`, …) shown inline throughout this atlas — exhaustive parameter tables live in `library_reference.md`, narrative walkthroughs in Tutorial 6.
+
+### Shared kwargs glossary
+
+- `inflow=` — sidecar `.py` exposing public symbols for `conv_dict` token resolution; in fjord, may also define `inflow(state)` for sequential dependent seeding (see [the `inflow(state)` contract](#fjord) under the fjord entry for call cadence, guard requirements, and return shape).
+- `outflow=` — sidecar `.py` whose stem becomes the dynamic output class name; must define `outflow(state) -> list[dict]` (or `dict[ClassName, list[dict]]` for multi-output fjord).
+- `inc_page=` — `AsyncPaginator` subclass (`PageNumberPaginator`, `CursorPaginator`, `OffsetPaginator`, `NextUrlPaginator`, `LinkHeaderPaginator` for web; `SQLitePaginator`, `CSVPaginator`, `AvroPaginator` for local) that drives chunking-mode `stream()` or paginated `incorp()`. Every paginator subclass accepts a keyword-only `penstock=` argument (defaults to `NullPenstock()`); pass a `SustainedPenstock(rate_per_sec=...)` / `BurstPenstock` / `WindowPenstock` / `SignalPenstock` to throttle the yield rate at the paginator layer. Web paginators compose additively with host-level throttles registered via `register_host_penstock`; local paginators have no other throttle path, so the per-paginator penstock is the only way to bound their disk-speed iteration. See [Streaming & Pagination §6](./streaming_and_pagination.md#6-throttling-paginators) for worked examples.
+- `format_type=` — `FormatType` enum forcing a writer when the file extension is ambiguous; otherwise auto-detected from extension.
+- `enable_logging=` — on `LoggedIncorporator` only; wires the call into per-class rotating JSONL handlers (`logs/<ClassName>_{api,error,debug}.log`).
+- `inc_code=` — field name on each record that becomes the primary key in `inc_dict`. Pass the field name (e.g. `"id"`); the framework reads each record's value at that key.
+
+---
+
+### DATA-SHAPE directives
+
+The four data-shape pipeline parameters (`excl_lst`, `name_chg`,
+`code_attr`, `name_attr`) travel through a single normalizer
+(`_normalize_etl_kwargs`) into typed frozen-dataclass directives before
+the dispatcher runs.  Bare strings and 2-tuples keep working — the
+normalizer accepts mixed sequences of bare shapes and directive
+instances, and emits an identical `NormalizedKwargs` container either
+way.
+
+**Import**
+```python
+from incorporator.schema.directives import Ex, Nm
+```
+
+`Pk` is also importable from the same module but is synthesised
+internally — users pass `code_attr="field"` / `name_attr="field"` (bare
+strings) and the framework constructs the `Pk` instances at normalize
+time.
+
+**The three directives**
+
+| Directive | Shape | Where it goes | Purpose |
+|---|---|---|---|
+| `Ex(field: str)` | frozen dataclass | `excl_lst` | Drop a field.  Bare `Ex("foo")` drops the top-level key `"foo"`; dotted-path `Ex("a.b.c")` drops the nested leaf via `DataPath.pop`. |
+| `Nm(old: str, new: str)` | frozen dataclass | `name_chg` | Rename a top-level key.  Same semantics as the bare 2-tuple `("old", "new")`; both forms produce identical normalised output. |
+| `Pk(source: str, target: Literal["code", "name"])` | frozen dataclass | synthesised internally | Bind the value at `source` to `inc_code` or `inc_name`.  Built by the normalizer from `code_attr` / `name_attr` bare strings; `Pk.source` is rewritten through the `name_chg` rename map (first-hit) so renames don't desync the bind. |
+
+**Four-pass dispatch order** — `incorporator/schema/builder.py:185-315`
+
+1. **Ex (drop)** — every directive applied per row via `Ex.apply_drop(record)`.
+2. **`conv_dict` ops** — converter operations apply per row, op-outer / row-inner.
+3. **Nm (rename)** — every directive applied per row via `Nm.apply_rename(record)`.
+4. **Pk (PK-bind)** — runs last so renamed source fields resolve cleanly.  `Pk.apply_bind(record)` reads `_path.resolve(record)` and writes `inc_code` or `inc_name`.
+
+PK binding running after rename closes two silent failure modes the
+prior order let through — Case A (rename moves the source away from
+where `code_attr` pointed) and Case B (rename *creates* the field
+`code_attr` targets, but the bind ran too early and the auto-counter
+fallback silently wrote synthetic IDs).
+
+**Worked example**
+
+```python
+from incorporator import Incorporator
+from incorporator.schema.directives import Ex, Nm
+
+class Invoice(Incorporator): pass
+
+# Bare-string form (always worked).
+await Invoice.incorp(
+    inc_file="invoices.json",
+    excl_lst=["internal_id"],
+    name_chg=[("ext_id", "id")],
+    code_attr="id",
+)
+
+# Directive form (post-normalizer).
+await Invoice.incorp(
+    inc_file="invoices.json",
+    excl_lst=[Ex("internal_id"), Ex("audit.legacy_flag")],   # nested drop
+    name_chg=[Nm("ext_id", "id"), Nm("vendor_code", "code")],
+    code_attr="id",
+)
+
+# Mixed sequences are accepted in the same list.
+await Invoice.incorp(
+    inc_file="invoices.json",
+    excl_lst=["internal_id", Ex("audit.legacy_flag")],
+    name_chg=[("ext_id", "id"), Nm("vendor_code", "code")],
+    code_attr="id",
+)
+```
+
+**JSON form** — the same directives resolve as text tokens through `resolve_tokens()`:
+
+```json
+{
+  "incorp_params": {
+    "excl_lst": ["internal_id", "Ex('audit.legacy_flag')"],
+    "name_chg": [["ext_id", "id"], "Nm('vendor_code', 'code')"],
+    "code_attr": "id"
+  }
+}
+```
+
+`Pk` is allow-listed at `incorporator/cli/tokens.py:125-127` for
+forward-compat — a token string like `"Pk('id', target='code')"`
+resolves to a `Pk` instance — but JSON pipelines today have no
+canonical destination slot for it.  Continue to use `code_attr` /
+`name_attr` bare strings in JSON.
+
+**When to reach for the directive form**
+
+- Type-safe, IDE-friendly drop/rename declarations in Python code.
+- Hashable frozen containers for cache/replay across many `incorp()` calls.
+- Nested-leaf drops via `Ex("a.b.c")` that bare-string `excl_lst` cannot express.
+
+**See also**
+[Library Reference](./library_reference.md) ·
+`incorporator/schema/directives.py` ·
+`incorporator/schema/builder.py`
+
+---
+
+### Schema utilities
+
+Helpers for `conv_dict`, `json_payload`, and `form_payload` that don't fit neatly inside the `incorp` kwarg descriptions.  All are importable from the top-level `incorporator` package.
+
+**Import**
+```python
+from incorporator import new, sum_attributes, each, join_all, as_list
+```
+
+---
+
+#### `new` — generated-field sentinel
+
+**Signature**
+```python
+new  # module-level value, not a callable
+```
+
+`new` is a module-level sentinel value (instance of the private `_NewSentinel` class).  Assign it as the value for a `conv_dict` key to signal "this field should exist on the dynamic class but has no source key to map from — generate it from scratch."  The schema factory accepts any valid Python type for a `new`-valued key; the value defaults to `None` unless a converter on the same key sets it.
+
+```python
+from incorporator import Incorporator, new, calc
+
+class Enriched(Incorporator):
+    pass
+
+await Enriched.incorp(
+    inc_url="https://api.example.com/items",
+    conv_dict={
+        "computed_rank": new,       # field exists on the class; populated by a downstream calc
+        "upper_name":   calc(str.upper, "name", target_type=str),
+    },
+)
+```
+
+**When to reach for it**
+When you need a field to exist on the dynamic class (e.g. for a downstream `calc()` to write into, or for Pydantic to include in the schema) but no source key maps to it directly.  Rare in typical ETL — most fields come from the raw payload.
+
+---
+
+### `sum_attributes` — safe field-sum reducer
+
+**Signature**
+```python
+def sum_attributes(*args: Any) -> float:
+```
+
+`sum_attributes` is a ready-made `calc()` reducer that safely sums N fields, treating `None` and non-numeric values as zero.  Numeric strings (`"42"`), floats, ints, and `None` all mix without raising.  Use it as the `func` argument to `calc()`:
+
+```python
+from incorporator import calc, sum_attributes
+
+await Pokemon.incorp(
+    inc_url="https://pokeapi.co/api/v2/pokemon?limit=151",
+    conv_dict={
+        "total_stats": calc(sum_attributes, "hp", "attack", "defense", "speed"),
+    },
+)
+# pokemon.total_stats == float(hp + attack + defense + speed)
+```
+
+**When to reach for it**
+Any time you'd write a 3-line try/except to total a handful of row fields: Pokémon base-stat totals, revenue sums across line items, point totals in a fantasy scoring sheet.
+
+---
+
+### `each` — POST fan-out sentinel
+
+**Signature**
+```python
+def each() -> _EachSentinel:
+```
+
+`each` is a POST fan-out sentinel.  Place `each()` as the value in `json_payload` or `form_payload` to tell the router "make one POST per parent ID rather than a single bulk request."  Produces N concurrent requests — one per row in the parent snapshot.  Returns an `_EachSentinel` instance (not an `Op`).
+
+```python
+from incorporator import Incorporator, each
+
+results = await Decoded.incorp(
+    inc_url="https://vpic.nhtsa.dot.gov/.../DecodeVin/",
+    inc_parent=invoices,
+    inc_child="Vehicle.VIN",
+    http_method="POST",
+    json_payload={"vin": each(), "format": "json"},
+)
+```
+
+**When to reach for it**
+When the target endpoint takes exactly one ID per request and will not accept a bulk body.  Contrast with `join_all()` (one POST, delimited string) and `as_list()` (one POST, JSON array) for endpoints that accept batch shapes.
+
+---
+
+### `join_all` — bulk-POST delimited string
+
+**Signature**
+```python
+def join_all(delimiter: str = ",") -> Op:
+```
+
+`join_all` collapses all parent IDs into one delimited string for a single bulk POST.  Returns an `Op` instance.  Place it in `form_payload` when the endpoint accepts a delimited-batch body (e.g. NHTSA `DecodeVINValuesBatch/` takes `vin1;vin2;vin3`).
+
+```python
+from incorporator import Incorporator, join_all
+
+specs = await NHTSASpec.incorp(
+    inc_url="https://vpic.nhtsa.dot.gov/.../DecodeVINValuesBatch/",
+    inc_parent=invoices,
+    inc_child="Vehicle.VIN",
+    http_method="POST",
+    payload_type="form",
+    form_payload={"data": join_all(";"), "format": "json"},
+)
+```
+
+**Args**
+- `delimiter` — separator between IDs.  Default `","` ; common alternatives are `";"` and `"|"`.
+
+**When to reach for it**
+When the endpoint supports a delimited-batch shape and `each()` (N requests) would be wasteful or rate-limited.
+
+---
+
+### `as_list` — bulk-POST JSON array
+
+**Signature**
+```python
+def as_list() -> Op:
+```
+
+`as_list` wraps all parent IDs in one JSON array for a single bulk POST.  Returns an `Op` instance.  Place it in `json_payload` when the endpoint expects `{"ids": [1, 2, 3]}` or any other JSON-array-bodied bulk shape.
+
+```python
+from incorporator import Incorporator, as_list
+
+results = await Audit.incorp(
+    inc_url="https://api.example.com/bulk-audit",
+    inc_parent=invoices,
+    inc_child="id",
+    http_method="POST",
+    json_payload={"ids": as_list()},   # → {"ids": [1, 2, 3, ...]}
+)
+```
+
+**When to reach for it**
+When the endpoint expects a JSON array body and a single round-trip.  Scalar inputs are wrapped in a single-element list.  Contrast with `each()` (N requests) and `join_all()` (one request, delimited string).
+
+---
+
+### Row filtering: pick the right primitive
+
+The framework has **no post-fetch row-filter primitive** — there is no
+`Stream.parent_filter`, no `Fjord.parent_filters`. Row scoping always
+happens at the source. Pick the right primitive from this decision tree:
+
+1. **SQL source** → `SQLitePaginator(sql_query="... WHERE ...")`.
+   Database-side `WHERE` is the cheapest filter the framework can express
+   — the rows you don't want never leave SQLite. See
+   `incorporator/io/pagination/local.py`.
+
+2. **HTTP source with a filter-capable API** → `inc_url` carrying the
+   filter in the URL string (`?divisionId=201`, `?status=active`,
+   `?since=2024-01-01`). Probe the live API if the filter parameter is
+   undocumented. This is the established framework idiom:
+   - `examples/appendix/mlb-pulse/` → `?leagueId=103` for AL teams.
+   - `examples/11-tideweaver/` → `?pair=XBTUSD,ETHUSD` for a symbol set.
+   - `examples/appendix/crypto-graph-mapping/` →
+     `?vs_currency=usd&per_page=100`.
+   - `examples/appendix/pokeapi-etl/` → `?limit=50&offset=0`.
+
+3. **Aggregating multiple upstreams where the filter belongs with the
+   join logic** → filter inside the `outflow(state)` return list.
+   See T9 (NASCAR fjord) and T10 (multi-source fjord) for the pattern —
+   the filter and the row-shaping live together where the join is
+   declared.
+
+4. **Multi-child with different filters** → declare a separate
+   URL-filtered parent `Stream` per filter, one child per parent.
+   Cheaper than fetch-all-and-post-filter, and the dependency graph
+   stays explicit.
+
+5. **Computed-field filter (rare, escape hatch)** → subclass
+   `CustomCurrent` and override `async tick(...)` to filter and call
+   `cls.incorp(inc_parent=filtered)` yourself. Use this only when the
+   URL / SQL / outflow primitives genuinely can't express the predicate
+   (e.g. the filter depends on a derived attribute that's only available
+   after seeding the parent).
+
+**See also** the `Stream.parent_current` / `Fjord.parent_currents`
+entries in the class-attribute reference at the end of this document —
+the declarative parent-child dependency primitives that pair with this
+decision tree.
+
+---
 
 ### Build-time vs read-time: where coercion + joins belong
 
@@ -604,35 +874,67 @@ Both patterns are worked through in [Tutorial 9 — NASCAR Fantasy Fjord](../exa
 
 ---
 
-## REPL
+## Part III — Currents
 
-### display
+A Current is a declarative node in a watershed: a class + a verb + a cadence.  `Stream` wraps the chunking `cls.stream()` drain (or a parent-snapshot drill), `Fjord` is a per-tick flush through `outflow(state)`, `Export` wraps `cls.export()`, and `CustomCurrent` is the escape hatch with a user `tick()`.  Streams and fjords inside a watershed are **currents** — scheduled by a Tideweaver — not daemons; the self-driving daemon path lives in Part I.
+
+### CustomCurrent
+
+**Import path** *(load-bearing — not top-level)*
+```python
+from incorporator.tideweaver import CustomCurrent
+```
 
 **Signature**
 ```python
-def display(self) -> None:
+class CustomCurrent(Current):
+    auto_park_snapshot: ClassVar[bool] = True
+
+    async def tick(self, scheduler: Tideweaver) -> None: ...
 ```
 
+`CustomCurrent` is the escape hatch for tick logic that does not fit the three verb-typed Currents (`Stream` / `Fjord` / `Export`).  Subclass it, override `async tick(self, scheduler)`, and place the instance in the `Watershed.currents` list like any other Current.  The scheduler calls `current._run_tick(scheduler)` — which wraps `tick()` with the auto-park logic described below — in place of the normal verb dispatch.
+
 **What it does (pseudocode)**
-1. Read `self.__class__.__name__`, falling back to `"UnknownClass"` if absent.
-2. Print one line containing `class`, `inc_code`, `inc_name`, and `last_rcd`.
-3. Return `None`.
+1. On each scheduler pass that satisfies the interval + upstream gate checks, the scheduler calls `await current._run_tick(scheduler)`.
+2. `_run_tick` records the pre-tick value of `cls._tideweaver_snapshot` (the identity sentinel).
+3. `await self.tick(scheduler)` runs the user-supplied body.
+4. If `auto_park_snapshot` is `True` and the tick body did NOT assign a new list to `cls._tideweaver_snapshot` (identity check — a new list object means the user wired their own snapshot), the scheduler parks `list(cls.inc_dict.values())` as `cls._tideweaver_snapshot` so downstream `HardLock` edges see fresh upstream waves without manual wiring.
+5. After the tick returns, if the resulting `_tideweaver_snapshot` is empty while at least one upstream current's snapshot was non-empty, the scheduler emits a per-tick WARNING — surfaces silent predicate or `conv_dict` mismatches without needing a debugger (fires each tick while the condition persists).
+
+**`auto_park_snapshot` opt-out contract**
+
+Set `auto_park_snapshot: ClassVar[bool] = False` on the subclass to disable the automatic snapshot park.  Only correct for ticks that are pure side-effects (health-check pings, external metric pushes) that should never gate downstream currents.  When `False`, downstream `HardLock` edges will stay permanently unblocked unless the tick body manually assigns `cls._tideweaver_snapshot`.
+
+```python
+from incorporator.tideweaver import CustomCurrent
+
+class HealthcheckPing(CustomCurrent):
+    auto_park_snapshot: ClassVar[bool] = False   # pure side-effect — don't gate downstream
+
+    async def tick(self, scheduler):
+        response = await httpx.get("https://internal.acme/health")
+        if response.status_code != 200:
+            raise RuntimeError(f"health check failed: {response.status_code}")
+```
+
+**Immutability contract**
+
+`tick()` MUST NOT register new `Current`s or `Edge`s, nor mutate `scheduler.watershed.currents` / `scheduler.watershed.edges`, after `Tideweaver.run()` has started.  The scheduler memoises transitive-upstream lookups once per instance for O(1) gate evaluation; runtime topology mutations would silently invalidate that cache and produce incorrect gating decisions.  To add a current mid-run, stop the current watershed and start a new `Tideweaver` instance.
 
 **When to reach for it**
-The REPL spot-check. Use it when you're tabbing through `launches.inc_dict` interactively and want a one-liner identity dump without typing `model_dump_json(indent=2)`. For structured output in production, use `model_dump_json()` directly.
-
-**Common kwargs**
-- None — `display()` is parameter-free.
-
-**Yields / returns**
-`None`. The line is printed to stdout.
+Use `CustomCurrent` only when the standard verb-typed Currents genuinely cannot express the tick logic: health-check pings, sentinel-row insertions, externally-driven publishers, computed-field filters that depend on a derived attribute only available post-seeding.  For all standard `incorp()` / `refresh()` / `export()` shapes reach for `Stream`, `Fjord`, or `Export` first.
 
 **See also**
-[Tutorial 1 — First Steps + DX Inspector](../examples/01-first-steps/README.md)
+[Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive) (escape-hatch entry #5) ·
+[Class-attribute reference](#class-attribute-reference) (`CustomCurrent` row) ·
+[Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md)
 
 ---
 
-## Orchestration
+## Part IV — Watersheds
+
+A Watershed composes currents into a windowed DAG; the Tideweaver scheduler runs it tick by tick, emitting `Tide` and `Wave` telemetry.  For logged runs see `LoggedTideweaver` in Part VI.
 
 ### Tideweaver orchestration surface
 
@@ -809,6 +1111,61 @@ The source-of-truth module is `incorporator/tideweaver/reasons.py` (`SkipReason`
 
 ---
 
+## Part V — Canal engineering
+
+Rate and flow control live at two independent layers: the **host layer** (a per-hostname penstock registry consulted by every HTTP request any verb makes) and the **edge layer** (a `FlowControl` on each watershed edge governing when a downstream current may consume).  They compose — one request can be paced by both — and never deduplicate across layers.
+
+### register_host_penstock
+
+**Signature**
+```python
+def register_host_penstock(
+    host: str,
+    penstock: Penstock | Callable[[], Penstock] | None = None,
+    *,
+    rate_per_sec: float | None = None,
+    burst: int | None = None,
+) -> None:
+```
+
+**What it does (pseudocode)**
+1. Registers a per-host `Penstock` keyed by lowercase hostname.  Accepts a `Penstock` instance, a zero-arg factory callable (legacy back-compat), or the `rate_per_sec=`/`burst=` shorthand — a bare `rate_per_sec` builds a `SustainedPenstock`; adding `burst` builds a `BurstPenstock` instead.
+2. Each `resolve_penstock()` invocation builds a fresh `BoundPenstock` (sharing the registered config, with its own `FlowState` + `asyncio.Lock`) so fan-out legs run independently.
+3. Re-registering the same host replaces the previous penstock.
+
+**When to reach for it**
+The framework ships with **no implicit per-host throttling**.  Use this to attach a penstock for an in-house API or any public host that imposes a documented rate ceiling.  The alternative — `incorp(..., requests_per_second=X)` per call — is fine for one-shot scripts; the registry is the right tool when you have many call sites against the same host and want one source of truth.
+
+**Worked example**
+```python
+from incorporator import register_host_penstock
+
+# Conservative rate for CoinGecko's anon tier (5-15 req/min documented).
+register_host_penstock("api.coingecko.com", rate_per_sec=0.2)
+
+# Bursty in-house API: 50 req/s sustained, 200-burst tolerance.
+register_host_penstock("api.internal.acme.com", rate_per_sec=50.0, burst=200)
+```
+
+**Common kwargs**
+- `host` — hostname to throttle; casing doesn't matter — the registry lowercases it on registration to match the lowercase hostname `urllib.parse` extracts from URLs at resolve time.
+- `penstock` — a `Penstock` instance (preferred for non-Sustained/Burst policies) or a zero-arg callable returning one.  The `Penstock` config is frozen Pydantic; the per-call binding owns the mutable state + lock.  Mutually exclusive with `rate_per_sec`/`burst`.
+- `rate_per_sec` / `burst` — keyword-only shorthand that builds a `SustainedPenstock` (bare `rate_per_sec`) or `BurstPenstock` (`rate_per_sec` + `burst`) inline, skipping the explicit import + instantiation.
+
+**Yields / returns**
+`None`.  Side-effect-only: mutates the module-level `_HOST_PENSTOCKS` dict.
+
+**Related**
+- `incorporator.io.penstock.resolve_penstock(source, requests_per_second=, burst=)` — the resolver every `incorp()` call routes through.  Five-tier precedence: env-var bypass > `rps<=0` > caller rps > registered host > `DEFAULT_RPS=15` fallback.
+- `incorporator.io.penstock.known_host_rates()` — diagnostic view of `host → float` rates currently registered.
+- `incorporator.io.penstock.Penstock` — the unified rate-control primitive shared by both the HTTP host registry and the Tideweaver edge layer.  Subclasses: `NullPenstock`, `SustainedPenstock`, `BurstPenstock`, `WindowPenstock`, `SignalPenstock` (and `BackpressurePenstock` at the edge layer only).
+
+**See also**
+[Tutorial 1](../examples/01-first-steps/README.md) — CoinGecko example with explicit registration ·
+[Library Reference](./library_reference.md)
+
+---
+
 ### Canal toolkit primitives
 
 Per-edge flow control.  Every `Edge` carries a `FlowControl` composing
@@ -935,109 +1292,13 @@ Pass `flow=FlowControl(...)` explicitly to control the SurgeBarrier independentl
 
 ---
 
-### CustomCurrent
+## Part VI — Branches
 
-**Import path** *(load-bearing — not top-level)*
-```python
-from incorporator.tideweaver import CustomCurrent
-```
+The leaves: telemetry records, the observability layer, reference tables, and introspection helpers.
 
-**Signature**
-```python
-class CustomCurrent(Current):
-    auto_park_snapshot: ClassVar[bool] = True
+### Telemetry
 
-    async def tick(self, scheduler: Tideweaver) -> None: ...
-```
-
-`CustomCurrent` is the escape hatch for tick logic that does not fit the three verb-typed Currents (`Stream` / `Fjord` / `Export`).  Subclass it, override `async tick(self, scheduler)`, and place the instance in the `Watershed.currents` list like any other Current.  The scheduler calls `current._run_tick(scheduler)` — which wraps `tick()` with the auto-park logic described below — in place of the normal verb dispatch.
-
-**What it does (pseudocode)**
-1. On each scheduler pass that satisfies the interval + upstream gate checks, the scheduler calls `await current._run_tick(scheduler)`.
-2. `_run_tick` records the pre-tick value of `cls._tideweaver_snapshot` (the identity sentinel).
-3. `await self.tick(scheduler)` runs the user-supplied body.
-4. If `auto_park_snapshot` is `True` and the tick body did NOT assign a new list to `cls._tideweaver_snapshot` (identity check — a new list object means the user wired their own snapshot), the scheduler parks `list(cls.inc_dict.values())` as `cls._tideweaver_snapshot` so downstream `HardLock` edges see fresh upstream waves without manual wiring.
-5. After the tick returns, if the resulting `_tideweaver_snapshot` is empty while at least one upstream current's snapshot was non-empty, the scheduler emits a per-tick WARNING — surfaces silent predicate or `conv_dict` mismatches without needing a debugger (fires each tick while the condition persists).
-
-**`auto_park_snapshot` opt-out contract**
-
-Set `auto_park_snapshot: ClassVar[bool] = False` on the subclass to disable the automatic snapshot park.  Only correct for ticks that are pure side-effects (health-check pings, external metric pushes) that should never gate downstream currents.  When `False`, downstream `HardLock` edges will stay permanently unblocked unless the tick body manually assigns `cls._tideweaver_snapshot`.
-
-```python
-from incorporator.tideweaver import CustomCurrent
-
-class HealthcheckPing(CustomCurrent):
-    auto_park_snapshot: ClassVar[bool] = False   # pure side-effect — don't gate downstream
-
-    async def tick(self, scheduler):
-        response = await httpx.get("https://internal.acme/health")
-        if response.status_code != 200:
-            raise RuntimeError(f"health check failed: {response.status_code}")
-```
-
-**Immutability contract**
-
-`tick()` MUST NOT register new `Current`s or `Edge`s, nor mutate `scheduler.watershed.currents` / `scheduler.watershed.edges`, after `Tideweaver.run()` has started.  The scheduler memoises transitive-upstream lookups once per instance for O(1) gate evaluation; runtime topology mutations would silently invalidate that cache and produce incorrect gating decisions.  To add a current mid-run, stop the current watershed and start a new `Tideweaver` instance.
-
-**When to reach for it**
-Use `CustomCurrent` only when the standard verb-typed Currents genuinely cannot express the tick logic: health-check pings, sentinel-row insertions, externally-driven publishers, computed-field filters that depend on a derived attribute only available post-seeding.  For all standard `incorp()` / `refresh()` / `export()` shapes reach for `Stream`, `Fjord`, or `Export` first.
-
-**See also**
-[Row filtering: pick the right primitive](#row-filtering-pick-the-right-primitive) (escape-hatch entry #5) ·
-[Class-attribute reference](#class-attribute-reference) (`CustomCurrent` row) ·
-[Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md)
-
----
-
-## Row filtering: pick the right primitive
-
-The framework has **no post-fetch row-filter primitive** — there is no
-`Stream.parent_filter`, no `Fjord.parent_filters`. Row scoping always
-happens at the source. Pick the right primitive from this decision tree:
-
-1. **SQL source** → `SQLitePaginator(sql_query="... WHERE ...")`.
-   Database-side `WHERE` is the cheapest filter the framework can express
-   — the rows you don't want never leave SQLite. See
-   `incorporator/io/pagination/local.py`.
-
-2. **HTTP source with a filter-capable API** → `inc_url` carrying the
-   filter in the URL string (`?divisionId=201`, `?status=active`,
-   `?since=2024-01-01`). Probe the live API if the filter parameter is
-   undocumented. This is the established framework idiom:
-   - `examples/appendix/mlb-pulse/` → `?leagueId=103` for AL teams.
-   - `examples/11-tideweaver/` → `?pair=XBTUSD,ETHUSD` for a symbol set.
-   - `examples/appendix/crypto-graph-mapping/` →
-     `?vs_currency=usd&per_page=100`.
-   - `examples/appendix/pokeapi-etl/` → `?limit=50&offset=0`.
-
-3. **Aggregating multiple upstreams where the filter belongs with the
-   join logic** → filter inside the `outflow(state)` return list.
-   See T9 (NASCAR fjord) and T10 (multi-source fjord) for the pattern —
-   the filter and the row-shaping live together where the join is
-   declared.
-
-4. **Multi-child with different filters** → declare a separate
-   URL-filtered parent `Stream` per filter, one child per parent.
-   Cheaper than fetch-all-and-post-filter, and the dependency graph
-   stays explicit.
-
-5. **Computed-field filter (rare, escape hatch)** → subclass
-   `CustomCurrent` and override `async tick(...)` to filter and call
-   `cls.incorp(inc_parent=filtered)` yourself. Use this only when the
-   URL / SQL / outflow primitives genuinely can't express the predicate
-   (e.g. the filter depends on a derived attribute that's only available
-   after seeding the parent).
-
-**See also** the `Stream.parent_current` / `Fjord.parent_currents`
-entries in the class-attribute reference at the end of this document —
-the declarative parent-child dependency primitives that pair with this
-decision tree.
-
----
-
-## Telemetry
-
-### Wave.log_meta
+#### Wave.log_meta
 
 **Signature**
 ```python
@@ -1063,9 +1324,9 @@ Rarely called directly — the routing adapter calls it on every `Wave` written 
 
 ---
 
-## Observability layer (`LoggedIncorporator` + `LoggedTideweaver`)
+### Observability layer (`LoggedIncorporator` + `LoggedTideweaver`)
 
-### LoggedIncorporator — shared `enable_logging=` note
+#### LoggedIncorporator — shared `enable_logging=` note
 
 The five verbs `LoggedIncorporator` overrides (`incorp`, `refresh`, `export`, `stream`, `fjord`)
 accept every kwarg their `Incorporator` counterpart accepts, plus one extra:
@@ -1090,7 +1351,7 @@ The routing decision is a single read of `record.is_url_traffic_error` (`logger.
 ---
 
 <a id="loggedincorporator-get_error"></a>
-### LoggedIncorporator.get_error
+#### LoggedIncorporator.get_error
 
 **Signature**
 ```python
@@ -1117,7 +1378,7 @@ Codebase/parse errors only — schema failures, converter errors, canal skips wh
 ---
 
 <a id="loggedincorporator-get_api"></a>
-### LoggedIncorporator.get_api
+#### LoggedIncorporator.get_api
 
 **Signature**
 ```python
@@ -1142,7 +1403,7 @@ When you want to inspect only the API/network failure side — for example, to c
 ---
 
 <a id="loggedincorporator-get_rejects"></a>
-### LoggedIncorporator.get_rejects
+#### LoggedIncorporator.get_rejects
 
 **Signature**
 ```python
@@ -1168,7 +1429,7 @@ The default reject reader — the one to call when you want all failures for ret
 ---
 
 <a id="loggedincorporator-get_current"></a>
-### LoggedIncorporator.get_current
+#### LoggedIncorporator.get_current
 
 **Signature**
 ```python
@@ -1197,7 +1458,7 @@ Retrieve all log records for a specific instance identity within the current ses
 ---
 
 <a id="loggedincorporator-log_debug--log_info--log_error"></a>
-### LoggedIncorporator.log_debug / log_info / log_error
+#### LoggedIncorporator.log_debug / log_info / log_error
 
 **Signature**
 ```python
@@ -1228,7 +1489,7 @@ The per-instance trace verbs — use `log_debug` for verbose noise you want grep
 ---
 
 <a id="loggedincorporator-log_api"></a>
-### LoggedIncorporator.log_api
+#### LoggedIncorporator.log_api
 
 **Signature**
 ```python
@@ -1255,7 +1516,7 @@ The audit-trail verb for outbound HTTP. Use it to record "I called endpoint X wi
 ---
 
 <a id="loggedincorporator-log_meta"></a>
-### LoggedIncorporator.log_meta
+#### LoggedIncorporator.log_meta
 
 **Signature**
 ```python
@@ -1282,7 +1543,7 @@ You rarely call it directly — every `log_info` / `log_error` / `log_api` call 
 ---
 
 <a id="loggedincorporator-log_cls_info--log_cls_error"></a>
-### LoggedIncorporator.log_cls_info / log_cls_error
+#### LoggedIncorporator.log_cls_info / log_cls_error
 
 **Signature**
 ```python
@@ -1314,7 +1575,7 @@ The class-level counterpart to `log_info` / `log_error` — use these inside `@c
 ---
 
 <a id="loggingmixin"></a>
-### LoggingMixin
+#### LoggingMixin
 
 **Signature**
 ```python
@@ -1366,7 +1627,7 @@ setup_class_logger(Audited)
 ---
 
 <a id="setup_class_logger"></a>
-### setup_class_logger
+#### setup_class_logger
 
 **Signature**
 ```python
@@ -1388,7 +1649,7 @@ from incorporator.observability.logger import setup_class_logger
 5. Register the listener in `_ACTIVE_LISTENERS`; register a `_cleanup_listeners` atexit hook that gracefully stops all listeners on process exit.
 
 **When to reach for it**
-Call it directly when you use `LoggingMixin` on a custom subclass rather than `LoggedIncorporator`, or when you want structured logging on a class identified by a string name (e.g. a dynamically constructed logger name in a Tideweaver pipeline).  `LoggedIncorporator` calls it automatically when `enable_logging=True` — you don't need to call it manually for standard verb usage.
+Call it directly when you use `LoggingMixin` on a custom subclass rather than `LoggedIncorporator`, or when you want structured logging on a class identified by a string name (e.g. a dynamically constructed logger name in a Tideweaver watershed).  `LoggedIncorporator` calls it automatically when `enable_logging=True` — you don't need to call it manually for standard verb usage.
 
 ```python
 from incorporator.observability.logger import LoggingMixin, setup_class_logger
@@ -1412,7 +1673,7 @@ instance.log_info("pipeline started")   # now live
 
 ---
 
-### LoggedTideweaver
+#### LoggedTideweaver
 
 **Signatures** *(v1.2.1+, extended in v1.3.3)*
 ```python
@@ -1465,7 +1726,7 @@ from incorporator.tideweaver import LoggedTideweaver
 7. `get_scheduler_events(logger_name)` reads `_error.log` filtered to records with a `"scheduler_event"` key. Includes `watershed_started`, `watershed_completed`, and six diagnostic event types.
 
 **When to reach for it**
-The orchestration-side `LoggedIncorporator` — for Tideweaver pipelines that need disk-readable Tide + RejectEntry capture without inline `print(tide)`.  Pair with `tune()` for the post-run feedback loop; pair with `LoggedTideweaver.get_tides()` / `get_rejects()` for cross-process replay (a separate analysis worker reading the log files).
+The orchestration-side `LoggedIncorporator` — for Tideweaver watershed runs that need disk-readable Tide + RejectEntry capture without inline `print(tide)`.  Pair with `tune()` for the post-run feedback loop; pair with `LoggedTideweaver.get_tides()` / `get_rejects()` for cross-process replay (a separate analysis worker reading the log files).
 
 **Common kwargs**
 - `watershed` — same as `Tideweaver`.
@@ -1496,271 +1757,7 @@ When `enable_logging=True`, the runner writes four rotating JSONL files under `l
 
 ---
 
-## Schema utilities
-
-Helpers for `conv_dict`, `json_payload`, and `form_payload` that don't fit neatly inside the `incorp` kwarg descriptions.  All are importable from the top-level `incorporator` package.
-
-**Import**
-```python
-from incorporator import new, sum_attributes, each, join_all, as_list
-```
-
----
-
-### `new` — generated-field sentinel
-
-**Signature**
-```python
-new  # module-level value, not a callable
-```
-
-`new` is a module-level sentinel value (instance of the private `_NewSentinel` class).  Assign it as the value for a `conv_dict` key to signal "this field should exist on the dynamic class but has no source key to map from — generate it from scratch."  The schema factory accepts any valid Python type for a `new`-valued key; the value defaults to `None` unless a converter on the same key sets it.
-
-```python
-from incorporator import Incorporator, new, calc
-
-class Enriched(Incorporator):
-    pass
-
-await Enriched.incorp(
-    inc_url="https://api.example.com/items",
-    conv_dict={
-        "computed_rank": new,       # field exists on the class; populated by a downstream calc
-        "upper_name":   calc(str.upper, "name", target_type=str),
-    },
-)
-```
-
-**When to reach for it**
-When you need a field to exist on the dynamic class (e.g. for a downstream `calc()` to write into, or for Pydantic to include in the schema) but no source key maps to it directly.  Rare in typical ETL — most fields come from the raw payload.
-
----
-
-### `sum_attributes` — safe field-sum reducer
-
-**Signature**
-```python
-def sum_attributes(*args: Any) -> float:
-```
-
-`sum_attributes` is a ready-made `calc()` reducer that safely sums N fields, treating `None` and non-numeric values as zero.  Numeric strings (`"42"`), floats, ints, and `None` all mix without raising.  Use it as the `func` argument to `calc()`:
-
-```python
-from incorporator import calc, sum_attributes
-
-await Pokemon.incorp(
-    inc_url="https://pokeapi.co/api/v2/pokemon?limit=151",
-    conv_dict={
-        "total_stats": calc(sum_attributes, "hp", "attack", "defense", "speed"),
-    },
-)
-# pokemon.total_stats == float(hp + attack + defense + speed)
-```
-
-**When to reach for it**
-Any time you'd write a 3-line try/except to total a handful of row fields: Pokémon base-stat totals, revenue sums across line items, point totals in a fantasy scoring sheet.
-
----
-
-### `each` — POST fan-out sentinel
-
-**Signature**
-```python
-def each() -> _EachSentinel:
-```
-
-`each` is a POST fan-out sentinel.  Place `each()` as the value in `json_payload` or `form_payload` to tell the router "make one POST per parent ID rather than a single bulk request."  Produces N concurrent requests — one per row in the parent snapshot.  Returns an `_EachSentinel` instance (not an `Op`).
-
-```python
-from incorporator import Incorporator, each
-
-results = await Decoded.incorp(
-    inc_url="https://vpic.nhtsa.dot.gov/.../DecodeVin/",
-    inc_parent=invoices,
-    inc_child="Vehicle.VIN",
-    http_method="POST",
-    json_payload={"vin": each(), "format": "json"},
-)
-```
-
-**When to reach for it**
-When the target endpoint takes exactly one ID per request and will not accept a bulk body.  Contrast with `join_all()` (one POST, delimited string) and `as_list()` (one POST, JSON array) for endpoints that accept batch shapes.
-
----
-
-### `join_all` — bulk-POST delimited string
-
-**Signature**
-```python
-def join_all(delimiter: str = ",") -> Op:
-```
-
-`join_all` collapses all parent IDs into one delimited string for a single bulk POST.  Returns an `Op` instance.  Place it in `form_payload` when the endpoint accepts a delimited-batch body (e.g. NHTSA `DecodeVINValuesBatch/` takes `vin1;vin2;vin3`).
-
-```python
-from incorporator import Incorporator, join_all
-
-specs = await NHTSASpec.incorp(
-    inc_url="https://vpic.nhtsa.dot.gov/.../DecodeVINValuesBatch/",
-    inc_parent=invoices,
-    inc_child="Vehicle.VIN",
-    http_method="POST",
-    payload_type="form",
-    form_payload={"data": join_all(";"), "format": "json"},
-)
-```
-
-**Args**
-- `delimiter` — separator between IDs.  Default `","` ; common alternatives are `";"` and `"|"`.
-
-**When to reach for it**
-When the endpoint supports a delimited-batch shape and `each()` (N requests) would be wasteful or rate-limited.
-
----
-
-### `as_list` — bulk-POST JSON array
-
-**Signature**
-```python
-def as_list() -> Op:
-```
-
-`as_list` wraps all parent IDs in one JSON array for a single bulk POST.  Returns an `Op` instance.  Place it in `json_payload` when the endpoint expects `{"ids": [1, 2, 3]}` or any other JSON-array-bodied bulk shape.
-
-```python
-from incorporator import Incorporator, as_list
-
-results = await Audit.incorp(
-    inc_url="https://api.example.com/bulk-audit",
-    inc_parent=invoices,
-    inc_child="id",
-    http_method="POST",
-    json_payload={"ids": as_list()},   # → {"ids": [1, 2, 3, ...]}
-)
-```
-
-**When to reach for it**
-When the endpoint expects a JSON array body and a single round-trip.  Scalar inputs are wrapped in a single-element list.  Contrast with `each()` (N requests) and `join_all()` (one request, delimited string).
-
----
-
-## Shared kwargs glossary
-
-- `inflow=` — sidecar `.py` exposing public symbols for `conv_dict` token resolution; in fjord, may also define `inflow(state)` for sequential dependent seeding (see [the `inflow(state)` contract](#fjord) under the fjord entry for call cadence, guard requirements, and return shape).
-- `outflow=` — sidecar `.py` whose stem becomes the dynamic output class name; must define `outflow(state) -> list[dict]` (or `dict[ClassName, list[dict]]` for multi-output fjord).
-- `inc_page=` — `AsyncPaginator` subclass (`PageNumberPaginator`, `CursorPaginator`, `OffsetPaginator`, `NextUrlPaginator`, `LinkHeaderPaginator` for web; `SQLitePaginator`, `CSVPaginator`, `AvroPaginator` for local) that drives chunking-mode `stream()` or paginated `incorp()`. Every paginator subclass accepts a keyword-only `penstock=` argument (defaults to `NullPenstock()`); pass a `SustainedPenstock(rate_per_sec=...)` / `BurstPenstock` / `WindowPenstock` / `SignalPenstock` to throttle the yield rate at the paginator layer. Web paginators compose additively with host-level throttles registered via `register_host_penstock`; local paginators have no other throttle path, so the per-paginator penstock is the only way to bound their disk-speed iteration. See [Streaming & Pagination §6](./streaming_and_pagination.md#6-throttling-paginators) for worked examples.
-- `format_type=` — `FormatType` enum forcing a writer when the file extension is ambiguous; otherwise auto-detected from extension.
-- `enable_logging=` — on `LoggedIncorporator` only; wires the call into per-class rotating JSONL handlers (`logs/<ClassName>_{api,error,debug}.log`).
-- `inc_code=` — field name on each record that becomes the primary key in `inc_dict`. Pass the field name (e.g. `"id"`); the framework reads each record's value at that key.
-
----
-
-## DATA-SHAPE directives
-
-The four data-shape pipeline parameters (`excl_lst`, `name_chg`,
-`code_attr`, `name_attr`) travel through a single normalizer
-(`_normalize_etl_kwargs`) into typed frozen-dataclass directives before
-the dispatcher runs.  Bare strings and 2-tuples keep working — the
-normalizer accepts mixed sequences of bare shapes and directive
-instances, and emits an identical `NormalizedKwargs` container either
-way.
-
-**Import**
-```python
-from incorporator.schema.directives import Ex, Nm
-```
-
-`Pk` is also importable from the same module but is synthesised
-internally — users pass `code_attr="field"` / `name_attr="field"` (bare
-strings) and the framework constructs the `Pk` instances at normalize
-time.
-
-**The three directives**
-
-| Directive | Shape | Where it goes | Purpose |
-|---|---|---|---|
-| `Ex(field: str)` | frozen dataclass | `excl_lst` | Drop a field.  Bare `Ex("foo")` drops the top-level key `"foo"`; dotted-path `Ex("a.b.c")` drops the nested leaf via `DataPath.pop`. |
-| `Nm(old: str, new: str)` | frozen dataclass | `name_chg` | Rename a top-level key.  Same semantics as the bare 2-tuple `("old", "new")`; both forms produce identical normalised output. |
-| `Pk(source: str, target: Literal["code", "name"])` | frozen dataclass | synthesised internally | Bind the value at `source` to `inc_code` or `inc_name`.  Built by the normalizer from `code_attr` / `name_attr` bare strings; `Pk.source` is rewritten through the `name_chg` rename map (first-hit) so renames don't desync the bind. |
-
-**Four-pass dispatch order** — `incorporator/schema/builder.py:185-315`
-
-1. **Ex (drop)** — every directive applied per row via `Ex.apply_drop(record)`.
-2. **`conv_dict` ops** — converter operations apply per row, op-outer / row-inner.
-3. **Nm (rename)** — every directive applied per row via `Nm.apply_rename(record)`.
-4. **Pk (PK-bind)** — runs last so renamed source fields resolve cleanly.  `Pk.apply_bind(record)` reads `_path.resolve(record)` and writes `inc_code` or `inc_name`.
-
-PK binding running after rename closes two silent failure modes the
-prior order let through — Case A (rename moves the source away from
-where `code_attr` pointed) and Case B (rename *creates* the field
-`code_attr` targets, but the bind ran too early and the auto-counter
-fallback silently wrote synthetic IDs).
-
-**Worked example**
-
-```python
-from incorporator import Incorporator
-from incorporator.schema.directives import Ex, Nm
-
-class Invoice(Incorporator): pass
-
-# Bare-string form (always worked).
-await Invoice.incorp(
-    inc_file="invoices.json",
-    excl_lst=["internal_id"],
-    name_chg=[("ext_id", "id")],
-    code_attr="id",
-)
-
-# Directive form (post-normalizer).
-await Invoice.incorp(
-    inc_file="invoices.json",
-    excl_lst=[Ex("internal_id"), Ex("audit.legacy_flag")],   # nested drop
-    name_chg=[Nm("ext_id", "id"), Nm("vendor_code", "code")],
-    code_attr="id",
-)
-
-# Mixed sequences are accepted in the same list.
-await Invoice.incorp(
-    inc_file="invoices.json",
-    excl_lst=["internal_id", Ex("audit.legacy_flag")],
-    name_chg=[("ext_id", "id"), Nm("vendor_code", "code")],
-    code_attr="id",
-)
-```
-
-**JSON form** — the same directives resolve as text tokens through `resolve_tokens()`:
-
-```json
-{
-  "incorp_params": {
-    "excl_lst": ["internal_id", "Ex('audit.legacy_flag')"],
-    "name_chg": [["ext_id", "id"], "Nm('vendor_code', 'code')"],
-    "code_attr": "id"
-  }
-}
-```
-
-`Pk` is allow-listed at `incorporator/cli/tokens.py:125-127` for
-forward-compat — a token string like `"Pk('id', target='code')"`
-resolves to a `Pk` instance — but JSON pipelines today have no
-canonical destination slot for it.  Continue to use `code_attr` /
-`name_attr` bare strings in JSON.
-
-**When to reach for the directive form**
-
-- Type-safe, IDE-friendly drop/rename declarations in Python code.
-- Hashable frozen containers for cache/replay across many `incorp()` calls.
-- Nested-leaf drops via `Ex("a.b.c")` that bare-string `excl_lst` cannot express.
-
-**See also**
-[Library Reference](./library_reference.md) ·
-`incorporator/schema/directives.py` ·
-`incorporator/schema/builder.py`
-
----
-
-## Class-attribute reference
+### Class-attribute reference
 
 | Symbol | Owner | Kind | Purpose |
 |---|---|---|---|
@@ -1788,7 +1785,7 @@ canonical destination slot for it.  Continue to use `code_attr` /
 
 ---
 
-## FormatType
+### FormatType
 
 `FormatType` is the enum that names every supported format.  It surfaces in three programmatic contexts: as a parameter gate (`format_type=` on `export()` / `stream()` / `fjord()`), as a routing key inside the streaming and snapshot engines, and as a utility for callers writing custom outflow sidecars.
 
@@ -1821,7 +1818,7 @@ if not fmt.is_append_safe:
 
 ---
 
-## CompressionType
+### CompressionType
 
 `CompressionType` is the enum that names every compression and archive format Incorporator can transparently decompress (and re-compress on `export()`).  The enum value is the canonical file-extension suffix (without the dot) used by `infer_compression()` to detect compression from a path or URL.
 
@@ -1865,7 +1862,7 @@ Pass the string value directly to `export(compression=...)` (e.g. `compression="
 
 ---
 
-## Exception hierarchy
+### Exception hierarchy
 
 All Incorporator exceptions inherit from `IncorporatorError`, which inherits from the built-in `Exception`.  Import from the top-level package:
 
@@ -1901,7 +1898,7 @@ from incorporator import (
 
 ---
 
-## Optional-dependency introspection
+### Optional-dependency introspection
 
 **When to reach for it:** inspect which optional packages are available at runtime, generate install hints, or surface a machine-readable dependency manifest for CI health checks.
 
@@ -1910,15 +1907,15 @@ from incorporator import (
 from incorporator import list_deps, install_hint, Category, DepInfo
 ```
 
-### `list_deps() -> list[DepInfo]`
+#### `list_deps() -> list[DepInfo]`
 
 Returns one `DepInfo` record for every registered optional dependency, in declaration order. Modules are imported lazily inside the function — no circular-import risk.
 
-### `install_hint(dep_name: str) -> str`
+#### `install_hint(dep_name: str) -> str`
 
 Returns a `pip install incorporator[<extra>]` string for the named package, or `pip install <dep_name>` when the package is not registered.
 
-### `Category` enum
+#### `Category` enum
 
 | Value | Extra | Purpose |
 |---|---|---|
@@ -1927,7 +1924,7 @@ Returns a `pip install incorporator[<extra>]` string for the named package, or `
 | `ORCHESTRATE` | `orchestrate` | CLI + Prefect integration (typer, prefect) |
 | `PLATFORM_FIX` | `parquet` | Windows-only compat shims (tzdata) |
 
-### `DepInfo` fields
+#### `DepInfo` fields
 
 | Field | Type | Description |
 |---|---|---|

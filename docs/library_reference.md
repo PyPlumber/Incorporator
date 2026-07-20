@@ -50,7 +50,7 @@ For a paste-ready lookup map of every public callable — signature, 3-7 step ps
   an unknown endpoint.
 - `architect()` — multi-source counterpart of `test()`.  Probes N
   URLs / files in parallel and emits a paste-ready
-  [Tideweaver](./api_atlas.md#orchestration) scaffold (pretty report,
+  [Tideweaver](./api_atlas.md#part-iv--watersheds) scaffold (pretty report,
   Python module, or `watershed.json`).  Honours
   `incorporator.io.penstock.known_host_rates()` for per-edge Penstock
   recommendations on any host you've registered via
