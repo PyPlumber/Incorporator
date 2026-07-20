@@ -1,6 +1,6 @@
 ***
 
-# Tutorial 8 — Streaming Daemon: Paginated Bulk Export at O(1) Memory
+# 🌊 Tutorial 8 — Streaming Daemon: Paginated Bulk Export at O(1) Memory
 
 You're building a historical crypto warehouse and need to walk every coin CoinGecko
 knows about, not just the top-100.  At `per_page=250` that's 40+ pages.  You don't
@@ -43,6 +43,15 @@ kwargs you already know from Tutorial 1: schema-free, no class definitions requi
 > - **fjord flush** (Tideweaver `Fjord` current — full vocabulary at
 >   [T11](../11-tideweaver/README.md)) — the per-tick flush variant of the
 >   daemon, scheduled inside a windowed graph.
+
+```mermaid
+flowchart TD
+    source[("paginated source")] --> decision{{"stream()"}}
+    decision -->|"stateful_polling=False (default)"| chunk["chunking engine<br/>O(1) memory per page"]
+    chunk --> ndjson[("NDJSON, append per wave")]
+    decision -->|"stateful_polling=True"| shim["single-source shim<br/>live registry"]
+    shim --> snap[("periodic snapshot export")]
+```
 
 ---
 

@@ -1,6 +1,6 @@
 ***
 
-# Tutorial 6 — State Sports: Two Chained Parent-Child Drills
+# 🗺️ Tutorial 6 — State Sports: Two Chained Parent-Child Drills
 
 **Prerequisites:** [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md).
 
@@ -50,7 +50,16 @@ entry block (`main("ON")`, `main("California")`, `main("NJ")`, ...).
 
 ---
 
-## Two chained drills, a plain series of `incorp()` calls
+```mermaid
+flowchart LR
+    states["StateRef<br/>incorp · CountriesNow"] --> leagues["League<br/>incorp · ESPN /teams"]
+    leagues -->|"per-league loop<br/>inc_parent=lg, inc_child=leagues.teams.team.id"| teams["Team<br/>incorp · venue detail"]
+    teams --> filter{{"filter: venue_state == region"}}
+    filter -->|"per-team loop<br/>inc_parent=team, inc_child=id"| players["Player<br/>incorp · roster<br/>rec_path: team.athletes"]
+    players --> boards[("paycheck / veterans / homegrown boards")]
+```
+
+## 🎯 Two chained drills, a plain series of `incorp()` calls
 
 Unlike a Watershed (a fixed graph of nodes wired at construction time), this
 tutorial's shape is two ordinary `await`ed `incorp()` calls in plain `for` loops,
@@ -120,7 +129,7 @@ entry CountriesNow's feed omits, in both directions.
 
 ---
 
-## Drill 1: league discovery, then venue detail per league
+## 🔧 Drill 1: league discovery, then venue detail per league
 
 `/{sport}/{league}/teams` returns a nested envelope — one `sports[0]` row per
 league holding a `slug` (sport segment) and a `leagues[0]` sub-object with its
@@ -186,7 +195,7 @@ any roster request.
 
 ---
 
-## Drill 2: the roster drill, straight into `Player` rows
+## 🔧 Drill 2: the roster drill, straight into `Player` rows
 
 Drill 2 reuses the same single-instance `inc_parent` shape again — this time
 bound to **one matched `Team` at a time**, with a scalar `inc_child="id"` (one
@@ -351,7 +360,7 @@ above.
 
 ---
 
-## Run it
+## 🏁 Run it
 
 ```bash
 python examples/06-state-sports/state_sports.py    # pass a region by editing main("CA")

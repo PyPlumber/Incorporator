@@ -32,6 +32,15 @@ Three Stream currents feed one Fjord tail. Same shape as the crypto arb scanner;
 > lockstep — a change to `nascar_tideweaver.py` is reflected in both
 > immediately.
 
+```mermaid
+flowchart TD
+    laps["laps<br/>LapData · stream · 3s"] --> pits["pits<br/>PitStops · stream · 3s"]
+    laps --> flags["flags<br/>FlagEvents · stream · 3s"]
+    pits --> state["state<br/>DriverState · fjord · 3s<br/>gate: hard · reservoir depth 1 · spillway: drop_oldest"]
+    flags --> state
+    state --> out[("out/driver_state.ndjson")]
+```
+
 ---
 
 ## The diamond (Python form)

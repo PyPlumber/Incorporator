@@ -54,6 +54,13 @@ Notice: no output class is declared. `fjord()` builds it dynamically
 from the rows your `outflow()` returns, named after the code-file
 stem (`outflow.py` → `Outflow`).
 
+```mermaid
+flowchart LR
+    coingecko[("CoinGecko<br/>/coins/markets · USD")] --> outflow["outflow(state)<br/>read-time join"]
+    binance[("Binance<br/>/ticker/price · USDT")] --> outflow
+    outflow --> spread[("out/crypto_spread.ndjson")]
+```
+
 ---
 
 ## Step 1: `outflow.py` — Read-Time Join

@@ -1,6 +1,6 @@
 ***
 
-# Tutorial 7 — Stateful Refresh: Keeping Binance Tickers Live
+# 🔄 Tutorial 7 — Stateful Refresh: Keeping Binance Tickers Live
 
 **Prerequisites:** [Tutorial 1](../01-first-steps/README.md) (`incorp()`, `test()`, `inc_dict`),
 [Tutorial 5](../05-parent-child-drilling/README.md) (two-registries mental model),
@@ -20,6 +20,16 @@ Three resolution modes — in-state, re-source, targeted — cover every refresh
 you'll need. By the end of this tutorial you'll know which to reach for, plus the
 identity-mapping memory that makes `refresh()` ergonomic and the HTTP-dedup behaviour
 that makes it cheap.
+
+```mermaid
+flowchart TD
+    refresh["Pair.refresh()"] --> instate["in-state<br/>refresh() — no args<br/>reuses stored inc_url"]
+    refresh --> resource["re-source<br/>refresh(instance='new_url')"]
+    refresh --> targeted["targeted<br/>refresh(instance=[obj, ...])"]
+    instate --> mem[("Class.inc_dict<br/>identity-mapping memory")]
+    resource --> mem
+    targeted --> mem
+```
 
 ---
 
@@ -63,7 +73,7 @@ not via a reference you captured before the call.
 
 ---
 
-## The Three Resolution Modes
+## 🎯 The Three Resolution Modes
 
 `refresh()` chooses what to re-fetch from the shape of the `instance`
 argument:
@@ -212,7 +222,7 @@ on independent cadences — the primitives do not change.
 
 ---
 
-## Step 1: Minimal Live-Refresh Loop
+## 🔧 Step 1: Minimal Live-Refresh Loop
 
 ```python
 import asyncio
@@ -281,7 +291,7 @@ structured retry orchestration via `RejectEntry`.
 
 ---
 
-## Run it
+## 🏁 Run it
 
 ```bash
 python examples/07-stateful-refresh/stateful_refresh.py

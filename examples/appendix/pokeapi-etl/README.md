@@ -26,6 +26,13 @@ Build a "Gen 1 Power Ranking" table:
 2. **Deep enrichment:** concurrently fire 150 HTTP requests to those URLs to fetch their deep specs.
 3. **Declarative ETL:** use `calc()` to intercept the massive `stats` and `types` JSON arrays, sum them up, format them, and drop the raw JSON to save memory.
 
+```mermaid
+flowchart LR
+    nav["nav<br/>Nav · stream · 300s<br/>yields URLs"] -->|"parent_current: nav<br/>drills url"| pokemon["pokemon<br/>Pokemon · stream · 300s"]
+    pokemon --> export["export_pokemon<br/>export · 10s<br/>depends_on: pokemon"]
+    export --> out[("out/pokemon.ndjson")]
+```
+
 > **Rate-limit note.** PokéAPI [documents a 100 req/min ceiling](https://pokeapi.co/docs/v2#fairuse).
 > The framework default is 15 req/sec (900 req/min) — 9× too fast and would
 > 429 most of the 150 child drills.  The companion script opts in to

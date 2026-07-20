@@ -1,4 +1,4 @@
-# Tutorial 2 — Data Lake Pivot: From SaaS Roster to SQLite + Avro
+# 🔁 Tutorial 2 — Data Lake Pivot: From SaaS Roster to SQLite + Avro
 
 Your SaaS roster lives in Auth0 or Okta as deeply nested JSON. BI wants it in Avro + SQLite by 7 AM. Start with `test()` to profile the endpoint and get paste-ready kwargs, call `incorp()` to absorb the nested payload into a typed object graph, then `export()` to write Avro and SQLite — with the nested `address` and `company` dicts flattened, types mapped to strict Avro (`int` → `long`) and SQLite columns, and the round-trip rehydrating the full object graph. No schema file, no ORM, no Avro schema definition.
 
@@ -14,6 +14,16 @@ This tutorial walks that arc on a SaaS-style `/users` endpoint. `jsonplaceholder
 2. **Automatic type translation:** Incorporator infers types from the JSON and maps them to strict Avro types (e.g., `int` → `long`) and SQLite columns.
 3. **Nested data flattening:** Nested dicts (like an `address` dictionary) are serialised for binary/SQL storage and rehydrated on read-back to dot-notation objects.
 4. **One vocabulary, three storage shapes:** The same `inc_code` that keys the in-memory registry also keys SQLite columns and Avro fields — one declaration, three targets.
+
+```mermaid
+flowchart LR
+    users[("/users API")] --> incorp["User.incorp()"]
+    incorp --> sqlite["User.export()<br/>SQLite"]
+    incorp --> avro["User.export()<br/>Avro"]
+    sqlite --> readback["User.incorp()<br/>read-back"]
+    avro --> readback
+    readback --> verify[("O(1) schema verification")]
+```
 
 ---
 

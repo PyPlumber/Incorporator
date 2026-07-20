@@ -1,6 +1,6 @@
 ***
 
-# Tutorial 4 — XML Post Audit: Federal VIN Fraud Detection
+# 🛡️ Tutorial 4 — XML Post Audit: Federal VIN Fraud Detection
 
 **Prerequisites:** [Tutorial 3 — Universal Formats](../03-universal-formats/README.md) (warehouse round-trip).
 
@@ -8,7 +8,16 @@ You're a state auditor. You've seized an XML ledger from **Shady Jimmy's Used Ca
 
 Real-world compliance teams run this arc every day: banking against the SEC, healthcare against the FDA, vehicle resale against NHTSA. REST APIs aren't just `GET`; bulk endpoints (government databases, GraphQL, batch lookup services) often require `POST` with a dynamic payload mapping multiple records — and that's where this tutorial earns its slot.
 
-## The Input Data (`jimmy_ledger.xml`)
+```mermaid
+flowchart LR
+    xml[("jimmy_ledger.xml")] --> invoice["Invoice<br/>incorp · XML parse<br/>rec_path: Invoices.Invoice"]
+    invoice -->|"inc_child: Vehicle.VIN"| nhtsa["NHTSASpec<br/>incorp · POST (batched)<br/>form_payload: join_all(';')"]
+    nhtsa --> join["inc_dict.get(VIN)<br/>O(1) join"]
+    join --> console[("console fraud report<br/>Python entry")]
+    join --> ndjson[("out/jimmy_audit.ndjson<br/>CLI / pipeline.json path")]
+```
+
+## 🧱 The Input Data (`jimmy_ledger.xml`)
 
 Save the file below as `jimmy_ledger.xml`. The real ledger holds **10 invoices** (INV-001 through INV-010). The snippet shows the structure plus the fraudulent record at the end — `jimmy_ledger.xml` in this directory is the complete file.
 
@@ -56,7 +65,7 @@ Save the file below as `jimmy_ledger.xml`. The real ledger holds **10 invoices**
 
 ---
 
-## The Audit Script
+## 🔧 The Audit Script
 
 Create `audit_jimmy.py` (the runnable version ships in this directory as `nhtsa_post_audit.py`). Incorporator auto-detects the `.xml` extension, drills through `rec_path`, and builds nested Python objects (`inv.Vehicle.VIN`) without a schema file — that's the schema-free ingestion path.
 
@@ -175,7 +184,7 @@ if __name__ == "__main__":
 
 ---
 
-## Framework Highlights
+## 🧠 Framework Highlights
 
 ### 1. Schema-Free XML Parsing
 
@@ -218,7 +227,7 @@ true_spec = govt_specs.inc_dict.get(jimmy_vin)
 
 ---
 
-## Run it
+## 🏁 Run it
 
 ```bash
 # Python entry

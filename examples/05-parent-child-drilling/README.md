@@ -38,6 +38,13 @@ land child-drilled detail in a warehouse), [Tutorial 4](../04-xml-post-audit/REA
 
 ---
 
+```mermaid
+flowchart LR
+    coin["coin<br/>Coin · stream · 300s"] -->|"gate: hard<br/>parent_current: coin, drills id"| coin_detail["coin_detail<br/>CoinDetail · stream · 300s"]
+    coin_detail --> export["export_coin_detail<br/>export · 10s<br/>depends_on: coin_detail"]
+    export --> out[("out/coin_details.ndjson")]
+```
+
 ## The Pattern
 
 ```python

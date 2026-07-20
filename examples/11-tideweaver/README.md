@@ -36,6 +36,15 @@ This tutorial builds the data layer for the 3-exchange scanner above —
 Binance.us + Coinbase Advanced Trade + Kraken, all free, all no-auth — using
 `Watershed.diamond()`.
 
+```mermaid
+flowchart TD
+    binance["binance<br/>BinanceBook · stream · 15s"] --> coinbase["coinbase<br/>CoinbaseTicker · stream · 30s"]
+    binance --> kraken["kraken<br/>KrakenTicker · stream · 30s"]
+    coinbase --> best["best_market<br/>BestMarket · fjord · 30s<br/>gate: hard"]
+    kraken --> best
+    best --> out[("out/arb_signals.ndjson")]
+```
+
 ---
 
 ## Five names cover the whole layer
@@ -170,6 +179,12 @@ if __name__ == "__main__":
 Each Tide record tells you which currents fired this pass and which got skipped
 (`"not_due"`, `"awaiting_upstream"`, `"skip_ahead"`, …).
 
+```mermaid
+flowchart LR
+    coins["coins<br/>CoinList · stream · 60s"]
+    markets["markets<br/>TopMarkets · stream · 30s"]
+```
+
 ---
 
 ## Step 2: `chain()` — strict A → B → C
@@ -198,6 +213,11 @@ running longer than `2.0 × b.interval`, B skips this pass with reason
 `"skip_ahead"` so it doesn't queue up behind a stuck upstream.  Override per
 edge with `flow=FlowControl(surge_barrier=SurgeBarrier(threshold_multiple=3.0, action="bypass"))`.
 
+```mermaid
+flowchart LR
+    A -->|"gate_mode: hard / soft / weir"| B --> C
+```
+
 ---
 
 ## Step 3: `fanout()` — one source, N sinks
@@ -213,6 +233,13 @@ watershed = Watershed.fanout(
 Every sink has a single hard dependency on `source`; the sinks are independent of each
 other.
 
+```mermaid
+flowchart LR
+    upstream_stream["upstream_stream"] --> sink_a["sink_a"]
+    upstream_stream --> sink_b["sink_b"]
+    upstream_stream --> sink_c["sink_c"]
+```
+
 ---
 
 ## Step 4: `diamond()` — the multi-exchange arb-scanner capstone
@@ -221,6 +248,14 @@ Three exchange currents — Binance.us, Coinbase Advanced Trade, Kraken — each
 on their own cadence.  One tail `Fjord` current snapshots all three exchange registries,
 finds the best bid and best ask per symbol across venues, computes the cross-venue
 spread, and flags any opportunity where the spread crosses a threshold (basis points).
+
+```mermaid
+flowchart TD
+    head["head"] --> middle1["middle[0]"]
+    head --> middle2["middle[1]"]
+    middle1 --> tail["tail"]
+    middle2 --> tail
+```
 
 > **`stateful_polling=True` is rejected inside a Watershed.**
 > Tideweaver does its own per-tick scheduling, so a `Stream` current with

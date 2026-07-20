@@ -25,6 +25,21 @@ Try to merge these with standard Python `for` loops and you'll hit **429 Too Man
 
 Build a Unified Stablecoin Liquidity Dashboard. For the top 100 cryptocurrencies, see their Global Price, their Binance **USDT** volume/bids, and their Binance **USDC** volume/bids side-by-side.
 
+```mermaid
+flowchart TD
+    subgraph build_time["main() -- build-time link_to"]
+        stats["BinanceStat<br/>incorp"] -.->|"link_to"| asset["CryptoAsset<br/>incorp"]
+        books["BinanceBook<br/>incorp"] -.->|"link_to"| asset
+        asset --> dashboard[("print_dashboard()")]
+    end
+    subgraph read_time["watershed.json -- read-time fjord"]
+        binance_stats["binance_stats<br/>BinanceStat · stream · 90s"] --> liquidity["liquidity<br/>CryptoLiquidity · fjord · 8s"]
+        binance_books["binance_books<br/>BinanceBook · stream · 90s"] --> liquidity
+        crypto_assets["crypto_assets<br/>CryptoAsset · stream · 90s"] --> liquidity
+        liquidity --> out[("out/crypto_liquidity.ndjson")]
+    end
+```
+
 ## 💻 The Complete Code
 
 `BinanceStat`/`BinanceBook`/`CryptoAsset`/`CryptoLiquidity` and every conv_dict

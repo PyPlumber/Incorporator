@@ -16,25 +16,15 @@ Fifteen ranked "Pulse Cards" for the American League — one row per team,
 fused live from four MLB Stats API endpoints inside a single Tideweaver
 diamond:
 
-```
-                    al_teams (head Stream)
-                 ?sportId=1&leagueId=103, 15 teams
-                              │
-        ┌───────────────┬────┴────┬───────────────┐
-        ▼                ▼                        ▼
-   standings         hitting (Stream)        pitching (Stream)
-   Stream            parent_current=          parent_current=
-   ?leagueId=103     "al_teams"               "al_teams"
-   3 division        T5 drill, 15 calls       T5 drill, 15 calls
-   records
-        │                │                        │
-        └────────────────┴───────────┬────────────┘
-                                      ▼
-                              pulse (tail Fjord)
-                    join + rank into 15 Pulse Cards
-                                      │
-                                      ▼
-                          out/al_pulse.ndjson
+```mermaid
+flowchart TD
+    al_teams["al_teams<br/>MLBAllTeam · stream · 20s"] --> standings["standings<br/>MLBStandings · stream · 20s"]
+    al_teams -->|"parent_current: al_teams"| hitting["hitting<br/>MLBHitting · stream · 25s"]
+    al_teams -->|"parent_current: al_teams"| pitching["pitching<br/>MLBPitching · stream · 25s"]
+    standings --> pulse["pulse<br/>TeamPulseCard · fjord · 5s<br/>gate_mode: weir"]
+    hitting --> pulse
+    pitching --> pulse
+    pulse --> out[("out/al_pulse.ndjson")]
 ```
 
 Each card carries two independent composite metrics side by side — a
@@ -80,7 +70,7 @@ run to run since the 2026 season is in progress.
 
 ---
 
-## The redesign: no reducer for the nested standings list
+## 🔧 The redesign: no reducer for the nested standings list
 
 `standings` returns one row per division, each nesting a raw
 `teamRecords` list. The framework auto-promotes that list to nested
@@ -115,7 +105,7 @@ a list-of-dicts the way `teamRecords` is.
 
 ---
 
-## Row filtering: filter at the source
+## 🔎 Row filtering: filter at the source
 
 | Priority | Primitive | Used here |
 |---|---|---|
@@ -130,7 +120,7 @@ divisions at once.
 
 ---
 
-## Reading each source, class-handle vs. plain list
+## 🧠 Reading each source, class-handle vs. plain list
 
 `outflow(state)` runs inside a Tideweaver Fjord current (a
 `Watershed`/diamond run, not a `cls.fjord()` daemon), so `state` values
@@ -150,7 +140,7 @@ class-level `inc_dict` graph map because the join needs O(1) lookups by
 
 ---
 
-## What this appendix demonstrates
+## 🎯 What this appendix demonstrates
 
 | Capability | How |
 |---|---|
@@ -164,7 +154,7 @@ class-level `inc_dict` graph map because the join needs O(1) lookups by
 
 ---
 
-## Timing budget
+## 🔄 Timing budget
 
 Total live calls per full wave: 1 (`al_teams`) + 1 (`standings`) + 15
 (`hitting`) + 15 (`pitching`) = 32, sharing one 1 req/sec host penstock.
@@ -179,7 +169,7 @@ snapshot (`if_exists="replace"`).
 
 ---
 
-## File layout
+## 🧱 File layout
 
 ```
 examples/appendix/mlb-pulse/
@@ -198,7 +188,7 @@ examples/appendix/mlb-pulse/
 
 ---
 
-## Run it
+## 🏁 Run it
 
 ```bash
 # Python entry
@@ -218,7 +208,7 @@ Also runs in Docker via the [central mount pattern](../../README.md#running-a-tu
 
 ---
 
-## See also
+## 🔗 See also
 
 - [Tutorial 11 — Tideweaver Diamond](../../11-tideweaver/README.md) — canonical introduction to the `Watershed.diamond` shape
 - [Tutorial 5 — Parent-Child Drilling](../../05-parent-child-drilling/README.md) — the T5 `inc_parent`/`inc_child` pattern `hitting`/`pitching` use via `Stream(parent_current=...)`
