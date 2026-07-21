@@ -45,8 +45,15 @@ Volumes mounted by `docker-compose.yml`:
 | Host path | Container path | Purpose |
 | :--- | :--- | :--- |
 | `./config` | `/app/config` (read-only) | `pipeline.json` and any `outflow.py` files |
-| `./data` | `/app/data` | Exported output files (CSV / NDJSON / Parquet / …) |
+| `./data` | `/app/data` | Exported output files (CSV / NDJSON / Avro / XLSX / SQLite / …) |
 | `./logs` | `/app/logs` | Rotating JSON log files (when `--logs` is set) |
+
+Parquet is **not** in that list: the stock image installs
+`.[speedups,avro,xlsx,cli]` (see *Custom Dockerfile* below), which
+excludes `pyarrow`. Export Parquet from a container by building a
+custom image that adds `.[parquet]` explicitly — it's deliberately
+left out of `[all]` too (pyarrow is ~30 MB). The layer-split Dockerfile
+and its extras list ship in the next release — current PyPI is 1.4.2.
 
 ### Secrets — local vs. production
 

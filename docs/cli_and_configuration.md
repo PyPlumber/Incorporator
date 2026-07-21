@@ -15,6 +15,9 @@ pip install "incorporator[cli]"
 > want the Prefect `@flow` wrapper (`incorporator.integrations.prefect`),
 > install `incorporator[orchestrate]` instead — it bundles `typer>=0.9.0`
 > and `prefect>=2.10.0` together.
+>
+> The dedicated `[cli]` extra ships in the next release — current PyPI
+> is 1.4.2.
 
 ---
 
@@ -95,11 +98,21 @@ incorporator stream pipeline.json
 ```
 **Output:**
 ```text
-🚀 Starting Incorporator Stream...
-Chunk 1 | 10000 rows | 1.84s
-Chunk 2 | 10000 rows | 1.91s
-🛑 Stream process completed gracefully.
+Starting Incorporator Stream...
+Chunk 1 | chunk | 10000 rows | 1.84s
+Chunk 2 | chunk | 10000 rows | 1.91s
 ```
+Each wave line carries the pipeline's `operation` label — `chunk` for
+chunking-mode extraction here; `fjord` sessions tag their own waves
+per source (`fjord_refresh:Coin`, `outflow:CoinMarket`, see §8). A
+`Stream process completed gracefully.` line is written to disk (via
+`log_cls_info`) whenever `--logs` is set. That same `--logs` flag also
+installs the shared root INFO handler described in §6, and this
+particular logger propagates to root by default — so with `--logs`
+the line also lands on stderr as
+`INFO:LoggedIncorporator:Stream process completed gracefully.`,
+alongside the wave lines above. Without `--logs`, only the wave lines
+print; there is no disk record and no `INFO:` line.
 
 ### Daemon Execution (Infinite Polling)
 To keep the pipeline alive in the background, use the `--poll` flag. This tells the daemon to wait `X` seconds after a successful run before automatically restarting the extraction/hydration cycle.
@@ -133,8 +146,8 @@ token in a checked-in `pipeline.json`.
 ### Machine-readable Output (`--json-output`)
 
 Both `stream` and `fjord` accept `--json-output`, which switches stdout
-to NDJSON (one `Wave` per line). The colorized startup banner
-and `🛑/❌` framing messages go to **stderr** so stdout stays parseable.
+to NDJSON (one `Wave` per line). The startup banner and any stop/error
+messages go to **stderr** so stdout stays parseable.
 
 ```bash
 incorporator stream pipeline.json --json-output | jq '.rows_processed'
@@ -395,12 +408,24 @@ incorporator stream pipeline.json --poll 3600.0 --logs
 ```
 
 ### What happens when `--logs` is enabled?
-Terminal output is suppressed, and telemetry is routed to non-blocking background OS threads. Incorporator will automatically create a `logs/` directory and generate four rotating JSON Lines files per pipeline (5MB each, 3 backups — roughly 20MB total per log type):
+Wave lines keep printing to the terminal exactly as they do without the
+flag — `--logs` never touches stdout. It does two things instead:
+
+- **Disk logging.** Incorporator creates a `logs/` directory and wires
+  four rotating JSON Lines handlers per session (5MB each, 3 backups —
+  roughly 20MB total per log type), listed below.
+- **Root diagnostics on stderr.** An INFO-level root log handler is
+  installed, shared by `stream`, `fjord`, and `tideweaver run`, so
+  module-logger diagnostics (drain-timeout parse warnings,
+  unknown-current-key typos, source-load-failure summaries) reach the
+  console instead of being silently dropped by Python's default
+  no-handler behavior. This unified handler ships in the next
+  release — current PyPI is 1.4.2.
 
 1.  **`logs/{Class}_api.log`**: URL/internet-traffic errors — HTTP 4xx/5xx responses, network timeouts, and connection failures where `RejectEntry.is_url_traffic_error=True`. Use `get_api()` to read these records.
 2.  **`logs/{Class}_error.log`**: All non-API-routed records at INFO and above — successful waves, parse failures, schema errors. Use `get_error()` for codebase failures; `get_rejects()` to union both files.
 3.  **`logs/{Class}_debug.log`**: Superset of both files above — every record that lands in `_api.log` or `_error.log` also lands here, plus DEBUG-floor lifecycle events. Used by `get_current()` to retrieve per-session records without double-counting.
-4.  **`logs/{LoggerName}_tide.log`** *(LoggedTideweaver only)*: Every yielded `Tide` (fired and no-op), in `tide_number` order.  Single-file source for `LoggedTideweaver.get_tides(logger_name)`.  The file name uses the resolved `logger_name` (explicit arg → `watershed.name` → `"Tideweaver"`).
+4.  **`logs/{LoggerName}_tide.log`**: Every yielded `Tide` (fired and no-op), in `tide_number` order — single-file source for `LoggedTideweaver.get_tides(logger_name)`. All four files are created for every session, `stream`/`fjord` included; only a `tideweaver run --logs` session ever writes records here — for `stream`/`fjord` the file exists and stays empty. The file name uses the resolved `logger_name` (explicit arg → `watershed.name` → `"Tideweaver"`).
 
 Every `Wave` yielded by the pipeline is also routed to these
 files: the structured `wave` payload appears as a top-level JSON key
@@ -426,11 +451,30 @@ the config type from its top-level keys (`incorp_params` → stream,
 `outflow` + `stream_params` → fjord, `window` + `shape` → tideweaver); pass
 `--type stream|fjord|tideweaver` to force one.
 
-`incorporator init [--type stream|fjord|tideweaver] [--output-dir .]`
-writes a starter `pipeline.json` or `watershed.json` (and, for fjord /
-tideweaver, an `outflow.py`). Refuses to overwrite existing files. After
+`incorporator init [--type stream|fjord|tideweaver] [--output-dir .]
+[--with-inflow]` writes a starter `pipeline.json` or `watershed.json`
+(and, for fjord / tideweaver, an `outflow.py`). `--with-inflow` also
+scaffolds an `inflow.py` for user-defined helpers (calc reducers,
+custom converters). Refuses to overwrite existing files. After
 running, edit the placeholders, then `validate`, then the matching run
-verb (`stream`, `fjord`, or `tideweaver run`).
+verb (`stream`, `fjord`, or `tideweaver run`) — `init` prints this same
+three-step sequence after it writes the files.
+
+### From zero
+
+```bash
+incorporator init --type stream --output-dir config
+# edit config/pipeline.json — fill in the placeholder incorp_params / export_params
+incorporator validate config/pipeline.json
+incorporator stream config/pipeline.json
+```
+
+`validate` runs the same config-loading path every run verb uses — JSON
+parse, env expansion, sidecar imports, token resolution — so a config
+that passes `validate` won't fail on load when you run it. If a
+converter or export format needs an optional dependency you haven't
+installed, `incorporator deps --missing` lists what's missing and the
+exact `pip install` command for each (§10).
 
 ---
 
@@ -456,7 +500,7 @@ zero-schema philosophy as `incorp()`. The class name is derived from the
 - `outflow.py` → `Outflow`
 - `nascar_fantasy.py` → `NascarFantasy`
 
-### Configuration File (`fjord.json`)
+### Configuration File (`pipeline.json`)
 
 The config points to an `outflow` file — a single `.py` containing your
 source `Incorporator` subclasses **and** a top-level `outflow(state)`
@@ -564,7 +608,7 @@ iteration" without crashing the daemon.
 ### Running the Daemon
 
 ```bash
-incorporator fjord fjord.json --logs
+incorporator fjord pipeline.json --logs
 ```
 
 There is no `--poll` flag — fjord is **stateful-polling only** by design.
@@ -664,7 +708,7 @@ for the full walk-through plus the Python-API equivalents.
 > **Path resolution — inputs vs outputs.** Relative **input** paths declared in any
 > config file (`inflow`, `outflow`, and `incorp_params.inc_file` / `inc_files` /
 > `refresh_params.new_file`, at the top level and per-current) resolve against the
-> **config file's directory** — so the same `watershed.json` / `fjord.json` /
+> **config file's directory** — so the same `watershed.json` /
 > `pipeline.json` runs from any working directory and reads alongside a read-only
 > Docker config mount. Relative **output** paths (`export_params.file_path`,
 > `archive_target`) stay **CWD / `WORKDIR`-relative**, so writes land in the
@@ -872,7 +916,11 @@ For the full method-level signature of `fjord()`, see the pdoc-built
 ### Structured session logging (v1.3.3)
 
 `LoggedTideweaver` writes three categories of structured JSONL records to disk.
-The files are named after the resolved `logger_name`.
+The files are named after the resolved `logger_name`. From the CLI,
+`tideweaver run --logs` is what builds a `LoggedTideweaver` in the
+first place — without the flag, `tideweaver run` constructs a bare
+`Tideweaver` and there are no log files for the reader methods below
+to read.
 
 **Session log naming via `Watershed.name`**
 
