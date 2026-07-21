@@ -65,6 +65,49 @@ Pick standalone Tideweaver when:
 
 Run `incorporator tideweaver run watershed.json` from cron, systemd, or a Docker `CMD`; let the process exit at window close.
 
+## The shipped Prefect wrapper — stream only
+
+For the `stream` verb, `incorporator.integrations.prefect` ships two
+functions instead of a hand-rolled `@task`:
+
+* `run_incorporator_flow(config_path, poll_interval=None)` — a `@flow`
+  that loads `pipeline.json` through the same env-expansion,
+  path-rebasing, and `@sigil`/token-resolution steps `incorporator
+  stream` uses — full config-front-end parity, not a re-implementation.
+* `run_incorporator_stream(incorp_params, ..., enable_logging=False,
+  retries=0, retry_delay_seconds=0)` — the lower-level `@task` wrapper
+  `run_incorporator_flow` calls internally; takes raw kwarg dicts
+  instead of a config path, and is where `retries` and `enable_logging`
+  live today.
+
+```python
+from prefect import flow
+
+from incorporator.integrations.prefect import run_incorporator_flow
+
+
+@flow(name="ingest-posts")
+async def ingest_flow() -> None:
+    summary = await run_incorporator_flow("pipeline.json")
+    print(summary)
+    # {"chunks": ..., "rows_processed": ..., "failed_chunks": ...,
+    #  "failed_sources": [...], "elapsed_sec": ...}
+```
+
+Both functions return the same summary dict, bounded to O(1) memory —
+no per-wave list is retained, and `failed_sources` is capped at 20
+entries. `run_incorporator_stream`'s `retries` / `retry_delay_seconds`
+pass straight through to Prefect's `Task.with_options(...)` when
+non-zero; its `enable_logging=True` opts into the same disk logging
+`--logs` gives the CLI — a deliberate double-write against Prefect's
+own run logger, not a bug.
+
+This wrapper covers `stream` only. There is no `fjord` or watershed
+equivalent — for a watershed, hand-rolling `@task`/`@flow` around a bare
+`Tideweaver` (below) is the current, deliberate approach.
+
+This wrapper ships in the next release — current PyPI is 1.4.2.
+
 ## Both — recommended for production
 
 The strongest pattern wraps Tideweaver inside a Prefect `@flow`:

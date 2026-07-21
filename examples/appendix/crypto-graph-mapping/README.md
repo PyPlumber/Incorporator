@@ -301,6 +301,19 @@ python examples/appendix/crypto-graph-mapping/crypto_graph_mapping.py
 incorporator tideweaver run watershed.json
 ```
 
+`outflow.py` re-imports `BinanceStat`/`BinanceBook`/`CryptoAsset`/
+`CryptoLiquidity`/`upper_symbol` from `crypto_graph_mapping.py` rather
+than redefining them — see `outflow.py`'s own docstring — so both entry
+forms share one canonical class/join-helper definition. `watershed.json`'s
+top-level `host_penstocks` block declares the same `api.coingecko.com`
+0.2 req/sec limit `crypto_graph_mapping.py` sets via
+`register_host_penstock` — the CLI form paces itself from config, no
+sidecar side effect required. Unlike T5/pokeapi's chain shape, the
+`liquidity` current here is a `Fjord` (`verb: "fjord"`) whose own
+`export_params` the scheduler consumes directly each wave — no separate
+`export_*` current is needed, since a fjord current's export isn't the
+unconsumed `Stream(parent_current=...)` output T5/pokeapi work around.
+
 Also runs in Docker via the [central mount pattern](../../README.md#running-a-tutorial-in-docker) (not run or verified). The CLI form is a bounded Tideweaver `parallel` shape (3 independent-source Streams, one-shot) with a `CryptoLiquidity` `Fjord` tail that exits when the window ends, not `cls.fjord()`'s unbounded daemon — designed to sort the same top assets by `market_cap_rank` as the Python entry, with `usdt_*`/`usdc_*` legitimately `None` for assets missing that quote on binance.us (see [`watershed.json`](watershed.json) + [`outflow.py`](outflow.py)).
 
 ---
