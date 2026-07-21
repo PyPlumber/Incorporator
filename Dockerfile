@@ -36,11 +36,13 @@ RUN pip install --upgrade pip && \
     pip install --no-cache-dir .[speedups,avro,xlsx,cli]
 
 # --- Source layer: only this layer is invalidated by incorporator/ edits ---
-# Overwrites the stub package with the real source, then reinstalls it with
-# --no-deps — every third-party dependency already landed in the layer
-# above, so this reinstall does no network/resolver work.
+# Overwrites the stub package with the real source, then reinstalls it.
+# --force-reinstall is REQUIRED: the stub above installed `incorporator` at the
+# same version, so a plain `pip install .` would no-op ("already satisfied") and
+# leave the empty stub __init__.py in site-packages. --no-deps keeps the cached
+# dependency layer untouched, so this reinstall does no network/resolver work.
 COPY incorporator/ ./incorporator/
-RUN pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir --no-deps --force-reinstall .
 
 # Switch to the secure non-root user
 USER appuser

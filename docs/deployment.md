@@ -168,8 +168,11 @@ RUN pip install --upgrade pip && \
     pip install --no-cache-dir .[speedups,avro,xlsx,cli]
 
 # Source layer: only this layer is invalidated by incorporator/ edits.
+# --force-reinstall replaces the same-version stub package from the deps layer
+# with the real source (a plain install would no-op); --no-deps leaves the
+# cached dependency layer untouched.
 COPY incorporator/ ./incorporator/
-RUN pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir --no-deps --force-reinstall .
 
 USER appuser
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
