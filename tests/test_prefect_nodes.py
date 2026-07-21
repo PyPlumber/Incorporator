@@ -226,3 +226,16 @@ def test_prefect_absent_dummy_branch_exposes_both_symbols() -> None:
             sys.modules["incorporator._deps.prefect"] = deps_prefect_mod
         if integrations_prefect_mod is not None:
             sys.modules["incorporator.integrations.prefect"] = integrations_prefect_mod
+        # importlib.import_module above also rebound the PARENT packages'
+        # attributes (incorporator.integrations.prefect / _deps.prefect) to
+        # the fresh dummy-mode module; `import a.b as m` resolves through
+        # that parent attribute, so restore it too or later tests in a
+        # randomized order receive the dummy module (its task is a plain
+        # function with no `with_options`).
+        import incorporator._deps as _deps_pkg
+        import incorporator.integrations as _integrations_pkg
+
+        if deps_prefect_mod is not None:
+            _deps_pkg.prefect = deps_prefect_mod  # type: ignore[attr-defined]
+        if integrations_prefect_mod is not None:
+            _integrations_pkg.prefect = integrations_prefect_mod  # type: ignore[attr-defined]
