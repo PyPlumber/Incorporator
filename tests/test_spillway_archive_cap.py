@@ -37,6 +37,7 @@ from incorporator.tideweaver import (
     Tideweaver,
     Watershed,
 )
+from incorporator.tideweaver.flow import _ARCHIVE_CAP_WARNED
 from incorporator.tideweaver.logged import LoggedTideweaver
 
 
@@ -58,6 +59,12 @@ def _stream(name: str, cls: type[Incorporator], interval: float) -> Any:
 def _reset(*classes: type[Incorporator]) -> None:
     for cls in classes:
         cls.inc_dict.clear()
+        # The spillway cap warning is a once-per-process guard keyed by
+        # id(archive_cls) (flow._ARCHIVE_CAP_WARNED). CPython recycles id()
+        # values once a prior test's local archive class is collected, so a
+        # stale entry under this class's id would suppress the warning we
+        # assert on. Discard by id to guarantee a clean, unwarned start.
+        _ARCHIVE_CAP_WARNED.discard(id(cls))
         for attr in ("_tideweaver_snapshot", "_spillway_backlog"):
             if attr in cls.__dict__:
                 try:
