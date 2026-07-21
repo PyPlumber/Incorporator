@@ -35,11 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matching its documented O(1)-memory contract. Per-wave Prefect log
   lines are unchanged.
 - **Docker image installs `.[speedups,avro,xlsx,cli]`** instead of
-  `.[all]` — everything the image previously provided except Prefect —
-  and the Dockerfile layer-splits dependencies from source so
-  `incorporator/` edits no longer invalidate the dependency-download
-  layer. `/app/out` is created and chowned for the documented mount
-  pattern.
+  `.[all]` — everything the image previously provided except Prefect.
+  `/app/out` is created and chowned for the documented mount pattern.
 
 ### Fixed
 

@@ -144,10 +144,9 @@ minutes, the container is reported unhealthy — your orchestrator
 ### Custom Dockerfile
 
 If you prefer a standalone Dockerfile, the repo's blueprint runs as a
-non-root user, installs `.[speedups,avro,xlsx,cli]` (the orjson / cramjam
+non-root user and installs `.[speedups,avro,xlsx,cli]` (the orjson / cramjam
 native-code accelerators plus the Typer CLI entry point — everything
-`[all]` gives you except Prefect), and layer-splits the install so
-`incorporator/` source edits don't bust the dependency-download layer:
+`[all]` gives you except Prefect):
 
 ```dockerfile
 FROM python:3.11-slim
@@ -160,19 +159,11 @@ WORKDIR /app
 RUN mkdir -p /app/config /app/data /app/logs /app/out && \
     chown -R appuser:appuser /app
 
-# Dependency layer: cache-keyed on pyproject.toml + README.md only.
 COPY pyproject.toml README.md ./
-RUN mkdir incorporator && touch incorporator/__init__.py
+COPY incorporator/ ./incorporator/
 
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir .[speedups,avro,xlsx,cli]
-
-# Source layer: only this layer is invalidated by incorporator/ edits.
-# --force-reinstall replaces the same-version stub package from the deps layer
-# with the real source (a plain install would no-op); --no-deps leaves the
-# cached dependency layer untouched.
-COPY incorporator/ ./incorporator/
-RUN pip install --no-cache-dir --no-deps --force-reinstall .
 
 USER appuser
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

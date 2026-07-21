@@ -18,13 +18,15 @@ WORKDIR /app
 RUN mkdir -p /app/config /app/data /app/logs /app/out && \
     chown -R appuser:appuser /app
 
-# --- Dependency layer: cache-keyed on pyproject.toml + README.md only ---
-# A stub `incorporator/` package (just enough for [tool.setuptools.packages.find]
-# to resolve) lets `pip install .[extras]` download and resolve every
-# third-party dependency before any real source is copied in, so editing
-# incorporator/*.py does not bust this (expensive) layer's cache.
+# Copy project metadata and the real source, then install in one step.
+# (An earlier stub-package layer-split — priming the dependency layer, then
+# reinstalling the real source — proved unreliable in CI: the same-version
+# reinstall did not consistently replace the stub's __init__.py. A single
+# straightforward install is used instead; the dependency layer is rebuilt
+# when incorporator/ changes, which is acceptable since CI builds cleanly and
+# the image is not iterated on locally.)
 COPY pyproject.toml README.md ./
-RUN mkdir incorporator && touch incorporator/__init__.py
+COPY incorporator/ ./incorporator/
 
 # Install [speedups]+[avro]+[xlsx]+[cli] — the Rust/C accelerators (orjson,
 # cramjam, lxml), Avro/xlsx format support, and the Typer CLI entry point.
@@ -34,15 +36,6 @@ RUN mkdir incorporator && touch incorporator/__init__.py
 # their own image should swap this extras set for [orchestrate].
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir .[speedups,avro,xlsx,cli]
-
-# --- Source layer: only this layer is invalidated by incorporator/ edits ---
-# Overwrites the stub package with the real source, then reinstalls it.
-# --force-reinstall is REQUIRED: the stub above installed `incorporator` at the
-# same version, so a plain `pip install .` would no-op ("already satisfied") and
-# leave the empty stub __init__.py in site-packages. --no-deps keeps the cached
-# dependency layer untouched, so this reinstall does no network/resolver work.
-COPY incorporator/ ./incorporator/
-RUN pip install --no-cache-dir --no-deps --force-reinstall .
 
 # Switch to the secure non-root user
 USER appuser
