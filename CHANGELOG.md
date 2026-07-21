@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`[cli]` extra** (`pyproject.toml` via `tools/sync_pyproject.py`):
+  installs the `incorporator` CLI entry point with typer alone —
+  CLI-only users no longer pull Prefect's dependency tree.
+  `[orchestrate]` is unchanged (typer + prefect) for the Prefect
+  integration.
+- **Prefect stream task options** (`incorporator/integrations/prefect.py`):
+  `run_incorporator_stream` gains the docstring-promised
+  `enable_logging` parameter (default `False`; Prefect-logger-only
+  behavior unchanged) and `retries` / `retry_delay_seconds`
+  passthrough via `task.with_options` (default: no retries).
+
+### Changed
+
+- **`envexpand` and `tokens` moved to `incorporator.config`**
+  (previously `incorporator.cli.envexpand` / `incorporator.cli.tokens`):
+  they are config-layer utilities consumed by the verb, watershed, and
+  CLI layers alike. Import sites must use the new canonical paths — no
+  compatibility re-exports are provided.
+- **`run_incorporator_stream` returns an O(1) summary dict** (chunks,
+  rows processed, failure count, bounded failed-sources sample,
+  elapsed seconds) instead of accumulating every `Wave` in memory —
+  matching its documented O(1)-memory contract. Per-wave Prefect log
+  lines are unchanged.
+- **Docker image installs `.[speedups,avro,xlsx,cli]`** instead of
+  `.[all]` — everything the image previously provided except Prefect —
+  and the Dockerfile layer-splits dependencies from source so
+  `incorporator/` edits no longer invalidate the dependency-download
+  layer. `/app/out` is created and chowned for the documented mount
+  pattern.
+
+### Fixed
+
+- **`tideweaver run` builds its Watershed once per invocation**
+  (`incorporator/cli/tideweaver.py`, `incorporator/cli/validate.py`):
+  the validate pass's built Watershed is reused instead of rebuilding
+  (and double-registering host penstocks) after validation.
+- **`--json-output` stdout purity on the tideweaver path**
+  (`incorporator/cli/tideweaver.py`): `tideweaver run`/`validate` now
+  route diagnostics to stderr like `stream`/`fjord`, keeping stdout
+  pure NDJSON.
+- **`--logs` root-logging setup is uniform across `stream`, `fjord`,
+  and `tideweaver run`** (`incorporator/cli/runners.py::configure_logs_option`):
+  previously only `fjord` configured a root handler (and only after
+  validation), so module-logger diagnostics were silently swallowed on
+  the other paths.
+- **`run_incorporator_flow` resolves its config like the CLI**
+  (`incorporator/integrations/prefect.py`): env expansion, `@sigil`
+  token resolution, config-dir path rebasing, and sidecar allow-lists
+  now behave identically under Prefect and `incorporator stream`; a
+  missing Prefect installation raises `RuntimeError` instead of
+  exiting the process.
+- **User-module cache keys on the literal resolved path**
+  (`incorporator/usercode.py`): removes the theoretical hash-collision
+  case where a colliding digest could return the wrong cached module.
+
+### Performance
+
+- `_route_to_log` gates on `isEnabledFor` before serializing records:
+  suppressed-logger wave routing ~7x faster, zero-row waves ~8x
+  (`tests/benchmarks/test_wave_logging_overhead.py`); the scheduler
+  builds each current's log meta string once per tick instead of per
+  record.
+
 ## [1.4.2] - 2026-07-20
 
 ### Added
