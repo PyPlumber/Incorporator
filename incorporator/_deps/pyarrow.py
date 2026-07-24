@@ -16,7 +16,7 @@ def _probe() -> Any:
         return None
 
 
-PYARROW = _probe()
+_pyarrow = _probe()
 
 META = DepInfo(
     name="pyarrow",
@@ -24,7 +24,7 @@ META = DepInfo(
     category=Category.FORMAT,
     description="Parquet / ORC / Feather columnar I/O (~30 MB wheel)",
     version_spec=">=14.0",
-    is_available=PYARROW is not None,
-    module=PYARROW,
+    is_available=_pyarrow is not None,
+    module=_pyarrow,
     include_in_all=False,
 )

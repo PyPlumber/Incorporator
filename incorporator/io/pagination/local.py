@@ -10,7 +10,7 @@ import sqlite3
 from collections.abc import AsyncGenerator
 from typing import IO, Any, ClassVar
 
-from ..._deps import fastavro as _fastavro_mod
+from ..handlers._base import _require_optional
 from ..penstock import Penstock
 from .base import AsyncPaginator, _deserialize_row
 
@@ -292,8 +292,8 @@ class AvroPaginator(_LocalChunkedPaginator):
     Avro block at a time, so peak memory is bounded by block size +
     chunk size regardless of total file size.  Requires the optional
     ``fastavro`` extra (``pip install incorporator[avro]``); a clear
-    :class:`RuntimeError` is raised if it is missing.  Cleanup is
-    inherited from :class:`_LocalChunkedPaginator`.
+    :class:`~incorporator.exceptions.IncorporatorFormatError` is raised if
+    it is missing.  Cleanup is inherited from :class:`_LocalChunkedPaginator`.
 
     Args:
         file_path: Filesystem path to the Avro file.
@@ -317,9 +317,7 @@ class AvroPaginator(_LocalChunkedPaginator):
         self._reader: Any | None = None
 
     def _fetch_chunk(self) -> list[dict[str, Any]]:
-        fastavro = _fastavro_mod.FASTAVRO
-        if fastavro is None:
-            raise RuntimeError("fastavro not installed. Run: pip install incorporator[avro]")
+        fastavro = _require_optional("fastavro")
 
         if not self._file:
             self._file = open(self.file_path, "rb")

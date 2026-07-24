@@ -58,3 +58,34 @@ def install_hint(dep_name: str) -> str:
         if info.name == dep_name:
             return f"pip install incorporator[{info.extra}]"
     return f"pip install {dep_name}"
+
+
+def _extra_for_module(module_name: str) -> str:
+    """Derive the install-extra for a (possibly dotted submodule) module name.
+
+    Normalises submodule names (``"pyarrow.orc"``, ``"lxml.html"``) to their
+    top-level package before looking up ``DepInfo.extra``, so every submodule
+    of a registered dep resolves to the same extra as the parent package.
+
+    Only the single dep actually requested is imported/probed here — unlike
+    :func:`list_deps`, which walks every registered dep and would trigger a
+    real import of each one's underlying package.
+
+    Args:
+        module_name: The module name a caller tried to import, e.g.
+            ``"pyarrow"``, ``"pyarrow.orc"``, or ``"lxml.html"``.
+
+    Returns:
+        The registered ``DepInfo.extra`` for the module's top-level package,
+        or ``module_name`` unchanged when the top-level package isn't a
+        registered optional dependency.
+    """
+    top_level = module_name.split(".", 1)[0]
+    try:
+        mod = importlib.import_module(f"incorporator._deps.{top_level}")
+    except ImportError:
+        return module_name
+    meta = getattr(mod, "META", None)
+    if meta is None:
+        return module_name
+    return str(meta.extra)

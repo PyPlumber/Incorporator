@@ -16,7 +16,7 @@ def _probe() -> Any:
         return None
 
 
-OPENPYXL = _probe()
+_openpyxl = _probe()
 
 META = DepInfo(
     name="openpyxl",
@@ -24,6 +24,6 @@ META = DepInfo(
     category=Category.FORMAT,
     description="Read/write Excel .xlsx workbooks (pure Python)",
     version_spec=">=3.1",
-    is_available=OPENPYXL is not None,
-    module=OPENPYXL,
+    is_available=_openpyxl is not None,
+    module=_openpyxl,
 )

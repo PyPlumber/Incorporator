@@ -105,8 +105,7 @@ def test_orc_parse_missing_pyarrow_message(tmp_path: Path) -> None:
     real_import = builtins.__import__
 
     def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        # 'from pyarrow import orc' resolves through pyarrow; intercept the submodule.
-        if name == "pyarrow":
+        if name == "pyarrow.orc":
             raise ImportError("simulated missing pyarrow")
         return real_import(name, *args, **kwargs)
 

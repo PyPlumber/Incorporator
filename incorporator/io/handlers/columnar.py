@@ -612,14 +612,7 @@ class OrcHandler(BaseFormatHandler):
         Routes through the same ``_table_to_dicts`` helper as Parquet/Feather
         for consistent JSON-encoded nested-cell re-hydration.
         """
-        try:
-            from pyarrow import orc
-        except ImportError:
-            raise IncorporatorFormatError(
-                "pyarrow.orc not available. Run: pip install incorporator[parquet] "
-                "(ORC support requires pyarrow with libarrow_orc; on some platforms "
-                "this may need pyarrow built from source)."
-            ) from None
+        orc = _require_optional("pyarrow.orc")
 
         try:
             orc_file = orc.ORCFile(_coerce_columnar_source(source, "OrcHandler"))  # type: ignore[no-untyped-call]
@@ -643,13 +636,7 @@ class OrcHandler(BaseFormatHandler):
         # Empty guard handled centrally by _peek_iterable in handlers/__init__.py.
         _raise_if_append_unsupported(kwargs, "ORC")
 
-        try:
-            from pyarrow import orc
-        except ImportError:
-            raise IncorporatorFormatError(
-                "pyarrow.orc not available. Run: pip install incorporator[parquet] "
-                "(ORC support requires pyarrow with libarrow_orc)."
-            ) from None
+        orc = _require_optional("pyarrow.orc")
 
         # pyarrow's ORCWriter signature is ``ORCWriter(where, *, ...)`` — schema
         # is inferred from the first ``write()`` call rather than passed at
