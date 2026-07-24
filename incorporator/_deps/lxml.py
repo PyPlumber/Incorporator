@@ -23,7 +23,7 @@ META = DepInfo(
     extra="speedups",
     category=Category.SPEEDUP,
     description="Fast XML/HTML parser with XXE-safe defaults (libxml2-backed)",
-    version_spec=">=4.9",
+    version_spec=">=6.1.1",
     is_available=LXML_ETREE is not None,
     module=LXML_ETREE,
 )

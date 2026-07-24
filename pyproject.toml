@@ -66,7 +66,7 @@ dev =[
 # The GIL-releasing C/Rust upgrades
 speedups =[
     "orjson>=3.9",
-    "lxml>=4.9",
+    "lxml>=6.1.1",
     "cramjam>=2.7"
 ]
 # Big Data Formats
@@ -105,7 +105,7 @@ docs =[
 # excluded — users opt into those explicitly via incorporator[parquet] etc.
 all =[
     "orjson>=3.9",
-    "lxml>=4.9",
+    "lxml>=6.1.1",
     "cramjam>=2.7",
     "fastavro>=1.8",
     "openpyxl>=3.1",
