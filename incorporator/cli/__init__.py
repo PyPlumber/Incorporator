@@ -289,7 +289,7 @@ if typer:
 def main() -> None:
     """Entry point for the setup.py / pyproject.toml console script."""
     if app is None:
-        print("Typer is not installed. To use the CLI, run: pip install incorporator[orchestrate]")
+        print("Typer is not installed. To use the CLI, run: pip install incorporator[cli]")
         sys.exit(1)
     app()
 

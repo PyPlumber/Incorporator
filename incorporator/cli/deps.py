@@ -165,7 +165,7 @@ def render_deps(*, missing: bool, category: str | None, as_json: bool) -> None:
         RuntimeError: When typer is not installed (the CLI cannot function).
     """
     if _typer is None:
-        raise RuntimeError("typer not installed. Run: pip install incorporator[orchestrate]")
+        raise RuntimeError("typer not installed. Run: pip install incorporator[cli]")
     deps = list_deps()
     filtered = _apply_filters(deps, missing=missing, category=category)
     if as_json:

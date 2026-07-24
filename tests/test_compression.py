@@ -134,7 +134,7 @@ def test_decompress_invalid_data() -> None:
 
 
 # ==========================================
-# 5. CRAMJAM-BACKED ROUND-TRIPS (optional [cramjam] extra)
+# 5. CRAMJAM-BACKED ROUND-TRIPS (optional [speedups] extra)
 # ==========================================
 @pytest.mark.parametrize(
     "comp_type",

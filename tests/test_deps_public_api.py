@@ -14,7 +14,9 @@ Covers:
 from __future__ import annotations
 
 import json
+import re
 import sys
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -35,6 +37,62 @@ except ImportError:
     _typer_mod = None  # type: ignore[assignment]
     _runner = None
     _typer_available = False
+
+
+# ---------------------------------------------------------------------------
+# Guard: every ``pip install incorporator[<extra>]`` hint names a real extra
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_PKG_ROOT = _REPO_ROOT / "incorporator"
+_PYPROJECT = _REPO_ROOT / "pyproject.toml"
+
+# Matches ``incorporator[<literal>]``. The registry's parameterized
+# ``incorporator[{info.extra}]`` form is skipped by construction — ``{`` is not
+# in the character class — so only hard-coded literal extras are validated.
+_HINT_RE = re.compile(r"incorporator\[([a-z0-9_][a-z0-9_,\-]*)\]")
+
+
+def _declared_extras() -> set[str]:
+    """Extra names declared under ``[project.optional-dependencies]``.
+
+    Parsed textually to avoid a ``tomllib``/``tomli`` dependency (``tomllib`` is
+    3.11+; CI still tests 3.10).
+    """
+    extras: set[str] = set()
+    in_section = False
+    key_re = re.compile(r"^([A-Za-z][\w-]*)\s*=\s*\[")
+    for line in _PYPROJECT.read_text(encoding="utf-8").splitlines():
+        if line.lstrip().startswith("["):
+            in_section = line.strip() == "[project.optional-dependencies]"
+            continue
+        if in_section:
+            m = key_re.match(line)
+            if m:
+                extras.add(m.group(1))
+    return extras
+
+
+def test_install_hint_extras_are_real() -> None:
+    """Every literal ``pip install incorporator[<extra>]`` names a declared extra.
+
+    Guards the class of bug where a source hint points at a nonexistent extra
+    (e.g. ``[cramjam]`` — cramjam ships in ``[speedups]``), which would print a
+    ``pip install`` command that pip rejects. Validates existence, not which
+    extra is semantically correct for a given dependency.
+    """
+    declared = _declared_extras()
+    assert declared, "could not parse any extras from pyproject.toml"
+
+    offenders: list[str] = []
+    for py in _PKG_ROOT.rglob("*.py"):
+        text = py.read_text(encoding="utf-8")
+        for match in _HINT_RE.finditer(text):
+            for name in match.group(1).split(","):
+                if name not in declared:
+                    offenders.append(f"{py.relative_to(_REPO_ROOT)}: incorporator[{name}]")
+
+    assert not offenders, "install hints reference undeclared extras:\n" + "\n".join(offenders)
 
 
 # ---------------------------------------------------------------------------

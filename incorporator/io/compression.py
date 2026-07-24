@@ -307,7 +307,7 @@ def _decompress_cramjam(
     """Lazy-loads Cramjam Rust bindings with structural binary bypass."""
     cramjam = _cramjam_mod.CRAMJAM
     if cramjam is None:
-        raise IncorporatorFormatError(f"{comp_type.value} requires cramjam. Run: pip install incorporator[cramjam]")
+        raise IncorporatorFormatError(f"{comp_type.value} requires cramjam. Run: pip install incorporator[speedups]")
 
     module_name = _CRAMJAM_MODULE_MAP.get(comp_type)
     if not module_name:
@@ -370,7 +370,7 @@ def _compress_cramjam(src: Path, out_path: Path, comp_type: CompressionType) -> 
     if cramjam is None:
         raise IncorporatorFormatError(
             f"{_CRAMJAM_MODULE_MAP.get(comp_type, comp_type.value)} requires cramjam. "
-            f"Run: pip install incorporator[cramjam]"
+            f"Run: pip install incorporator[speedups]"
         )
 
     module_name = _CRAMJAM_MODULE_MAP.get(comp_type)
