@@ -210,11 +210,11 @@ explicit `is not None` check per field. `symbol` arrives pre-uppercased
 (`crypto_assets`' own `conv_dict` runs `calc(upper_symbol, ...)`), so the
 join keys are plain f-strings — no `make_linker` needed on this path.
 
-> A related fix — unreleased, this codebase only — keeps `link_to`'s target
-> dataset live on every call instead of snapshotted once at construction, and
-> lets a JSON `conv_dict` reference a class token in a `link_to(...)` entry,
-> like `main()`'s Python `conv_dict`. This appendix's CLI doesn't need that —
-> see [`docs/api_atlas.md`](../../../docs/api_atlas.md) for the general case.
+> A related capability: `link_to` keeps its target dataset live on every call
+> (rather than snapshotting it once at construction), and a JSON `conv_dict` can
+> reference a class token in a `link_to(...)` entry, like `main()`'s Python
+> `conv_dict`. This appendix's CLI doesn't need that — see
+> [`docs/api_atlas.md`](../../../docs/api_atlas.md) for the general case.
 
 **GC-safety is automatic.** `BinanceStat.inc_dict` / `BinanceBook.inc_dict`
 are each a `WeakValueDictionary` — reading them depends on *something*

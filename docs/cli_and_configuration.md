@@ -16,8 +16,7 @@ pip install "incorporator[cli]"
 > install `incorporator[orchestrate]` instead — it bundles `typer>=0.9.0`
 > and `prefect>=2.10.0` together.
 >
-> The dedicated `[cli]` extra ships in the next release — current PyPI
-> is 1.4.2.
+> The dedicated `[cli]` extra is available in `incorporator` 1.4.3 and later.
 
 ---
 
@@ -419,8 +418,8 @@ flag — `--logs` never touches stdout. It does two things instead:
   module-logger diagnostics (drain-timeout parse warnings,
   unknown-current-key typos, source-load-failure summaries) reach the
   console instead of being silently dropped by Python's default
-  no-handler behavior. This unified handler ships in the next
-  release — current PyPI is 1.4.2.
+  no-handler behavior. This unified handler is available in
+  `incorporator` 1.4.3 and later.
 
 1.  **`logs/{Class}_api.log`**: URL/internet-traffic errors — HTTP 4xx/5xx responses, network timeouts, and connection failures where `RejectEntry.is_url_traffic_error=True`. Use `get_api()` to read these records.
 2.  **`logs/{Class}_error.log`**: All non-API-routed records at INFO and above — successful waves, parse failures, schema errors. Use `get_error()` for codebase failures; `get_rejects()` to union both files.

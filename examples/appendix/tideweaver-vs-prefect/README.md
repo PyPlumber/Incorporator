@@ -106,7 +106,7 @@ This wrapper covers `stream` only. There is no `fjord` or watershed
 equivalent — for a watershed, hand-rolling `@task`/`@flow` around a bare
 `Tideweaver` (below) is the current, deliberate approach.
 
-This wrapper ships in the next release — current PyPI is 1.4.2.
+This wrapper is available in `incorporator` 1.4.3 and later.
 
 ## Both — recommended for production
 

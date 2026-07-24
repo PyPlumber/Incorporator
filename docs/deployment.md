@@ -52,8 +52,9 @@ Parquet is **not** in that list: the stock image installs
 `.[speedups,avro,xlsx,cli]` (see *Custom Dockerfile* below), which
 excludes `pyarrow`. Export Parquet from a container by building a
 custom image that adds `.[parquet]` explicitly — it's deliberately
-left out of `[all]` too (pyarrow is ~30 MB). The layer-split Dockerfile
-and its extras list ship in the next release — current PyPI is 1.4.2.
+left out of `[all]` too (pyarrow is ~30 MB). The slim
+`.[speedups,avro,xlsx,cli]` image (Prefect excluded) is available in
+`incorporator` 1.4.3 and later.
 
 ### Secrets — local vs. production
 
