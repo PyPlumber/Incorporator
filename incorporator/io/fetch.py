@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import email.utils
 import functools
 import ipaddress
 import logging
@@ -13,6 +14,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -64,9 +66,11 @@ _httpx_traffic: tuple[type[Exception], ...] = (httpx.HTTPStatusError, httpx.Requ
 def _extract_retry_after(exc: Exception) -> float | None:
     """Pull a ``Retry-After`` hint from an HTTPStatusError if the server sent one.
 
-    The header value is interpreted as seconds (the HTTP/1.1 spec also
-    allows an HTTP-date form; we treat that as ``None`` to avoid the
-    parsing edge cases for a hint that's already advisory).
+    The HTTP/1.1 spec allows the header to be either an integer number of
+    seconds or an RFC 1123 HTTP-date; both forms are parsed here. A naive
+    (timezone-less) parsed date is assumed to be UTC. Any value that fails
+    to parse under either form returns ``None`` — this hint is advisory and
+    best-effort, so a malformed header never raises out of this function.
     """
     if isinstance(exc, httpx.HTTPStatusError):
         header = exc.response.headers.get("Retry-After")
@@ -74,7 +78,15 @@ def _extract_retry_after(exc: Exception) -> float | None:
             try:
                 return float(header)
             except ValueError:
-                return None
+                try:
+                    dt = email.utils.parsedate_to_datetime(header)
+                except (ValueError, TypeError):
+                    return None
+                if dt is None:
+                    return None
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds())
     return None
 
 

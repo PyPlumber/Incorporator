@@ -1794,6 +1794,112 @@ async def test_execute_request_429_retry_after_stop_policy_unchanged(
 
 
 # ----------------------------------------------------------------------
+# Stage E — Retry-After HTTP-date form is parsed, not dropped
+# ----------------------------------------------------------------------
+
+
+def test_extract_retry_after_integer_seconds_unchanged() -> None:
+    """The integer-seconds fast path still returns the plain float (regression guard)."""
+    from incorporator.io.fetch import _extract_retry_after
+
+    req = httpx.Request("GET", "https://x.example.com")
+    resp = httpx.Response(429, request=req, headers={"Retry-After": "30"})
+    exc = httpx.HTTPStatusError("429", request=req, response=resp)
+
+    assert _extract_retry_after(exc) == 30.0
+
+
+def test_extract_retry_after_future_http_date_returns_positive_bounded_float() -> None:
+    """An RFC 1123 HTTP-date roughly 90s in the future returns a positive float near 90."""
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    from incorporator.io.fetch import _extract_retry_after
+
+    future = datetime.now(timezone.utc) + timedelta(seconds=90)
+    req = httpx.Request("GET", "https://x.example.com")
+    resp = httpx.Response(429, request=req, headers={"Retry-After": format_datetime(future)})
+    exc = httpx.HTTPStatusError("429", request=req, response=resp)
+
+    result = _extract_retry_after(exc)
+    assert result is not None
+    assert 0 < result <= 120, f"expected a positive value near 90s, got {result}"
+
+
+def test_extract_retry_after_past_http_date_clamps_to_zero() -> None:
+    """A past HTTP-date returns exactly 0.0 — clamped, never negative."""
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    from incorporator.io.fetch import _extract_retry_after
+
+    past = datetime.now(timezone.utc) - timedelta(days=1)
+    req = httpx.Request("GET", "https://x.example.com")
+    resp = httpx.Response(429, request=req, headers={"Retry-After": format_datetime(past)})
+    exc = httpx.HTTPStatusError("429", request=req, response=resp)
+
+    assert _extract_retry_after(exc) == 0.0
+
+
+def test_extract_retry_after_garbage_header_returns_none() -> None:
+    """A header that is neither an integer nor a parseable HTTP-date returns None."""
+    from incorporator.io.fetch import _extract_retry_after
+
+    req = httpx.Request("GET", "https://x.example.com")
+    resp = httpx.Response(429, request=req, headers={"Retry-After": "not-a-date-or-number"})
+    exc = httpx.HTTPStatusError("429", request=req, response=resp)
+
+    assert _extract_retry_after(exc) is None
+
+
+@pytest.mark.asyncio
+async def test_execute_request_429_retry_after_http_date_ceiling_caps_extreme_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A far-future HTTP-date Retry-After still clamps at _HTTP_RETRY_AFTER_CEILING, end to end.
+
+    Mirrors test_execute_request_429_retry_after_ceiling_caps_extreme_hint but exercises
+    the HTTP-date parsing branch instead of the integer-seconds branch.
+    """
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    from incorporator.io._retry_defaults import _HTTP_RETRY_AFTER_CEILING
+    from incorporator.io.fetch import execute_request
+
+    monkeypatch.chdir(tmp_path)
+
+    total_slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(seconds: float) -> None:
+        if seconds > 0:
+            total_slept.append(seconds)
+        else:
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+    far_future = datetime.now(timezone.utc) + timedelta(days=365)
+
+    def _429_transport(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, request=request, headers={"Retry-After": format_datetime(far_future)})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_429_transport)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await execute_request(url="https://limited.example.com/data", client=client)
+
+    assert total_slept
+    assert all(w <= _HTTP_RETRY_AFTER_CEILING for w in total_slept), (
+        f"a far-future HTTP-date hint must be capped at {_HTTP_RETRY_AFTER_CEILING}, got {total_slept}"
+    )
+
+    await asyncio.sleep(0)
+
+
+# ----------------------------------------------------------------------
 # Commit B — 408 / 425 are now retryable (behavior change)
 # ----------------------------------------------------------------------
 
