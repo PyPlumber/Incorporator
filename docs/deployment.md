@@ -346,7 +346,9 @@ hard dependencies — `typer` is not in the base package; it ships with
 `[cli]`, `[orchestrate]`, and `[all]`. If you only need the
 `incorporator` CLI entry point (no Prefect), `pip install
 incorporator[cli]` is the smallest install that gets you that —
-see `installation.md`.
+see `installation.md`. The wrapper is verified against Prefect 2.10+
+through 3.x — it uses the stable `@flow` / `@task` / `get_run_logger`
+API that is unchanged across the 2→3 major.
 
 ### Deploying a flow
 
