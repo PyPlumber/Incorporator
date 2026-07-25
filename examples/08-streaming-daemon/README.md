@@ -333,7 +333,7 @@ Also runs in Docker via the [central mount pattern](../README.md#running-a-tutor
 | Preview the multi-source fjord shape on a fantasy-sports problem | [Tutorial 9 — NASCAR Fantasy Fjord](../09-nascar-fantasy-fjord/README.md) |
 | Stream multiple sources concurrently with a fused outflow | [Tutorial 10 — Multi-Source Fjord](../10-multi-source-fjord/README.md) |
 | Orchestrate multiple sources on independent cadences in one window | [Tutorial 11 — Tideweaver](../11-tideweaver/README.md) |
-| Land per-window columnar artifacts (Parquet) | [Appendix — Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md) |
+| Land per-window columnar artifacts (Parquet) | [Formats & Compression — Columnar snapshots](../../docs/formats_and_compression.md#columnar-snapshots-in-a-tideweaver-window) |
 | Master the paginator family for the chunking engine | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |
 | Ship as a Docker daemon with health checks | [Deployment Guide](../../docs/deployment.md) |
 

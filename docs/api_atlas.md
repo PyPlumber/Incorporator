@@ -2011,7 +2011,7 @@ if not fmt.is_append_safe:
 
 **See also**
 [Formats & Compression](./formats_and_compression.md) ·
-[Appendix — Tideweaver Parquet Snapshots](../examples/appendix/tideweaver-parquet-snapshots/README.md)
+[Columnar snapshots in a Tideweaver window](./formats_and_compression.md#columnar-snapshots-in-a-tideweaver-window)
 
 ---
 

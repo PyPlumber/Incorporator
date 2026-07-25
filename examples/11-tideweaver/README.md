@@ -655,8 +655,8 @@ Also runs in Docker via the [central mount pattern](../README.md#running-a-tutor
 |---|---|
 | Master the fjord pattern that `Fjord` currents reuse | [Tutorial 10 — Multi-Source Fjord](../10-multi-source-fjord/README.md) |
 | Run the same diamond shape against a different domain | [Appendix — NASCAR Tideweaver](../appendix/nascar-tideweaver/README.md) |
-| Land columnar Parquet artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md) |
-| Pick between in-process and cloud orchestration | [Appendix — Tideweaver vs. Prefect](../appendix/tideweaver-vs-prefect/README.md) |
+| Land columnar Parquet artifacts at window close | [Formats & Compression — Columnar snapshots](../../docs/formats_and_compression.md#columnar-snapshots-in-a-tideweaver-window) |
+| Pick between in-process and cloud orchestration | [Deployment — Tideweaver vs. Prefect](../../docs/deployment.md#tideweaver-vs-prefect-or-dagster-airflow-argo) |
 | Configure Tideweaver from `watershed.json` for the CLI | [CLI & Configuration §9](../../docs/cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration) |
 | Ship as a Docker container with environment-driven config | [Deployment Guide](../../docs/deployment.md) |
 

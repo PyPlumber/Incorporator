@@ -393,6 +393,108 @@ logger; setting `enable_logging=True` ALSO wires up Incorporator's own
 JSON-line disk logger — a genuine double-write you're opting into, not
 a bug. Leave it `False` (the default) unless you specifically want both.
 
+### Tideweaver vs. Prefect (or Dagster, Airflow, Argo)
+
+Both tools schedule work over time, but at different scopes. Tideweaver
+runs in-process with one event loop, for the duration of one bounded
+time window; Prefect (and Dagster, Airflow, Argo) runs as a cluster
+with a server, workers, and a UI, for the lifetime of your data
+platform. **Tideweaver is what runs during a window. Prefect is what
+decides which window to run next.**
+
+| Requirement                                      | Tideweaver           | Prefect / Dagster / Airflow |
+|--------------------------------------------------|----------------------|------------------------------|
+| Sub-minute cadence per source                    | ✅ native            | ⚠️ heavy (scheduler overhead) |
+| Multiple sources, independent intervals          | ✅ native            | ⚠️ N flows or N scheduled tasks |
+| In-process registries (`cls.inc_dict` reused)    | ✅ native            | ❌ workers don't share memory |
+| Bounded time window (e.g. a 4-hour NASCAR race)  | ✅ native            | ⚠️ requires external stop logic |
+| Per-current fault isolation (`on_error`)         | ✅ native            | ⚠️ task-level retries        |
+| Graceful drain at window close                   | ✅ native            | ⚠️ requires custom hook      |
+| Structured event logs to disk (per-pass)         | ✅ `LoggedTideweaver` | ✅ Prefect Cloud + handlers |
+| Post-run tuning recommendations                  | ✅ `tune()` → `TuningReport` (v1.2.1+) | ❌ no built-in equivalent (custom observer pattern) |
+| Structured canal-layer reject taxonomy           | ✅ `Tideweaver.rejects` (`error_kind` ∈ `PenstockLimited`/`SurgeHalted`/`SkipAhead`/`GateBlocked`) | ⚠️ task-level retries; no edge/canal cause taxonomy |
+| Cron-style daily / weekly scheduling             | ⚠️ wrap in cron/systemd | ✅ native                 |
+| Multi-machine fan-out                            | ❌ (single process)  | ✅ native                    |
+| UI / observability dashboard                     | ❌ (disk logs only)  | ✅ native                    |
+| Multi-team coordination across services          | ❌                   | ✅ native                    |
+
+Sub-minute cadence and in-process registries are the dividing line — at
+hour/day cadence with cross-machine fan-out, Prefect's overhead pays
+for itself. For the consistently-saturated case (heap depth climbing
+near window close), see *Backlog short-circuit — `backlog_backoff_factor`*
+above; Prefect's analogue is task-concurrency limiters and work-pool
+concurrency caps.
+
+**Only Prefect.** Pick standalone Prefect when the workload is
+task-level concurrent but not source-level recurring (e.g. "transform
+50 files, then load the results"), sources tick on hour / day
+boundaries rather than seconds / minutes, or you need durable
+scheduling across machine reboots, fleet scaling, or per-task retries
+with backoff visible in a UI. Wrap your `incorp()` calls inside
+`@task`-decorated functions and let Prefect's executor drive
+concurrency — no Tideweaver involved.
+
+**Only Tideweaver.** Pick standalone Tideweaver when the workload is
+bounded (a race weekend, a market session, a measurement campaign),
+sources tick on sub-minute cadences, in-process registries matter
+(downstream currents read live upstream `cls.inc_dict` snapshots
+rather than disk artifacts), or you don't want to operate a
+control-plane server. Run `incorporator tideweaver run watershed.json`
+from cron, systemd, or a Docker `CMD`; let the process exit at window
+close.
+
+The wrapper above covers `stream` only — there is no `fjord` or
+watershed equivalent; for a watershed, hand-rolling `@task`/`@flow`
+around a bare `Tideweaver` (below) is the current, deliberate
+approach.
+
+**Both — recommended for production.** The strongest pattern wraps
+Tideweaver inside a Prefect `@flow`:
+
+```python
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+from prefect import flow, task
+
+from incorporator import Tideweaver, Watershed
+
+
+@task(retries=3, retry_delay_seconds=60)
+async def run_race_window(start: datetime, end: datetime) -> None:
+    watershed = Watershed.diamond(
+        window=(start, end),
+        head=...,
+        middle=[...],
+        tail=...,
+        outflow="outflow.py",
+    )
+    async for tide in Tideweaver(watershed).run():
+        # per-tick observability (Prefect logger picks this up)
+        if tide.skipped:
+            print(tide.tide_number, tide.skipped)
+
+
+@flow(name="nascar-race-day")
+async def race_day_flow() -> None:
+    start = datetime.now(timezone.utc)
+    end = start + timedelta(hours=4)
+    await run_race_window(start, end)
+
+
+if __name__ == "__main__":
+    asyncio.run(race_day_flow())
+```
+
+**Prefect** handles the calendar (cron deployment), infra-level
+retries (whole-task restarts after worker failure), the UI, the audit
+log, and the multi-flow dependency graph. **Tideweaver** handles
+everything inside the window: sub-minute scheduling, per-source
+`on_error` policy, dependency gating between currents, graceful drain
+at window close. The seam between them is the `@task` boundary —
+Tideweaver returns when the window closes, and Prefect logs the
+result and schedules the next deployment.
+
 ---
 
 ## Where to go next
@@ -401,7 +503,7 @@ a bug. Leave it `False` (the default) unless you specifically want both.
 |---|---|
 | Pick the right CLI command for your pipeline shape | [CLI & Configuration Guide](./cli_and_configuration.md) |
 | Coordinate multiple pipelines on independent cadences | [Tutorial 11 — Tideweaver](../examples/11-tideweaver/README.md) |
-| Decide between in-process and cloud orchestration | [Appendix — Tideweaver vs. Prefect](../examples/appendix/tideweaver-vs-prefect/README.md) |
+| Decide between in-process and cloud orchestration | [Tideweaver vs. Prefect](#tideweaver-vs-prefect-or-dagster-airflow-argo) |
 | Get structured error logs flowing to a log aggregator | [Production Debugging](./debugging.md) |
 | Tune performance per format / payload size | [Performance Guide](./performance.md) |
 

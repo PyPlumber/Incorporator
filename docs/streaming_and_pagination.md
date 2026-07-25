@@ -365,7 +365,7 @@ matrix.
 | Pick the right polling mode for your pipeline | [Tutorial 8 — Streaming Daemons](../examples/08-streaming-daemon/README.md) |
 | Snapshot millions of rows into a warehouse without OOM | [Tutorial 3 — Universal Formats](../examples/03-universal-formats/README.md) |
 | Tune chunk size against memory + throughput | [Performance Guide](./performance.md) |
-| Land columnar Parquet at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../examples/appendix/tideweaver-parquet-snapshots/README.md) |
+| Land columnar Parquet at window close | [Columnar snapshots in a Tideweaver window](./formats_and_compression.md#columnar-snapshots-in-a-tideweaver-window) |
 | Get structured error logs from a chunked daemon | [Production Debugging](./debugging.md) |
 
 ---

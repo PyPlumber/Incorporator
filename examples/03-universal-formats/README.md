@@ -195,7 +195,7 @@ corrupt-footer file. This is the right pattern for hourly / daily *artifact*
 dumps that downstream consumers (Athena, DuckDB, Spark, Snowflake) query
 directly — for per-tick accumulation, stay in NDJSON / CSV / SQLite and let a
 downstream batch job convert to Parquet at window close, see
-[Appendix: Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md).
+[Formats & Compression — Columnar snapshots in a Tideweaver window](../../docs/formats_and_compression.md#columnar-snapshots-in-a-tideweaver-window).
 
 ### 5. The Round Trip Proves the Schema Held
 
@@ -294,7 +294,7 @@ verification — so this tutorial stays in Python.
 | Join a parent endpoint to per-record detail children | [Tutorial 5 — Parent-Child Drilling](../05-parent-child-drilling/README.md) |
 | Keep the warehouse source data fresh | [Tutorial 7 — Stateful Refresh](../07-stateful-refresh/README.md) |
 | Run the warehouse loader as a long-running daemon | [Tutorial 8 — Streaming Daemons](../08-streaming-daemon/README.md) |
-| Land columnar Parquet from an orchestrated pipeline | [Appendix — Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md) |
+| Land columnar Parquet from an orchestrated pipeline | [Formats & Compression — Columnar snapshots](../../docs/formats_and_compression.md#columnar-snapshots-in-a-tideweaver-window) |
 | Stream a file too big for RAM | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |
 
 ---

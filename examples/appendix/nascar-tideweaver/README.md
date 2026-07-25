@@ -234,8 +234,8 @@ Also runs in Docker via the [central mount pattern](../../README.md#running-a-tu
 |---|---|
 | See the crypto-spine version of the same diamond | [Tutorial 11 — Tideweaver](../../11-tideweaver/README.md) |
 | Run the non-Tideweaver fjord variant against NASCAR data | [Tutorial 9 — NASCAR Fantasy Fjord](../../09-nascar-fantasy-fjord/README.md) |
-| Land columnar artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../tideweaver-parquet-snapshots/README.md) |
-| Pick between in-process Tideweaver and cloud schedulers | [Appendix — Tideweaver vs. Prefect](../tideweaver-vs-prefect/README.md) |
+| Land columnar artifacts at window close | [Formats & Compression — Columnar snapshots](../../../docs/formats_and_compression.md#columnar-snapshots-in-a-tideweaver-window) |
+| Pick between in-process Tideweaver and cloud schedulers | [Deployment — Tideweaver vs. Prefect](../../../docs/deployment.md#tideweaver-vs-prefect-or-dagster-airflow-argo) |
 | Configure this watershed for the CLI | [CLI & Configuration §9](../../../docs/cli_and_configuration.md#9-the-tideweaver-subcommand--windowed-orchestration) |
 
 ---

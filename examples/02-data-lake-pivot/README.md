@@ -171,7 +171,7 @@ Also runs in Docker via the [central mount pattern](../README.md#running-a-tutor
 |---|---|
 | Build a per-tick snapshot warehouse across multiple formats | [Tutorial 3 — Universal Formats](../03-universal-formats/README.md) |
 | Audit a warehouse against a federal source | [Tutorial 4 — XML Post Audit](../04-xml-post-audit/README.md) |
-| Land Parquet artifacts at window close | [Appendix — Parquet Snapshots in a Tideweaver Window](../appendix/tideweaver-parquet-snapshots/README.md) |
+| Land Parquet artifacts at window close | [Formats & Compression — Columnar snapshots](../../docs/formats_and_compression.md#columnar-snapshots-in-a-tideweaver-window) |
 | Stream massive files through chunking + paginators | [Streaming & Pagination Deep Dive](../../docs/streaming_and_pagination.md) |
 | See the format kwarg reference | [Formats & Compression](../../docs/formats_and_compression.md) |
 

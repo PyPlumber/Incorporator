@@ -251,12 +251,106 @@ to read end-to-end in one sitting.
 
 ---
 
+## Columnar snapshots in a Tideweaver window
+
+A Tideweaver run accumulates a window of data into an append-friendly
+format like NDJSON, but downstream consumers (Athena, DuckDB, Spark)
+often want columnar Parquet. `Stream` and `Fjord` currents flush once
+per tick — fine for record-oriented formats, but not for Parquet,
+Feather, or ORC: those formats write a column-statistics footer at
+the *end* of the file, recomputed from the full row set, so appending
+a second chunk means reading every existing row group back, merging,
+re-encoding, and rewriting the whole file. A Parquet "append" is
+really a rebuild, and the framework refuses to do that silently every
+tick — see the *Append-safety predicate* note above for the exact
+`FormatType.is_append_safe` True/False format list. Two patterns land
+a clean columnar artifact from a Tideweaver run without per-tick
+rewrites.
+
+### Pattern 1: `Export` current at window close
+
+Inside a `Watershed`, add an `Export` current after the head stream
+and push its single tick to the end of the window with
+`phase_offset_sec`. The first tick of any current fires on the first
+pass it is gate-eligible (the scheduler skips the interval check
+while `last_tick_started is None`); a long `interval` then blocks any
+re-fire inside the window. So with `phase_offset_sec` set near the
+window length, that first — and only — `Export` tick lands just
+before window close, calling `cls.export()` against the fully
+accumulated registry in one shot.
+
+```python
+from datetime import datetime, timedelta, timezone
+
+from incorporator import Incorporator, Tideweaver, Watershed, Stream, Export
+
+
+class Lap(Incorporator):
+    pass
+
+
+start = datetime.now(timezone.utc)
+end = start + timedelta(hours=1)
+
+watershed = Watershed.chain(
+    window=(start, end),
+    gate_mode="hard",  # wait for the upstream Stream's data each tick
+    currents=[
+        Stream(
+            name="laps",
+            cls=Lap,
+            interval=30,
+            incorp_params={
+                "inc_url": "https://cf.nascar.com/.../laps.json",
+                "inc_code": "lap_id",
+            },
+        ),
+        Export(
+            name="laps_snapshot",
+            cls=Lap,
+            interval=3600,                                  # long interval — never re-fires inside the window
+            phase_offset_sec=3500,                          # hold the single tick until just before window close
+            export_params={"file_path": "laps_snapshot.parquet"},
+        ),
+    ],
+)
+
+async for tide in Tideweaver(watershed).run():
+    print(tide.tide_number, tide.fired, tide.skipped)
+```
+
+Pyarrow writes the file via the same atomic `os.replace()` path
+`incorp().export()` uses, so a crash mid-write leaves the previous
+snapshot (or nothing) — never a half-written Parquet.
+
+### Pattern 2: Post-run export
+
+`Tideweaver.run()` drains all in-flight currents before returning.
+After the loop exits, the source class registries are quiescent and
+you can call `export()` against them directly:
+
+```python
+async for tide in Tideweaver(watershed).run():
+    ...                                                     # tick-level work
+await Lap.export(file_path="laps_final.parquet")            # one-shot, no Tideweaver
+```
+
+This is the right shape when you want exactly one artifact at the end
+and don't need an `Export` node in the graph for ordering or
+dependency reasons.
+
+For post-run observability once the artifact lands — auditing
+`tw.rejects` for canal-layer drops, or `tune()` for next-window
+tuning hints — see the [Deployment Guide](./deployment.md).
+
+---
+
 ## Where to Go Next
 
 | Goal | Read |
 |---|---|
 | Build a snapshot warehouse with append-friendly formats | [Tutorial 3 — Universal Formats](../examples/03-universal-formats/README.md) |
-| Land columnar Parquet at the end of an orchestration window | [Appendix — Parquet Snapshots in a Tideweaver Window](../examples/appendix/tideweaver-parquet-snapshots/README.md) |
+| Land columnar Parquet at the end of an orchestration window | [Columnar snapshots in a Tideweaver window](#columnar-snapshots-in-a-tideweaver-window) |
 | Round-trip JSON ↔ Avro ↔ SQLite with nested reconstruction | [Tutorial 2 — Data Lake Pivot](../examples/02-data-lake-pivot/README.md) |
 | Stream a file too big to fit in RAM | [Streaming & Pagination Deep Dive](./streaming_and_pagination.md) |
 | Tune per-format throughput | [Performance Guide](./performance.md) |
