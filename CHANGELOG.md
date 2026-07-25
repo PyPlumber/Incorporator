@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-07-25
+
+### Fixed
+
+- **Sidecar modules loaded via `outflow=`/`fjord()` now share class identity
+  with a directly-executed entry file** (`incorporator/usercode.py`): running
+  an entry script directly (e.g. `python examples/appendix/mlb-pulse/mlb_pulse.py`)
+  no longer causes a same-directory sidecar's `from <entry> import Cls` to
+  re-execute the entry as a second, disconnected module — previously this
+  silently forked class identity and orphaned incoming records (observed as
+  an empty pulse export).
+- **`pip install incorporator[<extra>]` hints now name real, correct
+  extras**: the `fastavro` hint pointed at `[orchestrate]` instead of
+  `[avro]`, and the `cramjam` hint pointed at a nonexistent `[cramjam]`
+  extra instead of `[speedups]`; the Typer-missing hint now suggests the
+  lighter `[cli]` extra. A new guard test scans every literal extra hint
+  against `pyproject.toml` so this class of bug can't regress.
+
+### Changed
+
+- **`Retry-After` response headers now support the HTTP-date form** (e.g.
+  `Wed, 21 Oct 2026 07:28:00 GMT`), not just integer seconds — a server's
+  date-form backoff hint is honored instead of falling back to plain
+  exponential backoff.
+- **lxml floor raised to 6.1.1** — the release with no known open CVEs in
+  the 6.x line (fixes for XXE local-file-read and libxslt XSLT
+  type-confusion DoS); Incorporator's own parse paths were not exposed on
+  older versions, but this is a defense-in-depth floor raise.
+- **Optional-dependency extra lookup unified** on the `DepInfo.extra`
+  registry (`incorporator/io/handlers/_base.py`), removing a duplicated
+  extras dict and giving Avro/ORC missing-dependency errors a single,
+  consistent code path.
+
+### Docs
+
+- Documented that the Prefect integration is verified on Prefect 2.10+
+  through 3.x.
+- Added the `[cli]` extra to the README install matrix.
+- Folded the Tideweaver-vs-Prefect and Tideweaver-parquet-snapshots
+  doc-only appendices into `docs/deployment.md` and
+  `docs/formats_and_compression.md` respectively.
+- Codified the atlas contracts for batch upsert (last-write-wins),
+  `conv_dict` op ordering, and `link_to` one-way key typing.
+- Refreshed stale "ships in the next release" version hedges now that
+  1.4.3 has shipped.
+
 ## [1.4.3] - 2026-07-21
 
 ### Added
