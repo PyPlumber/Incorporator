@@ -142,6 +142,37 @@ def test_load_sidecar_helper_imports_sibling_without_manual_syspath_guard(tmp_pa
     assert module.sibling.VALUE == 42
 
 
+def test_sibling_sidecar_native_import_shares_class_identity_with_main(tmp_path: Path) -> None:
+    """A sidecar's `from <entry_stem> import Cls` resolves to the running `__main__` module's class.
+
+    Simulates a direct `python entry.py` run (manually registers the entry
+    module under `sys.modules["__main__"]`, mirroring
+    `test_main_entry_point_shares_class_identity_with_framework_load`), then
+    writes a SEPARATE, sibling sidecar file in the same directory that
+    performs a native top-level `from entry import Widget` — the shape a
+    lazily-loaded `outflow.py` uses to reach classes declared in the entry
+    file. Without the entry-stem alias, Python's own import machinery finds
+    no `sys.modules["entry"]` and re-executes `entry.py` as a second,
+    disconnected module, forking `Widget` into two non-identical classes.
+    """
+    entry_py = tmp_path / "entry.py"
+    entry_py.write_text("class Widget:\n    pass\n", encoding="utf-8")
+
+    spec = importlib.util.spec_from_file_location("__main__", entry_py)
+    assert spec is not None and spec.loader is not None
+    main_module = importlib.util.module_from_spec(spec)
+    sys.modules["__main__"] = main_module
+    spec.loader.exec_module(main_module)
+
+    sidecar_py = tmp_path / "sidecar.py"
+    sidecar_py.write_text("from entry import Widget\n", encoding="utf-8")
+
+    sidecar_module = load_user_module(sidecar_py)
+
+    assert sidecar_module.Widget is main_module.Widget
+    assert sys.modules["entry"] is main_module
+
+
 def test_load_user_module_repeated_call_returns_same_object(tmp_path: Path) -> None:
     """Loading the SAME file path twice via `load_user_module` returns the IDENTICAL module object.
 

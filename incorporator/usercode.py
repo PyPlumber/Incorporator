@@ -94,6 +94,21 @@ def load_user_module(path: str | Path) -> ModuleType:
     without the file having to hand-roll its own
     ``sys.path.insert(0, str(Path(__file__).parent))`` guard.
 
+    **Sibling ``__main__`` aliasing.** A sidecar that lives next to the
+    running entry file (e.g. ``outflow.py`` beside ``mlb_pulse.py``) may do
+    a native ``from mlb_pulse import MLBAllTeam`` at its own top level.
+    Without help, Python's import machinery finds no ``sys.modules["mlb_pulse"]``
+    entry (the entry file only ever ran as ``__main__``) and re-executes
+    ``mlb_pulse.py`` as a second, disconnected module — silently forking
+    class identity and orphaning the original classes' ``inc_dict``
+    (a ``WeakValueDictionary``) once the ``__main__`` copies go out of
+    scope. Before ``exec_module`` runs on a freshly loaded sidecar whose
+    parent directory matches the running entry file's own directory, this
+    aliases ``sys.modules[<entry file's stem>]`` to the ``__main__`` module
+    via ``setdefault`` (never overwriting a genuine same-name module already
+    present), so the sidecar's own import resolves to the SAME module the
+    same-file short-circuit above already treats as canonical.
+
     Args:
         path: Absolute or relative path to a ``.py`` file.
 
@@ -116,13 +131,17 @@ def load_user_module(path: str | Path) -> ModuleType:
         return cached
 
     main_module = sys.modules.get("__main__")
+    main_path: Path | None = None
     if main_module is not None:
         main_file = getattr(main_module, "__file__", None)
-        if main_file is not None and Path(main_file).resolve() == code_path:
-            # Same file as the running entry point — share its class
-            # objects rather than exec-ing a disconnected second copy.
-            sys.modules[cache_key] = main_module
-            return main_module
+        if main_file is not None:
+            main_path = Path(main_file).resolve()
+
+    if main_module is not None and main_path is not None and main_path == code_path:
+        # Same file as the running entry point — share its class
+        # objects rather than exec-ing a disconnected second copy.
+        sys.modules[cache_key] = main_module
+        return main_module
 
     spec = importlib.util.spec_from_file_location(cache_key, code_path)
     if spec is None or spec.loader is None:
@@ -133,6 +152,16 @@ def load_user_module(path: str | Path) -> ModuleType:
     # user file and ensures the cache check above sees the module on the
     # next call.
     sys.modules[cache_key] = module
+
+    # A sidecar next to the running entry file may do a native
+    # `from <entry_stem> import Cls` at its own top level. Alias the
+    # entry file's stem to the already-loaded `__main__` module BEFORE
+    # exec_module runs, so that import resolves to the canonical
+    # `__main__` classes instead of Python's import machinery
+    # re-executing the entry file as a second, disconnected module.
+    # `setdefault` guards a genuine same-name module already present.
+    if main_module is not None and main_path is not None and main_path.parent == code_path.parent:
+        sys.modules.setdefault(main_path.stem, main_module)
 
     # Mirror how `python entry.py` itself prepends the script's own
     # directory to sys.path for the life of the process — a sidecar's
