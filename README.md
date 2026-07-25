@@ -80,6 +80,7 @@ pip install incorporator[speedups]        # orjson + lxml + cramjam
 pip install incorporator[parquet]         # pyarrow — Parquet, Feather, ORC
 pip install incorporator[avro]            # fastavro
 pip install incorporator[xlsx]            # openpyxl — XLSX read/write
+pip install incorporator[cli]             # typer — the CLI entry point (no Prefect)
 pip install incorporator[orchestrate]     # typer + prefect — CLI + Prefect wrappers
 pip install incorporator[all]             # everything except [parquet]
 ```
