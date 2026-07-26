@@ -46,10 +46,27 @@ def test_sanitize_pydantic_reserved_gets_safe_prefix() -> None:
     assert result2 == "safe_dict"
 
 
-def test_sanitize_digit_prefix_gets_leading_underscore() -> None:
-    """Keys starting with a digit must receive a leading underscore."""
+def test_sanitize_digit_prefix_gets_field_prefix() -> None:
+    """Digit-leading keys must loop back through the underscore rescue so the
+    result never itself starts with '_' (Pydantic V2's create_model rejects
+    leading-underscore field names)."""
     result = sanitize_json_key("123abc")
-    assert result == "_123abc"
+    assert result == "field_123abc"
+
+
+def test_sanitize_single_digit_key_gets_field_prefix() -> None:
+    """A bare single-digit key (e.g. ESPN's matchupAcquisitionTotals '3') must
+    be rescued the same way as a longer digit-leading key."""
+    result = sanitize_json_key("3")
+    assert result == "field_3"
+
+
+def test_sanitize_iso_timestamp_key_gets_field_prefix() -> None:
+    """An ISO-timestamp key (e.g. ESPN's status.waiverProcessStatus value
+    shape) collapses to a digit-leading, underscore-heavy string that must
+    still resolve to a valid, non-underscore-leading field name."""
+    result = sanitize_json_key("2024-09-05T07:03:46Z")
+    assert result == "field_2024_09_05T07_03_46Z"
 
 
 def test_sanitize_leading_underscore_gets_field_prefix() -> None:
@@ -361,6 +378,34 @@ def test_infer_schema_leading_underscore_key_builds_and_retrievable() -> None:
     assert "field_key" in model.model_fields
     instance = model.model_validate({"_key": "value"})
     assert getattr(instance, "field_key") == "value"
+
+
+def test_infer_schema_digit_leading_and_timestamp_keys_build_and_retrievable() -> None:
+    """ESPN Fantasy's mTeam payload nests digit-only keys (matchupAcquisitionTotals'
+    '3'/'5') and an ISO-timestamp key (status.waiverProcessStatus) — both must
+    build without IncorporatorSchemaError instead of tripping Pydantic V2's
+    leading-underscore field name rejection, and remain retrievable via their
+    original raw-key aliases."""
+    raw = {
+        "matchupAcquisitionTotals": {"3": 1, "5": 2},
+        "status": {"waiverProcessStatus": "2024-09-05T07:03:46Z"},
+    }
+    model = infer_dynamic_schema("ESPNTeamModel", raw, BaseModel)
+
+    nested_model = model.model_fields["matchupAcquisitionTotals"].annotation
+    # Unwrap the `NestedModel | None` union produced by infer_dynamic_schema.
+    nested_fields = next(a for a in nested_model.__args__ if a is not type(None)).model_fields
+    assert "field_3" in nested_fields
+    assert "field_5" in nested_fields
+
+    instance = model.model_validate(raw)
+    nested = getattr(instance, "matchupAcquisitionTotals")
+    assert nested is not None
+    assert getattr(nested, "field_3") == 1
+    assert getattr(nested, "field_5") == 2
+    status = getattr(instance, "status")
+    assert status is not None
+    assert getattr(status, "waiverProcessStatus") == "2024-09-05T07:03:46Z"
 
 
 # ==========================================

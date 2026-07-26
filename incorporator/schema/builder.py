@@ -81,23 +81,28 @@ def sanitize_json_key(key: str) -> str:
     """Convert a raw JSON key to a safe Python identifier.
 
     Replaces non-alphanumeric characters with ``_``, prefixes digit-leading
-    names, prefixes leading-underscore names with ``field`` (Pydantic V2's
-    ``create_model`` rejects field names starting with ``_``), appends ``_``
-    to Python keywords, and prefixes Pydantic reserved names with ``safe_``
-    to prevent ``model_dump`` and friends from colliding.
+    names with ``_`` (e.g. ``"123abc"`` -> ``"_123abc"``), then runs the
+    leading-underscore rescue below — which also catches that digit-branch
+    output — to prefix any remaining leading-underscore name with ``field``
+    (Pydantic V2's ``create_model`` rejects field names starting with ``_``),
+    appends ``_`` to Python keywords, and prefixes Pydantic reserved names
+    with ``safe_`` to prevent ``model_dump`` and friends from colliding.
     """
     clean_key = _SANITIZE_RE.sub("_", str(key))
 
     if not clean_key:
         clean_key = "empty_key"
-    if clean_key.startswith("_"):
-        # Checked before the digit-prefix branch so a genuinely leading-
-        # underscore key ("_key") is caught here, while a digit-leading key
-        # ("123abc") only starts with "_" AFTER the branch below runs — so
-        # it never loops back through this check.
-        clean_key = f"field{clean_key}"
-    elif clean_key[0].isdigit():
+    if clean_key[0].isdigit():
         clean_key = f"_{clean_key}"
+    if clean_key.startswith("_"):
+        # Runs AFTER the digit-prefix branch above (not elif) on purpose: a
+        # digit-leading key ("123abc") becomes "_123abc" in that branch, and
+        # that underscore-prefixed output must loop back through this rescue
+        # too, or it comes out the other end starting with "_" — which
+        # Pydantic V2's create_model rejects. A genuinely leading-underscore
+        # key ("_key") never matches the digit check (first char is "_", not
+        # a digit) so it lands here directly, unchanged from before.
+        clean_key = f"field{clean_key}"
     if keyword.iskeyword(clean_key):
         clean_key = f"{clean_key}_"
     if clean_key in PYDANTIC_RESERVED:

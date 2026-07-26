@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`sanitize_json_key` ordering hole crashed `infer_dynamic_schema` on
+  digit-leading JSON keys** (`incorporator/schema/builder.py`): the digit-
+  prefix branch (`"123abc"` -> `"_123abc"`) and the leading-underscore
+  rescue (`"_key"` -> `"field_key"`) were mutually exclusive (`if`/`elif`),
+  so a digit-leading key's own `"_"`-prefixed output never looped back
+  through the rescue that exists specifically to strip leading underscores
+  before Pydantic V2's `create_model` sees them — reproduced against the
+  ESPN Fantasy API, whose `mTeam` payload nests digit-only keys
+  (`matchupAcquisitionTotals`'s `"3"`/`"5"`) and ISO-timestamp keys
+  (`status.waiverProcessStatus`), both of which blew up
+  `infer_dynamic_schema` with `IncorporatorSchemaError`. The digit branch
+  now runs first and its output flows through the (no-longer-`elif`)
+  underscore rescue, so `"123abc"` -> `"field_123abc"` and `"3"` ->
+  `"field_3"`; the raw key is still preserved via the existing
+  `Field(alias=raw_key, ...)` round-trip.
+
 ## [1.4.4] - 2026-07-25
 
 ### Fixed
