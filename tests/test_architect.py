@@ -24,9 +24,11 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
+import httpx
 import pytest
 
 from incorporator import Incorporator, IncorporatorError
+from incorporator.io import fetch
 from incorporator.tideweaver.architect import (
     CurrentSpec,
     EdgeSpec,
@@ -44,7 +46,6 @@ from incorporator.tideweaver.architect import (
     run,
 )
 from incorporator.tools.inspector import ResponseMeta, SourceProfile
-
 
 # ---------------------------------------------------------------------------
 # Synthetic SourceProfile fixtures — keep tests deterministic / probe-free.
@@ -864,6 +865,53 @@ def test_incorporator_test_capture_into_untouched_when_absent(monkeypatch: pytes
     assert list(result) == []
 
 
+async def _mock_execute_request_refused(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+    """Raises a RequestError, mirroring an unroutable / connection-refused host."""
+    raise httpx.RequestError("connection refused", request=httpx.Request("GET", url))
+
+
+async def _mock_execute_request_empty_200(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+    """A genuinely healthy empty response — 200 with an empty JSON array."""
+    return httpx.Response(200, text="[]", request=httpx.Request("GET", url))
+
+
+def test_incorp_swallowed_fetch_failure_marks_capture_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gather-layer swallow path: fetch fails but incorp() never raises.
+
+    Drives the REAL ``fetch_concurrent_payloads`` -> ``rejects`` path (no
+    stubbing of ``incorp``/``test``) so this covers the actual bug: a
+    per-source fetch failure that lands in ``rejects`` instead of an
+    exception must still mark the sidechannel ``SourceProfile``.
+    """
+    monkeypatch.setattr(fetch, "execute_request", _mock_execute_request_refused)
+
+    capture: List[SourceProfile] = []
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        result = asyncio.run(Incorporator.test(inc_url="http://127.0.0.1:1/nope", __capture_into=capture))
+
+    # Public contract unchanged: still an empty IncorporatorList.
+    assert list(result) == []
+    assert len(capture) == 1
+    assert capture[0].parsed_data == []
+    assert "__probe_error__" in capture[0].provided_kwargs
+    assert "RequestError" in capture[0].provided_kwargs["__probe_error__"]
+
+
+def test_incorp_genuinely_empty_200_response_stays_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real 200-with-``[]`` response must NOT be marked as a probe failure (fact #7)."""
+    monkeypatch.setattr(fetch, "execute_request", _mock_execute_request_empty_200)
+
+    capture: List[SourceProfile] = []
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        result = asyncio.run(Incorporator.test(inc_url="https://x.example/empty", __capture_into=capture))
+
+    assert list(result) == []
+    assert len(capture) == 1
+    assert "__probe_error__" not in capture[0].provided_kwargs
+
+
 def test_probe_one_marks_failure_when_test_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """``_probe_one``'s except branch (defense-in-depth) marks the profile on a raise."""
 
@@ -1051,3 +1099,58 @@ def test_run_all_sources_failing_raises_incorporator_error(monkeypatch: pytest.M
                 output="plan",
             ),
         )
+
+
+async def _mock_execute_request_connection_refused(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+    """Every URL fails at the transport layer — no exception reaches ``run()``."""
+    raise httpx.RequestError("connection refused", request=httpx.Request("GET", url))
+
+
+def test_run_single_unroutable_source_raises_incorporator_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live-repro regression (fact #1): a single fetch-failing source via the REAL path must escalate.
+
+    Drives the actual ``fetch_concurrent_payloads`` -> ``rejects`` swallow
+    path (no ``Incorporator.test``/``incorp`` stubbing) so this proves the
+    fix closes the gap f5d1f18's mocked-raise tests couldn't see.
+    """
+    monkeypatch.setattr(fetch, "execute_request", _mock_execute_request_connection_refused)
+
+    with pytest.raises(IncorporatorError, match="every source probe failed"):
+        asyncio.run(
+            run(
+                Incorporator,
+                sources={"bad": "http://127.0.0.1:1/nope"},
+                output="plan",
+            ),
+        )
+
+
+async def _mock_execute_request_healthy_or_swallowed(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+    """One URL fetches real data; the other fails at the transport layer without raising into run()."""
+    if "broken" in url:
+        raise httpx.RequestError("connection refused", request=httpx.Request("GET", url))
+    return httpx.Response(
+        200,
+        text=json.dumps([{"user_id": "1", "name": "Ada"}]),
+        request=httpx.Request("GET", url),
+    )
+
+
+def test_run_mixed_healthy_and_swallowed_failure_via_real_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mixed set through the real fetch path: the swallowed failure lands in failed_sources; the healthy source resolves."""
+    monkeypatch.setattr(fetch, "execute_request", _mock_execute_request_healthy_or_swallowed)
+
+    plan = asyncio.run(
+        run(
+            Incorporator,
+            sources={
+                "users": "https://x.example/users",
+                "broken": "https://x.example/broken",
+            },
+            output="plan",
+        ),
+    )
+    assert isinstance(plan, OrchestrationPlan)
+    assert "broken" in plan.failed_sources
+    assert "RequestError" in plan.failed_sources["broken"]
+    assert {spec.name for spec in plan.currents} == {"users", "broken"}

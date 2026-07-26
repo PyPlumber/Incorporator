@@ -710,10 +710,22 @@ class Incorporator(BaseModel):
         )
 
         if __inspect:
-            from .tools.inspector import analyze_data, capture_signals
+            from .tools.inspector import SourceProfile, analyze_data, capture_signals
 
             if __capture_into is not None:
-                __capture_into.append(capture_signals(parsed_data, {"rec_path": kwargs.get("rec_path")}))
+                if not parsed_data and rejects:
+                    # Fetch failed but incorp() swallowed it into ``rejects``
+                    # (the common live case) instead of raising — mark the
+                    # profile so architect's ``_is_probe_failure`` catches
+                    # this the same way it catches an actual raise.
+                    __capture_into.append(
+                        SourceProfile(
+                            parsed_data=[],
+                            provided_kwargs={"__probe_error__": "; ".join(str(r) for r in rejects)},
+                        )
+                    )
+                else:
+                    __capture_into.append(capture_signals(parsed_data, {"rec_path": kwargs.get("rec_path")}))
             else:
                 analyze_data(parsed_data, {"rec_path": kwargs.get("rec_path")})
 
