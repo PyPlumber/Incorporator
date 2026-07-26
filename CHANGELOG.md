@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`architect()` no longer fabricates a clean plan when source probes fail**
+  (`incorporator/base.py`, `incorporator/tideweaver/architect.py`): a failed
+  probe used to come back as a silent empty profile — `test()` swallows
+  fetch exceptions by documented contract, and the gather layer swallows
+  per-source failures into `rejects` without raising — so the topology
+  analyzer read all-empty profiles as "disjoint field sets" and emitted a
+  misleading `shape="parallel"` plan with no hint anything went wrong.
+  Failed probes are now marked end-to-end (`__probe_error__` sidechannel
+  from both the raise path and the swallowed-`rejects` path), shape
+  inference runs on healthy sources only, `OrchestrationPlan` carries a
+  structural `failed_sources` mapping for `output="plan"`, all three
+  renderers surface the failures, and `architect()` raises
+  `IncorporatorError` when **every** probe fails. A genuinely healthy
+  empty response (200 with `[]`) still profiles as healthy.
 - **`sanitize_json_key` ordering hole crashed `infer_dynamic_schema` on
   digit-leading JSON keys** (`incorporator/schema/builder.py`): the digit-
   prefix branch (`"123abc"` -> `"_123abc"`) and the leading-underscore
