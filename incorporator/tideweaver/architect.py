@@ -43,6 +43,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PydanticField
 
+from ..exceptions import IncorporatorError
 from ..io._retry_defaults import _HTTP_INNER_STOP, _HTTP_INNER_WAIT_MAX
 from ..io.penstock import known_host_rates
 from ..io.source_ref import SourceRef
@@ -138,6 +139,11 @@ class OrchestrationPlan:
     shape_rationale: str
     needs_tail_current: bool = False
     notes: list[str] = field(default_factory=list)
+    #: name -> error string, populated by :func:`_analyze_topology` for every
+    #: source whose probe raised or came back with no signal.  Empty when
+    #: every probe succeeded.  Carries the failure structurally for
+    #: ``output="plan"`` (no printing happens on that path).
+    failed_sources: dict[str, str] = field(default_factory=dict)
 
     def to_watershed(
         self,
@@ -378,8 +384,11 @@ async def _probe_one(
         empty = SourceProfile(parsed_data=[], provided_kwargs={"__probe_error__": repr(exc)})
         return (name, empty)
     if not capture:
-        # Inspector path didn't run (e.g. fetch failed quietly) — return empty.
-        return (name, SourceProfile(parsed_data=[], provided_kwargs={}))
+        # Inspector path didn't run and test() didn't raise either (e.g. the
+        # fetch returned nothing without an exception) — mark it the same way
+        # as an actual raise so _analyze_topology can't mistake this for a
+        # healthy empty source.
+        return (name, SourceProfile(parsed_data=[], provided_kwargs={"__probe_error__": "probe returned no signal"}))
     profile = capture[0]
     # Populate response_meta.host from the resolved kwargs so _penstock_for can
     # consult the host rate registry.  File-mode probes leave host=None.
@@ -472,6 +481,16 @@ def _current_spec_for(
     )
 
 
+def _is_probe_failure(profile: SourceProfile) -> bool:
+    """True when ``profile`` carries the ``__probe_error__`` marker set by ``_probe_one``.
+
+    A genuinely-empty-but-successful probe (200 response with ``[]``) never
+    hits this — ``capture_signals`` still appends a profile in that case, so
+    ``provided_kwargs`` stays free of the marker.
+    """
+    return "__probe_error__" in profile.provided_kwargs
+
+
 def _analyze_topology(
     named_profiles: list[tuple[str, SourceProfile]],
     incorp_kwargs_by_name: dict[str, dict[str, Any]],
@@ -492,21 +511,45 @@ def _analyze_topology(
     4. **Custom** — anything else (some overlap but no clear pattern).
        ``edges=[]``; the renderer surfaces the overlapping field pairs in
        a comment so the user can decide.
+
+    Sources whose probe failed (raised, or came back with no signal) are
+    excluded from all of the above signal inference — a failed probe has no
+    parsed data to infer a shape from, so folding it in as a "disjoint"
+    source would fabricate a fanout/diamond/parallel signal that was never
+    actually observed.  When EVERY probe failed there is no signal left at
+    all, so this raises :class:`~incorporator.exceptions.IncorporatorError`
+    rather than return a fabricated plan.
     """
     current_specs = [
         _current_spec_for(name, profile, dict(incorp_kwargs_by_name.get(name, {}))) for name, profile in named_profiles
     ]
+
+    failed = [(name, profile) for name, profile in named_profiles if _is_probe_failure(profile)]
+    healthy = [(name, profile) for name, profile in named_profiles if not _is_probe_failure(profile)]
+    failed_sources: dict[str, str] = {name: profile.provided_kwargs["__probe_error__"] for name, profile in failed}
+
+    if not healthy:
+        details = "; ".join(f"{name!r}: {err}" for name, err in failed_sources.items())
+        raise IncorporatorError(
+            f"architect(): every source probe failed, so no signal exists to infer a "
+            f"watershed shape from ({details}). Fix the underlying source(s) and re-run."
+        )
+
+    failure_notes = [
+        f"Source {name!r} probe failed: {err} — excluded from shape inference." for name, err in failed_sources.items()
+    ]
+    exclusion_suffix = f" ({len(failed)} of {len(named_profiles)} sources excluded — probe failed)" if failed else ""
 
     # 1. Fanout: one source's pk appears as a (non-pk) field in all others.
     # Same-pk-everywhere goes to the diamond branch below, not fanout —
     # parallel views of the same domain (e.g. laps + pits both keyed on
     # user_id) merge in a Fjord rather than fan out from one source.
     fanout_head: int | None = None
-    for i, (_name, profile) in enumerate(named_profiles):
+    for i, (_name, profile) in enumerate(healthy):
         pk = profile.primary_key_field
         if not pk:
             continue
-        others = [op for j, (_n, op) in enumerate(named_profiles) if j != i]
+        others = [op for j, (_n, op) in enumerate(healthy) if j != i]
         if not others:
             continue
         if all(pk in op.top_level_fields and op.primary_key_field != pk for op in others):
@@ -514,7 +557,7 @@ def _analyze_topology(
             break
 
     if fanout_head is not None:
-        head_name, head_profile = named_profiles[fanout_head]
+        head_name, head_profile = healthy[fanout_head]
         head_pk = head_profile.primary_key_field
         edges = [
             EdgeSpec(
@@ -523,20 +566,23 @@ def _analyze_topology(
                 gate_mode="hard",
                 penstock=_penstock_for(other_profile),
             )
-            for j, (other_name, other_profile) in enumerate(named_profiles)
+            for j, (other_name, other_profile) in enumerate(healthy)
             if j != fanout_head
         ]
         return OrchestrationPlan(
             shape="fanout",
             currents=current_specs,
             edges=edges,
-            shape_rationale=(f"primary key {head_pk!r} from {head_name!r} appears in all other sources"),
+            shape_rationale=(
+                f"primary key {head_pk!r} from {head_name!r} appears in all other sources{exclusion_suffix}"
+            ),
             needs_tail_current=False,
-            notes=[],
+            notes=failure_notes,
+            failed_sources=failed_sources,
         )
 
     # 2. Diamond: 2+ sources share the same pk field name.
-    pks = [p.primary_key_field for _n, p in named_profiles if p.primary_key_field]
+    pks = [p.primary_key_field for _n, p in healthy if p.primary_key_field]
     pk_counts = Counter(pks)
     shared_pks = [pk for pk, c in pk_counts.items() if c >= 2]
     if shared_pks:
@@ -546,31 +592,35 @@ def _analyze_topology(
             currents=current_specs,
             edges=[],  # tail is _TODO_ — renderer prompts for it
             shape_rationale=(
-                f"primary key {shared_pk!r} appears on {pk_counts[shared_pk]} sources — diamond merge candidate"
+                f"primary key {shared_pk!r} appears on {pk_counts[shared_pk]} sources — "
+                f"diamond merge candidate{exclusion_suffix}"
             ),
             needs_tail_current=True,
             notes=[
                 "Wire a Fjord at the diamond's tail to fuse the merging upstreams into a single mark-to-market view.",
+                *failure_notes,
             ],
+            failed_sources=failed_sources,
         )
 
     # 3 / 4: pairwise overlap → parallel vs custom.
-    field_sets: list[set[str]] = [p.top_level_fields for _n, p in named_profiles]
+    field_sets: list[set[str]] = [p.top_level_fields for _n, p in healthy]
     overlap_pairs: list[tuple[str, str, list[str]]] = []
     for i in range(len(field_sets)):
         for j in range(i + 1, len(field_sets)):
             common = field_sets[i] & field_sets[j]
             if common:
-                overlap_pairs.append((named_profiles[i][0], named_profiles[j][0], sorted(common)))
+                overlap_pairs.append((healthy[i][0], healthy[j][0], sorted(common)))
 
     if not overlap_pairs:
         return OrchestrationPlan(
             shape="parallel",
             currents=current_specs,
             edges=[],
-            shape_rationale="all sources have disjoint top-level field sets",
+            shape_rationale=f"all sources have disjoint top-level field sets{exclusion_suffix}",
             needs_tail_current=False,
-            notes=[],
+            notes=failure_notes,
+            failed_sources=failed_sources,
         )
 
     notes = [f"Overlap between {a!r} and {b!r}: {common}" for a, b, common in overlap_pairs[:5]]
@@ -578,15 +628,30 @@ def _analyze_topology(
         shape="custom",
         currents=current_specs,
         edges=[],
-        shape_rationale="field-name overlap detected but no clear fanout / diamond pattern",
+        shape_rationale=f"field-name overlap detected but no clear fanout / diamond pattern{exclusion_suffix}",
         needs_tail_current=False,
-        notes=notes,
+        notes=[*notes, *failure_notes],
+        failed_sources=failed_sources,
     )
 
 
 # ---------------------------------------------------------------------------
 # Renderers.
 # ---------------------------------------------------------------------------
+
+
+def _safe_print(text: str) -> None:
+    """``print()`` that survives consoles that can't encode arbitrary non-ASCII.
+
+    Failure messages surfaced here may embed raw HTTP/OS error text with
+    characters outside Windows cp1252's repertoire.  Mirrors
+    :func:`incorporator.tools.inspector.analyze_error`'s inner ``p()``
+    fallback shape so a probe-failure line can never crash the report mid-print.
+    """
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", errors="replace").decode("ascii"))
 
 
 def render_report(named_profiles: list[tuple[str, SourceProfile]], plan: OrchestrationPlan) -> None:
@@ -625,10 +690,17 @@ def render_report(named_profiles: list[tuple[str, SourceProfile]], plan: Orchest
     if plan.needs_tail_current:
         print("   Tail current not provided - pass `{'verb': 'fjord'}` for the merging current")
         print("       to make this a runnable diamond watershed.")
-    if plan.notes:
+    if plan.failed_sources:
+        _safe_print("   FAILED SOURCES (excluded from shape inference):")
+        for name, err in plan.failed_sources.items():
+            _safe_print(f"     - {name}: {err}")
+    # The per-source failure lines already live in the dedicated block above —
+    # skip them here so a failed source isn't reported twice in one report.
+    generic_notes = [note for note in plan.notes if not note.startswith("Source ") or " probe failed: " not in note]
+    if generic_notes:
         print("   Notes:")
-        for note in plan.notes:
-            print(f"     - {note}")
+        for note in generic_notes:
+            _safe_print(f"     - {note}")
     print("=" * 70 + "\n")
 
 
@@ -732,9 +804,19 @@ def render_python(named_profiles: list[tuple[str, SourceProfile]], plan: Orchest
     if needs_penstock_import:
         penstock_imports = ", FlowControl, HardLock, SustainedPenstock"
 
+    warning_block = ""
+    if plan.failed_sources:
+        warning_lines = "\n".join(f"#   - {name}: {err}" for name, err in plan.failed_sources.items())
+        warning_block = (
+            "# WARNING: the following source(s) never probed successfully and were\n"
+            "# excluded from shape inference below — inspect and fix them before running:\n"
+            f"{warning_lines}\n"
+        )
+
     header = (
         "# Generated by Incorporator.architect()\n"
         "# Inspect, tune intervals, fill in the TODOs, then run.\n"
+        f"{warning_block}"
         "from datetime import datetime, timedelta, timezone\n\n"
         "from incorporator import Incorporator\n"
         "from incorporator.tideweaver import (\n"
@@ -772,7 +854,7 @@ def render_python(named_profiles: list[tuple[str, SourceProfile]], plan: Orchest
         + watershed_block
         + runner_block
     )
-    print(rendered)
+    _safe_print(rendered)
     return rendered
 
 
@@ -844,8 +926,14 @@ def render_json(named_profiles: list[tuple[str, SourceProfile]], plan: Orchestra
         body["currents"] = [_json_current_entry(spec) for spec in plan.currents]
         body["edges"] = []  # user fills in based on the overlap notes
 
+    if plan.failed_sources:
+        # Advisory-only key: `build_watershed` parses the top-level shape via
+        # `raw.get(...)` with no `extra="forbid"` model, so this round-trips
+        # harmlessly through `load_watershed()`.
+        body["_probe_warnings"] = dict(plan.failed_sources)
+
     rendered = json.dumps(body, indent=2)
-    print(rendered)
+    _safe_print(rendered)
     return rendered
 
 
@@ -883,6 +971,15 @@ async def run(
         The :class:`OrchestrationPlan` directly for ``"plan"``.  Pair with
         :meth:`OrchestrationPlan.to_watershed` to run the plan in-memory
         without disk round-tripping.
+
+    Raises:
+        IncorporatorError: when EVERY source's probe fails — there is no
+            signal left to infer a shape from.  When only SOME probes fail,
+            those sources are excluded from shape inference and surfaced
+            instead via :attr:`OrchestrationPlan.failed_sources` (present in
+            all four ``output`` modes, including ``"plan"``) plus a
+            dedicated block in the ``"report"`` output and advisory
+            markers in the ``"python"`` / ``"json"`` renders.
     """
     if output not in ("report", "python", "json", "plan"):
         raise ValueError(f"output must be one of 'report' / 'python' / 'json' / 'plan'; got {output!r}")

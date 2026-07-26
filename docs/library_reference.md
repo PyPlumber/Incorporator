@@ -54,7 +54,10 @@ For a paste-ready lookup map of every public callable — signature, 3-7 step ps
   Python module, or `watershed.json`).  Honours
   `incorporator.io.penstock.known_host_rates()` for per-edge Penstock
   recommendations on any host you've registered via
-  `register_host_penstock`.
+  `register_host_penstock`.  A source whose probe fails is excluded from
+  shape inference and surfaced (never silently dropped) across all output
+  modes; if every source fails, `architect()` raises `IncorporatorError`
+  instead of returning a fabricated plan.
 
 ### Top-level helpers
 

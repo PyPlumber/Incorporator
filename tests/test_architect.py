@@ -26,15 +26,17 @@ from typing import Any, Dict, List, Set, Tuple
 
 import pytest
 
-from incorporator import Incorporator
+from incorporator import Incorporator, IncorporatorError
 from incorporator.tideweaver.architect import (
     CurrentSpec,
     EdgeSpec,
     OrchestrationPlan,
     PenstockSpec,
     _analyze_topology,
+    _is_probe_failure,
     _pascal_case,
     _penstock_for,
+    _probe_one,
     _resolve_sources,
     render_json,
     render_python,
@@ -71,6 +73,11 @@ def _profile(
         pagination_kind=pagination,
         pagination_suggestion=(f"CursorPaginator(cursor_param='{pagination}')" if pagination else None),
     )
+
+
+def _failed_profile(error: str = "boom") -> SourceProfile:
+    """Build a SourceProfile carrying the ``__probe_error__`` marker _probe_one sets on failure."""
+    return SourceProfile(parsed_data=[], provided_kwargs={"__probe_error__": error})
 
 
 # ---------------------------------------------------------------------------
@@ -804,3 +811,243 @@ def test_probe_seeding_file_mode_leaves_size_latency_none(tmp_path: Path) -> Non
     # File-mode: no HTTP round trip → both fields must be None.
     assert profile.response_meta.wire_bytes is None
     assert profile.response_meta.http_latency_sec is None
+
+
+# ---------------------------------------------------------------------------
+# Probe-failure surfacing — base.py's test() sidechannel write + architect's
+# handling of a marked-failed SourceProfile through _analyze_topology and
+# all three renderers.
+# ---------------------------------------------------------------------------
+
+
+def test_incorporator_test_records_probe_error_into_capture_into(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The base.py fix itself: test()'s except-block must append a marked SourceProfile.
+
+    Monkeypatches ``Incorporator.incorp`` (not ``test``) so the real
+    ``Incorporator.test(...)`` except-block runs unmocked — this is the only
+    way to cover the actual fix location rather than architect.py's handling
+    of an already-marked profile.
+    """
+
+    async def _raise_incorp(cls: Any, **kwargs: Any) -> Any:
+        raise ValueError("upstream exploded")
+
+    monkeypatch.setattr(Incorporator, "incorp", classmethod(_raise_incorp))
+
+    capture: List[SourceProfile] = []
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        result = asyncio.run(Incorporator.test(inc_url="https://x.example/", __capture_into=capture))
+
+    # Public contract unchanged: still an empty IncorporatorList.
+    assert list(result) == []
+
+    # The sidechannel now carries the failure instead of staying empty.
+    assert len(capture) == 1
+    assert capture[0].parsed_data == []
+    assert "__probe_error__" in capture[0].provided_kwargs
+    assert "upstream exploded" in capture[0].provided_kwargs["__probe_error__"]
+
+
+def test_incorporator_test_capture_into_untouched_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A normal caller who never passes ``__capture_into`` sees no new behavior."""
+
+    async def _raise_incorp(cls: Any, **kwargs: Any) -> Any:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(Incorporator, "incorp", classmethod(_raise_incorp))
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        result = asyncio.run(Incorporator.test(inc_url="https://x.example/"))
+
+    assert list(result) == []
+
+
+def test_probe_one_marks_failure_when_test_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_probe_one``'s except branch (defense-in-depth) marks the profile on a raise."""
+
+    async def _stub_test(cls: Any, **kwargs: Any) -> None:
+        raise RuntimeError("probe blew up")
+
+    monkeypatch.setattr(Incorporator, "test", classmethod(_stub_test))
+
+    name, profile = asyncio.run(_probe_one(Incorporator, "flaky", {"inc_url": "https://x.example/flaky"}))
+    assert name == "flaky"
+    assert _is_probe_failure(profile)
+    assert "probe blew up" in profile.provided_kwargs["__probe_error__"]
+
+
+def test_probe_one_marks_failure_when_capture_stays_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_probe_one``'s ``if not capture`` fallback must also mark the failure, not stay silent.
+
+    This is the actual live-observed bug: test() swallows the exception,
+    capture_signals() never runs, and the old code returned an unmarked
+    empty SourceProfile indistinguishable from a healthy-empty source.
+    """
+
+    async def _stub_test(cls: Any, **kwargs: Any) -> None:
+        # Mirrors what happens today when incorp() raises inside test():
+        # analyze_error() prints, __capture_into stays empty, test() returns quietly.
+        return None
+
+    monkeypatch.setattr(Incorporator, "test", classmethod(_stub_test))
+
+    name, profile = asyncio.run(_probe_one(Incorporator, "quiet", {"inc_url": "https://x.example/quiet"}))
+    assert name == "quiet"
+    assert _is_probe_failure(profile)
+
+
+def test_analyze_topology_all_probes_failed_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When every source's probe failed there is no signal left — architect must raise, not fabricate a plan."""
+    profiles = [
+        ("a", _failed_profile("timeout")),
+        ("b", _failed_profile("404 not found")),
+    ]
+    with pytest.raises(IncorporatorError, match="every source probe failed"):
+        _analyze_topology(profiles, incorp_kwargs_by_name={"a": {}, "b": {}})
+
+
+def test_analyze_topology_partial_failure_excludes_failed_source_from_inference() -> None:
+    """A failed source is excluded from shape inference but still surfaced via failed_sources/notes."""
+    profiles = [
+        ("users", _profile({"user_id", "name"}, pk="user_id")),
+        ("orders", _profile({"order_id", "user_id", "total"}, pk="order_id")),
+        ("broken", _failed_profile("connection refused")),
+    ]
+    plan = _analyze_topology(
+        profiles,
+        incorp_kwargs_by_name={"users": {}, "orders": {}, "broken": {}},
+    )
+    # Healthy pair still resolves to fanout — the failed source didn't pollute it.
+    assert plan.shape == "fanout"
+    assert {(e.from_name, e.to_name) for e in plan.edges} == {("users", "orders")}
+    assert plan.failed_sources == {"broken": "connection refused"}
+    assert any("broken" in note and "probe failed" in note for note in plan.notes)
+    # current_specs still cover all three sources, including the failed one.
+    assert {spec.name for spec in plan.currents} == {"users", "orders", "broken"}
+
+
+def test_analyze_topology_partial_failure_parallel_shape_rationale_mentions_exclusion() -> None:
+    """A truthful shape_rationale — the parallel plan admits a source was excluded."""
+    profiles = [
+        ("a", _profile({"a_id"}, pk="a_id")),
+        ("b", _profile({"b_id"}, pk="b_id")),
+        ("broken", _failed_profile("500 Internal Server Error")),
+    ]
+    plan = _analyze_topology(profiles, incorp_kwargs_by_name={"a": {}, "b": {}, "broken": {}})
+    assert plan.shape == "parallel"
+    assert "excluded" in plan.shape_rationale
+    assert plan.failed_sources == {"broken": "500 Internal Server Error"}
+
+
+def test_render_report_surfaces_failed_source_in_dedicated_block() -> None:
+    """render_report's output gives failed sources their own unmissable block."""
+    profiles = [
+        ("a", _profile({"a_id"}, pk="a_id")),
+        ("b", _profile({"b_id"}, pk="b_id")),
+        ("broken", _failed_profile("DNS resolution failed")),
+    ]
+    plan = _analyze_topology(profiles, incorp_kwargs_by_name={"a": {}, "b": {}, "broken": {}})
+    result, output = _silent(render_report, profiles, plan)
+    assert result is None
+    assert "FAILED SOURCES" in output
+    assert "broken" in output
+    assert "DNS resolution failed" in output
+
+
+def test_render_python_surfaces_failed_source_as_warning_comment() -> None:
+    """render_python's generated module carries a WARNING header when a source failed."""
+    profiles = [
+        ("a", _profile({"a_id"}, pk="a_id")),
+        ("b", _profile({"b_id"}, pk="b_id")),
+        ("broken", _failed_profile("timeout after 5s")),
+    ]
+    plan = _analyze_topology(profiles, incorp_kwargs_by_name={"a": {}, "b": {}, "broken": {}})
+    result, _output = _silent(render_python, profiles, plan)
+    assert "WARNING" in result
+    assert "broken" in result
+    assert "timeout after 5s" in result
+
+
+def test_render_json_surfaces_failed_source_as_probe_warnings_key() -> None:
+    """render_json's body carries an advisory ``_probe_warnings`` key when a source failed."""
+    profiles = [
+        ("a", _profile({"a_id"}, pk="a_id")),
+        ("b", _profile({"b_id"}, pk="b_id")),
+        ("broken", _failed_profile("connection reset")),
+    ]
+    plan = _analyze_topology(profiles, incorp_kwargs_by_name={"a": {}, "b": {}, "broken": {}})
+    result, _output = _silent(render_json, profiles, plan)
+    body = json.loads(result)
+    assert body["_probe_warnings"] == {"broken": "connection reset"}
+
+
+def test_render_json_omits_probe_warnings_key_when_all_healthy() -> None:
+    """No spurious ``_probe_warnings`` key when every probe succeeded."""
+    profiles, plan = _build_simple_plan()
+    result, _output = _silent(render_json, profiles, plan)
+    body = json.loads(result)
+    assert "_probe_warnings" not in body
+
+
+def test_run_output_plan_surfaces_failed_source_structurally(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``output='plan'`` (no printing) must still carry the failure via ``failed_sources``.
+
+    Stubs ``Incorporator.test`` (no network I/O) so one source's probe fails
+    while the other two succeed with a fanout-shaped fixture.
+    """
+
+    async def _stub_test(cls: Any, **kwargs: Any) -> Any:
+        url = kwargs.get("inc_url", "")
+        if "broken" in url:
+            raise RuntimeError("simulated network failure")
+        capture = kwargs.get("__capture_into")
+        if capture is not None:
+            if "users" in url:
+                capture.append(_profile({"user_id", "name"}, pk="user_id"))
+            else:
+                capture.append(_profile({"order_id", "user_id", "total"}, pk="order_id"))
+        from incorporator import IncorporatorList
+
+        return IncorporatorList(cls, [])
+
+    monkeypatch.setattr(Incorporator, "test", classmethod(_stub_test))
+
+    plan = asyncio.run(
+        run(
+            Incorporator,
+            sources={
+                "users": "https://x.example/users",
+                "orders": "https://x.example/orders",
+                "broken": "https://x.example/broken",
+            },
+            output="plan",
+        ),
+    )
+    assert isinstance(plan, OrchestrationPlan)
+    assert "broken" in plan.failed_sources
+    assert "simulated network failure" in plan.failed_sources["broken"]
+    # Healthy pair still resolves normally.
+    assert plan.shape == "fanout"
+
+
+def test_run_all_sources_failing_raises_incorporator_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The all-probes-fail escalation policy: run() propagates the IncorporatorError."""
+
+    async def _stub_test(cls: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("simulated network failure")
+
+    monkeypatch.setattr(Incorporator, "test", classmethod(_stub_test))
+
+    with pytest.raises(IncorporatorError, match="every source probe failed"):
+        asyncio.run(
+            run(
+                Incorporator,
+                sources={
+                    "a": "https://x.example/a",
+                    "b": "https://x.example/b",
+                },
+                output="plan",
+            ),
+        )

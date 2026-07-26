@@ -1777,9 +1777,17 @@ class Incorporator(BaseModel):
 
         except Exception as e:
             # Defer DX logging to the Inspector module
-            from .tools.inspector import analyze_error
+            from .tools.inspector import SourceProfile, analyze_error
 
             analyze_error(e)
+            # architect()'s _probe_one threads a private sidechannel so a raised
+            # probe is distinguishable from a healthy-but-empty response — without
+            # this, _analyze_topology sees an unmarked empty profile and silently
+            # folds the failure into shape inference (see architect.py's
+            # _is_probe_failure).  test()'s own public contract is unchanged.
+            capture_into = kwargs.get("__capture_into")
+            if isinstance(capture_into, list):
+                capture_into.append(SourceProfile(parsed_data=[], provided_kwargs={"__probe_error__": repr(e)}))
             return IncorporatorList(cls, [])
 
         if isinstance(result, IncorporatorList):
