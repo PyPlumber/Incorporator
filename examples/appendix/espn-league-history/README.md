@@ -29,9 +29,10 @@ Discovering reachable seasons via status.previousSeasons ...
   ...
 
 Fetched 7 season(s): [2020, 2021, 2022, 2023, 2024, 2025, 2026]
-Loaded 72 standings, 556 matchups, 73 owner records, 1270 draft picks.
+Loaded 72 standings, 556 matchups, 13 owner records.
 Resolving player names for round-1 picks + top drafted players ...
 Resolved 49 player names.
+Loaded 1270 draft picks.
 
 Wrote 6 views to .../out:
   franchise_cards.ndjson    13 rows
@@ -133,42 +134,67 @@ it depends solely on whether cookies are present.
 
 Every season is fetched exactly once, ever -- there is no polling axis. A
 Watershed's entire value proposition is repeated ticks against a moving
-window, and nothing here moves: this is static historical data. The six
-views are cardinality-reducing group-bys (per-owner rollups across N
-seasons, per-pair rivalry aggregation, top-N draft counts) -- `conv_dict` /
-`calc` / `calc_all` operate per-row or column-wide within a single
-`incorp()` call and cannot express "roll up across every season's Standing
-rows into one FranchiseCard row." That reduction happens in plain Python
-`build_*` helper functions, called inline in `main()` right before each
-view's own `Cls.incorp(payload_list=...)` + `Cls.export(...)` -- the
-return-twin of a Fjord's `outflow(state)`, without a Fjord's tick
-machinery. [Tutorial 6 -- State Sports](../../06-state-sports/README.md) is
-the shipped precedent for this shape: a pure one-shot script, no Watershed,
-classes defined once, network calls made exactly as many times as the data
+window, and nothing here moves: this is static historical data.
+[Tutorial 6 -- State Sports](../../06-state-sports/README.md) is the shipped
+precedent for this shape: a pure one-shot script, no Watershed, classes
+defined once, network calls made exactly as many times as the data
 genuinely requires.
+
+The six views are cardinality-reducing group-bys (per-owner rollups across
+N seasons, per-pair rivalry aggregation, top-N draft counts). `calc_all`
+*can* roll up all of it declaratively -- but only within the scope of ONE
+`incorp()` call, and only that far: it runs once, against the full column
+lists of whatever rows THAT call built. `Owner`/`Standing`/`Matchup`/
+`DraftPick` are each built with exactly ONE batched `incorp(payload_list=
+...)` call spanning every fetched season (never inside the season-discovery
+loop), so every `calc_all` entry in `Standing`'s own `conv_dict` sees the
+WHOLE history in one column-wide pass -- all-time win/loss totals,
+championships, average finish, and win% all broadcast onto every row
+declaratively, no hand-rolled fold. A `TeamGame` reshape (one row per team
+per decided matchup -- the one unavoidable de-nesting, since ESPN ships
+matchups as home/away pairs and every cross-row stat here is team-scoped)
+does the same for all-play expected wins and franchise-history win/loss
+streaks. What `calc_all` genuinely cannot do is REDUCE row count across a
+join that spans two DIFFERENT `incorp()` calls -- Franchise Cards'
+playoff-appearances count needs `Standing` owners joined against `Matchup`
+bracket appearances from a separate call, and the pairwise rivalry matrix /
+draft-tendency counts collapse many rows into fewer. Those three stay
+plain Python, called inline in `main()` right before each view's own
+`Cls.incorp(payload_list=...)` + `Cls.export(...)` -- the return-twin of a
+Fjord's `outflow(state)`, without a Fjord's tick machinery.
 
 ## 6. `payload_list=` and `model_dump(by_alias=True)`
 
 Every sub-collection (`teams`, `schedule`, `members`, `draftDetail.picks`)
-and the `settings` dict are pulled off each fetched `Season` row and handed
-to a sibling class's `incorp(payload_list=...)` -- a network-free,
-in-memory passthrough (`incorporator/base.py`'s payload-only mode): one
-dict entry in, one row out, through the full `conv_dict` pipeline. Because
-`Season`'s own `conv_dict` runs `calc(list, ...)` / `calc(dict, ...)`
-against nested JSON, the framework's dynamic schema builder auto-promotes
-each nested dict into its own typed submodel (dotted attribute access) --
-so `season.teams` is a list of submodel instances, not plain dicts, by the
-time the loop reads it. `[t.model_dump(by_alias=True) for t in
-season.teams]` flattens each back to a plain dict before the
-`payload_list=` call. `by_alias=True` matters specifically for
-`rosterSettings.lineupSlotCounts`: its keys are numeric STRINGS (`"0"`,
-`"2"`, ..., `"23"`), and the auto-promoted submodel sanitizes those into
-Python attribute names (`field_0`, `field_2`, ...) -- `model_dump(by_alias=
-True)` exports the ORIGINAL string keys instead of the sanitized attribute
-names. `SettingsRow.roster_slots` stays a plain dict read directly off
-`season.settings.model_dump(by_alias=True)`, never its own `Incorporator`
-row class (a row class with numeric-string field names would crash schema
-inference).
+is pulled off EVERY fetched `Season` row, flattened into one list spanning
+every season (each row stamped with `"season": s.season` inline via dict-
+comprehension unpacking -- `{**t.model_dump(by_alias=True), "season":
+s.season}`), and handed to a sibling class's `incorp(payload_list=...)` --
+a network-free, in-memory passthrough (`incorporator/base.py`'s
+payload-only mode): one dict entry in, one row out, through the full
+`conv_dict` pipeline, called exactly ONCE per class rather than once per
+season. Because `Season`'s own `conv_dict` runs `calc(list, ...)` /
+`calc(dict, ...)` against nested JSON, the framework's dynamic schema
+builder auto-promotes each nested dict into its own typed submodel (dotted
+attribute access) -- so `season.teams` is a list of submodel instances, not
+plain dicts, by the time the loop reads it. `t.model_dump(by_alias=True)`
+flattens each back to a plain dict before the `payload_list=` call.
+`by_alias=True` matters specifically for `rosterSettings.lineupSlotCounts`:
+its keys are numeric STRINGS (`"0"`, `"2"`, ..., `"23"`), and the
+auto-promoted submodel sanitizes those into Python attribute names
+(`field_0`, `field_2`, ...) -- `model_dump(by_alias=True)` exports the
+ORIGINAL string keys instead of the sanitized attribute names.
+`SettingsRow.roster_slots` stays a plain dict read directly off
+`season.settings.model_dump(by_alias=True)` via `calc(dict, "rosterSettings
+.lineupSlotCounts", ...)`, never its own `Incorporator` row class (a row
+class with numeric-string field names would crash schema inference).
+
+A bare ESPN `team.id` repeats every season -- once every season's `Standing`
+rows share one `incorp()` call, a bare `id` would collide in `inc_dict`.
+`team_key(season, team_id)` synthesizes a `"{season}:{team_id}"` composite
+join key via `calc()`, and `Standing`'s `inc_code="team_key"` makes that
+composite the registry key every downstream `link_to()` resolves against
+(`Matchup.home_standing`/`away_standing`, `DraftPick.standing`).
 
 ## 7. Player names: season-matched, batched, targeted
 
@@ -187,13 +213,27 @@ player universe. The pipeline makes two passes:
    grouped by each player's own most-recently-drafted season and fetched
    in a second, smaller batch per season.
 
+Both passes genuinely need one HTTP call per season -- ESPN's player
+universe is season-scoped, so this is the one part of the pipeline that
+can't batch down to a single `incorp()` call. `DraftPick.player` is a
+build-time `link_to(PlayerName)` join (`calc(link_to(PlayerName),
+"playerId")`) -- since `PlayerName` is built via several `incorp()` calls
+(one per season/batch) rather than one, the join reads the CLASS
+(`link_to(PlayerName)`), not a single call's returned list: `model_post_init`
+bubbles every built instance's registration up to the base class's own
+`inc_dict`, so `link_to(PlayerName)` sees every batch's results regardless
+of which call built them.
+
 `defaultPositionId` (not `lineupSlotId`) is the verified position source --
-`1=QB`, `2=RB`, `3=WR`, `4=TE`, `5=K`, `16=D/ST`; an unmapped id falls back
-to a labelled placeholder (`POS_<id>`) rather than crashing. Some very old
-or vacated draft slots resolve to a sentinel `playerId` ESPN doesn't map to
-a real player at all -- that row's name/position fall back to
-`"Unknown"`/`"UNKNOWN"` gracefully, the same fallback used for any
-unresolved lookup.
+`1=QB`, `2=RB`, `3=WR`, `4=TE`, `5=K`, `16=D/ST`, computed ONCE per player at
+`PlayerName`'s own build time via `calc(position_name, "defaultPositionId",
+...)`; an unmapped id falls back to a labelled placeholder (`POS_<id>`)
+rather than crashing. Every read site then takes `p.player.position if
+p.player else "UNKNOWN"` -- a single conditional-dot guard, not a repeated
+`position_name(...)` call. Some very old or vacated draft slots resolve to
+a sentinel `playerId` ESPN doesn't map to a real player at all -- that
+row's name/position fall back to `"Unknown"`/`"UNKNOWN"` gracefully, the
+same fallback used for any unresolved lookup.
 
 ## Run it
 
