@@ -2,20 +2,26 @@
 
 Loads `espn_league_history.py` via `load_sidecar` (unique importlib key) and
 drives `main()` end-to-end against hand-faked ESPN payloads, zero network,
-via `monkeypatch.setattr(fetch, "execute_request", ...)`.
+via `monkeypatch.setattr(fetch, "execute_request", ...)`. The pipeline is a
+one-shot `Incorporator.fjord()`: `main()` runs the pre-fjord season-discovery
+calls, then `fjord()` seeds six network-free `payload_list=` sources plus one
+genuinely-networked `PlayerName` fan-out, then flushes `outflow.py`'s
+`outflow(state)` once into the six NDJSON views.
 
 Two scenarios, one shared fixture set:
 
 - `test_public_run_...`: no `ESPN_S2`/`ESPN_SWID` env vars. The bootstrap
   season's `status.previousSeasons` includes an OLD_YEAR that 401s on the
   modern endpoint (no-cookie behavior, live-verified); with no cookies
-  present that season is skipped with a printed note (never retried against
-  `leagueHistory`).
+  present that season is left out of the final season list (never retried
+  against `leagueHistory`).
 - `test_private_run_...`: `ESPN_S2`/`ESPN_SWID` set. OLD_YEAR now 404s on the
   modern endpoint (cookies-present behavior, live-verified -- ESPN returns
   404, not 401, when a season predates the modern endpoint's own coverage
   window), and the retry against the cookie-gated `leagueHistory` list-root
-  endpoint (`rec_path="0"`) succeeds regardless of that status code.
+  endpoint (`rec_path="0"`, `seasonId` embedded in the URL string since the
+  retry is now a fan-out and `params=`/`headers=` are shared across a
+  fan-out call, not per-URL) succeeds regardless of that status code.
 
 Both scenarios exercise: a playoff bye (home-only, no `away` key, permanently
 `UNDECIDED`), a tiebreak-decided tie (`winner` still HOME/AWAY, margin can be
@@ -24,13 +30,13 @@ both `pointsOverrides` guard branches (key entirely absent / value `null` /
 value present).
 
 Both scenarios also assert that the OLD_YEAR probe's expected reject (401 or
-404, per scenario) produces NO stderr noise: `quiet_expected_reject()` must
-suppress BOTH independent framework channels -- the `warnings.warn(UserWarning,
-...)` in `incorporator/base.py` AND the `logger.warning(...)` on the
-`incorporator.io.fetch` logger -- around the two deliberately-probed
-`Season.incorp()` calls in the discovery loop. A test that only checked the
-printed skip message would still pass even if `quiet_expected_reject()` were
-accidentally removed; `recwarn`/`caplog` are the actual regression guard.
+404, per scenario) surfaces NORMALLY through the framework's own two
+channels -- a `warnings.warn(UserWarning, ...)` in `incorporator/base.py` and
+a `logger.warning(...)` on the `incorporator.io.fetch` logger -- instead of
+being suppressed. This is the regression guard for Complaint 1's removal:
+the pipeline no longer defines any `warnings`/logger-suppression ceremony,
+so a failed source's reject is exactly as visible here as anywhere else in
+the examples tree.
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ import re
 from datetime import date
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -278,8 +285,11 @@ def _make_mock(allow_cookies: bool):
             raise httpx.HTTPStatusError("401", request=req, response=resp)
 
         if "leagueHistory" in url:
-            params = kwargs.get("params") or {}
-            season_id = params.get("seasonId")
+            # The historical retry is a fan-out (`inc_url=[...]`) with shared
+            # `params=`/`headers=` -- the per-URL `seasonId` differentiator
+            # is embedded directly in each URL's own query string instead.
+            query = parse_qs(urlsplit(url).query)
+            season_id = int(query["seasonId"][0]) if "seasonId" in query else None
             if allow_cookies and season_id == OLD_YEAR and headers.get("Cookie"):
                 return httpx.Response(200, text=json.dumps(_OLD_PAYLOAD), request=req)
             resp = httpx.Response(404, text="not found", request=req)
@@ -291,6 +301,11 @@ def _make_mock(allow_cookies: bool):
 
 
 def _reset_all() -> None:
+    # The six derived view classes (FranchiseCard, ...) are declared in
+    # outflow.py and never imported into espn_league_history.py's own
+    # namespace (see that module's import-block comment) -- fjord()'s
+    # internal flush() always clears+rebuilds their inc_dict on every run
+    # regardless, so only the seven SOURCE classes need resetting here.
     for cls in (
         espn_history.Season,
         espn_history.Standing,
@@ -298,12 +313,7 @@ def _reset_all() -> None:
         espn_history.Owner,
         espn_history.DraftPick,
         espn_history.PlayerName,
-        espn_history.FranchiseCard,
-        espn_history.SeasonTimelineRow,
-        espn_history.RivalryRow,
-        espn_history.RecordRow,
-        espn_history.DraftTendencyRow,
-        espn_history.SettingsRow,
+        espn_history.TeamGame,
     ):
         cls.inc_dict.clear()
 
@@ -316,14 +326,14 @@ async def test_public_run_skips_401_season_and_builds_six_views(
     recwarn: pytest.WarningsRecorder,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """No cookies: OLD_YEAR 401s on the modern endpoint and is skipped with a
-    printed note, never retried against `leagueHistory`. CURRENT_YEAR +
-    PREVIOUS_YEAR still fetch fine, producing all six views.
+    """No cookies: OLD_YEAR 401s on the modern endpoint and is left out of
+    the final season list, never retried against `leagueHistory`.
+    CURRENT_YEAR + PREVIOUS_YEAR still fetch fine, producing all six views.
 
-    Also proves `quiet_expected_reject()` suppresses BOTH the reject
-    `UserWarning` (base.py) and the `incorporator.io.fetch` WARNING log line
-    around the OLD_YEAR probe -- a printed-message-only assertion would not
-    catch a regression that dropped the logging half of the suppression."""
+    Also proves the OLD_YEAR fan-out reject surfaces through the framework's
+    own two channels -- a `UserWarning` (base.py) and an `incorporator.io.fetch`
+    WARNING log line -- since the pipeline no longer defines any suppression
+    ceremony around it (Complaint 1's removal)."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("ESPN_S2", raising=False)
     monkeypatch.delenv("ESPN_SWID", raising=False)
@@ -334,12 +344,12 @@ async def test_public_run_skips_401_season_and_builds_six_views(
     with caplog.at_level(logging.WARNING, logger="incorporator"):
         await espn_history.main()
 
-    assert [w for w in recwarn.list if issubclass(w.category, UserWarning)] == []
-    assert caplog.records == []
+    assert any(issubclass(w.category, UserWarning) for w in recwarn.list)
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
 
     captured = capsys.readouterr()
     assert captured.out.isascii()
-    assert f"season {OLD_YEAR}: unavailable (no cookies) -- skipping" in captured.out
+    assert f"unresolved seasons (no data available): [{OLD_YEAR}]" in captured.out
     assert f"Fetched 2 season(s): [{PREVIOUS_YEAR}, {CURRENT_YEAR}]" in captured.out
 
     out_dir = _EXAMPLE_DIR / "out"
@@ -391,13 +401,15 @@ async def test_private_run_resolves_old_year_via_league_history(
 ) -> None:
     """Cookies present: OLD_YEAR now 404s on the modern endpoint (the
     live-verified cookies-present failure mode), but the retry against the
-    cookie-gated `leagueHistory` list-root (`rec_path="0"`) succeeds
+    cookie-gated `leagueHistory` list-root (`rec_path="0"`, `seasonId`
+    embedded in the URL string since the retry fans out) succeeds
     regardless of that status code, pulling in a third season.
 
-    Also proves `quiet_expected_reject()` suppresses BOTH the reject
-    `UserWarning` and the `incorporator.io.fetch` WARNING log line around
-    the OLD_YEAR modern-endpoint 404 probe, even though the retry itself
-    succeeds."""
+    Also proves the OLD_YEAR modern-endpoint 404 reject surfaces through the
+    framework's own two channels -- a `UserWarning` and an
+    `incorporator.io.fetch` WARNING log line -- even though the retry itself
+    succeeds, since the pipeline no longer defines any suppression ceremony
+    around it (Complaint 1's removal)."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ESPN_S2", "fake-s2-value")
     monkeypatch.setenv("ESPN_SWID", "{FAKE-SWID}")
@@ -408,8 +420,8 @@ async def test_private_run_resolves_old_year_via_league_history(
     with caplog.at_level(logging.WARNING, logger="incorporator"):
         await espn_history.main()
 
-    assert [w for w in recwarn.list if issubclass(w.category, UserWarning)] == []
-    assert caplog.records == []
+    assert any(issubclass(w.category, UserWarning) for w in recwarn.list)
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
 
     captured = capsys.readouterr()
     assert captured.out.isascii()
