@@ -75,7 +75,8 @@ server-declared** (Section 4).
 ```
 examples/appendix/espn-league-history/
   espn_league_history.py   # season discovery (plain Python) + the fjord() call
-  outflow.py                # 7 source classes + 6 derived view classes + outflow(state)
+  outflow.py                # 7 source classes + outflow(state); RecordRow is the
+                             # one pre-declared derived view (see Section 3a)
   README.md                # this file
   out/                      # gitignored -- six NDJSON views land here
 ```
@@ -117,29 +118,45 @@ check. Win/loss streaks are franchise-history streaks, chronological across
 every fetched season (`(season, matchupPeriodId)` order), not reset at a
 season boundary.
 
+**`RecordRow` is pre-declared in `outflow.py` -- the one exception to "let
+fjord infer every derived class."** All ten kinds share one `value` column,
+but that column's native type differs by kind: point/margin/ratio floats for
+seven kinds, plain win/loss-streak game counts (ints) for the other two.
+`value: int | float | None` opts that one field out of dynamic-schema
+inference so every row keeps its own natural type; every other field on the
+row still infers normally (`extra="allow"` covers them). The five other
+views have no field that mixes types under one key across rows, so they stay
+fully bare and let fjord build their schema dynamically.
+
 ## 4. Season discovery is server-declared
 
 No brute-force floor/ceiling guessing. One bootstrap fetch -- the current
 calendar-year season -- reads `status.previousSeasons` off the response;
-that IS the candidate season list. Every remaining year fans out
-CONCURRENTLY in one `Season.incorp(inc_url=[...])` call on one client with
-shared headers -- ESPN gives back the successful years and each failed
-year's URL lands in `.failed_sources`, never a raised exception. With
-cookies present, whichever years failed that first fan-out retry as ONE
-more fan-out against the cookie-gated `leagueHistory` endpoint (list-root
-response, `rec_path="0"`); each retried year's `seasonId` is embedded
-directly in ITS OWN URL string (`?seasonId=<year>`), since `params=`/
-`headers=` are shared across every URL in a fan-out call, not per-URL. With
-no cookies present, whichever years failed the first fan-out are simply
-left out of the final season list. League size is read from each season's
-own `len(season.teams)` -- never hardcoded, since a league's team count can
-and does drift across seasons.
+that IS the candidate season list. Which endpoint every remaining year fans
+out against is decided ONCE, up front, from whether cookies are present --
+no probe, no retry:
+
+- **With cookies**, every remaining year fans out CONCURRENTLY in one
+  `Season.incorp(inc_url=[...])` call directly against the cookie-gated
+  `leagueHistory` endpoint (list-root response, `rec_path="0"`), which
+  serves every completed season once cookies unlock it. Each year's
+  `seasonId` is embedded directly in ITS OWN URL string
+  (`?seasonId=<year>`), since `params=`/`headers=` are shared across every
+  URL in a fan-out call, not per-URL.
+- **With no cookies**, every remaining year fans out against the modern
+  endpoint instead -- `leagueHistory` always 401s without cookies, so
+  public mode is modern-only. A modern-endpoint miss on an old season is
+  terminal: ESPN gives back the successful years and each failed year's URL
+  lands in `.failed_sources`, which the pipeline reports (via a plain
+  set-difference against the candidate list) but never retries.
+
+League size is read from each season's own `len(season.teams)` -- never
+hardcoded, since a league's team count can and does drift across seasons.
 
 A fetch failure surfaces through `IncorporatorList.rejects` /
 `.failed_sources` (structured `RejectEntry` records with `.status_code`)
 plus the framework's own WARNING-level log line -- never a raised exception,
-and never suppressed. The retry decision (private mode only) never inspects
-`.status_code` at all; it depends solely on whether cookies are present.
+and never suppressed.
 
 ## 5. Why a one-shot fjord, not a Watershed
 
@@ -217,6 +234,22 @@ against, inside `outflow.py`'s `outflow(state)`
 entries seeded with no ordering guarantee between them, so every
 cross-class join happens read-time in `outflow(state)`, not build-time via
 `link_to` -- see that file's own module docstring.
+
+**`Standing` and `Matchup` are built TWICE, the same two-phase pattern
+`Season` itself already uses**: once pre-fjord in `main()` (typed instances,
+real attribute/submodel access), and once more as `payload_list=` fjord
+sources so `outflow(state)` can read `state["Standing"]` / `state["Matchup"]`.
+The pre-fjord build exists so `TeamGame`'s raw payload rows can be
+constructed by TRAVERSING typed submodels (`m.home`/`m.away`, each an
+auto-promoted `Optional` submodel with a real `.totalPoints` attribute, and
+`m.away is None` on a playoff bye) instead of raw-dict `.get()` chains. The
+home/away perspective split is DATA, not control flow: one loop iterates a
+2-tuple of `(side, team, opponent, team_key, opponent_key)` and appends one
+row per perspective, skipping the away perspective when `team is None` (the
+playoff-bye case). `TeamGame`'s own `conv_dict` derives the `"W"/"L"/"T"`
+`result` field via a single `calc(perspective_result, "winner", "side", ...)`
+entry shared by both perspectives, instead of an inline ternary duplicated
+per append.
 
 ## 7. Player names: one shared fan-out, not two passes
 

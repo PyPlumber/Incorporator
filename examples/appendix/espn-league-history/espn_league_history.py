@@ -5,13 +5,12 @@ Companion script for `README.md` in this directory.
 A one-shot `Incorporator.fjord()` pipeline -- every ESPN season is fetched
 exactly once, ever. Season discovery is a genuine two-phase dependency
 (bootstrap fetch -> learn the reachable-years list -> fan out the rest) that
-has to run as plain pre-fjord Python, since every `fjord()` `stream_params`
+runs as plain pre-fjord Python, since every `fjord()` `stream_params`
 entry's `incorp_params` must be fully static before `fjord()` is called.
 Everything downstream of discovery -- `Owner`/`Standing`/`Matchup`/
 `DraftPick`/`TeamGame` -- becomes a network-free `payload_list=` fjord
-source (one dict list built once in `main()`, never inside a loop), and
-`PlayerName` is the ONE genuinely-networked fjord source: a single
-`inc_url=[...]` fan-out across every discovered season, sharing one
+source, and `PlayerName` is the ONE genuinely-networked fjord source: a
+single `inc_url=[...]` fan-out across every discovered season, sharing one
 `X-Fantasy-Filter` header carrying the union of every wanted player id.
 `outflow.py` fuses all seven sources into the six views entirely READ-TIME
 (`state["Peer"].inc_dict.get(key)`) -- no build-time `link_to` anywhere,
@@ -19,21 +18,21 @@ since `Standing`/`Matchup`/`DraftPick`/`TeamGame` are sibling `stream_params`
 entries with no ordering guarantee between them.
 
 A failed source never raises -- `IncorporatorList.rejects` / `.failed_sources`
-plus the framework's own WARNING-level log line ARE the failure report. The
-season-discovery fan-out's `.failed_sources` drives the historical-endpoint
-retry (a data check, not a print); the fjord wave loop's
-`if wave.failed_sources: print(...)` is the one user-facing failure line.
+plus the framework's own WARNING-level log line ARE the failure report.
 
 Two auth modes, one pipeline:
 - PUBLIC (default): no cookies, demo league 899513, unauthenticated floor
   season 2020 (earlier seasons fail without cookies and are left out of the
-  final season list -- no historical retry without cookies).
+  final season list -- public mode is modern-endpoint-only).
 - PRIVATE: set `ESPN_S2` / `ESPN_SWID` (browser cookies) to unlock a
-  private league and the cookie-gated pre-2018 `leagueHistory` endpoint.
+  private league and the cookie-gated `leagueHistory` endpoint, which
+  serves every completed season directly.
 
 Season discovery is server-declared, not brute-forced: one bootstrap fetch
 of the current calendar-year season reads `status.previousSeasons` off the
-response -- that IS the season list, no floor/ceiling guessing.
+response -- that IS the season list, no floor/ceiling guessing. Which
+endpoint each remaining year fetches from is decided once, up front, from
+`has_cookies` alone (see Section 4 of the README).
 
 Run with:
     python examples/appendix/espn-league-history/espn_league_history.py
@@ -50,7 +49,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from incorporator import Incorporator, calc, calc_all, inc, register_host_penstock
+from incorporator import Incorporator, IncorporatorList, calc, calc_all, inc, register_host_penstock
 
 # lm-api-reads.fantasy.espn.com has no known_host_rates() entry -- register a
 # polite 1 req/sec throttle for the handful of calls this pipeline makes.
@@ -68,13 +67,7 @@ HERE = Path(__file__).resolve().parent
 
 # Bring the SOURCE classes (the ones referenced as "cls": X below) + shared
 # domain-calc helpers into scope so fjord() can register them -- see
-# outflow.py's own docstring. The six DERIVED view classes are deliberately
-# NOT imported here (matching examples/09-nascar-fantasy-fjord/'s own
-# pattern): fjord()'s outflow= loads outflow.py through a separate cache key
-# from this file's own `import outflow`, so a class imported here and the
-# class flush() actually builds instances through would be two distinct,
-# non-interchangeable objects -- read the export files back instead (see
-# read_ndjson() below).
+# outflow.py's own docstring.
 from outflow import (  # noqa: E402
     TOP_N_MOST_DRAFTED,
     DraftPick,
@@ -86,7 +79,6 @@ from outflow import (  # noqa: E402
     TeamGame,
     abs_diff,
     all_play_broadcast,
-    cookie_headers,
     count_distinct_by_group,
     count_true_by_group,
     is_champion,
@@ -94,6 +86,7 @@ from outflow import (  # noqa: E402
     is_runner_up,
     make_streak_broadcast,
     mean_positive_by_group,
+    perspective_result,
     position_name,
     sum_by_group,
     team_key,
@@ -102,61 +95,68 @@ from outflow import (  # noqa: E402
 )
 
 
-def ascii_safe(text: str) -> str:
-    return text.encode("ascii", errors="replace").decode("ascii")
+def cookie_headers(espn_s2: str | None, espn_swid: str | None) -> dict[str, str]:
+    """Hand-rolled Cookie header -- `incorp()` has no native `cookies=` kwarg."""
+    if espn_s2 and espn_swid:
+        return {"Cookie": f"espn_s2={espn_s2}; SWID={espn_swid}"}
+    return {}
 
 
-def read_ndjson(path: Path) -> list[dict[str, Any]]:
-    """Read one just-exported view back off disk for the console board below.
+class ViewRow(Incorporator):
+    pass
 
-    The board reads from the EXPORT FILE, not `SomeDerivedClass.inc_dict`:
-    `outflow.py`'s six view classes are resolved by `fjord()`'s internal
-    `load_user_module()` against a synthetic cache key distinct from this
-    file's own `from outflow import (...)` -- two separate class objects,
-    live-verified 2026-07-27 (export is correct; a post-loop
-    `FranchiseCard.inc_dict` read here is always empty)."""
+
+class RecordViewRow(Incorporator):
+    """Records Book read-back needs the same declared `value` field as
+    `outflow.py`'s `RecordRow`: its ten kinds share one `value` key across
+    float measurements and int streak counts, and a schema inferred fresh
+    from a bare class types that key from its first-sampled row only."""
+
+    value: int | float | None = None
+
+
+async def read_view(path: Path, row_cls: type[Incorporator] = ViewRow) -> IncorporatorList[Any]:
     if not path.exists():
-        return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return IncorporatorList([])
+    return await row_cls.incorp(inc_file=path)
 
 
-def print_franchise_board(franchise_cards: list[dict[str, Any]]) -> None:
-    ranked = sorted(franchise_cards, key=operator.itemgetter("win_pct"), reverse=True)
+def print_franchise_board(franchise_cards: IncorporatorList[Any]) -> None:
+    ranked = sorted(franchise_cards, key=operator.attrgetter("win_pct"), reverse=True)
     print("\nFRANCHISE CARDS (all-time, sorted by win%)")
     header = f"{'FRANCHISE':<24}{'W-L-T':<12}{'WIN%':>7}{'SEASONS':>9}{'TITLES':>8}{'PLAYOFF%':>10}"
     print(header)
     print("-" * len(header))
     for row in ranked:
-        name = ascii_safe(str(row["display_name"]))[:23]
-        record = f"{row['wins']}-{row['losses']}-{row['ties']}"
+        name = str(row.display_name).encode("ascii", errors="replace").decode("ascii")[:23]
+        record = f"{row.wins}-{row.losses}-{row.ties}"
         print(
-            f"{name:<24}{record:<12}{row['win_pct']:>7.3f}{row['seasons_played']:>9}"
-            f"{row['championships']:>8}{row['playoff_rate']:>10.1%}"
+            f"{name:<24}{record:<12}{row.win_pct:>7.3f}{row.seasons_played:>9}"
+            f"{row.championships:>8}{row.playoff_rate:>10.1%}"
         )
 
 
-def print_records_book(records_book: list[dict[str, Any]]) -> None:
+def print_records_book(records_book: IncorporatorList[Any]) -> None:
     print("\nRECORDS BOOK")
     header = f"{'KIND':<28}{'VALUE':>10}  {'FRANCHISE':<20}{'SEASON':>8}  {'DETAIL'}"
     print(header)
     print("-" * len(header))
     for row in records_book:
-        name = ascii_safe(str(row["display_name"]))[:19]
-        print(f"{row['kind']:<28}{row['value']:>10}  {name:<20}{row['season']!s:>8}  {ascii_safe(str(row['detail']))}")
+        name = str(row.display_name).encode("ascii", errors="replace").decode("ascii")[:19]
+        detail = str(row.detail).encode("ascii", errors="replace").decode("ascii")
+        print(f"{row.kind:<28}{row.value:>10}  {name:<20}{row.season!s:>8}  {detail}")
 
 
-def print_honor_roll(draft_tendencies: list[dict[str, Any]]) -> None:
-    honor_roll = sorted(
-        (r for r in draft_tendencies if r["kind"] == "first_overall"), key=operator.itemgetter("season")
-    )
+def print_honor_roll(draft_tendencies: IncorporatorList[Any]) -> None:
+    honor_roll = sorted((r for r in draft_tendencies if r.kind == "first_overall"), key=operator.attrgetter("season"))
     print("\nFIRST-OVERALL DRAFT HONOR ROLL")
     header = f"{'SEASON':<8}{'FRANCHISE':<22}{'PLAYER':<24}{'POS'}"
     print(header)
     print("-" * len(header))
     for row in honor_roll:
-        franchise = ascii_safe(str(row["display_name"]))[:21]
-        player = ascii_safe(str(row["player_name"]))[:23]
-        print(f"{row['season']:<8}{franchise:<22}{player:<24}{row['position']}")
+        franchise = str(row.display_name).encode("ascii", errors="replace").decode("ascii")[:21]
+        player = str(row.player_name).encode("ascii", errors="replace").decode("ascii")[:23]
+        print(f"{row.season:<8}{franchise:<22}{player:<24}{row.position}")
 
 
 async def main() -> None:
@@ -197,35 +197,34 @@ async def main() -> None:
     remaining_years = sorted(y for y in candidate_years if y != current_year)
 
     # --- Fan-out: every remaining year, ONE call, concurrent on one client.
+    # Endpoint choice is deterministic, decided once from has_cookies alone --
+    # no probe, no retry (see README Section 4).
     fanout_rows: Any = []
-    url_to_year: dict[str, int] = {}
     if remaining_years:
-        fanout_urls = [MODERN_URL.format(season=y, league_id=league_id) for y in remaining_years]
-        url_to_year = dict(zip(fanout_urls, remaining_years, strict=True))
-        fanout_rows = await Season.incorp(
-            inc_url=fanout_urls,
-            headers=auth_headers,
-            params={"view": VIEWS},
-            conv_dict=season_conv_dict,
-        )
+        if has_cookies:
+            # leagueHistory serves every completed season once cookies unlock
+            # it (live-verified 2010-2025 for this league) -- go straight there.
+            fanout_urls = [f"{HISTORY_URL.format(league_id=league_id)}?seasonId={y}" for y in remaining_years]
+            fanout_rows = await Season.incorp(
+                inc_url=fanout_urls,
+                headers=auth_headers,
+                params={"view": VIEWS},
+                rec_path="0",
+                conv_dict=season_conv_dict,
+            )
+        else:
+            # No cookies: leagueHistory always 401s, so public mode is
+            # modern-only; a modern-endpoint miss on an old season is
+            # terminal, never retried.
+            fanout_urls = [MODERN_URL.format(season=y, league_id=league_id) for y in remaining_years]
+            fanout_rows = await Season.incorp(
+                inc_url=fanout_urls,
+                headers=auth_headers,
+                params={"view": VIEWS},
+                conv_dict=season_conv_dict,
+            )
 
-    # --- Historical retry (private mode only): whichever fan-out years
-    # failed, refetch as ONE more fan-out against the cookie-gated
-    # leagueHistory endpoint. The failed-source check drives control flow
-    # (which years to retry), not a print -- see module docstring.
-    failed_years = sorted(url_to_year[u] for u in fanout_rows.failed_sources) if remaining_years else []
-    historical_rows: Any = []
-    if has_cookies and failed_years:
-        historical_urls = [f"{HISTORY_URL.format(league_id=league_id)}?seasonId={y}" for y in failed_years]
-        historical_rows = await Season.incorp(
-            inc_url=historical_urls,
-            headers=auth_headers,
-            params={"view": VIEWS},
-            rec_path="0",
-            conv_dict=season_conv_dict,
-        )
-
-    all_seasons = sorted([*bootstrap, *fanout_rows, *historical_rows], key=operator.attrgetter("season"))
+    all_seasons = sorted([*bootstrap, *fanout_rows], key=operator.attrgetter("season"))
     resolved_years = {s.season for s in all_seasons}
     unresolved_years = sorted((candidate_years | {current_year}) - resolved_years)
     print(f"\nFetched {len(all_seasons)} season(s): {[s.season for s in all_seasons]}")
@@ -242,56 +241,85 @@ async def main() -> None:
     all_schedule_rows = [{**m.model_dump(by_alias=True), "season": s.season} for s in all_seasons for m in s.schedule]
     all_pick_rows = [{**p.model_dump(by_alias=True), "season": s.season} for s in all_seasons for p in s.draft_picks]
 
-    # --- TeamGame's raw payload rows: one per team per DECIDED matchup.
-    # Built off the RAW schedule dicts (Matchup hasn't been built yet -- it's
-    # a sibling fjord source with no ordering guarantee), so this reads dict
-    # keys (`m["home"]["totalPoints"]`), not `.home`/`.away` attributes.
-    # owner_by_team_key is a composite-key -> raw-string lookup (not an
-    # FK->object dict) built from Standing's own raw rows, needed only
-    # because Standing and TeamGame are sibling sources seeded with no
-    # build-time ordering guarantee between them.
-    owner_by_team_key = {team_key(t["season"], t["id"]): t.get("primaryOwner") for t in all_team_rows}
+    standing_conv_dict = {
+        "id": inc(int, default=0),
+        "primaryOwner": inc(str, default=""),
+        "name": inc(str, default="Unknown"),
+        "season": inc(int, default=0),
+        "team_key": calc(team_key, "season", "id", target_type=str),
+        "division_id": calc(int, "divisionId", default=0, target_type=int),
+        "wins": calc(int, "record.overall.wins", default=0, target_type=int),
+        "losses": calc(int, "record.overall.losses", default=0, target_type=int),
+        "ties": calc(int, "record.overall.ties", default=0, target_type=int),
+        "points_for": calc(float, "record.overall.pointsFor", default=0.0, target_type=float),
+        "points_against": calc(float, "record.overall.pointsAgainst", default=0.0, target_type=float),
+        "playoff_seed": calc(int, "playoffSeed", default=0, target_type=int),
+        "final_rank": calc(int, "rankCalculatedFinal", default=0, target_type=int),
+        "win_pct_equiv": calc(win_pct_equiv, "wins", "losses", "ties", target_type=float),
+        "is_champion": calc(is_champion, "final_rank", default=False, target_type=bool),
+        "is_runner_up": calc(is_runner_up, "final_rank", default=False, target_type=bool),
+        # --- calc_all broadcasts: whole-column pass, once, across every
+        # fetched season.
+        "owner_wins_total": calc_all(sum_by_group, "primaryOwner", "wins", target_type=int),
+        "owner_losses_total": calc_all(sum_by_group, "primaryOwner", "losses", target_type=int),
+        "owner_ties_total": calc_all(sum_by_group, "primaryOwner", "ties", target_type=int),
+        "owner_points_for_total": calc_all(sum_by_group, "primaryOwner", "points_for", target_type=float),
+        "owner_points_against_total": calc_all(sum_by_group, "primaryOwner", "points_against", target_type=float),
+        "owner_seasons_played": calc_all(count_distinct_by_group, "primaryOwner", "season", target_type=int),
+        "owner_championships": calc_all(count_true_by_group, "primaryOwner", "is_champion", target_type=int),
+        "owner_runner_ups": calc_all(count_true_by_group, "primaryOwner", "is_runner_up", target_type=int),
+        "owner_average_finish": calc_all(mean_positive_by_group, "primaryOwner", "final_rank", target_type=float),
+        "season_is_last_place": calc_all(is_group_max_positive, "season", "final_rank", target_type=bool),
+        "owner_last_places_total": calc_all(
+            count_true_by_group, "primaryOwner", "season_is_last_place", target_type=int
+        ),
+        "owner_win_pct": calc(
+            win_pct_from_totals, "owner_wins_total", "owner_losses_total", "owner_ties_total", target_type=float
+        ),
+    }
+    matchup_conv_dict = {
+        "id": inc(int, default=0),
+        "matchupPeriodId": inc(int, default=0),
+        "playoffTierType": inc(str, default="NONE"),
+        "winner": inc(str, default="UNDECIDED"),
+        "season": inc(int, default=0),
+        "home_team_key": calc(team_key, "season", "home.teamId", default=None, target_type=str),
+        "away_team_key": calc(team_key, "season", "away.teamId", default=None, target_type=str),
+    }
+
+    # --- Pre-fjord builds: Standing and Matchup need real typed instances
+    # here so team_game_rows can traverse submodels (m.home / m.away)
+    # instead of raw-dict .get() chains. Both are re-registered below as
+    # payload_list= fjord sources too, so outflow(state) can read
+    # state["Standing"] / state["Matchup"] -- the same two-phase pattern
+    # Season itself uses.
+    standings = await Standing.incorp(payload_list=all_team_rows, inc_code="team_key", conv_dict=standing_conv_dict)
+    matchups = await Matchup.incorp(payload_list=all_schedule_rows, conv_dict=matchup_conv_dict)
+
+    owner_by_team_key = {s.team_key: s.primaryOwner for s in standings}
     team_game_rows: list[dict[str, Any]] = []
-    for m in all_schedule_rows:
-        winner = m.get("winner", "UNDECIDED")
-        if winner == "UNDECIDED":
+    for m in matchups:
+        if m.winner == "UNDECIDED":
             continue
-        season = m["season"]
-        home = m.get("home") or {}
-        away = m.get("away")
-        home_key = team_key(season, home.get("teamId"))
-        away_key = team_key(season, away.get("teamId")) if away else None
-        home_score = home.get("totalPoints", 0.0)
-        away_score = away.get("totalPoints", 0.0) if away else 0.0
-        week = m.get("matchupPeriodId", 0)
-        tier = m.get("playoffTierType", "NONE")
-        team_game_rows.append(
-            {
-                "season": season,
-                "week": week,
-                "tier": tier,
-                "team_key": home_key,
-                "owner_guid": owner_by_team_key.get(home_key),
-                "opponent_team_key": away_key,
-                "opponent_owner_guid": owner_by_team_key.get(away_key) if away_key else None,
-                "score": home_score,
-                "opponent_score": away_score,
-                "result": "W" if winner == "HOME" else ("L" if winner == "AWAY" else "T"),
-            }
-        )
-        if away:
+        for side, team, opp_team, tk, opp_tk in (
+            ("home", m.home, m.away, m.home_team_key, m.away_team_key),
+            ("away", m.away, m.home, m.away_team_key, m.home_team_key),
+        ):
+            if team is None:  # away-perspective row skipped on a playoff bye
+                continue
             team_game_rows.append(
                 {
-                    "season": season,
-                    "week": week,
-                    "tier": tier,
-                    "team_key": away_key,
-                    "owner_guid": owner_by_team_key.get(away_key),
-                    "opponent_team_key": home_key,
-                    "opponent_owner_guid": owner_by_team_key.get(home_key),
-                    "score": away_score,
-                    "opponent_score": home_score,
-                    "result": "W" if winner == "AWAY" else ("L" if winner == "HOME" else "T"),
+                    "season": m.season,
+                    "week": m.matchupPeriodId,
+                    "tier": m.playoffTierType,
+                    "team_key": tk,
+                    "owner_guid": owner_by_team_key.get(tk),
+                    "opponent_team_key": opp_tk,
+                    "opponent_owner_guid": owner_by_team_key.get(opp_tk) if opp_tk else None,
+                    "score": team.totalPoints,
+                    "opponent_score": opp_team.totalPoints if opp_team else 0.0,
+                    "side": side,
+                    "winner": m.winner,
                 }
             )
 
@@ -301,11 +329,6 @@ async def main() -> None:
     draft_counts = Counter(p["playerId"] for p in all_pick_rows)
     top_drafted_ids = {pid for pid, _times in draft_counts.most_common(TOP_N_MOST_DRAFTED)}
     wanted_ids = sorted(round1_ids | top_drafted_ids)
-
-    player_name_conv_dict = {
-        "defaultPositionId": inc(int, default=0),
-        "position": calc(position_name, "defaultPositionId", default="UNKNOWN", target_type=str),
-    }
 
     print("Running one-shot fjord: Owner/Standing/Matchup/DraftPick/TeamGame network-free, PlayerName fanned out ...")
 
@@ -337,60 +360,7 @@ async def main() -> None:
                 "incorp_params": {
                     "payload_list": all_team_rows,
                     "inc_code": "team_key",
-                    "conv_dict": {
-                        "id": inc(int, default=0),
-                        "primaryOwner": inc(str, default=""),
-                        "name": inc(str, default="Unknown"),
-                        "season": inc(int, default=0),
-                        "team_key": calc(team_key, "season", "id", target_type=str),
-                        "division_id": calc(int, "divisionId", default=0, target_type=int),
-                        "wins": calc(int, "record.overall.wins", default=0, target_type=int),
-                        "losses": calc(int, "record.overall.losses", default=0, target_type=int),
-                        "ties": calc(int, "record.overall.ties", default=0, target_type=int),
-                        "points_for": calc(float, "record.overall.pointsFor", default=0.0, target_type=float),
-                        "points_against": calc(float, "record.overall.pointsAgainst", default=0.0, target_type=float),
-                        "playoff_seed": calc(int, "playoffSeed", default=0, target_type=int),
-                        "final_rank": calc(int, "rankCalculatedFinal", default=0, target_type=int),
-                        "win_pct_equiv": calc(win_pct_equiv, "wins", "losses", "ties", target_type=float),
-                        "is_champion": calc(is_champion, "final_rank", default=False, target_type=bool),
-                        "is_runner_up": calc(is_runner_up, "final_rank", default=False, target_type=bool),
-                        # --- calc_all broadcasts: whole-column pass, once,
-                        # across every fetched season.
-                        "owner_wins_total": calc_all(sum_by_group, "primaryOwner", "wins", target_type=int),
-                        "owner_losses_total": calc_all(sum_by_group, "primaryOwner", "losses", target_type=int),
-                        "owner_ties_total": calc_all(sum_by_group, "primaryOwner", "ties", target_type=int),
-                        "owner_points_for_total": calc_all(
-                            sum_by_group, "primaryOwner", "points_for", target_type=float
-                        ),
-                        "owner_points_against_total": calc_all(
-                            sum_by_group, "primaryOwner", "points_against", target_type=float
-                        ),
-                        "owner_seasons_played": calc_all(
-                            count_distinct_by_group, "primaryOwner", "season", target_type=int
-                        ),
-                        "owner_championships": calc_all(
-                            count_true_by_group, "primaryOwner", "is_champion", target_type=int
-                        ),
-                        "owner_runner_ups": calc_all(
-                            count_true_by_group, "primaryOwner", "is_runner_up", target_type=int
-                        ),
-                        "owner_average_finish": calc_all(
-                            mean_positive_by_group, "primaryOwner", "final_rank", target_type=float
-                        ),
-                        "season_is_last_place": calc_all(
-                            is_group_max_positive, "season", "final_rank", target_type=bool
-                        ),
-                        "owner_last_places_total": calc_all(
-                            count_true_by_group, "primaryOwner", "season_is_last_place", target_type=int
-                        ),
-                        "owner_win_pct": calc(
-                            win_pct_from_totals,
-                            "owner_wins_total",
-                            "owner_losses_total",
-                            "owner_ties_total",
-                            target_type=float,
-                        ),
-                    },
+                    "conv_dict": standing_conv_dict,
                 },
                 "refresh_params": None,
             },
@@ -398,15 +368,7 @@ async def main() -> None:
                 "cls": Matchup,
                 "incorp_params": {
                     "payload_list": all_schedule_rows,
-                    "conv_dict": {
-                        "id": inc(int, default=0),
-                        "matchupPeriodId": inc(int, default=0),
-                        "playoffTierType": inc(str, default="NONE"),
-                        "winner": inc(str, default="UNDECIDED"),
-                        "season": inc(int, default=0),
-                        "home_team_key": calc(team_key, "season", "home.teamId", default=None, target_type=str),
-                        "away_team_key": calc(team_key, "season", "away.teamId", default=None, target_type=str),
-                    },
+                    "conv_dict": matchup_conv_dict,
                 },
                 "refresh_params": None,
             },
@@ -433,6 +395,9 @@ async def main() -> None:
                     "payload_list": team_game_rows,
                     "inc_code": "team_key",
                     "conv_dict": {
+                        "score": inc(float, default=0.0),
+                        "opponent_score": inc(float, default=0.0),
+                        "result": calc(perspective_result, "winner", "side", default="T", target_type=str),
                         "margin": calc(abs_diff, "score", "opponent_score", target_type=float),
                         "all_play_expected_wins": calc_all(
                             all_play_broadcast, "season", "team_key", "week", "score", "tier", target_type=float
@@ -455,7 +420,10 @@ async def main() -> None:
                     "params": {"view": "players_wl"},
                     "inc_code": "id",
                     "inc_name": "fullName",
-                    "conv_dict": player_name_conv_dict,
+                    "conv_dict": {
+                        "defaultPositionId": inc(int, default=0),
+                        "position": calc(position_name, "defaultPositionId", default="UNKNOWN", target_type=str),
+                    },
                 },
                 "refresh_params": None,
             },
@@ -476,12 +444,12 @@ async def main() -> None:
         if wave.failed_sources:
             print(f"WARN  {wave.operation}: {wave.failed_sources}")
 
-    franchise_cards = read_ndjson(out_dir / "franchise_cards.ndjson")
-    season_timeline = read_ndjson(out_dir / "season_timeline.ndjson")
-    rivalry_matrix = read_ndjson(out_dir / "rivalry_matrix.ndjson")
-    records_book = read_ndjson(out_dir / "records_book.ndjson")
-    draft_tendencies = read_ndjson(out_dir / "draft_tendencies.ndjson")
-    settings_evolution = read_ndjson(out_dir / "settings_evolution.ndjson")
+    franchise_cards = await read_view(out_dir / "franchise_cards.ndjson")
+    season_timeline = await read_view(out_dir / "season_timeline.ndjson")
+    rivalry_matrix = await read_view(out_dir / "rivalry_matrix.ndjson")
+    records_book = await read_view(out_dir / "records_book.ndjson", RecordViewRow)
+    draft_tendencies = await read_view(out_dir / "draft_tendencies.ndjson")
+    settings_evolution = await read_view(out_dir / "settings_evolution.ndjson")
 
     print(f"\nWrote 6 views to {out_dir}:")
     print(f"  franchise_cards.ndjson    {len(franchise_cards)} rows")

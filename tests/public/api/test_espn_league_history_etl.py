@@ -8,20 +8,19 @@ calls, then `fjord()` seeds six network-free `payload_list=` sources plus one
 genuinely-networked `PlayerName` fan-out, then flushes `outflow.py`'s
 `outflow(state)` once into the six NDJSON views.
 
-Two scenarios, one shared fixture set:
+Two scenarios, one shared fixture set. Endpoint choice is decided once, up
+front, from `has_cookies` alone -- no probe, no retry:
 
-- `test_public_run_...`: no `ESPN_S2`/`ESPN_SWID` env vars. The bootstrap
-  season's `status.previousSeasons` includes an OLD_YEAR that 401s on the
-  modern endpoint (no-cookie behavior, live-verified); with no cookies
-  present that season is left out of the final season list (never retried
-  against `leagueHistory`).
-- `test_private_run_...`: `ESPN_S2`/`ESPN_SWID` set. OLD_YEAR now 404s on the
-  modern endpoint (cookies-present behavior, live-verified -- ESPN returns
-  404, not 401, when a season predates the modern endpoint's own coverage
-  window), and the retry against the cookie-gated `leagueHistory` list-root
-  endpoint (`rec_path="0"`, `seasonId` embedded in the URL string since the
-  retry is now a fan-out and `params=`/`headers=` are shared across a
-  fan-out call, not per-URL) succeeds regardless of that status code.
+- `test_public_run_...`: no `ESPN_S2`/`ESPN_SWID` env vars. Every remaining
+  year fans out against the modern endpoint; OLD_YEAR 401s there (no-cookie
+  behavior, live-verified) and is left out of the final season list --
+  public mode never touches `leagueHistory` at all.
+- `test_private_run_...`: `ESPN_S2`/`ESPN_SWID` set. Every remaining year
+  (PREVIOUS_YEAR and OLD_YEAR) fans out directly against the cookie-gated
+  `leagueHistory` list-root endpoint (`rec_path="0"`, `seasonId` embedded in
+  each URL's own query string since `params=`/`headers=` are shared across
+  a fan-out call, not per-URL) -- the modern endpoint is never probed for a
+  non-current year in private mode. Both years resolve on the first try.
 
 Both scenarios exercise: a playoff bye (home-only, no `away` key, permanently
 `UNDECIDED`), a tiebreak-decided tie (`winner` still HOME/AWAY, margin can be
@@ -29,14 +28,15 @@ Both scenarios exercise: a playoff bye (home-only, no `away` key, permanently
 both `pointsOverrides` guard branches (key entirely absent / value `null` /
 value present).
 
-Both scenarios also assert that the OLD_YEAR probe's expected reject (401 or
-404, per scenario) surfaces NORMALLY through the framework's own two
-channels -- a `warnings.warn(UserWarning, ...)` in `incorporator/base.py` and
-a `logger.warning(...)` on the `incorporator.io.fetch` logger -- instead of
-being suppressed. This is the regression guard for Complaint 1's removal:
-the pipeline no longer defines any `warnings`/logger-suppression ceremony,
-so a failed source's reject is exactly as visible here as anywhere else in
-the examples tree.
+The public scenario also asserts that OLD_YEAR's expected 401 reject
+surfaces NORMALLY through the framework's own two channels -- a
+`warnings.warn(UserWarning, ...)` in `incorporator/base.py` and a
+`logger.warning(...)` on the `incorporator.io.fetch` logger -- instead of
+being suppressed: the pipeline defines no `warnings`/logger-suppression
+ceremony, so a failed source's reject is exactly as visible here as
+anywhere else in the examples tree. The private scenario has no failed
+source to observe (both years resolve on the first try), so it does not
+assert the warning channel.
 """
 
 from __future__ import annotations
@@ -230,6 +230,13 @@ _OLD_PAYLOAD = [
     }
 ]
 
+# In private mode EVERY remaining year fans out against leagueHistory
+# directly (not just a failed year) -- one list-root payload per season_id.
+_HISTORY_PAYLOADS: dict[int, list[dict[str, Any]]] = {
+    PREVIOUS_YEAR: [_PREVIOUS_PAYLOAD],
+    OLD_YEAR: _OLD_PAYLOAD,
+}
+
 _SEASON_RE = re.compile(r"/seasons/(\d+)/segments/0/leagues/")
 _PLAYERS_RE = re.compile(r"/seasons/(\d+)/players")
 
@@ -242,15 +249,13 @@ def _players_response(headers: httpx.Headers, req: httpx.Request) -> httpx.Respo
 
 
 def _make_mock(allow_cookies: bool):
-    """Build a mock `execute_request` -- `allow_cookies` controls both the
-    modern-endpoint failure status for `OLD_YEAR` and whether the historical
-    `leagueHistory` fallback succeeds, mirroring ESPN's live-verified split:
-    with cookies present the modern endpoint 404s (a season outside its own
-    coverage window); with no cookies it 401s (an auth failure). Either way
-    the historical retry is gated on `has_cookies` alone, not on which status
-    code came back -- `allow_cookies=True` proves the fallback fires after a
-    404 (private mode); `allow_cookies=False` proves the no-cookies branch is
-    unaffected by a 401 (public mode).
+    """Build a mock `execute_request` -- `allow_cookies` selects which
+    endpoint family the pipeline is expected to reach. With cookies present
+    every remaining year fans out directly against `leagueHistory` (never
+    touching the modern endpoint for a non-current year at all); with no
+    cookies every remaining year fans out against the modern endpoint,
+    where OLD_YEAR 401s (an auth failure, live-verified) and is left
+    unresolved.
 
     `execute_request`'s real signature has no `headers=` kwarg -- headers are
     baked onto the `httpx.AsyncClient` at build time
@@ -275,23 +280,22 @@ def _make_mock(allow_cookies: bool):
                 return httpx.Response(200, text=json.dumps(_CURRENT_PAYLOAD), request=req)
             if season == PREVIOUS_YEAR:
                 return httpx.Response(200, text=json.dumps(_PREVIOUS_PAYLOAD), request=req)
-            # OLD_YEAR (and anything else): 404 with cookies present (a season
-            # outside the modern endpoint's own coverage window), 401 with no
-            # cookies (an auth failure) -- both live-verified.
-            if allow_cookies:
-                resp = httpx.Response(404, text="not found", request=req)
-                raise httpx.HTTPStatusError("404", request=req, response=resp)
+            # Public mode never resolves a year outside the modern
+            # endpoint's own coverage window -- OLD_YEAR 401s (an auth
+            # failure, live-verified) and is never retried.
             resp = httpx.Response(401, text="unauthorized", request=req)
             raise httpx.HTTPStatusError("401", request=req, response=resp)
 
         if "leagueHistory" in url:
-            # The historical retry is a fan-out (`inc_url=[...]`) with shared
-            # `params=`/`headers=` -- the per-URL `seasonId` differentiator
-            # is embedded directly in each URL's own query string instead.
+            # Private mode fans out directly against leagueHistory for
+            # EVERY remaining year, not just a failed one -- the per-URL
+            # seasonId differentiator is embedded directly in each URL's
+            # own query string since params=/headers= are shared across a
+            # fan-out call, not per-URL.
             query = parse_qs(urlsplit(url).query)
             season_id = int(query["seasonId"][0]) if "seasonId" in query else None
-            if allow_cookies and season_id == OLD_YEAR and headers.get("Cookie"):
-                return httpx.Response(200, text=json.dumps(_OLD_PAYLOAD), request=req)
+            if allow_cookies and headers.get("Cookie") and season_id in _HISTORY_PAYLOADS:
+                return httpx.Response(200, text=json.dumps(_HISTORY_PAYLOADS[season_id]), request=req)
             resp = httpx.Response(404, text="not found", request=req)
             raise httpx.HTTPStatusError("404", request=req, response=resp)
 
@@ -396,20 +400,16 @@ async def test_private_run_resolves_old_year_via_league_history(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
     capsys: pytest.CaptureFixture[str],
-    recwarn: pytest.WarningsRecorder,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Cookies present: OLD_YEAR now 404s on the modern endpoint (the
-    live-verified cookies-present failure mode), but the retry against the
-    cookie-gated `leagueHistory` list-root (`rec_path="0"`, `seasonId`
-    embedded in the URL string since the retry fans out) succeeds
-    regardless of that status code, pulling in a third season.
-
-    Also proves the OLD_YEAR modern-endpoint 404 reject surfaces through the
-    framework's own two channels -- a `UserWarning` and an
-    `incorporator.io.fetch` WARNING log line -- even though the retry itself
-    succeeds, since the pipeline no longer defines any suppression ceremony
-    around it (Complaint 1's removal)."""
+    """Cookies present: PREVIOUS_YEAR and OLD_YEAR both fan out directly
+    against the cookie-gated `leagueHistory` list-root endpoint
+    (`rec_path="0"`, `seasonId` embedded in each URL's own query string
+    since the fan-out shares `params=`/`headers=` across every URL) --
+    the modern endpoint is never probed for either year in private mode.
+    Both resolve on the first try, pulling in a third season alongside the
+    CURRENT_YEAR bootstrap. No source fails in this scenario, so there is
+    no warning channel to assert (see `test_public_run_...` for that
+    regression guard)."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ESPN_S2", "fake-s2-value")
     monkeypatch.setenv("ESPN_SWID", "{FAKE-SWID}")
@@ -417,11 +417,7 @@ async def test_private_run_resolves_old_year_via_league_history(
     monkeypatch.setattr(fetch, "execute_request", _make_mock(allow_cookies=True))
     _reset_all()
 
-    with caplog.at_level(logging.WARNING, logger="incorporator"):
-        await espn_history.main()
-
-    assert any(issubclass(w.category, UserWarning) for w in recwarn.list)
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    await espn_history.main()
 
     captured = capsys.readouterr()
     assert captured.out.isascii()

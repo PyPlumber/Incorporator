@@ -1,26 +1,24 @@
 """Outflow sidecar for the ESPN league-history one-shot fjord pipeline.
 
 Defines the seven source classes (``Season``, ``Owner``, ``Standing``,
-``Matchup``, ``DraftPick``, ``PlayerName``, ``TeamGame``) plus the six
-derived view classes and the ``outflow(state)`` function that fuses them
-into one six-key dict -- fjord's multi-output contract writes each key to
-its own file (see ``export_params`` in ``espn_league_history.py``).
+``Matchup``, ``DraftPick``, ``PlayerName``, ``TeamGame``) and the
+``outflow(state)`` function that fuses them into a six-key dict -- fjord's
+multi-output contract writes each key to its own file (see
+``export_params`` in ``espn_league_history.py``). Five of the six derived
+view classes are NOT pre-declared here; fjord builds a dynamic class per
+returned dict key and infers its schema from the emitted rows. ``RecordRow``
+is the one exception -- see its own docstring below.
 
-Every cross-class join (owner display name, team-key -> standing, player-id
--> name/position) resolves HERE, read-time, against the live snapshot
+Every cross-class join resolves HERE, read-time, against the live snapshot
 ``fjord()`` hands ``outflow(state)`` each wave -- ``state["Peer"].inc_dict.get(key)``
-(the ``cls.fjord()`` daemon path: ``state`` values are live ``IncorporatorList``s
-with a real ``inc_dict``, not the Tideweaver-Fjord-current plain-list form).
-No build-time ``link_to`` anywhere: ``Standing``/``Matchup``/``DraftPick``/
+(the ``cls.fjord()`` daemon path). ``Standing``/``Matchup``/``DraftPick``/
 ``TeamGame`` are sibling ``stream_params`` entries seeded with no ordering
-guarantee between them, so a build-time join would be unreliable even before
-considering that read-time is the doctrine default.
+guarantee between them, so no build-time ``link_to`` is used anywhere.
 
-Every source's own static coercion (int/float/bool casts, the composite
-``team_key`` join key, the per-owner ``calc_all`` rollups) lives in its own
-``conv_dict``, written inline in ``espn_league_history.py``'s ``stream_params``
-entries -- the domain-calc functions those ``conv_dict`` entries call are
-defined here and imported into the entry file, same split as
+Every source's own static coercion lives in its own ``conv_dict``, written
+inline in ``espn_league_history.py``'s ``stream_params`` entries -- the
+domain-calc functions those ``conv_dict`` entries call are defined here and
+imported into the entry file, same split as
 ``examples/09-nascar-fantasy-fjord/outflow.py``.
 """
 
@@ -62,12 +60,10 @@ def team_key(season: int, team_id: int | None) -> str | None:
     return f"{season}:{team_id}"
 
 
-def round2(x: float) -> float:
-    return round(x, 2)
-
-
-def round3(x: float) -> float:
-    return round(x, 3)
+def perspective_result(winner: str, side: str) -> str:
+    if winner not in ("HOME", "AWAY"):
+        return "T"
+    return "W" if winner == side.upper() else "L"
 
 
 def abs_diff(a: float, b: float) -> float:
@@ -75,11 +71,8 @@ def abs_diff(a: float, b: float) -> float:
 
 
 def win_pct_equiv(wins: int, losses: int, ties: int) -> float:
-    """Per-SEASON win rate, ties counted as half a win -- the definition
-    Records Book's best/worst-season kinds use. Distinct from
-    `win_pct_from_totals` (the all-time, ties-excluded rate Franchise Cards
-    sorts by) so the two views never publish different numbers under the
-    same field name."""
+    """Per-SEASON win rate (ties = half a win) -- Records Book's best/worst-
+    season kinds. Distinct from `win_pct_from_totals` (all-time, franchise cards)."""
     games = wins + losses + ties
     return (wins + 0.5 * ties) / games if games else 0.0
 
@@ -162,13 +155,8 @@ def all_play_broadcast(
 
 
 def make_streak_broadcast(target_result: str) -> Any:
-    """Factory: returns a `calc_all` reducer computing, for `target_result`
-    ("W" or "L"), the RUNNING consecutive-result count for each owner up
-    through that row -- chronological across every season. `owner_guids` is
-    TeamGame's own raw ``owner_guid`` string field (or `None`), stamped in
-    `espn_league_history.py`'s `main()` from a plain `team_key -> primaryOwner`
-    dict since `Standing` and `TeamGame` are sibling fjord sources with no
-    build-time ordering guarantee -- no `standing.owner` object to guard."""
+    """Factory: a `calc_all` reducer computing each owner's RUNNING
+    consecutive-`target_result` count, chronological across every season."""
 
     def broadcast(owner_guids: list[Any], seasons: list[int], weeks: list[int], results: list[str]) -> list[int]:
         order = [i for i, _ in sorted(enumerate(zip(seasons, weeks, strict=True)), key=operator.itemgetter(1))]
@@ -185,10 +173,6 @@ def make_streak_broadcast(target_result: str) -> Any:
     return broadcast
 
 
-def luck_delta(wins: int, ties: int, all_play_wins: float) -> float:
-    return round2(wins + 0.5 * ties - all_play_wins)
-
-
 def ppr_points_from_scoring(scoring_items: list[dict[str, Any]]) -> float:
     """`pointsOverrides` may be null OR the key entirely absent -- both
     guarded, plus the third branch (present WITH an override)."""
@@ -197,17 +181,6 @@ def ppr_points_from_scoring(scoring_items: list[dict[str, Any]]) -> float:
         return 0.0
     overrides = ppr_item.get("pointsOverrides") or {}
     return overrides.get("16", ppr_item.get("points", 0.0))
-
-
-def division_names_from_schedule(divisions: list[dict[str, Any]]) -> list[str]:
-    return [d.get("name", "") for d in divisions]
-
-
-def cookie_headers(espn_s2: str | None, espn_swid: str | None) -> dict[str, str]:
-    """Hand-rolled Cookie header -- `incorp()` has no native `cookies=` kwarg."""
-    if espn_s2 and espn_swid:
-        return {"Cookie": f"espn_s2={espn_s2}; SWID={espn_swid}"}
-    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -220,124 +193,51 @@ def cookie_headers(espn_s2: str | None, espn_swid: str | None) -> dict[str, str]
 
 class Season(Incorporator):
     """One ESPN league-season response -- modern dict-root or historical
-    list-root (`rec_path="0"`), same `conv_dict` either way. Re-registered a
-    fourth time as a `stream_params` entry (`payload_list=[s.model_dump(...)
-    for s in all_seasons]`) purely so `outflow(state)` can read
-    `state["Season"]` -- the pre-fjord discovery loop's own built rows aren't
-    otherwise visible inside the sidecar."""
+    list-root (`rec_path="0"`), same `conv_dict` either way."""
 
 
 class Owner(Incorporator):
     """One league member (GUID + display name), built network-free off every
-    season's `members` in ONE batched `payload_list=` call -- `inc_code="id"`
-    makes `Owner.inc_dict` the join every view resolves display names
-    against."""
+    season's `members` in ONE batched `payload_list=` call."""
 
 
 class Standing(Incorporator):
-    """One team's season-long record, built network-free off every season's
-    `teams` in ONE batched `payload_list=` call so `calc_all` can roll up
-    all-time owner aggregates across the whole history in one declarative
-    pass. `inc_code="team_key"` (a `"{season}:{team_id}"` composite -- a bare
-    team id repeats every season once seasons are batched together)."""
+    """One team's season-long record, batched network-free off every
+    season's `teams`. `inc_code="team_key"` (a `"{season}:{team_id}"` composite)."""
 
 
 class Matchup(Incorporator):
-    """One scheduled/played game, built network-free off every season's
-    `schedule` in ONE batched `payload_list=` call. `home`/`away` stay
-    nested (the framework's dynamic schema builder auto-promotes each into
-    an Optional submodel) -- a playoff bye (`home`-only, no `away` key)
-    surfaces as `m.away is None` directly, not an erased `0` sentinel."""
+    """One scheduled/played game, batched network-free off every season's
+    `schedule`. A playoff bye surfaces as `m.away is None`, not an erased sentinel."""
 
 
 class DraftPick(Incorporator):
-    """One draft pick, built network-free off every season's `draft_picks`
-    in ONE batched `payload_list=` call."""
+    """One draft pick, batched network-free off every season's `draft_picks`."""
 
 
 class PlayerName(Incorporator):
-    """Resolved player name + position. The ONE genuinely-networked fjord
-    source -- fanned out over every discovered season's `players_wl`
-    endpoint in ONE `incorp(inc_url=[...])` call, sharing one
-    `X-Fantasy-Filter` header carrying the union of every wanted player id
-    (round-1 picks + all-time top-N most-drafted); each season endpoint
-    resolves only the ids it recognises, `inc_code="id"` dedups the rest."""
+    """Resolved player name + position -- the ONE genuinely-networked fjord
+    source, fanned out over every season's `players_wl` endpoint."""
 
 
 class TeamGame(Incorporator):
-    """One row per team per DECIDED matchup (home perspective + away
-    perspective) -- the one unavoidable reshape, since ESPN ships matchups
-    as home/away pairs and every cross-row stat here (all-play expected
-    wins, win/loss streaks, single-week/margin records) is team-scoped.
-    Built network-free in `main()` off the RAW schedule dicts (never off
-    built `Matchup` instances -- `Matchup` is a sibling `stream_params`
-    entry with no ordering guarantee). `owner_guid`/`opponent_owner_guid`
-    are raw strings stamped from a `team_key -> primaryOwner` dict built off
-    `Standing`'s own raw payload rows in `main()`. `inc_code="team_key"`
-    lets Season Timeline read each team-season's broadcast all-play total
-    back via `TeamGame.inc_dict.get(...)`."""
-
-
-class FranchiseCard(Incorporator):
-    """All-time per-franchise rollup (view 1). Bare -- the returned dict's
-    keys are its export shape. `extra="allow"` is declared explicitly
-    (run-verified 2026-07-27): the fjord daemon's `flush()` calls
-    `derived_cls.model_validate(row)` directly on a pre-declared class with
-    no dynamic per-row schema union, so a bare class with pydantic's
-    default `extra="ignore"` silently drops every undeclared key -- unlike
-    the Tideweaver-Fjord-current path's dynamically-unioned schema."""
-
-    model_config = ConfigDict(extra="allow")
-
-
-class SeasonTimelineRow(Incorporator):
-    """One franchise-season (view 2). Bare, no `inc_code` -- owner+season is
-    a composite with no consumer that needs a lookup key. See
-    `FranchiseCard`'s docstring for why `extra="allow"` is declared here."""
-
-    model_config = ConfigDict(extra="allow")
-
-
-class RivalryRow(Incorporator):
-    """One franchise pair, all-time (view 3). Bare, no `inc_code` -- the pair
-    key is a plain Python tuple used only for aggregation. See
-    `FranchiseCard`'s docstring for why `extra="allow"` is declared here."""
-
-    model_config = ConfigDict(extra="allow")
+    """One row per team per DECIDED matchup (home + away perspective).
+    `inc_code="team_key"` lets Season Timeline read each team-season's
+    broadcast all-play total back via `TeamGame.inc_dict.get(...)`."""
 
 
 class RecordRow(Incorporator):
-    """One records-book entry, one of ten kinds (view 4). `value` is
-    declared explicitly: the ten kinds mix point/margin/ratio floats with
-    win/loss-streak game counts under one column, and the schema inferencer
-    types a bare field from its FIRST sampled row only
-    (`highest_single_week_score`'s float, here) -- silently widening every
-    later int (the streak kinds) to float. An explicit `int | float`
-    annotation opts `value` out of that single-sample inference so each row
-    keeps its own natural type. `extra="allow"` preserves every OTHER
-    field alongside it -- see `FranchiseCard`'s docstring. No `inc_code` --
-    `kind` is a plain field, not a synthesized PK."""
+    """One records-book entry (view 4) -- the one derived view pre-declared,
+    since its ten kinds share one `value` key across float and int kinds and
+    a bare class's schema inference types that key from its first row only
+    (run-verified 2026-07-29: `longest_win_streak` exported as `10.0`).
+    `extra="allow"` is required here (not inherited) -- declaring `value`
+    alone, without it, silently drops every other emitted field on
+    `model_validate` (run-verified 2026-07-29: `display_name`/`owner_guid`/
+    etc. vanished from the exported row)."""
 
     model_config = ConfigDict(extra="allow")
     value: int | float | None = None
-
-
-class DraftTendencyRow(Incorporator):
-    """One draft-tendency entry, one of three kinds (view 5). Bare, no
-    `inc_code` -- heterogeneous per-kind shape, list-scanned only. See
-    `FranchiseCard`'s docstring for why `extra="allow"` is declared here."""
-
-    model_config = ConfigDict(extra="allow")
-
-
-class SettingsRow(Incorporator):
-    """One season's league settings snapshot (view 6). Bare -- built fresh
-    from only the 8 wanted fields inside `outflow()`, so there's no raw ESPN
-    settings blob to drop before export (unlike the pre-fjord `conv_dict`
-    version, which had to null it out after drilling into it). See
-    `FranchiseCard`'s docstring for why `extra="allow"` is declared here."""
-
-    model_config = ConfigDict(extra="allow")
 
 
 # ---------------------------------------------------------------------------
@@ -348,9 +248,9 @@ class SettingsRow(Incorporator):
 def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Return-twin of the original pipeline's six view-building blocks --
     reads `state["Season"|"Owner"|"Standing"|"Matchup"|"DraftPick"|
-    "PlayerName"|"TeamGame"]` directly instead of closed-over `all_*`
-    variables. Every cross-class join is `PeerClass.inc_dict.get(key)`,
-    read-time, against the live snapshot `fjord()` hands this function."""
+    "PlayerName"|"TeamGame"]` directly. Every cross-class join is
+    `PeerClass.inc_dict.get(key)`, read-time, against the live snapshot
+    `fjord()` hands this function."""
     seasons = state.get("Season")
     owners = state.get("Owner")
     standings = state.get("Standing")
@@ -385,16 +285,16 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "wins": s.owner_wins_total,
                 "losses": s.owner_losses_total,
                 "ties": s.owner_ties_total,
-                "win_pct": round3(s.owner_win_pct),
-                "points_for": round2(s.owner_points_for_total),
-                "points_against": round2(s.owner_points_against_total),
+                "win_pct": round(s.owner_win_pct, 3),
+                "points_for": round(s.owner_points_for_total, 2),
+                "points_against": round(s.owner_points_against_total, 2),
                 "seasons_played": s.owner_seasons_played,
-                "average_finish": round2(s.owner_average_finish),
+                "average_finish": round(s.owner_average_finish, 2),
                 "championships": s.owner_championships,
                 "runner_ups": s.owner_runner_ups,
                 "last_places": s.owner_last_places_total,
                 "playoff_appearances": appearances,
-                "playoff_rate": round3(appearances / s.owner_seasons_played if s.owner_seasons_played else 0.0),
+                "playoff_rate": round(appearances / s.owner_seasons_played if s.owner_seasons_played else 0.0, 3),
             }
         )
 
@@ -421,8 +321,8 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "ties": s.ties,
                 "points_for": s.points_for,
                 "points_against": s.points_against,
-                "all_play_expected_wins": round2(all_play),
-                "luck_delta": luck_delta(s.wins, s.ties, all_play),
+                "all_play_expected_wins": round(all_play, 2),
+                "luck_delta": round(s.wins + 0.5 * s.ties - all_play, 2),
             }
         )
 
@@ -501,11 +401,11 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             "wins_a": stat["wins_a"],
             "wins_b": stat["wins_b"],
             "playoff_meetings": stat["playoff_meetings"],
-            "biggest_blowout_margin": round2(stat["biggest_blowout_margin"]),
+            "biggest_blowout_margin": round(stat["biggest_blowout_margin"], 2),
             "biggest_blowout_season": stat["biggest_blowout_season"],
             "biggest_blowout_week": stat["biggest_blowout_week"],
             "closest_game_margin": (
-                round2(stat["closest_game_margin"]) if stat["closest_game_margin"] is not None else None
+                round(stat["closest_game_margin"], 2) if stat["closest_game_margin"] is not None else None
             ),
             "closest_game_season": stat["closest_game_season"],
             "closest_game_week": stat["closest_game_week"],
@@ -523,7 +423,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         records_book.append(
             {
                 "kind": kind,
-                "value": round2(value),
+                "value": round(value, 2),
                 "owner_guid": owner_guid,
                 "display_name": owner_obj.display_name if owner_obj else "Unknown",
                 "season": season,
@@ -567,7 +467,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             biggest.owner_guid,
             biggest.season,
             biggest.week,
-            f"beat {_opponent_name(biggest)} by {round2(biggest.margin)}",
+            f"beat {_opponent_name(biggest)} by {round(biggest.margin, 2)}",
         )
         narrowest = min(winner_games, key=operator.attrgetter("margin"))
         _record(
@@ -576,7 +476,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             narrowest.owner_guid,
             narrowest.season,
             narrowest.week,
-            f"beat {_opponent_name(narrowest)} by {round2(narrowest.margin)}",
+            f"beat {_opponent_name(narrowest)} by {round(narrowest.margin, 2)}",
         )
 
     played_standings = [s for s in standings if (s.wins + s.losses + s.ties) > 0]
@@ -711,7 +611,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         schedule_settings = raw_settings.get("scheduleSettings") or {}
         roster_settings = raw_settings.get("rosterSettings") or {}
         scoring_settings = raw_settings.get("scoringSettings") or {}
-        division_names = division_names_from_schedule(schedule_settings.get("divisions", []))
+        division_names = [d.get("name", "") for d in schedule_settings.get("divisions", [])]
         settings_evolution.append(
             {
                 "season": s.season,
