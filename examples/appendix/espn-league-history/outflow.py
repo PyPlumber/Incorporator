@@ -9,11 +9,18 @@ view classes are NOT pre-declared here; fjord builds a dynamic class per
 returned dict key and infers its schema from the emitted rows. ``RecordRow``
 is the one exception -- see its own docstring below.
 
-Every cross-class join resolves HERE, read-time, against the live snapshot
-``fjord()`` hands ``outflow(state)`` each wave -- ``state["Peer"].inc_dict.get(key)``
-(the ``cls.fjord()`` daemon path). ``Standing``/``Matchup``/``DraftPick``/
-``TeamGame`` are sibling ``stream_params`` entries seeded with no ordering
-guarantee between them, so no build-time ``link_to`` is used anywhere.
+Every value a source's OWN ``conv_dict`` can already compute -- canonical
+rivalry a/b orientation on ``Matchup``, export-precision rounding, ``Season``'s
+settings-evolution fields, ``TeamGame.luck_delta`` -- is computed there, at
+``incorp()`` time, not here. What's left for ``outflow(state)`` are the joins
+that genuinely need read-time resolution (an owner GUID resolved to
+``Owner.display_name`` -- ``Owner`` is a sibling ``stream_params`` entry with
+no seeding-order guarantee relative to the sources that reference its GUIDs,
+so no build-time ``link_to`` is used anywhere) and the per-row-count-changing
+folds a ``conv_dict`` cannot express at all: rivalry-pair accumulation, the
+records-book max/min selections, and draft position-mix counts. Every
+cross-class join here reads ``state["Peer"].inc_dict.get(key)`` (the
+``cls.fjord()`` daemon path).
 
 Every source's own static coercion lives in its own ``conv_dict``, written
 inline in ``espn_league_history.py``'s ``stream_params`` entries -- the
@@ -46,6 +53,16 @@ TOP_N_MOST_DRAFTED = 15
 # ---------------------------------------------------------------------------
 
 
+def round2(value: Any) -> float:
+    """`target_type=` accepts any 1-arg callable, not just a `type` --
+    export precision belongs where a value is COMPUTED, not where it's read."""
+    return round(float(value), 2)
+
+
+def round3(value: Any) -> float:
+    return round(float(value), 3)
+
+
 def position_name(position_id: int) -> str:
     return POSITION_MAP.get(position_id, f"POS_{position_id}")
 
@@ -68,6 +85,49 @@ def perspective_result(winner: str, side: str) -> str:
 
 def abs_diff(a: float, b: float) -> float:
     return abs(a - b)
+
+
+def _away_is_a(home_owner_guid: str | None, away_owner_guid: str | None) -> bool:
+    """Canonical rivalry orientation: the alphabetically-lower owner GUID is
+    always side "a" -- `owner_home.id < owner_away.id`'s old read-time
+    comparison, moved to build time. `away_owner_guid` is `None` on a
+    playoff bye, which always sorts "a" to home."""
+    return away_owner_guid is not None and away_owner_guid < home_owner_guid
+
+
+def canonical_owner_a(home_owner_guid: str | None, away_owner_guid: str | None) -> str | None:
+    return away_owner_guid if _away_is_a(home_owner_guid, away_owner_guid) else home_owner_guid
+
+
+def canonical_owner_b(home_owner_guid: str | None, away_owner_guid: str | None) -> str | None:
+    return home_owner_guid if _away_is_a(home_owner_guid, away_owner_guid) else away_owner_guid
+
+
+def canonical_score_a(
+    home_owner_guid: str | None, away_owner_guid: str | None, home_points: float | None, away_points: float | None
+) -> float:
+    points = away_points if _away_is_a(home_owner_guid, away_owner_guid) else home_points
+    return points if points is not None else 0.0
+
+
+def canonical_score_b(
+    home_owner_guid: str | None, away_owner_guid: str | None, home_points: float | None, away_points: float | None
+) -> float:
+    """Always returns a real float, never `None` -- a playoff bye's missing
+    away side must not reach `abs_diff` as `None`: `calc()`'s garbage
+    short-circuit only fires when EVERY input is garbage, and here
+    `home_owner_guid`/`home_points` are real, so `func` still runs and a
+    `None` return would raise `TypeError` inside `margin`'s `abs_diff`."""
+    points = home_points if _away_is_a(home_owner_guid, away_owner_guid) else away_points
+    return points if points is not None else 0.0
+
+
+def canonical_a_won(home_owner_guid: str | None, away_owner_guid: str | None, winner: str) -> bool:
+    return winner == "AWAY" if _away_is_a(home_owner_guid, away_owner_guid) else winner == "HOME"
+
+
+def luck_delta_fn(wins: int, ties: int, all_play_expected_wins: float) -> float:
+    return wins + 0.5 * ties - all_play_expected_wins
 
 
 def win_pct_equiv(wins: int, losses: int, ties: int) -> float:
@@ -183,17 +243,58 @@ def ppr_points_from_scoring(scoring_items: list[dict[str, Any]]) -> float:
     return overrides.get("16", ppr_item.get("points", 0.0))
 
 
+def division_names_from_raw(divisions: list[dict[str, Any]]) -> list[str]:
+    return [d.get("name", "") for d in divisions]
+
+
+def roster_slots_from_raw(lineup_slot_counts: dict[str, Any]) -> dict[str, int]:
+    """`None`-filtered passthrough, not just `dict(...)`.
+
+    This conv_dict entry re-runs a SECOND time when `Season` reseeds the
+    fjord from `payload_list=[s.model_dump(...) for s in all_seasons]` --
+    at that point its source, `settings.rosterSettings.lineupSlotCounts`, no
+    longer comes from raw ESPN JSON but from a Season instance's own
+    reconstructed `settings` field (still schema-inferred, since only
+    `roster_slots` itself is declared, not `settings`). When two seasons in
+    the SAME `incorp()` batch have different key sets at that nested path,
+    `infer_dynamic_schema`'s cross-record sample union
+    (`incorporator/schema/builder.py:395-427`) builds ONE shared schema from
+    whichever record's keys got sampled first, and back-fills the other
+    season's missing keys with `None` on `model_dump()` (run-verified
+    2026-07-30: a 3-key season sharing a batch with an 8-key season came
+    back with the 5 extra keys present as `None`, not absent). Declaring
+    `Season.roster_slots: dict[str, int]` (not `int | None`) then rejects
+    those `None`s outright. Filtering here keeps every season's true key
+    set intact through both passes."""
+    return {k: v for k, v in lineup_slot_counts.items() if v is not None}
+
+
 # ---------------------------------------------------------------------------
 # Source classes -- each fjord source needs its own subclass; none carries a
-# build-time link_to now (every cross-class join is read-time, in outflow()
-# below). Field declarations here would silently coerce types, so every
-# source's own conv_dict (in espn_league_history.py) owns coercion instead.
+# build-time link_to (every cross-class join is read-time, in outflow()
+# below -- Owner is a sibling stream_params entry with no seeding-order
+# guarantee). Field declarations here would silently coerce types, so every
+# source's own conv_dict (in espn_league_history.py) owns coercion instead --
+# `Season.roster_slots` below is the one deliberate exception.
 # ---------------------------------------------------------------------------
 
 
 class Season(Incorporator):
     """One ESPN league-season response -- modern dict-root or historical
-    list-root (`rec_path="0"`), same `conv_dict` either way."""
+    list-root (`rec_path="0"`), same `conv_dict` either way.
+
+    `roster_slots` is declared (not left to schema inference) because its
+    source, `settings.rosterSettings.lineupSlotCounts`, is a dict keyed by
+    digit strings ("0", "2", "20", ...). `infer_dynamic_schema` promotes any
+    undeclared dict-valued field into a nested submodel
+    (`incorporator/schema/builder.py:453-455`), and that submodel's field
+    names run through `sanitize_json_key`'s digit-prefix rescue, mangling
+    "0" into "field_0" (run-verified 2026-07-30). Declaring the field here
+    skips inference entirely (`builder.py:450-451`'s `base_class.model_fields`
+    check) so the dict's keys survive untouched -- same escape hatch as
+    `RecordRow.value` below."""
+
+    roster_slots: dict[str, int] | None = None
 
 
 class Owner(Incorporator):
@@ -208,7 +309,10 @@ class Standing(Incorporator):
 
 class Matchup(Incorporator):
     """One scheduled/played game, batched network-free off every season's
-    `schedule`. A playoff bye surfaces as `m.away is None`, not an erased sentinel."""
+    `schedule`. A playoff bye surfaces as `m.away is None`, not an erased
+    sentinel. `owner_a`/`owner_b`/`score_a`/`score_b`/`a_won`/`margin` are the
+    rivalry view's canonical home/away-independent orientation, built once
+    here instead of per-row inside outflow()'s rivalry fold."""
 
 
 class DraftPick(Incorporator):
@@ -223,7 +327,8 @@ class PlayerName(Incorporator):
 class TeamGame(Incorporator):
     """One row per team per DECIDED matchup (home + away perspective).
     `inc_code="team_key"` lets Season Timeline read each team-season's
-    broadcast all-play total back via `TeamGame.inc_dict.get(...)`."""
+    broadcast all-play total and luck delta back via
+    `TeamGame.inc_dict.get(...)`."""
 
 
 class RecordRow(Incorporator):
@@ -264,20 +369,38 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     # ════════════════════════════════════════════════════════════════
     # View 1 — Franchise Cards
     # ════════════════════════════════════════════════════════════════
-    playoff_by_owner: dict[str, set[int]] = defaultdict(set)
+    # Playoff-appearance count-distinct: Matchup already carries owner_a/
+    # owner_b (build-time, canonical orientation) so this needs no Standing
+    # lookup at all -- and reuses count_distinct_by_group (the same calc_all
+    # broadcast standing_conv_dict already uses for owner_seasons_played)
+    # as a plain function call instead of a hand-rolled defaultdict(set) fold.
+    playoff_owner_seasons: list[str] = []
+    playoff_season_values: list[int] = []
     for m in matchups or []:
         if m.playoffTierType != "WINNERS_BRACKET":
             continue
-        for tk in (m.home_team_key, m.away_team_key):
-            st = standings.inc_dict.get(tk) if tk else None
-            if st and st.primaryOwner:
-                playoff_by_owner[st.primaryOwner].add(m.season)
+        for owner_guid in (m.home_owner_guid, m.away_owner_guid):
+            if owner_guid:
+                playoff_owner_seasons.append(owner_guid)
+                playoff_season_values.append(m.season)
+    playoff_by_owner_count = dict(
+        zip(playoff_owner_seasons, count_distinct_by_group(playoff_owner_seasons, playoff_season_values), strict=True)
+    )
 
+    # owner_wins_total/losses/ties/points_for/points_against/seasons_played/
+    # average_finish/championships/runner_ups/last_places are all verbatim
+    # calc_all outputs already computed by standing_conv_dict -- this view
+    # only reads them, no re-derivation and no read-time rounding (win_pct
+    # and points already carry their export precision from the source
+    # conv_dict; playoff_rate is the one ratio that genuinely can't move
+    # upstream, since its two inputs -- the Matchup fold above and Standing's
+    # own calc_all -- live on different sources with no safe one-directional
+    # build-time ordering between them).
     last_standing_by_owner = {s.primaryOwner: s for s in standings if s.primaryOwner}
     franchise_cards: list[dict[str, Any]] = []
     for owner_guid, s in last_standing_by_owner.items():
         owner_obj = owners.inc_dict.get(owner_guid)
-        appearances = len(playoff_by_owner.get(owner_guid, set()))
+        appearances = playoff_by_owner_count.get(owner_guid, 0)
         franchise_cards.append(
             {
                 "owner_guid": owner_guid,
@@ -285,11 +408,11 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "wins": s.owner_wins_total,
                 "losses": s.owner_losses_total,
                 "ties": s.owner_ties_total,
-                "win_pct": round(s.owner_win_pct, 3),
-                "points_for": round(s.owner_points_for_total, 2),
-                "points_against": round(s.owner_points_against_total, 2),
+                "win_pct": s.owner_win_pct,
+                "points_for": s.owner_points_for_total,
+                "points_against": s.owner_points_against_total,
                 "seasons_played": s.owner_seasons_played,
-                "average_finish": round(s.owner_average_finish, 2),
+                "average_finish": s.owner_average_finish,
                 "championships": s.owner_championships,
                 "runner_ups": s.owner_runner_ups,
                 "last_places": s.owner_last_places_total,
@@ -305,7 +428,6 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     for s in standings:
         owner_obj = owners.inc_dict.get(s.primaryOwner) if s.primaryOwner else None
         tg = team_games.inc_dict.get(s.team_key) if team_games else None
-        all_play = tg.all_play_expected_wins if tg else 0.0
         season_timeline.append(
             {
                 "owner_guid": s.primaryOwner,
@@ -321,49 +443,30 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "ties": s.ties,
                 "points_for": s.points_for,
                 "points_against": s.points_against,
-                "all_play_expected_wins": round(all_play, 2),
-                "luck_delta": round(s.wins + 0.5 * s.ties - all_play, 2),
+                "all_play_expected_wins": tg.all_play_expected_wins if tg else 0.0,
+                "luck_delta": tg.luck_delta if tg else 0.0,
             }
         )
 
     # ════════════════════════════════════════════════════════════════
     # View 3 — Rivalry Matrix
     # ════════════════════════════════════════════════════════════════
+    # Matchup already carries the canonical a/b orientation (owner_a/owner_b/
+    # score_a/score_b/a_won/margin -- build-time, home/away-independent), so
+    # this fold is now a plain reduction over already-rounded fields; no
+    # per-row home/away swap. max/min of pre-rounded (2dp) values equals
+    # round(max/min(raw), 2) since rounding is monotonic.
     pairs: dict[tuple[str, str], dict[str, Any]] = {}
     for m in matchups or []:
-        if m.winner == "UNDECIDED":
+        if m.winner == "UNDECIDED" or m.owner_a is None or m.owner_b is None or m.owner_a == m.owner_b:
             continue
-        home_standing = standings.inc_dict.get(m.home_team_key) if m.home_team_key else None
-        away_standing = standings.inc_dict.get(m.away_team_key) if m.away_team_key else None
-        if not home_standing or not away_standing:
-            continue
-        owner_home = owners.inc_dict.get(home_standing.primaryOwner) if home_standing.primaryOwner else None
-        owner_away = owners.inc_dict.get(away_standing.primaryOwner) if away_standing.primaryOwner else None
-        if not owner_home or not owner_away or owner_home.id == owner_away.id:
-            continue
-
-        if owner_home.id < owner_away.id:
-            owner_a, owner_b, score_a, score_b, a_won = (
-                owner_home,
-                owner_away,
-                m.home.totalPoints,
-                m.away.totalPoints,
-                (m.winner == "HOME"),
-            )
-        else:
-            owner_a, owner_b, score_a, score_b, a_won = (
-                owner_away,
-                owner_home,
-                m.away.totalPoints,
-                m.home.totalPoints,
-                (m.winner == "AWAY"),
-            )
-
+        owner_a_obj = owners.inc_dict.get(m.owner_a)
+        owner_b_obj = owners.inc_dict.get(m.owner_b)
         stat = pairs.setdefault(
-            (owner_a.id, owner_b.id),
+            (m.owner_a, m.owner_b),
             {
-                "display_name_a": owner_a.display_name,
-                "display_name_b": owner_b.display_name,
+                "display_name_a": owner_a_obj.display_name if owner_a_obj else "Unknown",
+                "display_name_b": owner_b_obj.display_name if owner_b_obj else "Unknown",
                 "meetings": 0,
                 "wins_a": 0,
                 "wins_b": 0,
@@ -377,17 +480,15 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             },
         )
         stat["meetings"] += 1
-        stat["wins_a" if a_won else "wins_b"] += 1
+        stat["wins_a" if m.a_won else "wins_b"] += 1
         if m.playoffTierType != "NONE":
             stat["playoff_meetings"] += 1
-
-        margin = abs(score_a - score_b)
-        if margin > stat["biggest_blowout_margin"]:
-            stat["biggest_blowout_margin"] = margin
+        if m.margin > stat["biggest_blowout_margin"]:
+            stat["biggest_blowout_margin"] = m.margin
             stat["biggest_blowout_season"] = m.season
             stat["biggest_blowout_week"] = m.matchupPeriodId
-        if stat["closest_game_margin"] is None or margin < stat["closest_game_margin"]:
-            stat["closest_game_margin"] = margin
+        if stat["closest_game_margin"] is None or m.margin < stat["closest_game_margin"]:
+            stat["closest_game_margin"] = m.margin
             stat["closest_game_season"] = m.season
             stat["closest_game_week"] = m.matchupPeriodId
 
@@ -401,12 +502,10 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             "wins_a": stat["wins_a"],
             "wins_b": stat["wins_b"],
             "playoff_meetings": stat["playoff_meetings"],
-            "biggest_blowout_margin": round(stat["biggest_blowout_margin"], 2),
+            "biggest_blowout_margin": stat["biggest_blowout_margin"],
             "biggest_blowout_season": stat["biggest_blowout_season"],
             "biggest_blowout_week": stat["biggest_blowout_week"],
-            "closest_game_margin": (
-                round(stat["closest_game_margin"], 2) if stat["closest_game_margin"] is not None else None
-            ),
+            "closest_game_margin": stat["closest_game_margin"],
             "closest_game_season": stat["closest_game_season"],
             "closest_game_week": stat["closest_game_week"],
         }
@@ -419,11 +518,15 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     records_book: list[dict[str, Any]] = []
 
     def _record(kind: str, value: Any, owner_guid: Any, season: int | None, week: int | None, detail: str) -> None:
+        # No round() here: every value passed in already carries its export
+        # precision from the source conv_dict that produced it (score/margin/
+        # win_pct_equiv/points_for are all round2 at build time; streak
+        # counts are plain ints).
         owner_obj = owners.inc_dict.get(owner_guid) if owner_guid else None
         records_book.append(
             {
                 "kind": kind,
-                "value": round(value, 2),
+                "value": value,
                 "owner_guid": owner_guid,
                 "display_name": owner_obj.display_name if owner_obj else "Unknown",
                 "season": season,
@@ -467,7 +570,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             biggest.owner_guid,
             biggest.season,
             biggest.week,
-            f"beat {_opponent_name(biggest)} by {round(biggest.margin, 2)}",
+            f"beat {_opponent_name(biggest)} by {biggest.margin}",
         )
         narrowest = min(winner_games, key=operator.attrgetter("margin"))
         _record(
@@ -476,7 +579,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             narrowest.owner_guid,
             narrowest.season,
             narrowest.week,
-            f"beat {_opponent_name(narrowest)} by {round(narrowest.margin, 2)}",
+            f"beat {_opponent_name(narrowest)} by {narrowest.margin}",
         )
 
     played_standings = [s for s in standings if (s.wins + s.losses + s.ties) > 0]
@@ -544,22 +647,22 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     # ════════════════════════════════════════════════════════════════
     # View 5 — Draft Tendencies (three kinds)
     # ════════════════════════════════════════════════════════════════
+    # p.owner_guid is threaded onto the pick row upstream (same
+    # owner_by_team_key_raw pattern as Matchup's home/away_owner_guid), so
+    # this needs no Standing lookup for the join -- only the read-time Owner
+    # display-name resolution remains, since Owner is a sibling
+    # stream_params entry with no seeding-order guarantee.
     draft_tendencies: list[dict[str, Any]] = []
     position_counts: dict[tuple[str, str], int] = defaultdict(int)
-    owner_by_pair: dict[str, Any] = {}
     for p in draft_picks or []:
-        if p.roundId != 1:
+        if p.roundId != 1 or not p.owner_guid:
             continue
-        standing = standings.inc_dict.get(p.team_key) if p.team_key else None
-        if not standing or not standing.primaryOwner:
-            continue
-        owner_by_pair[standing.primaryOwner] = owners.inc_dict.get(standing.primaryOwner)
         player = player_names.inc_dict.get(p.playerId) if player_names else None
         position = player.position if player else "UNKNOWN"
-        position_counts[(standing.primaryOwner, position)] += 1
+        position_counts[(p.owner_guid, position)] += 1
 
     for (owner_guid, position), count in position_counts.items():
-        owner_obj = owner_by_pair.get(owner_guid)
+        owner_obj = owners.inc_dict.get(owner_guid)
         draft_tendencies.append(
             {
                 "kind": "round1_position_mix",
@@ -587,14 +690,13 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     for p in draft_picks or []:
         if p.overallPickNumber != 1:
             continue
-        standing = standings.inc_dict.get(p.team_key) if p.team_key else None
-        owner_obj = owners.inc_dict.get(standing.primaryOwner) if standing and standing.primaryOwner else None
+        owner_obj = owners.inc_dict.get(p.owner_guid) if p.owner_guid else None
         player = player_names.inc_dict.get(p.playerId) if player_names else None
         draft_tendencies.append(
             {
                 "kind": "first_overall",
                 "season": p.season,
-                "owner_guid": standing.primaryOwner if standing else None,
+                "owner_guid": p.owner_guid,
                 "display_name": owner_obj.display_name if owner_obj else "Unknown",
                 "player_id": p.playerId,
                 "player_name": player.fullName if player else "Unknown",
@@ -605,25 +707,22 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     # ════════════════════════════════════════════════════════════════
     # View 6 — Settings Evolution
     # ════════════════════════════════════════════════════════════════
-    settings_evolution: list[dict[str, Any]] = []
-    for s in seasons:
-        raw_settings = s.settings.model_dump(by_alias=True)
-        schedule_settings = raw_settings.get("scheduleSettings") or {}
-        roster_settings = raw_settings.get("rosterSettings") or {}
-        scoring_settings = raw_settings.get("scoringSettings") or {}
-        division_names = [d.get("name", "") for d in schedule_settings.get("divisions", [])]
-        settings_evolution.append(
-            {
-                "season": s.season,
-                "league_size": len(s.teams),
-                "playoff_team_count": schedule_settings.get("playoffTeamCount", 0),
-                "playoff_seeding_rule": schedule_settings.get("playoffSeedingRule", ""),
-                "ppr_points": ppr_points_from_scoring(scoring_settings.get("scoringItems", [])),
-                "division_names": division_names,
-                "division_count": len(division_names),
-                "roster_slots": roster_settings.get("lineupSlotCounts", {}),
-            }
-        )
+    # Every field here is now a build-time Season conv_dict output -- no
+    # model_dump()/raw-dict digging, just a dict-literal projection (the same
+    # shape as every other view's row-building).
+    settings_evolution = [
+        {
+            "season": s.season,
+            "league_size": s.league_size,
+            "playoff_team_count": s.playoff_team_count,
+            "playoff_seeding_rule": s.playoff_seeding_rule,
+            "ppr_points": s.ppr_points,
+            "division_names": s.division_names,
+            "division_count": s.division_count,
+            "roster_slots": s.roster_slots,
+        }
+        for s in seasons
+    ]
 
     return {
         "FranchiseCard": franchise_cards,

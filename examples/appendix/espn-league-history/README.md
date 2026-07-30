@@ -214,26 +214,44 @@ list of submodel instances, not plain dicts, by the time `main()` reads it.
 `t.model_dump(by_alias=True)` flattens each back to a plain dict before the
 `payload_list=` handoff. `by_alias=True` matters specifically for
 `rosterSettings.lineupSlotCounts`: its keys are numeric STRINGS (`"0"`,
-`"2"`, ..., `"23"`), and the auto-promoted submodel sanitizes those into
-Python attribute names (`field_0`, `field_2`, ...) -- `model_dump(by_alias=
-True)` exports the ORIGINAL string keys instead of the sanitized attribute
-names. `outflow.py`'s `SettingsRow` builder reads `roster_slots` straight
-off `season.settings.model_dump(by_alias=True)["rosterSettings"]
-["lineupSlotCounts"]`, never its own `Incorporator` row class (a row class
-with numeric-string field names would crash schema inference).
+`"2"`, ..., `"23"`), and an UNDECLARED dict-valued field's auto-promoted
+submodel sanitizes those into Python attribute names (`field_0`, `field_2`,
+...). `Season.roster_slots` sidesteps this entirely by being a DECLARED
+field (`dict[str, int] | None`) on the `Season` class itself --
+`infer_dynamic_schema` skips inference for any field already present on the
+base class, so the dict's original string keys survive untouched. Its
+`season_conv_dict` entry drills the raw `settings.rosterSettings.
+lineupSlotCounts` path directly (`calc(roster_slots_from_raw, ...)`), never
+touching the `settings` field's own (still-inferred, still key-mangled)
+submodel. `roster_slots_from_raw` does one more thing beyond a plain
+`dict(...)` copy: `Season` reseeds a SECOND time when the fjord builds its
+own `payload_list=[s.model_dump(...) for s in all_seasons]`, and at that
+point this conv_dict entry's source is the (still-undeclared) `settings`
+field's OWN reconstructed value, not the raw ESPN payload -- when two
+seasons sharing that batch have different `lineupSlotCounts` key sets,
+`infer_dynamic_schema`'s cross-record sample union builds one shared schema
+from whichever season sampled first and back-fills the other's missing keys
+with `None` on dump (see `roster_slots_from_raw`'s own docstring). Filtering
+those `None`s out keeps every season's true key set intact through both
+passes.
 
 A bare ESPN `team.id` repeats every season -- once every season's `Standing`
 rows share one fjord source, a bare `id` would collide in `inc_dict`.
 `team_key(season, team_id)` synthesizes a `"{season}:{team_id}"` composite
 join key via `calc()`, and `Standing`'s `inc_code="team_key"` makes that
-composite the registry key every downstream READ-TIME join resolves
-against, inside `outflow.py`'s `outflow(state)`
-(`standings.inc_dict.get(m.home_team_key)` for a matchup's home side,
-`standings.inc_dict.get(p.team_key)` for a draft pick's team, and so on).
-`Standing`/`Matchup`/`DraftPick`/`TeamGame` are sibling `stream_params`
-entries seeded with no ordering guarantee between them, so every
-cross-class join happens read-time in `outflow(state)`, not build-time via
-`link_to` -- see that file's own module docstring.
+composite the registry key `main()`'s own pre-fjord Python uses to thread
+each team's owner GUID onto its sibling schedule/pick/team-game rows (the
+SAME `owner_by_team_key_raw` / `standing_by_team_key` lookups, built once
+right after `all_team_rows`), so `Matchup`'s and `DraftPick`'s own
+`conv_dict`s can build their canonical, home/away-independent join fields
+(`owner_a`/`owner_b`/`score_a`/`score_b`/`a_won`/`margin` on `Matchup`;
+`owner_guid` on `DraftPick`) at `incorp()` time instead of re-deriving them
+read-time against `Standing`. What's left for `outflow.py`'s `outflow(state)`
+is the join that genuinely can't move upstream -- an owner GUID resolved to
+`Owner.display_name` (`owners.inc_dict.get(owner_guid)`) -- since `Owner` is
+a sibling `stream_params` entry with no seeding-order guarantee relative to
+the sources that reference its GUIDs, so no build-time `link_to` is used
+anywhere; see that file's own module docstring.
 
 **`Standing` and `Matchup` are built TWICE, the same two-phase pattern
 `Season` itself already uses**: once pre-fjord in `main()` (typed instances,
@@ -242,14 +260,19 @@ sources so `outflow(state)` can read `state["Standing"]` / `state["Matchup"]`.
 The pre-fjord build exists so `TeamGame`'s raw payload rows can be
 constructed by TRAVERSING typed submodels (`m.home`/`m.away`, each an
 auto-promoted `Optional` submodel with a real `.totalPoints` attribute, and
-`m.away is None` on a playoff bye) instead of raw-dict `.get()` chains. The
-home/away perspective split is DATA, not control flow: one loop iterates a
-2-tuple of `(side, team, opponent, team_key, opponent_key)` and appends one
-row per perspective, skipping the away perspective when `team is None` (the
-playoff-bye case). `TeamGame`'s own `conv_dict` derives the `"W"/"L"/"T"`
-`result` field via a single `calc(perspective_result, "winner", "side", ...)`
-entry shared by both perspectives, instead of an inline ternary duplicated
-per append.
+`m.away is None` on a playoff bye) instead of raw-dict `.get()` chains, and
+so `Matchup`'s canonical a/b fields can be threaded the owner GUID they need
+before `Matchup.incorp()` even runs. The home/away perspective split is
+DATA, not control flow: one loop iterates a 2-tuple of `(side, team,
+opponent, team_key, opponent_key)` and appends one row per perspective,
+skipping the away perspective when `team is None` (the playoff-bye case).
+`TeamGame`'s own `conv_dict` derives the `"W"/"L"/"T"` `result` field via a
+single `calc(perspective_result, "winner", "side", ...)` entry shared by
+both perspectives, instead of an inline ternary duplicated per append, and
+its `luck_delta` field (per-team-season wins above/below all-play expected
+wins) is likewise a build-time `calc()` reading `team_wins`/`team_ties`
+(threaded onto the row the same way) against its own
+`all_play_expected_wins` calc_all output.
 
 ## 7. Player names: one shared fan-out, not two passes
 
