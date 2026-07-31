@@ -452,12 +452,12 @@ When the `inflow.py` sidecar defines a top-level `inflow(state)` callable, fjord
 4. **Return shape.** `dict[str, dict[str, Any]]` — a per-class kwarg overlay merged into that source's `incorp_params` just before seeding. Outer key = source class name; inner dict = kwargs to overlay (e.g. `inc_url`, `conv_dict`).
 5. **Failure mode.** An unguarded `KeyError` (or any exception) inside `inflow(state)` aborts the pipeline and emits a `fjord_incorp:<source>` wave whose `failed_sources` carries the exception's `str()`. The remaining sources never seed.
 
-**Output classes are always built by the framework — don't pre-declare them in the outflow sidecar.**
+**Output classes are built by the framework — pre-declaring them in the outflow sidecar is optional.**
 
 * **Single-output** (`outflow(state) -> list[dict]`): one dynamic class is built, named after the **outflow file's stem** in PascalCase. Fields are inferred from the returned rows.
 * **Multi-output** (`outflow(state) -> dict[ClassName, list[dict]]`): one dynamic class per dict key, named exactly that key. Fields inferred per output.
 
-Declaring a bare `class FantasyTeam(Incorporator): pass` in the outflow file *suppresses* field inference — the framework reuses your declared class and Pydantic silently drops every row field that isn't on it. Only pre-declare an output class when you want **full type control** with explicit field declarations; otherwise let the framework build the dynamic class.
+Declaring a bare `class FantasyTeam(Incorporator): pass` in the outflow file behaves exactly like a bare *source* class does under `incorp()`: the framework infers the schema from the returned rows and builds a subclass of your declared class, so every row field is kept and the built instances are reachable through `FantasyTeam.inc_dict` after the run — no field is silently dropped. Pre-declare an output class either for the DX of a named handle to read results back through, or when you want **full type control** with explicit field declarations (which suppresses inference entirely and validates rows against exactly the fields you declared, dropping anything else per Pydantic's default `extra='ignore'`).
 
 **Navigating `state` inside `outflow(state)`:**
 

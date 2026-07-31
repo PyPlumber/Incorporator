@@ -101,6 +101,33 @@ def outflow(state):
     return []
 """
 
+BARE_CLASS_OUTFLOW_SOURCE = '''
+from incorporator import Incorporator
+
+
+class CoinMarket(Incorporator):
+    pass
+
+
+def outflow(state):
+    """Join Coin spot prices with BinanceFutures prices by symbol/id."""
+    coins = state["Coin"]
+    futures = state["BinanceFutures"]
+    rows = []
+    for c in coins:
+        f = futures.inc_dict.get(c.inc_code)
+        if f is None:
+            continue
+        rows.append({
+            "inc_code": c.inc_code,
+            "coin_name": getattr(c, "name", ""),
+            "spot_price": getattr(c, "current_price", 0.0),
+            "futures_price": getattr(f, "price", 0.0),
+            "spread": getattr(f, "price", 0.0) - getattr(c, "current_price", 0.0),
+        })
+    return rows
+'''
+
 
 def _write_outflow(tmp_path: Path, source: str = OUTFLOW_SOURCE, filename: str = "coin_market.py") -> Path:
     p = tmp_path / filename
@@ -218,6 +245,60 @@ async def test_fjord_one_shot_combines_two_sources(tmp_path: Path, monkeypatch: 
     lines = [json.loads(line) for line in out_file.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(lines) == 2
     assert {r["inc_code"] for r in lines} == {"bitcoin", "ethereum"}
+
+
+@pytest.mark.asyncio
+async def test_fjord_bare_declared_output_class_populates_own_inc_dict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bare pre-declared output class in outflow.py gets its own inc_dict populated.
+
+    Reproduces the maintainer's live-repro'd defect: ``Incorporator.fjord()``
+    calls ``flush()`` with ``base_class=Incorporator`` (the root), so a bare
+    ``class CoinMarket(Incorporator): pass`` declared in outflow.py used to
+    build a sibling dynamic class rooted at ``Incorporator`` instead of
+    ``CoinMarket`` — the wave reported 2 rows built, but ``CoinMarket.inc_dict``
+    stayed empty.  After the fix, flush() infers with the user's own class as
+    the inference base, so instances register into ``CoinMarket.inc_dict``
+    directly — the post-loop read the maintainer specified as the target DX.
+    """
+    monkeypatch.setattr(fetch, "execute_request", mock_execute_request)
+    monkeypatch.chdir(tmp_path)
+
+    outflow_file = _write_outflow(tmp_path, BARE_CLASS_OUTFLOW_SOURCE)
+    out_file = tmp_path / "markets.ndjson"
+
+    waves = await _drain(
+        Incorporator.fjord(
+            stream_params=[
+                {"cls": Coin, "incorp_params": {"inc_url": COINGECKO_URL, "inc_code": "id"}, "refresh_params": None},
+                {
+                    "cls": BinanceFutures,
+                    "incorp_params": {"inc_url": BINANCE_URL, "inc_code": "symbol"},
+                    "refresh_params": None,
+                },
+            ],
+            outflow=outflow_file,
+            export_params={"file_path": str(out_file)},
+        )
+    )
+
+    outflow_wave = next(a for a in waves if a.operation == "outflow:CoinMarket")
+    assert outflow_wave.rows_processed == 2
+    assert not outflow_wave.failed_sources
+
+    from incorporator.usercode import load_outflow_module
+
+    _, outflow_mod = load_outflow_module(outflow_file)
+    coin_market_cls = outflow_mod.CoinMarket
+
+    values = list(coin_market_cls.inc_dict.values())
+    assert len(values) == 2, f"expected 2 instances registered on the declared CoinMarket.inc_dict, got {len(values)}"
+    btc = coin_market_cls.inc_dict["bitcoin"]
+    assert btc.spread == pytest.approx(500.0)
+    assert btc.coin_name == "Bitcoin"
+
+    coin_market_cls.inc_dict.clear()
 
 
 @pytest.mark.asyncio

@@ -254,26 +254,26 @@ raising) or declare the ordering on the dependent source's
 `stream_params` entry (`depends_on=["X"]` makes fjord wait for X
 before seeding this source).  T9 and T10 walk both patterns.
 
-### 3. Bare-class data-loss warning
+### 3. Bare pre-declared output class
 
 When a sidecar `outflow.py` pre-declares an `Incorporator` subclass
 with no fields beyond the base three (`inc_code`, `inc_name`,
-`last_rcd`), Pydantic V2's default `extra='ignore'` silently drops
-every row field on `model_validate`.  The framework emits a one-time
-`WARNING` per class identity so the failure mode is visible:
+`last_rcd`) and a returned row carries keys the class doesn't
+declare, the fjord engine falls through to schema inference —
+exactly like a bare *source* class does under `incorp()`. The
+inferred class subclasses your declared class, so every row field is
+kept and the results are reachable through `FantasyTeam.inc_dict`
+after the run. No warning fires and no field is dropped.
 
-```text
-WARNING: Pre-declared subclass `FantasyTeam` has no declared fields
-beyond the base three; Pydantic V2 will silently drop every row
-column. Either declare the fields explicitly or remove the class
-declaration to let infer_dynamic_schema take over.
-```
-
-If you see this in production logs, either flesh out the subclass
-with the fields you intend to keep, or remove the pre-declaration
-entirely (the engine will build a dynamic class from the row keys
-at first emit — T10 documents this path under "Don't pre-declare
-the output class").
+Pre-declaring a bare class is therefore purely a DX choice (a named
+handle to read results back through); it's never required and it no
+longer suppresses inference. To get **full type control** instead —
+validate rows against exactly the fields you declare and drop
+anything else, per Pydantic's default `extra='ignore'` — declare at
+least one real field on the subclass (or opt into `model_config =
+ConfigDict(extra="allow")` to keep every field instead). That opt-in
+is a deliberate, silent choice; no warning fires either way once you've
+declared fields.
 
 ---
 

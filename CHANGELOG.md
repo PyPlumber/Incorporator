@@ -38,6 +38,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   underscore rescue, so `"123abc"` -> `"field_123abc"` and `"3"` ->
   `"field_3"`; the raw key is still preserved via the existing
   `Field(alias=raw_key, ...)` round-trip.
+- **A bare pre-declared `fjord()`/Tideweaver `Fjord` output class silently
+  dropped every row field instead of registering built instances into its
+  own `inc_dict`** (`incorporator/pipeline/outflow.py`): `flush()`'s
+  bare-user-class branch already correctly fell through to
+  `infer_dynamic_schema` when a row carried keys the bare class didn't
+  declare, but it inferred against the fjord's generic `base_class`
+  (`Incorporator`, the abstract root — the value `Incorporator.fjord()`
+  passes) instead of the user's own declared class. The inferred class
+  ended up a sibling of the user's declaration rather than a subclass, so
+  the existing base-registration block (which forks instances into every
+  non-root base's `inc_dict`, mirroring `incorp()`'s own bare-source-class
+  handling in `incorporator/schema/factory.py`) never fired for the
+  user-declared class — the wave reported N rows built, but the class the
+  user could actually read from stayed empty. Inference now uses the
+  user's own class as the base, so a bare declared output class behaves
+  exactly like a bare declared source class: every row field is kept, and
+  `UserCls.inc_dict` is populated after the run. The now-obsolete
+  "fields will be silently dropped" warning no longer fires on this path.
+  Tideweaver's `_tick_fjord` was unaffected (it already passed the user's
+  own class as `base_class`).
 
 ## [1.4.4] - 2026-07-25
 

@@ -1,14 +1,32 @@
-"""Regression tests for G4: bare declared output class + extra-key rows fall through to inference.
+"""Regression tests: bare declared output class + extra-key rows fall through to inference.
 
-Two tests:
+flush() infers the dynamic class using the user's own declared bare class as the
+inference base (not the fjord's generic ``base_class``) — so the built instances
+register into the user's class registry, exactly like ``incorp()`` on a bare
+source class.  Covers:
 
-(a) Direct ``flush()`` call — bare class + rows with undeclared keys must yield
-    instances that retain ALL row fields via ``infer_dynamic_schema``, not just
-    the base three.
+(a) Direct ``flush()`` call with ``base_class=Incorporator`` (the real
+    ``Incorporator.fjord()`` shape) — bare class + rows with undeclared keys must
+    yield instances retaining ALL row fields, reachable via
+    ``UserCls.inc_dict``, with NO warning fired.
 
 (b) ``_tick_fjord`` path — monkeypatched ``load_outflow_module`` returns a bare
     class + rows with undeclared keys; the derived class parked on
-    ``_tideweaver_snapshot`` must retain all fields.
+    ``_tideweaver_snapshot`` must retain all fields (this path already passed
+    ``base_class=current.cls``, i.e. the user's own class, so it was correct
+    before the fix too — kept as a no-regression check).
+
+(c) Regression: declared-fields class + dict rows — extras still dropped per
+    Pydantic's default ``extra='ignore'``.
+
+(d) Regression: instance-row flow through a bare class — unchanged;
+    ``infer_dynamic_schema`` only samples dict rows.
+
+The one-shot ``Incorporator.fjord()`` DX check (a bare declared output class
+whose ``inc_dict`` is populated after the engine completes) lives in
+``tests/test_fjord.py`` (``test_fjord_bare_declared_output_class_populates_own_inc_dict``)
+since it reuses that file's existing mocked-HTTP fjord-engine harness rather
+than inventing a new one here.
 """
 
 from __future__ import annotations
@@ -21,7 +39,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from incorporator import Incorporator
-from incorporator.pipeline import outflow as outflow_module_ref
+from incorporator.list import IncorporatorList
 from incorporator.pipeline.outflow import _BARE_CLASS_WARNED, flush
 from incorporator.tideweaver import Fjord, Stream, Watershed
 from incorporator.tideweaver.current import Fjord as FjordCls
@@ -73,14 +91,16 @@ async def test_flush_bare_class_extra_keys_uses_inference(
 ) -> None:
     """Bare declared output class + rows with undeclared keys falls through to inference.
 
-    Proves that when flush() is called with a bare declared output class and
-    rows carrying fields beyond the base three, the instances parked on
-    _tideweaver_snapshot retain all extra fields (score, team) rather than
-    being silently dropped by Pydantic's extra='ignore'.
+    Uses ``base_class=Incorporator`` — the real shape ``Incorporator.fjord()``
+    passes into ``flush()`` — so this reproduces the production defect rather
+    than the coincidentally-correct Tideweaver ``_tick_fjord`` shape (part b).
 
-    Before the G4 fix: _BareOutput.model_validate(row) was called, silently
-    dropping 'score' and 'team'. After: infer_dynamic_schema is called, and
-    the resulting instances carry all row fields.
+    Proves that when flush() is called with a bare declared output class and
+    rows carrying fields beyond the base three, the built instances retain all
+    extra fields (score, team) AND are reachable via the user's own class
+    registry (``_BareOutput.inc_dict``) — not just a sibling inferred class
+    unrelated to the user's declaration.  No warning fires: nothing was
+    silently dropped.
     """
     monkeypatch.chdir(tmp_path)
     _reset_bare_class()
@@ -91,36 +111,25 @@ async def test_flush_bare_class_extra_keys_uses_inference(
     def outflow_fn(state: dict[str, Any]) -> list[dict[str, Any]]:
         return rows
 
-    instances_collected: list[Any] = []
     with caplog.at_level("WARNING", logger="incorporator.pipeline.outflow"):
         async for derived_name, count, err in flush(
             outflow_fn,
             state={},
             default_output_class_name="_BareOutput",
-            base_class=_BareOutput,
+            base_class=Incorporator,
             export_params={},
             outflow_module=fake_mod,
         ):
             assert err is None, f"flush() raised on derived class {derived_name!r}: {err}"
             assert count == 2, f"expected 2 rows, got {count}"
-            snapshot = getattr(_BareOutput, "_tideweaver_snapshot", None)
-            if snapshot is None:
-                # The inferred dynamic class is NOT _BareOutput itself —
-                # find it via the registered class's _tideweaver_snapshot.
-                # Use the instances from model_validate on the inferred class.
-                pass
 
-    # The derived class built by inference is NOT _BareOutput (it has extra
-    # fields), so _tideweaver_snapshot is parked on the inferred class, not
-    # _BareOutput.  Retrieve it from the inferred class via the builder cache.
-    from incorporator.schema.builder import infer_dynamic_schema
+    # The instances must be reachable via the user's own declared class —
+    # this is the whole point of the fix: infer with user_cls as the base
+    # so the base-registration block forks instances into _BareOutput.inc_dict.
+    values = list(_BareOutput.inc_dict.values())
+    assert len(values) == 2, f"expected 2 instances registered on _BareOutput.inc_dict, got {len(values)}"
 
-    inferred_cls = infer_dynamic_schema("_BareOutput", rows, _BareOutput)
-    snapshot = getattr(inferred_cls, "_tideweaver_snapshot", None)
-    assert snapshot is not None, "_tideweaver_snapshot must be parked on the inferred class"
-    assert len(snapshot) == 2, f"expected 2 instances, got {len(snapshot)}"
-
-    inst0 = snapshot[0]
+    inst0 = next(v for v in values if v.inc_code == "1")
     assert getattr(inst0, "score", None) == 42, (
         f"'score' field dropped — bare-class data loss not fixed; inst={inst0!r}"
     )
@@ -128,11 +137,15 @@ async def test_flush_bare_class_extra_keys_uses_inference(
         f"'team' field dropped — bare-class data loss not fixed; inst={inst0!r}"
     )
 
-    # The WARNING must have fired exactly once (the dedup guard keeps it once-per-class).
+    # No _warn_on_bare_user_class WARNING: inference keeps every row field, so
+    # nothing is silently dropped.  (An unrelated "no matching export_params
+    # key" warning DOES fire here since export_params={} — filter for the
+    # bare-class-specific message, not just any warning mentioning the name.)
     warn_msgs = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
-    assert any("_BareOutput" in m for m in warn_msgs), (
-        f"_warn_on_bare_user_class WARNING must fire when inference is triggered; got: {warn_msgs}"
+    assert not any("silently dropped" in m for m in warn_msgs), (
+        f"no _warn_on_bare_user_class WARNING should fire once inference preserves all fields; got: {warn_msgs}"
     )
+    assert id(_BareOutput) not in _BARE_CLASS_WARNED
 
 
 # ---------------------------------------------------------------------------
@@ -236,15 +249,124 @@ async def test_tick_fjord_bare_class_extra_keys_retains_all_fields(
 
     inferred_cls = infer_dynamic_schema("_BareOutputB", rows_b, _BareOutputB)
     snapshot = getattr(inferred_cls, "_tideweaver_snapshot", None)
-    assert snapshot is not None, (
-        "_tideweaver_snapshot must be parked on the inferred class after _tick_fjord"
-    )
+    assert snapshot is not None, "_tideweaver_snapshot must be parked on the inferred class after _tick_fjord"
     assert len(snapshot) == 1, f"expected 1 instance, got {len(snapshot)}"
 
     inst = snapshot[0]
-    assert getattr(inst, "score", None) == 99, (
-        f"'score' dropped by bare-class path in _tick_fjord; inst={inst!r}"
-    )
-    assert getattr(inst, "team", None) == "Green", (
-        f"'team' dropped by bare-class path in _tick_fjord; inst={inst!r}"
-    )
+    assert getattr(inst, "score", None) == 99, f"'score' dropped by bare-class path in _tick_fjord; inst={inst!r}"
+    assert getattr(inst, "team", None) == "Green", f"'team' dropped by bare-class path in _tick_fjord; inst={inst!r}"
+
+    # base_class == user_cls on this path already (current.cls), so the
+    # base-registration block was already firing pre-fix -- verify it still
+    # does.
+    values_b = list(_BareOutputB.inc_dict.values())
+    assert len(values_b) == 1, f"expected 1 instance registered on _BareOutputB.inc_dict, got {len(values_b)}"
+
+
+# ---------------------------------------------------------------------------
+# Part (c) — regression: declared-fields class + dict rows unchanged
+# ---------------------------------------------------------------------------
+
+
+class _DeclaredOutput(Incorporator):
+    """Non-bare declared output class -- has one real field beyond the base three."""
+
+    score: int = 0
+
+
+@pytest.mark.asyncio
+async def test_flush_declared_fields_class_still_drops_undeclared_extras(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A declared-fields class (extra_fields non-empty) is unaffected by the bare-class fix.
+
+    ``score`` is declared explicitly, so flush() uses ``_DeclaredOutput`` directly
+    for ``model_validate`` (the ``if extra_fields or allows_extra:`` arm, not the
+    bare-class inference arm this pass touches).  Pydantic's default
+    ``extra='ignore'`` still drops any row key the class didn't declare.
+    """
+    monkeypatch.chdir(tmp_path)
+    _DeclaredOutput.inc_dict.clear()
+
+    fake_mod = types.ModuleType("_fake_outflow_declared")
+    setattr(fake_mod, "_DeclaredOutput", _DeclaredOutput)
+
+    def outflow_fn(state: dict[str, Any]) -> list[dict[str, Any]]:
+        return [{"inc_code": "1", "score": 10, "extra_field": "drop-me"}]
+
+    async for derived_name, count, err in flush(
+        outflow_fn,
+        state={},
+        default_output_class_name="_DeclaredOutput",
+        base_class=Incorporator,
+        export_params={},
+        outflow_module=fake_mod,
+    ):
+        assert err is None, f"flush() raised on derived class {derived_name!r}: {err}"
+        assert count == 1
+
+    inst = _DeclaredOutput.inc_dict["1"]
+    assert inst.score == 10
+    assert not hasattr(inst, "extra_field"), "declared-fields class must still drop undeclared row keys"
+
+
+# ---------------------------------------------------------------------------
+# Part (d) — regression: instance-row path through a bare class is unchanged
+# ---------------------------------------------------------------------------
+
+
+class _BareReceiver(Incorporator):
+    """Bare declared output class fed instance rows (not dicts)."""
+
+
+class _SourceModel(Incorporator):
+    """Stand-in for a source class whose instances flow through as 'rows'.
+
+    ``extra='allow'`` so extra fields set at construction time survive on the
+    instance for ``model_dump()`` to see -- mirrors a source class already
+    built via inference during ``incorp()``/``refresh()``.
+    """
+
+    model_config = {"extra": "allow"}
+
+
+@pytest.mark.asyncio
+async def test_flush_instance_rows_through_bare_class_still_fails(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Instance-row (non-dict) flow through a bare declared class is unaffected by this fix.
+
+    Mirrors the documented crash in ``examples/08-streaming-daemon/outflow.py``:
+    a bare declared receiver class fed pre-built model instances (rather than
+    dict rows) from a mismatched class still fails at ``model_validate`` --
+    ``infer_dynamic_schema``'s sampler only reads ``dict`` rows (see
+    ``incorporator/schema/builder.py``), so instance rows contribute nothing
+    to the inferred schema regardless of which base class inference uses.
+    This pass changes ONLY the inference base for dict rows; instance-row
+    behavior is untouched.
+    """
+    monkeypatch.chdir(tmp_path)
+    _BareReceiver.inc_dict.clear()
+    _BARE_CLASS_WARNED.discard(id(_BareReceiver))
+
+    fake_mod = types.ModuleType("_fake_outflow_instance_rows")
+    setattr(fake_mod, "_BareReceiver", _BareReceiver)
+
+    src_inst = _SourceModel(inc_code="1", inc_name="a", last_rcd=_NOW, score=42, team="Red")
+    rows = IncorporatorList(_SourceModel, [src_inst])
+
+    def outflow_fn(state: dict[str, Any]) -> dict[str, Any]:
+        return {"_BareReceiver": rows}
+
+    async for derived_name, count, err in flush(
+        outflow_fn,
+        state={},
+        default_output_class_name="_BareReceiver",
+        base_class=Incorporator,
+        export_params={},
+        outflow_module=fake_mod,
+    ):
+        assert derived_name == "_BareReceiver"
+        assert count == 0
+        assert err is not None, "instance rows through a bare class must still fail, unchanged by this pass"
+        assert "validation error" in str(err).lower()

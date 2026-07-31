@@ -41,20 +41,32 @@ def _warn_on_bare_user_class(
     base_class: Any,
     sample_row: dict[str, Any] | None,
 ) -> None:
-    """Warn once when a bare user class declaration suppresses field inference.
+    """Warn once when a bare user class declaration would suppress field inference.
 
     ``flush()`` prefers a user-pre-declared subclass over
     :func:`infer_dynamic_schema` when the outflow module exposes a class
-    with the matching ``__name__``.  But a bare declaration like::
+    with the matching ``__name__``.  A bare declaration like::
 
         class Race(Incorporator):
             pass
 
     declares zero new fields beyond the base three, and the Incorporator
     base class doesn't set ``extra='allow'`` — so Pydantic V2's default
-    ``extra='ignore'`` silently drops every row field on
-    ``model_validate``.  The user thinks they're being explicit; the
-    framework is dropping their data on the floor.
+    ``extra='ignore'`` would silently drop every row field on
+    ``model_validate`` against that class directly.
+
+    This helper only guards the two arms of ``flush()`` where the bare
+    class IS used directly for ``model_validate`` — declared-fields
+    classes (``extra_fields`` non-empty) and ``extra='allow'`` classes,
+    plus the "row only has declared fields" bare-class arm.  All three
+    are effectively no-ops today (a non-empty ``extra_fields`` or
+    ``extra='allow'`` short-circuits below, and a row with only declared
+    fields has nothing to drop) — they're kept as a defensive tripwire
+    in case a future edit removes the fallback.  The case that used to
+    warn here — a bare class whose row carries undeclared keys — now
+    falls through to :func:`infer_dynamic_schema` using the user's own
+    class as the inference base instead of validating against the bare
+    class, so every row field is kept and no warning is needed.
 
     This helper emits one WARNING per class identity when:
 
@@ -256,11 +268,13 @@ async def flush(
                         sample_dict = {}
                     undeclared = [k for k in sample_dict if k not in user_any.model_fields]
                     if undeclared:
-                        # Row carries fields the bare class would silently drop.
-                        # Warn once so the user knows their class was bypassed, then
-                        # fall through to inference so every row field is preserved.
-                        _warn_on_bare_user_class(user_cls, base_class, sample_dict)
-                        derived_cls = cast(Any, infer_dynamic_schema(derived_name, rows, base_class))
+                        # Row carries fields the bare class would drop under
+                        # model_validate — fall through to inference, subclassing
+                        # the user's own class (not the fjord's generic base) so
+                        # the built instances register into user_cls.inc_dict too.
+                        # Every row field is kept, exactly like incorp() on a bare
+                        # source class — no warning needed on this arm.
+                        derived_cls = cast(Any, infer_dynamic_schema(derived_name, rows, user_any))
                     else:
                         # Row only contains declared fields — bare class is safe to use.
                         derived_cls = cast(Any, user_cls)
