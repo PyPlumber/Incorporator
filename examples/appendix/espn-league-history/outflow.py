@@ -26,8 +26,6 @@ import operator
 from collections import Counter, defaultdict
 from typing import Any
 
-from pydantic import ConfigDict
-
 from incorporator import Incorporator
 
 POSITION_MAP = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST"}
@@ -97,7 +95,7 @@ class SettingsRow(Incorporator):
     is smaller than another season sharing the wave. `extra="allow"` keeps every
     other field (season, league_size, division_names, ...) inferred as usual."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = {"extra": "allow"}
 
     roster_slots: dict[str, int] | None = None
 
