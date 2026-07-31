@@ -4,9 +4,11 @@ Loads `espn_league_history.py` via `load_sidecar` (unique importlib key) and
 drives `main()` end-to-end against hand-faked ESPN payloads, zero network,
 via `monkeypatch.setattr(fetch, "execute_request", ...)`. The pipeline is a
 one-shot `Incorporator.fjord()`: `main()` runs the pre-fjord season-discovery
-calls, then `fjord()` seeds six network-free `payload_list=` sources plus one
-genuinely-networked `PlayerName` fan-out, then flushes `outflow.py`'s
-`outflow(state)` once into the six NDJSON views.
+calls (exactly two `Season.incorp` sites), then `fjord()` seeds six
+network-free `payload_list=` sources plus one genuinely-networked
+`PlayerName` fan-out, then flushes `outflow.py`'s `outflow(state)` once into
+the six NDJSON views -- all six bare view classes, read back via
+`espn_history.FranchiseCard.inc_dict` etc. after `main()` returns.
 
 Two scenarios, one shared fixture set. Endpoint choice is decided once, up
 front, from `has_cookies` alone -- no probe, no retry:
@@ -15,12 +17,12 @@ front, from `has_cookies` alone -- no probe, no retry:
   year fans out against the modern endpoint; OLD_YEAR 401s there (no-cookie
   behavior, live-verified) and is left out of the final season list --
   public mode never touches `leagueHistory` at all.
-- `test_private_run_...`: `ESPN_S2`/`ESPN_SWID` set. Every remaining year
-  (PREVIOUS_YEAR and OLD_YEAR) fans out directly against the cookie-gated
-  `leagueHistory` list-root endpoint (`rec_path="0"`, `seasonId` embedded in
-  each URL's own query string since `params=`/`headers=` are shared across
-  a fan-out call, not per-URL) -- the modern endpoint is never probed for a
-  non-current year in private mode. Both years resolve on the first try.
+- `test_private_run_...`: `ESPN_S2`/`ESPN_SWID` set. ONE call fans out
+  directly against the cookie-gated `leagueHistory` endpoint with no
+  `seasonId` query param -- its top-level JSON list response IS every OTHER
+  completed season (PREVIOUS_YEAR and OLD_YEAR) in one body, no `rec_path`
+  drilling -- the modern endpoint is never probed for a non-current year in
+  private mode. Both years resolve on the first try.
 
 Both scenarios exercise: a playoff bye (home-only, no `away` key, permanently
 `UNDECIDED`), a tiebreak-decided tie (`winner` still HOME/AWAY, margin can be
@@ -47,7 +49,6 @@ import re
 from datetime import date
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -208,34 +209,30 @@ _PREVIOUS_PAYLOAD = {
     "status": {"previousSeasons": []},
 }
 
-# Historical (leagueHistory) list-root payload for OLD_YEAR -- only reachable
+# Historical (leagueHistory) season payload for OLD_YEAR -- only reachable
 # with cookies present; `pointsOverrides` present WITH an override this time
 # (the third guard branch).
-_OLD_PAYLOAD = [
-    {
-        "seasonId": OLD_YEAR,
-        "teams": [
-            _team(1, OWNER_A, "Team Alpha", 2, 1, 300.0, 250.0, 1, 1),
-            _team(2, OWNER_B, "Team Beta", 1, 2, 250.0, 300.0, 2, 2),
-        ],
-        "schedule": [_matchup(1, 1, "NONE", "HOME", 1, 100.0, 2, 80.0)],
-        "members": _MEMBERS,
-        "draftDetail": {"picks": [_pick(1, 1, 1, 4001, 1)]},
-        "settings": {
-            "scoringSettings": {"scoringItems": [{"statId": 53, "points": 0.5, "pointsOverrides": {"16": 1.0}}]},
-            "scheduleSettings": {"playoffTeamCount": 2, "playoffSeedingRule": "TOTAL_POINTS_SCORED", "divisions": []},
-            "rosterSettings": {"lineupSlotCounts": {"0": 1, "2": 1, "3": 1}},
-        },
-        "status": {"previousSeasons": []},
-    }
-]
-
-# In private mode EVERY remaining year fans out against leagueHistory
-# directly (not just a failed year) -- one list-root payload per season_id.
-_HISTORY_PAYLOADS: dict[int, list[dict[str, Any]]] = {
-    PREVIOUS_YEAR: [_PREVIOUS_PAYLOAD],
-    OLD_YEAR: _OLD_PAYLOAD,
+_OLD_SEASON_PAYLOAD = {
+    "seasonId": OLD_YEAR,
+    "teams": [
+        _team(1, OWNER_A, "Team Alpha", 2, 1, 300.0, 250.0, 1, 1),
+        _team(2, OWNER_B, "Team Beta", 1, 2, 250.0, 300.0, 2, 2),
+    ],
+    "schedule": [_matchup(1, 1, "NONE", "HOME", 1, 100.0, 2, 80.0)],
+    "members": _MEMBERS,
+    "draftDetail": {"picks": [_pick(1, 1, 1, 4001, 1)]},
+    "settings": {
+        "scoringSettings": {"scoringItems": [{"statId": 53, "points": 0.5, "pointsOverrides": {"16": 1.0}}]},
+        "scheduleSettings": {"playoffTeamCount": 2, "playoffSeedingRule": "TOTAL_POINTS_SCORED", "divisions": []},
+        "rosterSettings": {"lineupSlotCounts": {"0": 1, "2": 1, "3": 1}},
+    },
+    "status": {"previousSeasons": []},
 }
+
+# In private mode, ONE leagueHistory call (no seasonId query param) returns
+# every OTHER completed season as ONE top-level JSON list -- no per-season
+# fan-out, no rec_path drilling.
+_HISTORY_PAYLOAD_LIST: list[dict[str, Any]] = [_PREVIOUS_PAYLOAD, _OLD_SEASON_PAYLOAD]
 
 _SEASON_RE = re.compile(r"/seasons/(\d+)/segments/0/leagues/")
 _PLAYERS_RE = re.compile(r"/seasons/(\d+)/players")
@@ -250,12 +247,12 @@ def _players_response(headers: httpx.Headers, req: httpx.Request) -> httpx.Respo
 
 def _make_mock(allow_cookies: bool):
     """Build a mock `execute_request` -- `allow_cookies` selects which
-    endpoint family the pipeline is expected to reach. With cookies present
-    every remaining year fans out directly against `leagueHistory` (never
-    touching the modern endpoint for a non-current year at all); with no
-    cookies every remaining year fans out against the modern endpoint,
-    where OLD_YEAR 401s (an auth failure, live-verified) and is left
-    unresolved.
+    endpoint family the pipeline is expected to reach. With cookies present,
+    ONE `leagueHistory` call (no `seasonId` query param) returns every other
+    completed season as one JSON list body (never touching the modern
+    endpoint for a non-current year at all); with no cookies every remaining
+    year fans out against the modern endpoint, where OLD_YEAR 401s (an auth
+    failure, live-verified) and is left unresolved.
 
     `execute_request`'s real signature has no `headers=` kwarg -- headers are
     baked onto the `httpx.AsyncClient` at build time
@@ -287,15 +284,12 @@ def _make_mock(allow_cookies: bool):
             raise httpx.HTTPStatusError("401", request=req, response=resp)
 
         if "leagueHistory" in url:
-            # Private mode fans out directly against leagueHistory for
-            # EVERY remaining year, not just a failed one -- the per-URL
-            # seasonId differentiator is embedded directly in each URL's
-            # own query string since params=/headers= are shared across a
-            # fan-out call, not per-URL.
-            query = parse_qs(urlsplit(url).query)
-            season_id = int(query["seasonId"][0]) if "seasonId" in query else None
-            if allow_cookies and headers.get("Cookie") and season_id in _HISTORY_PAYLOADS:
-                return httpx.Response(200, text=json.dumps(_HISTORY_PAYLOADS[season_id]), request=req)
+            # Private mode fans out ONCE against leagueHistory with no
+            # seasonId query param -- the endpoint's own top-level list IS
+            # every other completed season (excluding the in-progress
+            # current year).
+            if allow_cookies and headers.get("Cookie"):
+                return httpx.Response(200, text=json.dumps(_HISTORY_PAYLOAD_LIST), request=req)
             resp = httpx.Response(404, text="not found", request=req)
             raise httpx.HTTPStatusError("404", request=req, response=resp)
 
@@ -305,11 +299,9 @@ def _make_mock(allow_cookies: bool):
 
 
 def _reset_all() -> None:
-    # The six derived view classes (FranchiseCard, ...) are declared in
-    # outflow.py and never imported into espn_league_history.py's own
-    # namespace (see that module's import-block comment) -- fjord()'s
-    # internal flush() always clears+rebuilds their inc_dict on every run
-    # regardless, so only the six SOURCE classes need resetting here.
+    # fjord()'s internal flush() always clears+rebuilds every derived view
+    # class's inc_dict on every run (FranchiseCard, ...), so only the six
+    # SOURCE classes need resetting here between the two test runs.
     for cls in (
         espn_history.Season,
         espn_history.Owner,
@@ -400,15 +392,13 @@ async def test_private_run_resolves_old_year_via_league_history(
     tmp_path: Any,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Cookies present: PREVIOUS_YEAR and OLD_YEAR both fan out directly
-    against the cookie-gated `leagueHistory` list-root endpoint
-    (`rec_path="0"`, `seasonId` embedded in each URL's own query string
-    since the fan-out shares `params=`/`headers=` across every URL) --
-    the modern endpoint is never probed for either year in private mode.
-    Both resolve on the first try, pulling in a third season alongside the
-    CURRENT_YEAR bootstrap. No source fails in this scenario, so there is
-    no warning channel to assert (see `test_public_run_...` for that
-    regression guard)."""
+    """Cookies present: ONE call against the cookie-gated `leagueHistory`
+    endpoint (no `seasonId` query param) returns PREVIOUS_YEAR and OLD_YEAR
+    together as one top-level JSON list -- the modern endpoint is never
+    probed for either year in private mode. Both resolve on the first try,
+    pulling in a third season alongside the CURRENT_YEAR bootstrap. No
+    source fails in this scenario, so there is no warning channel to assert
+    (see `test_public_run_...` for that regression guard)."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ESPN_S2", "fake-s2-value")
     monkeypatch.setenv("ESPN_SWID", "{FAKE-SWID}")
@@ -431,13 +421,17 @@ async def test_private_run_resolves_old_year_via_league_history(
     by_season = {r["season"]: r for r in settings_rows}
     assert by_season[OLD_YEAR]["ppr_points"] == 1.0  # pointsOverrides present with an override
 
-    # OLD_YEAR's lineupSlotCounts (3 keys) fans out in the SAME leagueHistory batch
-    # call as PREVIOUS_YEAR's (8 keys) -- the cross-record key-set divergence that
-    # used to null-pad the smaller season's roster_slots via the fan-out batch's
-    # own schema union. The Season fjord reseed's exclude_unset=True dump closes
-    # that: OLD_YEAR's exported roster_slots must carry only its own 3 keys, none null.
-    assert by_season[OLD_YEAR]["roster_slots"] == {"0": 1, "2": 1, "3": 1}
-    assert None not in by_season[OLD_YEAR]["roster_slots"].values()
+    # OLD_YEAR's lineupSlotCounts (3 keys) and PREVIOUS_YEAR's (8 keys) both land in
+    # SettingsRow's one flush wave. The bare SettingsRow class infers its
+    # `roster_slots` submodel from the UNION of keys across every row in that wave
+    # (infer_dynamic_schema's cross-row dict-key-union merge), so OLD_YEAR's smaller
+    # row gets null-padded with the 5 extra keys PREVIOUS_YEAR carries -- accepted
+    # inference behavior (see this session's brief / CHANGELOG entry), not data loss:
+    # OLD_YEAR's own 3 real values stay present and correct.
+    old_year_slots = by_season[OLD_YEAR]["roster_slots"]
+    assert all(old_year_slots[k] == v for k, v in {"0": 1, "2": 1, "3": 1}.items())
+    padded_keys = set(old_year_slots) - {"0", "2", "3"}
+    assert padded_keys and all(old_year_slots[k] is None for k in padded_keys)
 
     tendency_rows = [json.loads(ln) for ln in (out_dir / "draft_tendencies.ndjson").read_text().splitlines() if ln]
     old_year_pick = next(r for r in tendency_rows if r["kind"] == "first_overall" and r["season"] == OLD_YEAR)

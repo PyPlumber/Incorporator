@@ -74,10 +74,10 @@ server-declared** (Section 4).
 
 ```
 examples/appendix/espn-league-history/
-  espn_league_history.py   # season discovery (plain Python) + the fjord() call
-  outflow.py                # 6 source classes + outflow(state) -- five of the six
-                             # derived views stay bare (fjord infers their schema);
-                             # SettingsRow declares one field (Section 6)
+  espn_league_history.py   # season discovery (plain Python) + the fjord() call + the console report
+  outflow.py                # 6 source classes + 6 bare view classes + outflow(state) -- the
+                             # one declared field in the whole file is Season.roster_slots
+                             # (Section 6), a source-side concern, not a view-class one
   README.md                # this file
   out/                      # gitignored -- six NDJSON views land here
 ```
@@ -86,10 +86,22 @@ No `watershed.json` -- see Section 5 for why this appendix is a one-shot
 `Incorporator.fjord()` rather than a Watershed. Unlike a Watershed example,
 where every `Incorporator` subclass lives in the main entry file and a
 sidecar is a pure re-import store, a `cls.fjord()` daemon example (this one)
-defines its classes in `outflow.py` and the entry file imports the SOURCE
-classes back out of it -- the two-path split the framework's own CLI class
-resolution depends on (see `examples/09-nascar-fantasy-fjord/`, the template
-this rewrite follows).
+defines ALL its classes in `outflow.py` -- both the six source classes AND
+the six derived view classes the fjord builds (see
+`examples/09-nascar-fantasy-fjord/`, the template this rewrite follows).
+
+`espn_league_history.py`'s own console report reads three of those view
+classes' `inc_dict` back AFTER the fjord loop ends (Section 5), so the entry
+file loads `outflow.py` via one explicit
+`incorporator.usercode.load_outflow_module(...)` call rather than a bare
+`from outflow import (...)` -- a bare import registers a second,
+disconnected copy of the file under Python's own `sys.modules` cache,
+distinct from the path-keyed cache `fjord()`'s internal loader uses to
+build and park the view classes' rows, so a bare-imported class's
+`inc_dict` would come back silently empty post-loop.
+`load_outflow_module` shares that same path-keyed cache, so calling it
+explicitly here, once, before `fjord()` runs, guarantees both loads
+resolve to the identical module and class objects.
 
 ## 3. The six views
 
@@ -119,40 +131,44 @@ check. Win/loss streaks are franchise-history streaks, chronological across
 every fetched season (`(season, matchupPeriodId)` order), not reset at a
 season boundary.
 
-`RecordRow` stays bare, like five of the six derived views -- fjord infers its
-schema from whatever `outflow(state)` returns, no pre-declared class (the one
-exception, `SettingsRow`, is covered in Section 6). All ten kinds
-share one `value` column, but that column's native type differs by kind:
-point/margin/ratio floats for seven kinds, plain win/loss-streak game counts
-(ints) for the other two. Since `outflow(state)` appends the float-valued
-kinds first and the two streak kinds last, dynamic-schema inference locks
-`value`'s type from the first-sampled (float) row and coerces the trailing
-int streak values to match -- `longest_win_streak` renders as `10.0`, not
-`10`, in the exported NDJSON. This is expected, not a bug: fixing it would
-mean pre-declaring `RecordRow` again, exactly the machinery this rebuild
-removes.
+`RecordRow` is bare, like all six of `outflow.py`'s derived view classes
+(Section 2). All ten kinds share one `value` column, but the column's
+native type differs by kind: point/margin/ratio floats for seven kinds,
+plain win/loss-streak game counts (ints) for the other two. Since
+`outflow(state)` appends the float-valued kinds first and the two streak
+kinds last, fjord's own dynamic-schema inference locks `value`'s type from
+the first-sampled (float) row and coerces the trailing int streak values to
+match -- `longest_win_streak` renders as `10.0`, not `10`, in the exported
+NDJSON. This is expected, not a bug: fixing it would mean pre-declaring
+`RecordRow` again, exactly the machinery this class no longer needs.
 
-## 4. Season discovery is server-declared
+## 4. Season discovery is exactly two `Season.incorp` calls
 
-No brute-force floor/ceiling guessing. One bootstrap fetch -- the current
-calendar-year season -- reads `status.previousSeasons` off the response;
-that IS the candidate season list. Which endpoint every remaining year fans
-out against is decided ONCE, up front, from whether cookies are present --
-no probe, no retry:
+No brute-force floor/ceiling guessing, and no per-year fan-out machinery.
+Season discovery is exactly two `Season.incorp` call sites, both shared
+identically across auth modes -- mode differences are argument ternaries on
+a single fan-out call, never duplicated call sites:
 
-- **With cookies**, every remaining year fans out CONCURRENTLY in one
-  `Season.incorp(inc_url=[...])` call directly against the cookie-gated
-  `leagueHistory` endpoint (list-root response, `rec_path="0"`), which
-  serves every completed season once cookies unlock it. Each year's
-  `seasonId` is embedded directly in ITS OWN URL string
-  (`?seasonId=<year>`), since `params=`/`headers=` are shared across every
-  URL in a fan-out call, not per-URL.
-- **With no cookies**, every remaining year fans out against the modern
-  endpoint instead -- `leagueHistory` always 401s without cookies, so
-  public mode is modern-only. A modern-endpoint miss on an old season is
-  terminal: ESPN gives back the successful years and each failed year's URL
-  lands in `.failed_sources`, which the pipeline reports (via a plain
-  set-difference against the candidate list) but never retries.
+1. **Bootstrap** -- one call for the in-progress current-year season
+   (the modern endpoint). Reads `status.previousSeasons` off the response;
+   that's the candidate-years list, load-bearing for the public branch's
+   URL construction only (harmless, unused, in private mode).
+2. **History/fan-out** -- one call, one statement, mode decided ONCE up
+   front from whether cookies are present, no probe, no retry:
+   - **With cookies**, ONE `Season.incorp(inc_url=<leagueHistory URL>)`
+     call against the cookie-gated `leagueHistory/{league_id}` endpoint
+     with NO `seasonId` query param -- its top-level JSON response IS the
+     list of every OTHER completed season (excluding the in-progress
+     current year already covered by the bootstrap), so `incorp()` treats
+     the array itself as the record set with no `rec_path` drilling at
+     all.
+   - **With no cookies**, `leagueHistory` 401s uncookied, so `remaining_years`
+     (from the bootstrap's `previousSeasons`) fans out against the modern
+     per-season endpoint instead -- `Season.incorp(inc_url=[...])`, one URL
+     per year. A modern-endpoint miss on an old season is terminal: ESPN
+     gives back the successful years and each failed year's URL lands in
+     `.failed_sources`, which the pipeline reports (via a plain
+     set-difference against the candidate list) but never retries.
 
 League size is read from each season's own `len(season.teams)` -- never
 hardcoded, since a league's team count can and does drift across seasons.
@@ -213,6 +229,18 @@ read since `PlayerName` only needs single-shot per-pick lookups, not a
 prebuilt map. That's the return-twin of the six view-building blocks a
 plain script would otherwise write inline in `main()`.
 
+`outflow(state)` builds every view exactly once, here -- `main()`'s three
+console tables (Franchise Cards, Records Book, First-Overall Honor Roll)
+do NOT re-read the exported NDJSON files back afterward; they iterate the
+built classes' own registries directly (`FranchiseCard.inc_dict.values()`,
+`RecordRow.inc_dict.values()`, `DraftTendencyRow.inc_dict.values()`) after
+the `async for wave in Incorporator.fjord(...)` loop ends. This is a step
+further than [Tutorial 9 -- NASCAR Fantasy Fjord](../../09-nascar-fantasy-fjord/README.md)
+takes -- T9's own `main()` never reads a derived view class back, only
+prints the export file paths -- see Section 2 for why that requires loading
+`outflow.py` via `load_outflow_module` explicitly rather than a bare
+top-level import.
+
 ## 6. `payload_list=` and read-time joins
 
 Every sub-collection (`teams`, `schedule`, `members`, `draftDetail.picks`)
@@ -250,23 +278,22 @@ throughout the whole pipeline, including the fjord's own reseed off
 whatever `roster_slots` the first pass computed, and a declared field is
 copied through untouched rather than re-drilled a second time.
 
-That declared-field discipline extends one level further than `Season`
-itself: `outflow.py`'s `SettingsRow` -- View 6's derived row class --
-ALSO declares `roster_slots: dict[str, int] | None` (with
-`model_config = ConfigDict(extra="allow")` so every other field on the row
-still infers as usual). Every one of the other five derived view classes
-stays fully bare; `SettingsRow` is the one exception, because `outflow(state)`
-returns `roster_slots` as a plain dict, and an UNDECLARED dict-valued field
-on a fjord-inferred class gets its keys union-merged across every row
-`outflow(state)` returns in the SAME wave -- a season whose
-`lineupSlotCounts` key set is smaller than another season sharing that wave
-would otherwise come back `null`-padded in the exported
-`settings_evolution.ndjson`. Declaring the field on `SettingsRow` sidesteps
-that the same way `Season.roster_slots` sidesteps the fan-out-batch version
-of the same issue. Every real season in the live public-899513 run shares
-the same key set, so this padding never surfaces there; the appendix's own
-private-mode test (`OLD_YEAR`, a 3-key roster sharing a fan-out wave with an
-8-key season) asserts the fix directly.
+`outflow.py`'s `SettingsRow` -- View 6's derived row class -- does NOT need
+the same declared-field treatment: it's bare, like all six derived view
+classes (Section 2). Its bare inference does reintroduce one observable
+effect at read time: a season whose `lineupSlotCounts` key set is smaller
+than another season sharing the SAME flush wave gets its missing keys
+null-padded in the exported `settings_evolution.ndjson` -- fjord's own
+dynamic-schema inference union-merges an undeclared dict-valued field's keys
+across every row `outflow(state)` returns in one wave, the derived-row-level
+counterpart of the fan-out-batch union `Season.roster_slots`'s own
+declaration sidesteps at the source level. This is accepted inference
+behavior, not data loss -- the smaller season's own real values stay present
+and correct; only the extra keys another row in the wave carries come back
+`null`. Every real season in the live public-899513 run shares the same key
+set, so the padding never surfaces there; the appendix's own private-mode
+test (`OLD_YEAR`, a 3-key roster sharing a flush wave with an 8-key season)
+asserts exactly that shape.
 
 A bare ESPN `team.id` repeats every season -- once every season's `Standing`
 rows share one fjord source, a bare `id` would collide in `inc_dict`.

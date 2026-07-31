@@ -1,14 +1,22 @@
 """Outflow sidecar for the ESPN league-history one-shot fjord pipeline.
 
 Defines the six source classes (``Season``, ``Owner``, ``Standing``,
-``Matchup``, ``DraftPick``, ``PlayerName``) and ``outflow(state)`` -- the
-return-twin of ``espn_league_history.py``'s own print loop. Every field a
-view needs is either build-time-coerced on its own source's ``conv_dict``
-(inline in ``espn_league_history.py``'s ``incorp_params``) or resolved
-read-time here, directly off the live ``state["X"]`` snapshot fjord hands
-this function each wave -- ``state`` values are live ``IncorporatorList``s in
-this ``cls.fjord()`` daemon path (not the Tideweaver-plain-list form; see
-``espn_league_history.py``'s module docstring for the two-path split).
+``Matchup``, ``DraftPick``, ``PlayerName``) and the six DERIVED view classes
+(``FranchiseCard``, ``SeasonTimelineRow``, ``RivalryRow``, ``RecordRow``,
+``DraftTendencyRow``, ``SettingsRow``), all declared BARE (docstring only).
+``flush()`` infers each view's schema from the rows ``outflow()`` returns for
+it, using the bare class itself as the base -- every row field a view returns
+is kept, and the built instances register into that class's own ``inc_dict``,
+exactly like a bare source class under ``incorp()``. ``espn_league_history.py``'s
+console report reads these classes' `inc_dict` back AFTER the fjord loop ends
+-- and ``outflow(state)`` is the return-twin of that same print loop. Every
+field a view needs is either build-time-coerced on its own source's
+``conv_dict`` (inline in ``espn_league_history.py``'s ``incorp_params``) or
+resolved read-time here, directly off the live ``state["X"]`` snapshot fjord
+hands this function each wave -- ``state`` values are live
+``IncorporatorList``s in this ``cls.fjord()`` daemon path (not the
+Tideweaver-plain-list form; see ``espn_league_history.py``'s module docstring
+for the two-path split).
 
 Cross-row aggregation (per-franchise rollups, the rivalry matrix, the
 records-book extremes, draft tendencies) is plain Python: ``defaultdict``
@@ -28,32 +36,7 @@ from typing import Any
 
 from incorporator import Incorporator
 
-POSITION_MAP = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST"}
 TOP_N_MOST_DRAFTED = 15
-
-
-def win_pct_equiv(wins: int, losses: int, ties: int) -> float:
-    """Cross-field arithmetic over three named fields -- `calc` feeds all three
-    to one callable; no primitive composes `(w + 0.5t)/(w+l+t)` itself."""
-    games = wins + losses + ties
-    return round((wins + 0.5 * ties) / games, 2) if games else 0.0
-
-
-def position_name(position_id: int) -> str:
-    """Fallback label is VALUE-DERIVED (`POS_11`); `calc(POSITION_MAP.get, ...)`
-    alone can't synthesize a per-id placeholder string."""
-    return POSITION_MAP.get(position_id, f"POS_{position_id}")
-
-
-def ppr_points_from_scoring(scoring_items: list[dict[str, Any]]) -> float:
-    """Predicate search (`statId == 53`) plus a null-OR-absent
-    `pointsOverrides` guard -- `pluck`/DataPath drill by key/index, never
-    by predicate."""
-    ppr_item = next((item for item in scoring_items if item.get("statId") == 53), None)
-    if ppr_item is None:
-        return 0.0
-    overrides = ppr_item.get("pointsOverrides") or {}
-    return overrides.get("16", ppr_item.get("points", 0.0))
 
 
 class Season(Incorporator):
@@ -87,17 +70,34 @@ class PlayerName(Incorporator):
     """Resolved player name + position -- the one genuinely-networked fjord source."""
 
 
+class FranchiseCard(Incorporator):
+    """View 1's derived row -- one all-time rollup per owner."""
+
+
+class SeasonTimelineRow(Incorporator):
+    """View 2's derived row -- one row per franchise-season."""
+
+
+class RivalryRow(Incorporator):
+    """View 3's derived row -- one row per all-time franchise pair."""
+
+
+class RecordRow(Incorporator):
+    """View 4's derived row -- ten all-time record kinds. Bare inference locks `value`'s
+    type from the first-sampled row (a float), so the two trailing streak kinds render
+    `10.0`/`9.0` via Pydantic's lax int-to-float coercion -- expected, not a regression."""
+
+
+class DraftTendencyRow(Incorporator):
+    """View 5's derived row -- one class, three row shapes (union of all fields, nullable
+    where a given kind omits it): `round1_position_mix`, `most_drafted`, `first_overall`."""
+
+
 class SettingsRow(Incorporator):
-    """View 6's derived row. `roster_slots` is declared (not left to fjord's own
-    dynamic-schema inference) for the same reason as `Season.roster_slots` above:
-    a bare, undeclared dict-valued field gets its keys union-merged across every
-    row in the same outflow wave, null-padding a season whose digit-string key set
-    is smaller than another season sharing the wave. `extra="allow"` keeps every
-    other field (season, league_size, division_names, ...) inferred as usual."""
-
-    model_config = {"extra": "allow"}
-
-    roster_slots: dict[str, int] | None = None
+    """View 6's derived row -- one row per season. `roster_slots` keeps its digit-string
+    keys as plain data; a season whose key-set is smaller than another season sharing the
+    same flush wave gets its missing keys null-padded by the cross-row dict-submodel
+    inference -- accepted, not a data loss (the season's own real values stay intact)."""
 
 
 def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -296,8 +296,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
 
     # ── View 4 — RecordRow: ten kinds, each a max()/min() pick over team_games
     # or standings, guarded so a missing/empty source degrades to fewer kinds
-    # rather than crashing. RecordRow stays bare (no pre-declared `value` field) --
-    # the 10.0-vs-10 float rendering on streak kinds is expected, not a bug.
+    # rather than crashing.
     records_book: list[dict[str, Any]] = []
     if team_games:
         hi = max(team_games, key=operator.itemgetter("score"))

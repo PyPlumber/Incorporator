@@ -3,10 +3,17 @@
 Companion script for `README.md` in this directory.
 
 A one-shot `Incorporator.fjord()` pipeline -- every ESPN season is fetched
-exactly once, ever. Season discovery is a genuine two-phase dependency
-(bootstrap fetch -> learn the reachable-years list -> fan out the rest) that
-runs as plain pre-fjord Python, since every `fjord()` `stream_params`
-entry's `incorp_params` must be fully static before `fjord()` is called.
+exactly once, ever. Season discovery is exactly TWO `Season.incorp` calls,
+identical in shape across both auth modes: a bootstrap fetch of the
+in-progress current-year season (reads `status.previousSeasons` off the
+response -- used only by the public branch), then one history/fan-out call
+whose URL and record-set shape are the only mode difference -- private
+mode's cookie-gated `leagueHistory/{id}` endpoint (no `seasonId` query
+param) returns every OTHER completed season as one JSON list body (the
+top-level array IS the record set, no `rec_path` drilling); public mode
+fans the modern per-season endpoint out across `remaining_years` instead,
+since `leagueHistory` 401s uncookied.
+
 `Standing`/`Matchup`/`DraftPick` are network-free `payload_list=` fjord
 sources built straight off the flattened season rows below; `PlayerName` is
 the one genuinely-networked fan-out. Every rollup, rivalry stat, and
@@ -21,17 +28,23 @@ Two auth modes, one pipeline:
   final season list -- public mode is modern-endpoint-only).
 - PRIVATE: set `ESPN_S2` / `ESPN_SWID` (browser cookies) to unlock a
   private league and the cookie-gated `leagueHistory` endpoint, which
-  serves every completed season directly.
+  serves every other completed season directly, in one call.
 
-Season discovery is server-declared, not brute-forced: one bootstrap fetch
-of the current calendar-year season reads `status.previousSeasons` off the
-response -- that IS the season list, no floor/ceiling guessing.
-
-This is a `cls.fjord()` daemon example -- the six source classes AND the
-`outflow(state)` function are defined in `outflow.py`, and this entry file
-imports them back out of it (the CLI resolves `cls_name` against the
-sidecar's namespace, so this direction is load-bearing; a Watershed example
-would flip it).
+This is a `cls.fjord()` daemon example -- the six source classes, the six
+bare view classes, and `outflow(state)` all live in `outflow.py`. This
+entry file loads that module explicitly via
+`incorporator.usercode.load_outflow_module` rather than a bare
+`from outflow import (...)`: the three console tables below read
+`FranchiseCard.inc_dict.values()` / `RecordRow.inc_dict.values()` /
+`DraftTendencyRow.inc_dict.values()` AFTER the fjord loop ends, and a bare
+import registers a second, disconnected copy of `outflow.py` under
+Python's own `sys.modules` cache -- fjord()'s internal flush() builds and
+parks the views on ITS OWN loaded copy (a different, path-keyed cache; see
+`incorporator/usercode.py::load_user_module`'s docstring), so a bare-import
+copy's `inc_dict` would come back silently empty. `load_outflow_module`
+shares that same path-keyed cache, so calling it explicitly here, once,
+before `fjord()` runs, guarantees both loads resolve to the identical
+module and class objects.
 
 Run with:
     python examples/appendix/espn-league-history/espn_league_history.py
@@ -50,6 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from incorporator import Incorporator, calc, pluck, register_host_penstock
+from incorporator.usercode import load_outflow_module
 
 register_host_penstock("lm-api-reads.fantasy.espn.com", rate_per_sec=1.0)
 
@@ -61,25 +75,52 @@ VIEWS = ["mTeam", "mMatchupScore", "mSettings", "mDraftDetail"]
 
 DEMO_LEAGUE_ID = "899513"
 
+POSITION_MAP = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST"}
+
 HERE = Path(__file__).resolve().parent
-
-from outflow import (  # noqa: E402
-    TOP_N_MOST_DRAFTED,
-    DraftPick,
-    Matchup,
-    Owner,
-    PlayerName,
-    Season,
-    Standing,
-    position_name,
-    ppr_points_from_scoring,
-    win_pct_equiv,
+_outflow_path = str(HERE / "outflow.py")
+_, _outflow_mod = load_outflow_module(_outflow_path)
+Season, Owner, Standing, Matchup, DraftPick, PlayerName = (
+    _outflow_mod.Season,
+    _outflow_mod.Owner,
+    _outflow_mod.Standing,
+    _outflow_mod.Matchup,
+    _outflow_mod.DraftPick,
+    _outflow_mod.PlayerName,
 )
+FranchiseCard, SeasonTimelineRow, RivalryRow, RecordRow, DraftTendencyRow, SettingsRow = (
+    _outflow_mod.FranchiseCard,
+    _outflow_mod.SeasonTimelineRow,
+    _outflow_mod.RivalryRow,
+    _outflow_mod.RecordRow,
+    _outflow_mod.DraftTendencyRow,
+    _outflow_mod.SettingsRow,
+)
+TOP_N_MOST_DRAFTED = _outflow_mod.TOP_N_MOST_DRAFTED
 
 
-class ViewRow(Incorporator):
-    """Generic read-back class for re-reading an already-written NDJSON view -- used only
-    for the console report below, not for any of the six views' own build/export shape."""
+def win_pct_equiv(wins: int, losses: int, ties: int) -> float:
+    """Cross-field arithmetic over three named fields -- `calc` feeds all three
+    to one callable; no primitive composes `(w + 0.5t)/(w+l+t)` itself."""
+    games = wins + losses + ties
+    return round((wins + 0.5 * ties) / games, 2) if games else 0.0
+
+
+def position_name(position_id: int) -> str:
+    """Fallback label is VALUE-DERIVED (`POS_11`); `calc(POSITION_MAP.get, ...)`
+    alone can't synthesize a per-id placeholder string."""
+    return POSITION_MAP.get(position_id, f"POS_{position_id}")
+
+
+def ppr_points_from_scoring(scoring_items: list[dict[str, Any]]) -> float:
+    """Predicate search (`statId == 53`) plus a null-OR-absent
+    `pointsOverrides` guard -- `pluck`/DataPath drill by key/index, never
+    by predicate."""
+    ppr_item = next((item for item in scoring_items if item.get("statId") == 53), None)
+    if ppr_item is None:
+        return 0.0
+    overrides = ppr_item.get("pointsOverrides") or {}
+    return overrides.get("16", ppr_item.get("points", 0.0))
 
 
 async def main() -> None:
@@ -114,7 +155,8 @@ async def main() -> None:
         "roster_slots": calc(dict, "settings.rosterSettings.lineupSlotCounts", default={}, target_type=dict),
     }
 
-    # --- Bootstrap: one call, learns the reachable-years list.
+    # --- Bootstrap: one call, the in-progress current-year season, also learns
+    # the candidate-years list off status.previousSeasons (public branch only).
     bootstrap = await Season.incorp(
         inc_url=MODERN_URL.format(season=current_year, league_id=league_id),
         headers=auth_headers,
@@ -124,23 +166,20 @@ async def main() -> None:
     candidate_years = set(bootstrap[0].previous_seasons) if bootstrap else set()
     remaining_years = sorted(y for y in candidate_years if y != current_year)
 
-    # --- Fan-out: every remaining year, ONE call, concurrent on one client.
+    # --- History/fan-out: one call, one statement, mode differs only by kwarg.
+    # Private: leagueHistory with no seasonId returns every OTHER completed
+    # season as one list -- the top-level response IS the record set. Public:
+    # leagueHistory 401s uncookied, so the modern endpoint fans out instead.
     fanout_rows: Any = []
     if remaining_years:
-        if has_cookies:
-            fanout_urls = [f"{HISTORY_URL.format(league_id=league_id)}?seasonId={y}" for y in remaining_years]
-            fanout_rows = await Season.incorp(
-                inc_url=fanout_urls,
-                headers=auth_headers,
-                params={"view": VIEWS},
-                rec_path="0",
-                conv_dict=season_conv_dict,
-            )
-        else:
-            fanout_urls = [MODERN_URL.format(season=y, league_id=league_id) for y in remaining_years]
-            fanout_rows = await Season.incorp(
-                inc_url=fanout_urls, headers=auth_headers, params={"view": VIEWS}, conv_dict=season_conv_dict
-            )
+        fanout_kwargs = (
+            {"inc_url": HISTORY_URL.format(league_id=league_id)}
+            if has_cookies
+            else {"inc_url": [MODERN_URL.format(season=y, league_id=league_id) for y in remaining_years]}
+        )
+        fanout_rows = await Season.incorp(
+            headers=auth_headers, params={"view": VIEWS}, conv_dict=season_conv_dict, **fanout_kwargs
+        )
 
     all_seasons = sorted([*bootstrap, *fanout_rows], key=operator.attrgetter("season"))
     resolved_years = {s.season for s in all_seasons}
@@ -274,7 +313,7 @@ async def main() -> None:
                 "refresh_params": None,
             },
         ],
-        outflow=str(HERE / "outflow.py"),
+        outflow=_outflow_path,
         export_params={
             "FranchiseCard": {"file_path": str(out_dir / "franchise_cards.ndjson")},
             "SeasonTimelineRow": {"file_path": str(out_dir / "season_timeline.ndjson")},
@@ -287,22 +326,15 @@ async def main() -> None:
         if wave.failed_sources:
             print(f"WARN  {wave.operation}: {wave.failed_sources}")
 
-    franchise_cards = await ViewRow.incorp(inc_file=out_dir / "franchise_cards.ndjson")
-    season_timeline = await ViewRow.incorp(inc_file=out_dir / "season_timeline.ndjson")
-    rivalry_matrix = await ViewRow.incorp(inc_file=out_dir / "rivalry_matrix.ndjson")
-    records_book = await ViewRow.incorp(inc_file=out_dir / "records_book.ndjson")
-    draft_tendencies = await ViewRow.incorp(inc_file=out_dir / "draft_tendencies.ndjson")
-    settings_evolution = await ViewRow.incorp(inc_file=out_dir / "settings_evolution.ndjson")
-
     print(f"\nWrote 6 views to {out_dir}:")
-    print(f"  franchise_cards.ndjson    {len(franchise_cards)} rows")
-    print(f"  season_timeline.ndjson    {len(season_timeline)} rows")
-    print(f"  rivalry_matrix.ndjson     {len(rivalry_matrix)} rows")
-    print(f"  records_book.ndjson       {len(records_book)} rows")
-    print(f"  draft_tendencies.ndjson   {len(draft_tendencies)} rows")
-    print(f"  settings_evolution.ndjson {len(settings_evolution)} rows")
+    print(f"  franchise_cards.ndjson    {len(FranchiseCard.inc_dict)} rows")
+    print(f"  season_timeline.ndjson    {len(SeasonTimelineRow.inc_dict)} rows")
+    print(f"  rivalry_matrix.ndjson     {len(RivalryRow.inc_dict)} rows")
+    print(f"  records_book.ndjson       {len(RecordRow.inc_dict)} rows")
+    print(f"  draft_tendencies.ndjson   {len(DraftTendencyRow.inc_dict)} rows")
+    print(f"  settings_evolution.ndjson {len(SettingsRow.inc_dict)} rows")
 
-    ranked = sorted(franchise_cards, key=operator.attrgetter("win_pct"), reverse=True)
+    ranked = sorted(FranchiseCard.inc_dict.values(), key=operator.attrgetter("win_pct"), reverse=True)
     print("\nFRANCHISE CARDS (all-time, sorted by win%)")
     header = f"{'FRANCHISE':<24}{'W-L-T':<12}{'WIN%':>7}{'SEASONS':>9}{'TITLES':>8}{'PLAYOFF%':>10}"
     print(header)
@@ -319,12 +351,15 @@ async def main() -> None:
     header = f"{'KIND':<28}{'VALUE':>10}  {'FRANCHISE':<20}{'SEASON':>8}  {'DETAIL'}"
     print(header)
     print("-" * len(header))
-    for row in records_book:
+    for row in RecordRow.inc_dict.values():
         name = str(row.display_name).encode("ascii", errors="replace").decode("ascii")[:19]
         detail = str(row.detail).encode("ascii", errors="replace").decode("ascii")
         print(f"{row.kind:<28}{row.value:>10}  {name:<20}{row.season!s:>8}  {detail}")
 
-    honor_roll = sorted((r for r in draft_tendencies if r.kind == "first_overall"), key=operator.attrgetter("season"))
+    honor_roll = sorted(
+        (r for r in DraftTendencyRow.inc_dict.values() if r.kind == "first_overall"),
+        key=operator.attrgetter("season"),
+    )
     print("\nFIRST-OVERALL DRAFT HONOR ROLL")
     header = f"{'SEASON':<8}{'FRANCHISE':<22}{'PLAYER':<24}{'POS'}"
     print(header)
