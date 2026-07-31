@@ -309,15 +309,14 @@ def _reset_all() -> None:
     # outflow.py and never imported into espn_league_history.py's own
     # namespace (see that module's import-block comment) -- fjord()'s
     # internal flush() always clears+rebuilds their inc_dict on every run
-    # regardless, so only the seven SOURCE classes need resetting here.
+    # regardless, so only the six SOURCE classes need resetting here.
     for cls in (
         espn_history.Season,
+        espn_history.Owner,
         espn_history.Standing,
         espn_history.Matchup,
-        espn_history.Owner,
         espn_history.DraftPick,
         espn_history.PlayerName,
-        espn_history.TeamGame,
     ):
         cls.inc_dict.clear()
 
@@ -431,6 +430,14 @@ async def test_private_run_resolves_old_year_via_league_history(
     settings_rows = [json.loads(ln) for ln in (out_dir / "settings_evolution.ndjson").read_text().splitlines() if ln]
     by_season = {r["season"]: r for r in settings_rows}
     assert by_season[OLD_YEAR]["ppr_points"] == 1.0  # pointsOverrides present with an override
+
+    # OLD_YEAR's lineupSlotCounts (3 keys) fans out in the SAME leagueHistory batch
+    # call as PREVIOUS_YEAR's (8 keys) -- the cross-record key-set divergence that
+    # used to null-pad the smaller season's roster_slots via the fan-out batch's
+    # own schema union. The Season fjord reseed's exclude_unset=True dump closes
+    # that: OLD_YEAR's exported roster_slots must carry only its own 3 keys, none null.
+    assert by_season[OLD_YEAR]["roster_slots"] == {"0": 1, "2": 1, "3": 1}
+    assert None not in by_season[OLD_YEAR]["roster_slots"].values()
 
     tendency_rows = [json.loads(ln) for ln in (out_dir / "draft_tendencies.ndjson").read_text().splitlines() if ln]
     old_year_pick = next(r for r in tendency_rows if r["kind"] == "first_overall" and r["season"] == OLD_YEAR)
