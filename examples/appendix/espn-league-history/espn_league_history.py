@@ -4,23 +4,26 @@ Companion script for `README.md` in this directory.
 
 A one-shot `Incorporator.fjord()` pipeline -- every ESPN season is fetched
 exactly once, ever. Season discovery is exactly TWO `Season.incorp` calls,
-identical in shape across both auth modes: a bootstrap fetch of the
+identical in shape across both auth modes: a `current_season` fetch of the
 in-progress current-year season (reads `status.previousSeasons` off the
 response -- used only by the public branch), then one history/fan-out call
 whose URL and record-set shape are the only mode difference -- private
 mode's cookie-gated `leagueHistory/{id}` endpoint (no `seasonId` query
 param) returns every OTHER completed season as one JSON list body (the
 top-level array IS the record set, no `rec_path` drilling); public mode
-fans the modern per-season endpoint out across `remaining_years` instead,
-since `leagueHistory` 401s uncookied.
+drills the modern per-season endpoint declaratively instead, `inc_parent=
+current_season, inc_child="previous_seasons"` fanning one GET out per
+`status.previousSeasons` entry (`examples/06-state-sports/state_sports.py`'s
+`inc_parent`/`inc_child` shape), since `leagueHistory` 401s uncookied.
 
+`PlayerName` is likewise a declarative drill, `inc_parent=all_seasons,
+inc_child="season"`, one GET per discovered season's `players_wl` endpoint.
 `Standing`/`Matchup`/`DraftPick` are network-free `payload_list=` fjord
-sources built straight off the flattened season rows below; `PlayerName` is
-the one genuinely-networked fan-out. Every rollup, rivalry stat, and
-records-book extreme is plain Python inside `outflow.py`'s `outflow(state)`
--- `defaultdict` buckets, `Counter`, and `max()`/`min()` picks over the live
-fjord snapshot, the same shape `examples/09-nascar-fantasy-fjord/outflow.py`
-already uses.
+sources built straight off the flattened season rows below. Every rollup,
+rivalry stat, and records-book extreme is plain Python inside
+`outflow.py`'s `outflow(state)` -- `defaultdict` buckets, `Counter`, and
+`max()`/`min()` picks over the live fjord snapshot, the same shape
+`examples/09-nascar-fantasy-fjord/outflow.py` already uses.
 
 Two auth modes, one pipeline:
 - PUBLIC (default): no cookies, demo league 899513, unauthenticated floor
@@ -70,7 +73,6 @@ register_host_penstock("lm-api-reads.fantasy.espn.com", rate_per_sec=1.0)
 BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
 MODERN_URL = BASE + "/seasons/{season}/segments/0/leagues/{league_id}"
 HISTORY_URL = BASE + "/leagueHistory/{league_id}"
-PLAYERS_URL = BASE + "/seasons/{season}/players"
 VIEWS = ["mTeam", "mMatchupScore", "mSettings", "mDraftDetail"]
 
 DEMO_LEAGUE_ID = "899513"
@@ -155,33 +157,37 @@ async def main() -> None:
         "roster_slots": calc(dict, "settings.rosterSettings.lineupSlotCounts", default={}, target_type=dict),
     }
 
-    # --- Bootstrap: one call, the in-progress current-year season, also learns
-    # the candidate-years list off status.previousSeasons (public branch only).
-    bootstrap = await Season.incorp(
+    # --- current_season: one call, the in-progress current-year season, also
+    # learns the candidate-years list off status.previousSeasons (public branch only).
+    current_season = await Season.incorp(
         inc_url=MODERN_URL.format(season=current_year, league_id=league_id),
         headers=auth_headers,
         params={"view": VIEWS},
         conv_dict=season_conv_dict,
     )
-    candidate_years = set(bootstrap[0].previous_seasons) if bootstrap else set()
-    remaining_years = sorted(y for y in candidate_years if y != current_year)
+    candidate_years = set(current_season[0].previous_seasons) if current_season else set()
 
     # --- History/fan-out: one call, one statement, mode differs only by kwarg.
     # Private: leagueHistory with no seasonId returns every OTHER completed
     # season as one list -- the top-level response IS the record set. Public:
-    # leagueHistory 401s uncookied, so the modern endpoint fans out instead.
-    fanout_rows: Any = []
-    if remaining_years:
-        fanout_kwargs = (
-            {"inc_url": HISTORY_URL.format(league_id=league_id)}
-            if has_cookies
-            else {"inc_url": [MODERN_URL.format(season=y, league_id=league_id) for y in remaining_years]}
-        )
-        fanout_rows = await Season.incorp(
-            headers=auth_headers, params={"view": VIEWS}, conv_dict=season_conv_dict, **fanout_kwargs
-        )
+    # leagueHistory 401s uncookied, so an inc_parent/inc_child drill fans the
+    # modern endpoint out over current_season's own previous_seasons field
+    # instead -- one GET per entry, no y != current_year filter needed since
+    # ESPN's status.previousSeasons never includes the in-progress year.
+    completed_kwargs = (
+        {"inc_url": HISTORY_URL.format(league_id=league_id)}
+        if has_cookies
+        else {
+            "inc_parent": current_season,
+            "inc_child": "previous_seasons",
+            "inc_url": f"{BASE}/seasons/{{}}/segments/0/leagues/{league_id}",
+        }
+    )
+    completed_seasons = await Season.incorp(
+        headers=auth_headers, params={"view": VIEWS}, conv_dict=season_conv_dict, **completed_kwargs
+    )
 
-    all_seasons = sorted([*bootstrap, *fanout_rows], key=operator.attrgetter("season"))
+    all_seasons = sorted([*current_season, *completed_seasons], key=operator.attrgetter("season"))
     resolved_years = {s.season for s in all_seasons}
     unresolved_years = sorted((candidate_years | {current_year}) - resolved_years)
     print(f"\nFetched {len(all_seasons)} season(s): {[s.season for s in all_seasons]}")
@@ -301,7 +307,9 @@ async def main() -> None:
             {
                 "cls": PlayerName,
                 "incorp_params": {
-                    "inc_url": [PLAYERS_URL.format(season=s.season) for s in all_seasons],
+                    "inc_parent": all_seasons,
+                    "inc_child": "season",
+                    "inc_url": f"{BASE}/seasons/{{}}/players",
                     "headers": {**auth_headers, "X-Fantasy-Filter": json.dumps({"filterIds": {"value": wanted_ids}})},
                     "params": {"view": "players_wl"},
                     "inc_code": "id",

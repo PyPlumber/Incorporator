@@ -149,26 +149,32 @@ Season discovery is exactly two `Season.incorp` call sites, both shared
 identically across auth modes -- mode differences are argument ternaries on
 a single fan-out call, never duplicated call sites:
 
-1. **Bootstrap** -- one call for the in-progress current-year season
+1. **`current_season`** -- one call for the in-progress current-year season
    (the modern endpoint). Reads `status.previousSeasons` off the response;
    that's the candidate-years list, load-bearing for the public branch's
-   URL construction only (harmless, unused, in private mode).
+   drill below only (harmless, unused, in private mode).
 2. **History/fan-out** -- one call, one statement, mode decided ONCE up
    front from whether cookies are present, no probe, no retry:
    - **With cookies**, ONE `Season.incorp(inc_url=<leagueHistory URL>)`
      call against the cookie-gated `leagueHistory/{league_id}` endpoint
      with NO `seasonId` query param -- its top-level JSON response IS the
      list of every OTHER completed season (excluding the in-progress
-     current year already covered by the bootstrap), so `incorp()` treats
-     the array itself as the record set with no `rec_path` drilling at
-     all.
-   - **With no cookies**, `leagueHistory` 401s uncookied, so `remaining_years`
-     (from the bootstrap's `previousSeasons`) fans out against the modern
-     per-season endpoint instead -- `Season.incorp(inc_url=[...])`, one URL
-     per year. A modern-endpoint miss on an old season is terminal: ESPN
-     gives back the successful years and each failed year's URL lands in
-     `.failed_sources`, which the pipeline reports (via a plain
-     set-difference against the candidate list) but never retries.
+     current year already covered by `current_season`), so `incorp()`
+     treats the array itself as the record set with no `rec_path`
+     drilling at all.
+   - **With no cookies**, `leagueHistory` 401s uncookied, so a declarative
+     `inc_parent=current_season, inc_child="previous_seasons"` drill fans
+     the modern per-season endpoint out instead -- one GET per entry of
+     `current_season`'s own `previous_seasons` field, the same
+     `inc_parent`/`inc_child` shape as
+     [Tutorial 6 -- State Sports](../../06-state-sports/README.md)'s
+     per-team drill. No `y != current_year` filter is needed: ESPN's own
+     `status.previousSeasons` never includes the in-progress year, and the
+     framework does not post-filter parent rows. A modern-endpoint miss on
+     an old season is terminal: ESPN gives back the successful years and
+     each failed year's URL lands in `.failed_sources`, which the pipeline
+     reports (via a plain set-difference against the candidate list) but
+     never retries.
 
 League size is read from each season's own `len(season.teams)` -- never
 hardcoded, since a league's team count can and does drift across seasons.
@@ -336,15 +342,18 @@ Draft picks carry only a numeric `playerId` (negative for D/ST, e.g.
 call to ESPN's `players_wl` endpoint (`GET
 .../seasons/{S}/players?view=players_wl` with an `X-Fantasy-Filter` header
 listing the wanted IDs); old IDs don't resolve against a newer season's
-player universe. The pipeline makes exactly ONE `PlayerName.incorp(inc_url=
-[...])` call, fanning out over EVERY discovered season's `players_wl` URL
-concurrently on one client, sharing ONE `X-Fantasy-Filter` header whose
-value is the UNION of every wanted id -- round-1 picks from every season,
-plus the all-time top-15 most-drafted `playerId`s (by pick count, any
-round), computed once via a single `collections.Counter` pass over every
-fetched draft pick. Each season endpoint resolves only the ids it
-recognises out of that shared union; `inc_code="id"` dedups the rest across
-every URL's response into one `PlayerName.inc_dict`.
+player universe. The pipeline makes exactly ONE `PlayerName.incorp` call,
+a declarative `inc_parent=all_seasons, inc_child="season"` drill (the same
+`inc_parent`/`inc_child` shape as
+[Tutorial 6 -- State Sports](../../06-state-sports/README.md)) fanning out
+over EVERY discovered season's `players_wl` URL concurrently on one
+client, sharing ONE `X-Fantasy-Filter` header whose value is the UNION of
+every wanted id -- round-1 picks from every season, plus the all-time
+top-15 most-drafted `playerId`s (by pick count, any round), computed once
+via a single `collections.Counter` pass over every fetched draft pick.
+Each season endpoint resolves only the ids it recognises out of that
+shared union; `inc_code="id"` dedups the rest across every URL's response
+into one `PlayerName.inc_dict`.
 
 Season-matched calls are still genuinely required -- ESPN's player universe
 is season-scoped, so this is the one part of the pipeline that can't batch
