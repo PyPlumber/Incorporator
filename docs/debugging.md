@@ -299,11 +299,10 @@ Pre-declaring a bare class is therefore purely a DX choice (a named
 handle to read results back through); it's never required and it no
 longer suppresses inference. To get **full type control** instead —
 validate rows against exactly the fields you declare and drop
-anything else, per Pydantic's default `extra='ignore'` — declare at
-least one real field on the subclass (or opt into `model_config =
-ConfigDict(extra="allow")` to keep every field instead). That opt-in
-is a deliberate, silent choice; no warning fires either way once you've
-declared fields.
+anything else, per Pydantic's default `extra='ignore'` — declare the
+fields on the subclass (the `stateful_polling` receiver path requires
+this; see Tutorial 8). To keep every field, stay bare: that is the
+default behavior, and no `model_config` line is needed to get it.
 
 ---
 
