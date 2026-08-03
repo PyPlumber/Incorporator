@@ -40,7 +40,7 @@ Wrote 6 views to .../out:
 FRANCHISE CARDS (all-time, sorted by win%)
 FRANCHISE               W-L-T          WIN%  SEASONS  TITLES  PLAYOFF%
 ----------------------------------------------------------------------
-longhorn0010            53-29-0       0.646        7       1     71.4%
+longhorn0010            53-29-0       0.646        6       1     83.3%
 ...
 ```
 
@@ -104,12 +104,12 @@ resolve to the identical module and class objects.
 
 | View | File | Shape |
 |---|---|---|
-| 1. Franchise Cards | `franchise_cards.ndjson` | One row per owner, all-time: W-L-T, win%, PF/PA, seasons played, average finish, championships/runner-ups/last-places, playoff appearances + rate. |
-| 2. Season Timeline | `season_timeline.ndjson` | One row per franchise-season: seed -> final rank, record, PF/PA, division, all-play expected wins, luck delta. |
+| 1. Franchise Cards | `franchise_cards.ndjson` | One row per owner, all-time: W-L-T, win%, PF/PA, seasons played (completed only, Section 3b), average finish, championships/runner-ups/last-places, playoff appearances + rate, `has_current_season`. |
+| 2. Season Timeline | `season_timeline.ndjson` | One row per franchise-season: seed -> final rank, record, PF/PA, division, all-play expected wins, luck delta, `is_complete`. |
 | 3. Rivalry Matrix | `rivalry_matrix.ndjson` | One row per franchise pair, all-time: meetings, W-L, playoff meetings, biggest blowout, closest game. |
 | 4. Records Book | `records_book.ndjson` | Ten all-time record kinds (Section 3a). |
 | 5. Draft Tendencies | `draft_tendencies.ndjson` | Three kinds: round-1 position mix per franchise, all-time most-drafted players (top 15), first-overall honor roll. |
-| 6. Settings Evolution | `settings_evolution.ndjson` | One row per season: league size, playoff format, PPR adoption, roster slots, division eras. |
+| 6. Settings Evolution | `settings_evolution.ndjson` | One row per season: league size, playoff format, PPR adoption, roster slots, division eras, `is_complete`. |
 
 ### 3a. The ten records-book kinds
 
@@ -137,6 +137,23 @@ kinds last, fjord's own dynamic-schema inference locks `value`'s type from
 the first-sampled (float) row and coerces the trailing int streak values to
 match -- `longest_win_streak` renders as `10.0`, not `10`, in the exported
 NDJSON.
+
+### 3b. Completed vs. in-progress seasons
+
+Every row from every season stays in every view, including the current,
+still-in-progress year -- nothing is dropped. `Season.is_complete`
+(`status.finalScoringPeriod < status.latestScoringPeriod`) flags each
+season, and only the three season-COUNTING `FranchiseCard` fields narrow
+their denominator to completed seasons: `seasons_played`, `average_finish`,
+and `playoff_rate`'s denominator. A franchise whose only season on record is
+the in-progress one reads `seasons_played: 0, average_finish: 0.0,
+playoff_rate: 0.0` rather than dividing by zero.
+`FranchiseCard.has_current_season` marks a franchise that fielded a team in
+the still-in-progress year, and `SeasonTimelineRow.is_complete` /
+`SettingsRow.is_complete` carry the same per-season flag through for
+downstream filtering. Game-level records, streaks, the rivalry matrix,
+all-play/luck, and every draft-tendency fold stay fully inclusive -- a
+decided game this season is a real result.
 
 ## 4. Season discovery is exactly two `Season.incorp` calls
 

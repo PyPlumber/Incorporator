@@ -102,6 +102,12 @@ async def main() -> None:
         "draft_picks": pluck("draftDetail.picks"),
         "previous_seasons": pluck("status.previousSeasons"),
         "season": calc(int, "seasonId", default=0, target_type=int),
+        # `default=True` covers the cookie-gated leagueHistory response, whose
+        # per-season objects may omit `status` entirely -- every season it
+        # carries besides the current one is already complete by construction.
+        "is_complete": calc(
+            operator.lt, "status.finalScoringPeriod", "status.latestScoringPeriod", default=True, target_type=bool
+        ),
         "league_size": calc(len, "teams", default=0, target_type=int),
         "playoff_team_count": calc(int, "settings.scheduleSettings.playoffTeamCount", default=0, target_type=int),
         "playoff_seeding_rule": calc(str, "settings.scheduleSettings.playoffSeedingRule", default="", target_type=str),
@@ -216,6 +222,7 @@ async def main() -> None:
                     "payload_list": [
                         {
                             "season": s.season,
+                            "is_complete": s.is_complete,
                             "league_size": s.league_size,
                             "playoff_team_count": s.playoff_team_count,
                             "playoff_seeding_rule": s.playoff_seeding_rule,

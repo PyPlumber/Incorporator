@@ -90,6 +90,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     draft_picks = state.get("DraftPick")
     player_names = state.get("PlayerName")
     names = {o.inc_code: o.display_name for o in owners}
+    completed_years = {s.season for s in seasons if s.is_complete}
 
     # ── Team-game melt: one fold over every decided matchup builds team_games,
     # rivalry_games, and playoff_seasons_by_owner in a single pass.
@@ -196,7 +197,8 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     for owner_guid, rows in standings_by_owner.items():
         wins, losses, ties = sum(s.wins for s in rows), sum(s.losses for s in rows), sum(s.ties for s in rows)
         played = wins + losses + ties
-        seasons_played = len(rows)
+        completed_rows = [s for s in rows if s.season in completed_years]
+        seasons_played = len(completed_rows)
         playoff_appearances = len(playoff_seasons_by_owner.get(owner_guid, set()))
         franchise_cards.append(
             {
@@ -209,7 +211,9 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "points_for": round(sum(s.points_for for s in rows), 2),
                 "points_against": round(sum(s.points_against for s in rows), 2),
                 "seasons_played": seasons_played,
-                "average_finish": round(sum(s.final_rank for s in rows) / seasons_played, 2),
+                "average_finish": round(sum(s.final_rank for s in completed_rows) / seasons_played, 2)
+                if seasons_played
+                else 0.0,
                 "championships": sum(s.is_champion for s in rows),
                 "runner_ups": sum(s.is_runner_up for s in rows),
                 "last_places": sum(
@@ -217,6 +221,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 ),
                 "playoff_appearances": playoff_appearances,
                 "playoff_rate": round(playoff_appearances / seasons_played, 3) if seasons_played else 0.0,
+                "has_current_season": any(s.season not in completed_years for s in rows),
             }
         )
 
@@ -229,6 +234,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "owner_guid": s.primaryOwner,
                 "display_name": names.get(s.primaryOwner, "Unknown"),
                 "season": s.season,
+                "is_complete": s.season in completed_years,
                 "team_id": s.id,
                 "team_name": s.name,
                 "division_id": s.division_id,
@@ -323,7 +329,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "detail": f"beat {names.get(narrow['opp_owner_guid'], 'Unknown')} by {narrow['margin']}",
             },
         ]
-    played_seasons = [s for s in standings if s.wins + s.losses + s.ties > 0]
+    played_seasons = [s for s in standings if s.season in completed_years and s.wins + s.losses + s.ties > 0]
     if played_seasons:
         best = max(played_seasons, key=operator.attrgetter("win_pct_equiv"))
         worst = min(played_seasons, key=operator.attrgetter("win_pct_equiv"))
@@ -445,6 +451,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     settings_evolution = [
         {
             "season": s.season,
+            "is_complete": s.is_complete,
             "league_size": s.league_size,
             "playoff_team_count": s.playoff_team_count,
             "playoff_seeding_rule": s.playoff_seeding_rule,

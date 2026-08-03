@@ -73,6 +73,7 @@ OLD_YEAR = CURRENT_YEAR - 6
 
 OWNER_A = "{OWNER-AAAA}"
 OWNER_B = "{OWNER-BBBB}"
+OWNER_C = "{OWNER-CCCC}"
 FAKE_LEAGUE_ID = "555000"
 
 PLAYER_DB: dict[int, dict[str, Any]] = {
@@ -135,6 +136,7 @@ def _pick(round_id: int, round_pick: int, overall: int, player_id: int, team_id:
 _MEMBERS = [
     {"id": OWNER_A, "displayName": "Alice Alpha"},
     {"id": OWNER_B, "displayName": "Bob Beta"},
+    {"id": OWNER_C, "displayName": "Cleo Gamma"},
 ]
 
 _CURRENT_PAYLOAD = {
@@ -142,6 +144,9 @@ _CURRENT_PAYLOAD = {
     "teams": [
         _team(1, OWNER_A, "Team Alpha", 8, 5, 1200.5, 1100.25, 1, 1),
         _team(2, OWNER_B, "Team Beta", 5, 8, 1000.0, 1150.75, 2, 2),
+        # Owner C fields a team ONLY in the in-progress season -- exercises
+        # the zero-division guard once seasons_played excludes it entirely.
+        _team(3, OWNER_C, "Team Gamma", 0, 0, 0.0, 0.0, 0, 0),
     ],
     "schedule": [
         _matchup(1, 1, "NONE", "HOME", 1, 120.5, 2, 95.25),
@@ -175,7 +180,10 @@ _CURRENT_PAYLOAD = {
         },
         "rosterSettings": {"lineupSlotCounts": {"0": 1, "2": 2, "3": 2, "4": 1, "5": 1, "20": 6, "21": 2, "23": 1}},
     },
-    "status": {"previousSeasons": [PREVIOUS_YEAR, OLD_YEAR]},
+    # latestScoringPeriod < finalScoringPeriod -- in-progress, mirrors the
+    # live-probed 2026 preseason shape (0 < 17, real comparison not the
+    # garbage-value default path).
+    "status": {"previousSeasons": [PREVIOUS_YEAR, OLD_YEAR], "latestScoringPeriod": 0, "finalScoringPeriod": 17},
 }
 
 _PREVIOUS_PAYLOAD = {
@@ -214,7 +222,9 @@ _PREVIOUS_PAYLOAD = {
         "scheduleSettings": {"playoffTeamCount": 4, "playoffSeedingRule": "TOTAL_POINTS_SCORED", "divisions": []},
         "rosterSettings": {"lineupSlotCounts": {"0": 1, "2": 2, "3": 2, "4": 1, "5": 1, "20": 6, "21": 2, "23": 1}},
     },
-    "status": {"previousSeasons": []},
+    # latestScoringPeriod > finalScoringPeriod -- complete. Reused verbatim by
+    # both the public modern-endpoint fetch and the private leagueHistory list.
+    "status": {"previousSeasons": [], "latestScoringPeriod": 18, "finalScoringPeriod": 17},
 }
 
 # Historical (leagueHistory) season payload for OLD_YEAR -- only reachable
@@ -234,6 +244,8 @@ _OLD_SEASON_PAYLOAD = {
         "scheduleSettings": {"playoffTeamCount": 2, "playoffSeedingRule": "TOTAL_POINTS_SCORED", "divisions": []},
         "rosterSettings": {"lineupSlotCounts": {"0": 1, "2": 1, "3": 1}},
     },
+    # No scoring-period fields -- only reachable via cookie-gated leagueHistory
+    # in this twin, exercising is_complete's default=True fallback for real.
     "status": {"previousSeasons": []},
 }
 
@@ -368,9 +380,32 @@ async def test_public_run_skips_401_season_and_builds_six_views(
 
     out_dir = _EXAMPLE_DIR / "out"
     franchise_rows = [json.loads(ln) for ln in (out_dir / "franchise_cards.ndjson").read_text().splitlines() if ln]
-    assert {r["owner_guid"] for r in franchise_rows} == {OWNER_A, OWNER_B}
-    for row in franchise_rows:
-        assert row["seasons_played"] == 2
+    assert {r["owner_guid"] for r in franchise_rows} == {OWNER_A, OWNER_B, OWNER_C}
+    by_owner = {r["owner_guid"]: r for r in franchise_rows}
+    # Only PREVIOUS_YEAR is complete -- CURRENT_YEAR is excluded from every
+    # season-counting field even though it still produced rows everywhere else.
+    assert by_owner[OWNER_A]["seasons_played"] == 1
+    assert by_owner[OWNER_B]["seasons_played"] == 1
+    assert by_owner[OWNER_A]["average_finish"] == 1.0
+    assert by_owner[OWNER_B]["average_finish"] == 2.0
+    # playoff_appearances is unfiltered by design -- CURRENT_YEAR's own decided
+    # WINNERS_BRACKET matchup still counts (a real result, kept inclusive), so
+    # against a seasons_played denominator of 1 this reads 100%.
+    assert by_owner[OWNER_A]["playoff_rate"] == 1.0
+    assert by_owner[OWNER_B]["playoff_rate"] == 1.0
+    assert by_owner[OWNER_A]["has_current_season"] is True
+    # Owner C fields a team ONLY in the in-progress season -- seasons_played
+    # divides by zero without the guard this same edit adds.
+    assert by_owner[OWNER_C]["seasons_played"] == 0
+    assert by_owner[OWNER_C]["average_finish"] == 0.0
+    assert by_owner[OWNER_C]["playoff_rate"] == 0.0
+    assert by_owner[OWNER_C]["has_current_season"] is True
+
+    season_timeline_rows = [
+        json.loads(ln) for ln in (out_dir / "season_timeline.ndjson").read_text().splitlines() if ln
+    ]
+    assert all(r["is_complete"] is False for r in season_timeline_rows if r["season"] == CURRENT_YEAR)
+    assert all(r["is_complete"] is True for r in season_timeline_rows if r["season"] == PREVIOUS_YEAR)
 
     records_rows = [json.loads(ln) for ln in (out_dir / "records_book.ndjson").read_text().splitlines() if ln]
     kinds = {r["kind"] for r in records_rows}
@@ -413,6 +448,8 @@ async def test_public_run_skips_401_season_and_builds_six_views(
     by_season = {r["season"]: r for r in settings_rows}
     assert by_season[CURRENT_YEAR]["ppr_points"] == 0.5  # pointsOverrides key entirely absent
     assert by_season[PREVIOUS_YEAR]["ppr_points"] == 0.5  # pointsOverrides explicitly null
+    assert by_season[CURRENT_YEAR]["is_complete"] is False
+    assert by_season[PREVIOUS_YEAR]["is_complete"] is True
 
 
 @pytest.mark.asyncio
@@ -446,12 +483,28 @@ async def test_private_run_resolves_old_year_via_league_history(
 
     out_dir = _EXAMPLE_DIR / "out"
     franchise_rows = [json.loads(ln) for ln in (out_dir / "franchise_cards.ndjson").read_text().splitlines() if ln]
-    for row in franchise_rows:
-        assert row["seasons_played"] == 3
+    by_owner = {r["owner_guid"]: r for r in franchise_rows}
+    # PREVIOUS_YEAR + OLD_YEAR are complete; CURRENT_YEAR is excluded --
+    # OLD_YEAR's completeness comes from is_complete's default=True fallback
+    # (leagueHistory's status block carries no scoring-period fields).
+    assert by_owner[OWNER_A]["seasons_played"] == 2
+    assert by_owner[OWNER_B]["seasons_played"] == 2
+    assert by_owner[OWNER_A]["average_finish"] == 1.0
+    assert by_owner[OWNER_B]["average_finish"] == 2.0
+    assert by_owner[OWNER_A]["playoff_rate"] == 0.5
+    assert by_owner[OWNER_B]["playoff_rate"] == 0.5
+    # Owner C only ever fielded a team in the in-progress season here too.
+    assert by_owner[OWNER_C]["seasons_played"] == 0
+    assert by_owner[OWNER_C]["average_finish"] == 0.0
+    assert by_owner[OWNER_C]["playoff_rate"] == 0.0
+    assert all(by_owner[g]["has_current_season"] is True for g in (OWNER_A, OWNER_B, OWNER_C))
 
     settings_rows = [json.loads(ln) for ln in (out_dir / "settings_evolution.ndjson").read_text().splitlines() if ln]
     by_season = {r["season"]: r for r in settings_rows}
     assert by_season[OLD_YEAR]["ppr_points"] == 1.0  # pointsOverrides present with an override
+    assert by_season[CURRENT_YEAR]["is_complete"] is False
+    assert by_season[PREVIOUS_YEAR]["is_complete"] is True
+    assert by_season[OLD_YEAR]["is_complete"] is True  # default=True fallback, no status fields present
 
     # OLD_YEAR's lineupSlotCounts (3 keys) and PREVIOUS_YEAR's (8 keys) both land in
     # SettingsRow's one flush wave. The bare SettingsRow class infers its
