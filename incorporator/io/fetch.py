@@ -143,16 +143,9 @@ def _build_reject_entry(
 logger = logging.getLogger(__name__)
 
 # Dedicated child logger for per-reject WARNING detail (RejectEntry.__str__).
-# A local NullHandler makes logging.Logger.callHandlers count this logger's own
-# records as "found", so logging.lastResort never free-prints them to an
-# unconfigured console — while propagate=True (default) still carries every
-# record up to incorporator.io.fetch -> incorporator -> root, so caplog,
-# --logs (logging.basicConfig), and any user-installed root handler still see
-# them. The aggregate UserWarning in base.py (_format_reject_warning) is left
-# as the single console-visible rendering of reject detail in unconfigured
-# runs; this arbitration only concerns the duplicate per-reject line, not the
-# other ~35 module-logger DX warnings (e.g. outflow.py's bare-class warning),
-# which keep relying on lastResort untouched.
+# The local NullHandler stops logging.lastResort from free-printing to an
+# unconfigured console; propagate=True (default) still carries records up to
+# caplog, --logs (logging.basicConfig), and any user-installed root handler.
 _reject_logger = logging.getLogger(__name__ + ".rejects")
 _reject_logger.addHandler(logging.NullHandler())
 
@@ -249,13 +242,10 @@ def _is_retryable_error(exc: BaseException, method: str) -> bool:
 # and its own construction-time-frozen multiplier/min/max) — no per-call
 # mutable state, so the callables are safe to build once per HTTP method
 # and share across every concurrent/sequential ``execute_request`` call.
-# ``AsyncRetrying`` itself is deliberately NOT memoized here: its
-# ``.statistics`` dict and ``.iter_state`` (a ``threading.local``, shared
-# across coroutines cooperatively scheduled on the same event-loop thread)
-# are per-instance mutable state that ``execute_request`` reads after the
-# loop completes — sharing one ``AsyncRetrying`` object across concurrent
-# requests would corrupt those reads. Do not "complete" this optimization
-# by extending the cache to ``AsyncRetrying``.
+# Do not extend this cache to ``AsyncRetrying`` itself: its ``.statistics``
+# dict and ``.iter_state`` are per-instance mutable state that
+# ``execute_request`` reads after the loop completes, and sharing one
+# instance across concurrent requests would corrupt those reads.
 @functools.cache
 def _make_http_stop(method: str) -> Callable[[RetryCallState], bool]:
     """Return a tenacity stop callable that dispatches per-class attempt caps.
@@ -355,23 +345,12 @@ def _make_http_wait(method: str) -> Callable[[RetryCallState], float]:
 # ==========================================
 
 # Lazily-built, process-lifetime-shared default verify SSLContext.  httpx
-# rebuilds a fresh context (``ssl.create_default_context(cafile=certifi.where())``)
-# on *every* ``httpx.AsyncClient(verify=True)`` construction — measured at
-# ~1.1s vs ~54ms for ``ignore_ssl=True`` (2026-07-06), the root cause of the
-# scheduler-test flakes previously papered over test-side with
-# ``ignore_ssl=True``. Sharing one context is safe: ``ssl.SSLContext`` is
-# documented by the stdlib as reusable across concurrent connections, and
-# reading httpx's ``_config.create_ssl_context`` shows a pre-built context
-# passed as ``verify=<SSLContext>`` takes its ``else: ctx = verify`` branch —
-# identical semantics to the ``verify=True`` path today, just not rebuilt.
-# ``ignore_ssl=True`` is untouched: it still passes ``verify=False`` and
-# httpx builds its own cheap throwaway ``CERT_NONE`` context per call.
-#
-# HTTP/2 safety: ``create_ssl_context`` never receives ``http2`` — ALPN
-# negotiation happens later at the httpcore connection layer, driven by the
-# separate ``http2=`` kwarg on the transport/pool, not baked into the
-# SSLContext at creation time. So sharing one context across clients built
-# with different ``http2``/``concurrency_limit``/``headers`` values is safe.
+# rebuilds a fresh context on every ``httpx.AsyncClient(verify=True)``
+# construction — ~1.1s vs ~54ms for ``ignore_ssl=True``. ``ssl.SSLContext``
+# is documented by the stdlib as reusable across concurrent connections, and
+# ALPN/HTTP-2 negotiation happens later at the httpcore layer, driven by the
+# transport's own ``http2=`` kwarg, so sharing one context across clients
+# built with different ``http2`` settings is safe.
 _default_ssl_context: ssl.SSLContext | None = None
 _default_ssl_context_lock = threading.Lock()
 

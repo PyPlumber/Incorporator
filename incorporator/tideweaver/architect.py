@@ -377,9 +377,8 @@ async def _probe_one(
     probe_kwargs = {**kwargs, "__capture_into": capture}
     # Re-use test()'s safety guards: 5s timeout, single-page when paginated.
     try:
-        # Engine-driven: this probe runs as an asyncio.gather child with no user
-        # frame on the stack — suppress the redundant aggregate UserWarning here;
-        # the probe's own __probe_error__ marker still surfaces the failure.
+        # Runs as its own gather child, no user frame; rejects surface via the
+        # probe's own __probe_error__ marker.
         token = _ENGINE_DRIVEN_CALL.set(True)
         try:
             await probe_cls.test(**probe_kwargs)
@@ -1948,10 +1947,8 @@ def _tune_parent_child(
 # ---------------------------------------------------------------------------
 
 # _PARSE_TOO_FAST_P50 = 0.001  (1 ms)
-#   CPython json.loads throughput ~300–500 MB/s on 3.11+ (Python Performance
-#   Benchmark Suite).  A 100 KB chunk parses in ~0.2 ms; p50 < 1 ms means the
-#   chunk is almost certainly in the noise floor and all measurable latency is
-#   per-request overhead.
+#   At CPython json.loads throughput (~300-500 MB/s), a 100 KB chunk parses in
+#   ~0.2 ms; p50 < 1 ms means the chunk is in the noise floor.
 _PARSE_TOO_FAST_P50: float = 0.001
 
 # _PARSE_TOO_FAST_P99 = 0.005  (5 ms)
@@ -1960,17 +1957,14 @@ _PARSE_TOO_FAST_P50: float = 0.001
 _PARSE_TOO_FAST_P99: float = 0.005
 
 # _PARSE_MEMORY_P99 = 0.100  (100 ms)
-#   At ~300–500 MB/s, 100 ms of parse-only work implies ~30–50 MB per chunk —
+#   At ~300-500 MB/s, 100 ms of parse-only work implies ~30-50 MB per chunk —
 #   where memory pressure and GC pauses begin to dominate throughput.
 _PARSE_MEMORY_P99: float = 0.100
 
 # _HTTP_MAJORITY_FRACTION = 0.5
-#   Partition rule: if > this fraction of a source group carries
+#   Partition rule: if more than this fraction of a source group carries
 #   http_fetch_time_sec, steer on the HTTP-subset parse-only path rather than
-#   the coarse end-to-end path.  Basis: simple majority ensures the dominant
-#   signal wins; same 50% split semantics used by _tune_retry_policy's ceiling
-#   detection.  Strict > means a 50/50 split stays on end-to-end (identical
-#   to the pre-hardening all-or-nothing boundary for that edge case).
+#   the coarse end-to-end path; simple majority ensures the dominant signal wins.
 _HTTP_MAJORITY_FRACTION: float = 0.5
 
 # ---------------------------------------------------------------------------
@@ -1984,22 +1978,16 @@ _HTTP_MAJORITY_FRACTION: float = 0.5
 _DEFAULT_TIMEOUT_PROXY_SEC = 5.0
 
 # _TIMEOUT_PROXIMITY_FACTOR = 0.85
-#   A p99 latency at ≥85% of the configured timeout means roughly 1-in-100
-#   real fetches is within 15% of the cliff.  Standard SRE headroom practice
-#   for 99th-percentile network latency: ≥20% safety margin is the common
-#   recommendation (Google SRE Book, ch.19).  85% of timeout leaves only 15%
-#   headroom — tighter than the 20% threshold for pass_interval (which uses
-#   80%) because network latency variance is higher than scheduler variance.
+#   A p99 latency at ≥85% of the configured timeout means roughly 1-in-100 real
+#   fetches is within 15% of the cliff — tighter than the 80% threshold used
+#   for pass_interval, since network latency variance is higher than scheduler variance.
 _TIMEOUT_PROXIMITY_FACTOR = 0.85
 
 # _TIMEOUT_HEADROOM_FACTOR = 3.0
-#   When the configured timeout is more than 3× p99 latency, every failed
-#   request waits at least 3× longer than the 99th-percentile of real
-#   latency before the error propagates.  Tighter fail-fast behaviour is
-#   almost always preferable for idempotent retryable requests.  Derived
-#   from: if p99=100ms and timeout=300ms, the 1% of failed requests each
-#   wait 300ms instead of ~105ms — a 3× penalty per failure.  3× is the
-#   canonical "reasonable headroom" constant in circuit-breaker literature.
+#   When the configured timeout is more than 3x p99 latency, every failed
+#   request waits at least 3x longer than the 99th-percentile of real latency
+#   before the error propagates; e.g. p99=100ms, timeout=300ms means the 1% of
+#   failed requests each wait 300ms instead of ~105ms — a 3x penalty per failure.
 _TIMEOUT_HEADROOM_FACTOR = 3.0
 
 

@@ -206,10 +206,8 @@ async def _seed_one_source(
             merged_conv = {**base_params.get("conv_dict", {}), **extra_conv}
             base_params["conv_dict"] = merged_conv
 
-    # Engine-driven: this source's incorp() runs as part of a fjord tick whose
-    # rejects are already aggregated onto the yielded Wave, whether reached via
-    # the concurrent asyncio.gather tiers above or the legacy sequential
-    # fallback — suppress the redundant per-source aggregate UserWarning here.
+    # Runs as its own gather child, no user frame; rejects surface via the
+    # yielded Wave, so suppress the redundant per-source aggregate UserWarning.
     token = _ENGINE_DRIVEN_CALL.set(True)
     try:
         return await cls.incorp(**base_params)

@@ -917,14 +917,6 @@ class Tideweaver:
         # in ``_tick_fjord``), whose cumulative snapshot already includes
         # the mid-tick data.  This delivers the mid-tick wave instead of
         # dropping it, at the cost of one extra (harmless) re-fire.
-        #
-        # ``consumed_snapshot`` is threaded as a positional arg deliberately —
-        # a :class:`contextvars.ContextVar` alternative was evaluated and
-        # rejected: the dict construction is microsecond-class, and a
-        # ContextVar would silently leak if a future retry mechanism stops
-        # preserving task context (the current ``tenacity.AsyncRetrying``
-        # does preserve it, but that's an implementation detail of the
-        # ``on_error="restart"`` policy in ``_tick_wrapper`` below).
         consumed_snapshot: dict[str, datetime] = {}
         for up_name, _flow in self._upstream[current.name]:
             up_wave = self._state[up_name].last_wave_at
@@ -1285,10 +1277,8 @@ class Tideweaver:
             inherited_child_path = getattr(pre_snap, "inc_child_path", None)
             inc_parent = _wrap_snapshot(upstream_current.cls, list(pre_snap), inherited_child_path)
             incorp_call_params = {**params_with_client, "inc_parent": cast(Any, inc_parent)}
-            # Engine-driven: each Stream tick runs as its own asyncio.create_task child
-            # (no user frame on the stack); the reject is already surfaced via
-            # Tideweaver.rejects / the routed log line below, so suppress the
-            # redundant aggregate warning.
+            # Runs as its own task, no user frame; rejects surface via
+            # Tideweaver.rejects / the routed log line below.
             token = _ENGINE_DRIVEN_CALL.set(True)
             try:
                 _pc_result = await current.cls.incorp(**incorp_call_params)

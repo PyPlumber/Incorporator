@@ -47,9 +47,8 @@ async def _refresh_daemon(
             row_count_fn=lambda: _row_count(dataset_ref[0]),
         ):
             async with lock:  # ENSURE ATOMIC MUTATION
-                # Engine-driven: this daemon always runs as its own asyncio.create_task
-                # child (no user frame on the stack); the reject is already surfaced via
-                # the Wave this tick enqueues, so suppress the redundant aggregate warning.
+                # Runs as its own task, no user frame; rejects surface via the Wave
+                # this tick enqueues, so suppress the redundant aggregate warning.
                 token = _ENGINE_DRIVEN_CALL.set(True)
                 try:
                     refreshed = await cls.refresh(instance=dataset_ref[0], **refresh_params)

@@ -67,27 +67,17 @@ _PACKAGE_DIR = Path(__file__).resolve().parent
 def _reject_warning_stacklevel() -> int:
     """Compute a ``stacklevel`` that attributes the partial-data warning to user code.
 
-    Replaces a hardcoded ``stacklevel=2`` (only correct for a direct,
-    un-nested ``incorp()``/``refresh()`` call — the sole case it was ever
-    verified against, per git history) with a walk that keeps stepping
-    outward through the caller chain while each frame's file lives under
-    the installed ``incorporator`` package, then stops at the first frame
-    outside it. This generalises correctly across a direct call
-    (``stacklevel=2``, unchanged), a ``child_incorp`` drill
-    (``schema/factory.py``), a ``LoggedIncorporator`` wrap, ``Incorporator.test()``,
-    and the chunked ``stream()`` engine — every path where a real user frame
-    is reachable via ``f_back`` because the nested call is an ``await`` within
-    the same task, not a new ``asyncio.create_task``/``gather`` child.
+    Walks outward through the caller chain while each frame's file lives under the
+    installed ``incorporator`` package, then stops at the first frame outside it.
 
-    Must be called directly at the ``warnings.warn(...)`` call site (this
-    function's own frame is excluded via ``sys._getframe(1)``, matching
-    ``stacklevel``'s convention that level 1 is the frame calling ``warn()``).
+    Must be called directly at the ``warnings.warn(...)`` call site (this function's
+    own frame is excluded via ``sys._getframe(1)``, matching ``stacklevel``'s
+    convention that level 1 is the frame calling ``warn()``); wrapping this call in a
+    helper would silently break the attribution.
 
-    Task-rooted paths (fjord seed, refresh daemon, Tideweaver tick) have no
-    user frame on the stack at all — those are suppressed entirely via the
-    ``_ENGINE_DRIVEN_CALL`` flag before this function would otherwise be
-    called, so an exhausted stack (frame becomes ``None``) is not expected
-    in practice; the loop still guards against it defensively.
+    The ``None`` guard on an exhausted stack is defensive: task-rooted call paths
+    have no user frame at all, but those are suppressed upstream via the
+    ``_ENGINE_DRIVEN_CALL`` flag before this function runs.
 
     Returns:
         The ``stacklevel`` value to pass to ``warnings.warn``.
