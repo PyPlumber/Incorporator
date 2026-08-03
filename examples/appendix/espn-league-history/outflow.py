@@ -1,31 +1,12 @@
 """Outflow sidecar for the ESPN league-history one-shot fjord pipeline.
 
-Defines the six source classes (``Season``, ``Owner``, ``Standing``,
-``Matchup``, ``DraftPick``, ``PlayerName``) and the six DERIVED view classes
-(``FranchiseCard``, ``SeasonTimelineRow``, ``RivalryRow``, ``RecordRow``,
-``DraftTendencyRow``, ``SettingsRow``), all declared BARE (docstring only).
-``flush()`` infers each view's schema from the rows ``outflow()`` returns for
-it, using the bare class itself as the base -- every row field a view returns
-is kept, and the built instances register into that class's own ``inc_dict``,
-exactly like a bare source class under ``incorp()``. ``espn_league_history.py``'s
-console report reads these classes' `inc_dict` back AFTER the fjord loop ends
--- and ``outflow(state)`` is the return-twin of that same print loop. Every
-field a view needs is either build-time-coerced on its own source's
-``conv_dict`` (inline in ``espn_league_history.py``'s ``incorp_params``) or
-resolved read-time here, directly off the live ``state["X"]`` snapshot fjord
-hands this function each wave -- ``state`` values are live
-``IncorporatorList``s in this ``cls.fjord()`` daemon path (not the
-Tideweaver-plain-list form; see ``espn_league_history.py``'s module docstring
-for the two-path split).
-
-Cross-row aggregation (per-franchise rollups, the rivalry matrix, the
-records-book extremes, draft tendencies) is plain Python: ``defaultdict``
-buckets, ``Counter``, and ``max()``/``min()`` picks -- the same shape
-``examples/09-nascar-fantasy-fjord/outflow.py`` and
-``examples/appendix/mlb-pulse/outflow.py`` already use. No ``calc_all``, no
-group-collapsing second registration of a source under an alternate
-``inc_code`` -- one team-game melt over ``state["Matchup"]`` builds
-everything team/rivalry-related in a single pass.
+Defines the six source classes and six derived view classes (all bare,
+docstring only). ``state`` values here are live ``IncorporatorList``s (the
+``cls.fjord()`` daemon path). ``outflow(state)`` is the return-twin of the
+console print loop: fields are either source-side ``conv_dict`` coerced or
+resolved read-time here -- rollups, the rivalry matrix, and records-book
+extremes are plain Python (``defaultdict``/``Counter``/``max()``/``min()``)
+over one team-game melt of ``state["Matchup"]``.
 """
 
 from __future__ import annotations
@@ -57,9 +38,8 @@ class Standing(Incorporator):
 
 
 class Matchup(Incorporator):
-    """One scheduled game, `inc_code="id"`. Home/away owner GUIDs are threaded onto the raw
-    payload pre-fjord (in `espn_league_history.py`, from a sibling source with no seeding-order
-    guarantee) -- everything else `outflow()` needs is a plain, unconverted payload field."""
+    """One scheduled game, `inc_code="id"`. Owner GUIDs and home/away point totals are
+    both threaded onto the raw payload pre-fjord, in `espn_league_history.py`."""
 
 
 class DraftPick(Incorporator):
@@ -84,8 +64,8 @@ class RivalryRow(Incorporator):
 
 class RecordRow(Incorporator):
     """View 4's derived row -- ten all-time record kinds. Bare inference locks `value`'s
-    type from the first-sampled row (a float), so the two trailing streak kinds render
-    `10.0`/`9.0` via Pydantic's lax int-to-float coercion -- expected, not a regression."""
+    type from the first-sampled row; the two trailing (int) streak kinds render as floats
+    when a float kind is sampled first."""
 
 
 class DraftTendencyRow(Incorporator):
@@ -95,9 +75,8 @@ class DraftTendencyRow(Incorporator):
 
 class SettingsRow(Incorporator):
     """View 6's derived row -- one row per season. `roster_slots` keeps its digit-string
-    keys as plain data; a season whose key-set is smaller than another season sharing the
-    same flush wave gets its missing keys null-padded by the cross-row dict-submodel
-    inference -- accepted, not a data loss (the season's own real values stay intact)."""
+    keys as plain data; a season with fewer keys than another in the same flush wave gets
+    its missing keys null-padded by cross-row inference."""
 
 
 def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -113,8 +92,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     names = {o.inc_code: o.display_name for o in owners}
 
     # ── Team-game melt: one fold over every decided matchup builds team_games,
-    # rivalry_games, and playoff_seasons_by_owner in a single pass. Replaces the
-    # old TeamGame/RivalryPair build-time classes entirely.
+    # rivalry_games, and playoff_seasons_by_owner in a single pass.
     team_games: list[dict[str, Any]] = []
     rivalry_games: list[dict[str, Any]] = []
     playoff_seasons_by_owner: dict[str, set[int]] = defaultdict(set)
@@ -122,8 +100,8 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         if m.winner == "UNDECIDED":
             continue
         home_owner, away_owner = m.home_owner_guid, m.away_owner_guid
-        home_score = float(m.home.totalPoints)
-        away_score = float(m.away.totalPoints) if m.away else 0.0
+        home_score = float(m.home_points)
+        away_score = float(m.away_points) if m.away_points is not None else 0.0
         margin = round(abs(home_score - away_score), 2)
         if home_owner is not None:
             team_games.append(
@@ -471,8 +449,8 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             "playoff_team_count": s.playoff_team_count,
             "playoff_seeding_rule": s.playoff_seeding_rule,
             "ppr_points": s.ppr_points,
-            "division_names": [d.name for d in s.settings.scheduleSettings.divisions],
-            "division_count": len(s.settings.scheduleSettings.divisions),
+            "division_names": s.division_names,
+            "division_count": len(s.division_names),
             "roster_slots": s.roster_slots,
         }
         for s in seasons

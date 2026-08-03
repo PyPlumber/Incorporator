@@ -2,52 +2,13 @@
 
 Companion script for `README.md` in this directory.
 
-A one-shot `Incorporator.fjord()` pipeline -- every ESPN season is fetched
-exactly once, ever. Season discovery is exactly TWO `Season.incorp` calls,
-identical in shape across both auth modes: a `current_season` fetch of the
-in-progress current-year season (reads `status.previousSeasons` off the
-response -- used only by the public branch), then one history/fan-out call
-whose URL and record-set shape are the only mode difference -- private
-mode's cookie-gated `leagueHistory/{id}` endpoint (no `seasonId` query
-param) returns every OTHER completed season as one JSON list body (the
-top-level array IS the record set, no `rec_path` drilling); public mode
-drills the modern per-season endpoint declaratively instead, `inc_parent=
-current_season, inc_child="previous_seasons"` fanning one GET out per
-`status.previousSeasons` entry (`examples/06-state-sports/state_sports.py`'s
-`inc_parent`/`inc_child` shape), since `leagueHistory` 401s uncookied.
-
-`PlayerName` is likewise a declarative drill, `inc_parent=all_seasons,
-inc_child="season"`, one GET per discovered season's `players_wl` endpoint.
-`Standing`/`Matchup`/`DraftPick` are network-free `payload_list=` fjord
-sources built straight off the flattened season rows below. Every rollup,
-rivalry stat, and records-book extreme is plain Python inside
-`outflow.py`'s `outflow(state)` -- `defaultdict` buckets, `Counter`, and
-`max()`/`min()` picks over the live fjord snapshot, the same shape
-`examples/09-nascar-fantasy-fjord/outflow.py` already uses.
-
-Two auth modes, one pipeline:
-- PUBLIC (default): no cookies, demo league 899513, unauthenticated floor
-  season 2020 (earlier seasons fail without cookies and are left out of the
-  final season list -- public mode is modern-endpoint-only).
-- PRIVATE: set `ESPN_S2` / `ESPN_SWID` (browser cookies) to unlock a
-  private league and the cookie-gated `leagueHistory` endpoint, which
-  serves every other completed season directly, in one call.
-
-This is a `cls.fjord()` daemon example -- the six source classes, the six
-bare view classes, and `outflow(state)` all live in `outflow.py`. This
-entry file loads that module explicitly via
-`incorporator.usercode.load_outflow_module` rather than a bare
-`from outflow import (...)`: the three console tables below read
-`FranchiseCard.inc_dict.values()` / `RecordRow.inc_dict.values()` /
-`DraftTendencyRow.inc_dict.values()` AFTER the fjord loop ends, and a bare
-import registers a second, disconnected copy of `outflow.py` under
-Python's own `sys.modules` cache -- fjord()'s internal flush() builds and
-parks the views on ITS OWN loaded copy (a different, path-keyed cache; see
-`incorporator/usercode.py::load_user_module`'s docstring), so a bare-import
-copy's `inc_dict` would come back silently empty. `load_outflow_module`
-shares that same path-keyed cache, so calling it explicitly here, once,
-before `fjord()` runs, guarantees both loads resolve to the identical
-module and class objects.
+One-shot `Incorporator.fjord()` pipeline: two `Season.incorp` calls discover
+every reachable season, seeding network-free Owner/Standing/Matchup/DraftPick
+sources; `PlayerName` is the one genuinely-networked drill. Rollups and
+records-book extremes are plain Python in `outflow.py`'s `outflow(state)`.
+Two auth modes -- PUBLIC (default) or PRIVATE (`ESPN_S2`/`ESPN_SWID`
+cookies) -- see README Section 1. Classes live in `outflow.py`, loaded via
+`load_outflow_module` (README Section 2 explains why).
 
 Run with:
     python examples/appendix/espn-league-history/espn_league_history.py
@@ -102,22 +63,18 @@ TOP_N_MOST_DRAFTED = _outflow_mod.TOP_N_MOST_DRAFTED
 
 
 def win_pct_equiv(wins: int, losses: int, ties: int) -> float:
-    """Cross-field arithmetic over three named fields -- `calc` feeds all three
-    to one callable; no primitive composes `(w + 0.5t)/(w+l+t)` itself."""
+    """Win percentage with each tie counted as half a win."""
     games = wins + losses + ties
     return round((wins + 0.5 * ties) / games, 2) if games else 0.0
 
 
 def position_name(position_id: int) -> str:
-    """Fallback label is VALUE-DERIVED (`POS_11`); `calc(POSITION_MAP.get, ...)`
-    alone can't synthesize a per-id placeholder string."""
+    """Position abbreviation for a `defaultPositionId`, or `POS_<id>` if unmapped."""
     return POSITION_MAP.get(position_id, f"POS_{position_id}")
 
 
 def ppr_points_from_scoring(scoring_items: list[dict[str, Any]]) -> float:
-    """Predicate search (`statId == 53`) plus a null-OR-absent
-    `pointsOverrides` guard -- `pluck`/DataPath drill by key/index, never
-    by predicate."""
+    """PPR (reception) scoring value for a season, from its scoringItems list."""
     ppr_item = next((item for item in scoring_items if item.get("statId") == 53), None)
     if ppr_item is None:
         return 0.0
@@ -126,8 +83,7 @@ def ppr_points_from_scoring(scoring_items: list[dict[str, Any]]) -> float:
 
 
 async def main() -> None:
-    """Entry point -- the linear season-discovery -> fjord -> report path lives
-    inline here, T9's shape (exactly one `def` at this level)."""
+    """Entry point: season discovery, then the fjord, then the console report."""
     league_id = os.environ.get("ESPN_LEAGUE_ID", DEMO_LEAGUE_ID)
     espn_s2 = os.environ.get("ESPN_S2")
     espn_swid = os.environ.get("ESPN_SWID")
@@ -157,8 +113,8 @@ async def main() -> None:
         "roster_slots": calc(dict, "settings.rosterSettings.lineupSlotCounts", default={}, target_type=dict),
     }
 
-    # --- current_season: one call, the in-progress current-year season, also
-    # learns the candidate-years list off status.previousSeasons (public branch only).
+    # current_season: the in-progress current-year season; also learns the
+    # candidate-years list off status.previousSeasons (public branch only).
     current_season = await Season.incorp(
         inc_url=MODERN_URL.format(season=current_year, league_id=league_id),
         headers=auth_headers,
@@ -167,13 +123,9 @@ async def main() -> None:
     )
     candidate_years = set(current_season[0].previous_seasons) if current_season else set()
 
-    # --- History/fan-out: one call, one statement, mode differs only by kwarg.
-    # Private: leagueHistory with no seasonId returns every OTHER completed
-    # season as one list -- the top-level response IS the record set. Public:
-    # leagueHistory 401s uncookied, so an inc_parent/inc_child drill fans the
-    # modern endpoint out over current_season's own previous_seasons field
-    # instead -- one GET per entry, no y != current_year filter needed since
-    # ESPN's status.previousSeasons never includes the in-progress year.
+    # History/fan-out: private mode's leagueHistory endpoint (no seasonId) returns
+    # every OTHER completed season as one list; public mode drills the modern
+    # endpoint per entry of current_season's own previous_seasons field instead.
     completed_kwargs = (
         {"inc_url": HISTORY_URL.format(league_id=league_id)}
         if has_cookies
@@ -194,33 +146,58 @@ async def main() -> None:
     if unresolved_years:
         print(f"  unresolved seasons (no data available): {unresolved_years}")
 
-    # --- Flatten every season's sub-collections into raw row lists -- network-free payloads.
-    all_owner_rows = [o.model_dump(by_alias=True) for s in all_seasons for o in s.members]
+    # Flatten every season's sub-collections into raw row lists -- network-free payloads.
+    all_owner_rows = [{"id": o.id, "displayName": o.displayName} for s in all_seasons for o in s.members]
     deduped_owner_rows = list({o["id"]: o for o in all_owner_rows}.values())
-    all_team_rows = [{**t.model_dump(by_alias=True), "season": s.season} for s in all_seasons for t in s.teams]
+
+    all_team_rows = []
+    for s in all_seasons:
+        for t in s.teams:
+            rec = t.record.overall if t.record else None
+            all_team_rows.append(
+                {
+                    "season": s.season,
+                    "id": t.id,
+                    "primaryOwner": t.primaryOwner,
+                    "name": t.name,
+                    "divisionId": t.divisionId,
+                    "playoffSeed": t.playoffSeed,
+                    "rankCalculatedFinal": t.rankCalculatedFinal,
+                    "wins": rec.wins if rec else 0,
+                    "losses": rec.losses if rec else 0,
+                    "ties": rec.ties if rec else 0,
+                    "pointsFor": rec.pointsFor if rec else 0.0,
+                    "pointsAgainst": rec.pointsAgainst if rec else 0.0,
+                }
+            )
 
     owner_by_team_key_raw = {f"{r['season']}:{r['id']}": r["primaryOwner"] for r in all_team_rows}
     all_schedule_rows = [
         {
-            **m.model_dump(by_alias=True),
+            "id": m.id,
             "season": s.season,
+            "matchupPeriodId": m.matchupPeriodId,
+            "playoffTierType": m.playoffTierType,
+            "winner": m.winner,
             "home_owner_guid": owner_by_team_key_raw.get(f"{s.season}:{m.home.teamId}"),
             "away_owner_guid": owner_by_team_key_raw.get(f"{s.season}:{m.away.teamId}") if m.away else None,
+            "home_points": m.home.totalPoints,
+            "away_points": m.away.totalPoints if m.away else None,
         }
         for s in all_seasons
         for m in s.schedule
     ]
     all_pick_rows = [
         {
-            **p.model_dump(by_alias=True),
+            "playerId": p.playerId,
+            "roundId": p.roundId,
+            "overallPickNumber": p.overallPickNumber,
             "season": s.season,
             "owner_guid": owner_by_team_key_raw.get(f"{s.season}:{p.teamId}"),
         }
         for s in all_seasons
         for p in s.draft_picks
-        # ESPN's vacant/placeholder-pick sentinel: an undrafted or not-yet-reached
-        # slot comes back fully formed with playerId == -1, teamId == -1 rather than
-        # omitted entirely -- exclude it here so it never becomes a DraftPick row.
+        # ESPN's vacant-pick sentinel (playerId == -1) -- see README Section 7.
         if p.playerId != -1
     ]
 
@@ -236,7 +213,18 @@ async def main() -> None:
             {
                 "cls": Season,
                 "incorp_params": {
-                    "payload_list": [s.model_dump(by_alias=True, exclude_unset=True) for s in all_seasons],
+                    "payload_list": [
+                        {
+                            "season": s.season,
+                            "league_size": s.league_size,
+                            "playoff_team_count": s.playoff_team_count,
+                            "playoff_seeding_rule": s.playoff_seeding_rule,
+                            "ppr_points": s.ppr_points,
+                            "roster_slots": s.roster_slots,
+                            "division_names": [d.name for d in s.settings.scheduleSettings.divisions],
+                        }
+                        for s in all_seasons
+                    ],
                     "inc_code": "season",
                 },
                 "refresh_params": None,
@@ -260,28 +248,26 @@ async def main() -> None:
                     "conv_dict": {
                         "team_key": calc("{}:{}".format, "season", "id", target_type=str),
                         "division_id": calc(int, "divisionId", default=0, target_type=int),
-                        "wins": calc(int, "record.overall.wins", default=0, target_type=int),
-                        "losses": calc(int, "record.overall.losses", default=0, target_type=int),
-                        "ties": calc(int, "record.overall.ties", default=0, target_type=int),
-                        # ESPN's own cumulative point totals carry floating-point summation drift
-                        # (live-verified: e.g. 1946.3600000000001) -- round(..., ndigits=2) via the
-                        # same functools.partial constant-binding form used below for is_champion.
+                        "wins": calc(int, "wins", default=0, target_type=int),
+                        "losses": calc(int, "losses", default=0, target_type=int),
+                        "ties": calc(int, "ties", default=0, target_type=int),
+                        # ESPN's point totals carry floating-point summation drift;
+                        # round(..., ndigits=2) via functools.partial constant-binding.
                         "points_for": calc(
                             functools.partial(round, ndigits=2),
-                            "record.overall.pointsFor",
+                            "pointsFor",
                             default=0.0,
                             target_type=float,
                         ),
                         "points_against": calc(
                             functools.partial(round, ndigits=2),
-                            "record.overall.pointsAgainst",
+                            "pointsAgainst",
                             default=0.0,
                             target_type=float,
                         ),
                         "playoff_seed": calc(int, "playoffSeed", default=0, target_type=int),
                         "final_rank": calc(int, "rankCalculatedFinal", default=0, target_type=int),
-                        # win_pct_equiv/is_champion/is_runner_up read wins/losses/ties/final_rank
-                        # back, so they must come after those four entries in dict order.
+                        # Must come after wins/losses/ties/final_rank -- conv_dict order matters.
                         "win_pct_equiv": calc(win_pct_equiv, "wins", "losses", "ties", target_type=float),
                         "is_champion": calc((1).__eq__, "final_rank", target_type=bool),
                         "is_runner_up": calc((2).__eq__, "final_rank", target_type=bool),
@@ -292,8 +278,7 @@ async def main() -> None:
             {
                 "cls": Matchup,
                 "incorp_params": {
-                    # home_owner_guid/away_owner_guid are already threaded onto each row above;
-                    # season/matchupPeriodId/playoffTierType/winner/home/away auto-infer.
+                    # Owner GUIDs + points are already threaded onto each row; rest auto-infers.
                     "payload_list": all_schedule_rows,
                     "inc_code": "id",
                 },
@@ -302,8 +287,7 @@ async def main() -> None:
             {
                 "cls": DraftPick,
                 "incorp_params": {
-                    # owner_guid/season are already threaded onto each row above;
-                    # roundId/overallPickNumber/playerId/teamId/keeper auto-infer.
+                    # owner_guid/season are already threaded onto each row; rest auto-infers.
                     "payload_list": all_pick_rows,
                 },
                 "refresh_params": None,

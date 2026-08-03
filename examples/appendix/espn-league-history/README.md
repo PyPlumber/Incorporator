@@ -44,13 +44,9 @@ longhorn0010            53-29-0       0.646        7       1     71.4%
 ...
 ```
 
-(`draft_tendencies.ndjson`'s row count drifts slightly season to season -- a
-season entering or leaving the `first_overall` honor roll as its draft
-starts/completes is real drift, not a bug. An in-progress or not-yet-drafted
-season's picks are ESPN's own vacant/placeholder-pick sentinel
-(`playerId == -1`), filtered out before they ever become a `DraftPick` row --
-that season simply produces no `first_overall` row at all, rather than an
-`Unknown`/`UNKNOWN` one, until its draft completes.)
+(`draft_tendencies.ndjson`'s row count drifts season to season as a season
+enters or leaves the `first_overall` honor roll while its draft completes --
+see Section 7 for the vacant-pick sentinel behind that.)
 
 ## 1. Two auth modes, one pipeline
 
@@ -68,10 +64,8 @@ that season simply produces no `first_overall` row at all, rather than an
 The demo league `899513`'s own unauthenticated floor is season 2020 -- seasons
 2018/2019 exist (ESPN's `status.previousSeasons` reports them) but 401
 through the modern endpoint without cookies, so the public run leaves them
-out of the final season list (printed once, as a set difference, at the end
-of discovery -- never per-item). This is a fact about the demo league's own
-history, not a hardcoded floor in the code -- **season discovery is entirely
-server-declared** (Section 4).
+out of the final season list (printed once, as a set difference at the end
+of discovery). Season discovery is entirely server-declared (Section 4).
 
 ## 2. File layout
 
@@ -94,8 +88,8 @@ the six derived view classes the fjord builds (see
 `examples/09-nascar-fantasy-fjord/`, the template this rewrite follows).
 
 `espn_league_history.py`'s own console report reads three of those view
-classes' `inc_dict` back AFTER the fjord loop ends (Section 5), so the entry
-file loads `outflow.py` via one explicit
+classes' `inc_dict` back AFTER the fjord loop ends, so the entry file loads
+`outflow.py` via one explicit
 `incorporator.usercode.load_outflow_module(...)` call rather than a bare
 `from outflow import (...)` -- a bare import registers a second,
 disconnected copy of the file under Python's own `sys.modules` cache,
@@ -142,8 +136,7 @@ plain win/loss-streak game counts (ints) for the other two. Since
 kinds last, fjord's own dynamic-schema inference locks `value`'s type from
 the first-sampled (float) row and coerces the trailing int streak values to
 match -- `longest_win_streak` renders as `10.0`, not `10`, in the exported
-NDJSON. This is expected, not a bug: fixing it would mean pre-declaring
-`RecordRow` again, exactly the machinery this class no longer needs.
+NDJSON.
 
 ## 4. Season discovery is exactly two `Season.incorp` calls
 
@@ -184,108 +177,84 @@ hardcoded, since a league's team count can and does drift across seasons.
 
 A fetch failure surfaces through `IncorporatorList.rejects` /
 `.failed_sources` (structured `RejectEntry` records with `.status_code`)
-plus the framework's own WARNING-level log line -- never a raised exception,
-and never suppressed.
+plus the framework's own WARNING-level log line -- never a raised exception.
 
 ## 5. Why a one-shot fjord, not a Watershed
 
-Every season is fetched exactly once, ever -- there is no polling axis. A
-Watershed's entire value proposition is repeated ticks against a moving
-window, and nothing here moves: this is static historical data. But six
-cardinality-reducing views fused from six fjord sources IS exactly what
-`Incorporator.fjord()` is for, without needing a Watershed's tick/wave
-scheduler at all: give every `stream_params` entry `refresh_params=None`
-and omit the top-level `export_interval`, and `fjord()` seeds every source
-once, flushes `outflow(state)` once, and exits.
+Every season is fetched exactly once, ever -- there's no polling axis, and a
+Watershed's value proposition is repeated ticks against a moving window. Six
+cardinality-reducing views fused from six fjord sources is exactly what
+`Incorporator.fjord()` is for, without a Watershed's tick/wave scheduler:
+give every `stream_params` entry `refresh_params=None` and omit the
+top-level `export_interval`, and `fjord()` seeds every source once, flushes
+`outflow(state)` once, and exits.
 [Tutorial 9 -- NASCAR Fantasy Fjord](../../09-nascar-fantasy-fjord/README.md)
-is the shipped precedent this appendix follows for that exact one-shot
-shape; [Tutorial 6 -- State Sports](../../06-state-sports/README.md) remains
-the precedent for a *plain script*, no-fjord one-shot when there's no
-multi-source fusion to do.
+is the shipped precedent for this one-shot shape.
 
-The six views are cardinality-reducing group-bys (per-owner rollups across
-N seasons, per-pair rivalry aggregation, ten records-book extremes, top-N
-draft counts). None of that lives in a `conv_dict` -- it's plain Python
-inside `outflow.py`'s `outflow(state)`, the same shape
-`examples/09-nascar-fantasy-fjord/outflow.py`'s manufacturer leaderboard
-already uses: one fold over the live `state["Matchup"]` snapshot melts every
-decided game into a `team_games` list (one row per team per game, home and
-away perspective), a rivalry-candidate list, and a per-owner
-WINNERS_BRACKET-season set, all in a single pass. From there, plain
-`defaultdict` buckets and `Counter`s do the rest -- bucket `state["Standing"]`
-by `primaryOwner` for Franchise Cards (`sum()`/`round()` inline per bucket),
-bucket `team_games` by `(season, week)` for the all-play expected-wins
-column, one chronological pass over `team_games` tracks each owner's running
-win/loss streak, and `max()`/`min(key=operator.itemgetter(...))` picks over
-`team_games` / `state["Standing"]` answer all ten records-book kinds.
-`RivalryRow` buckets the fold's rivalry-candidate list by `(owner_a,
-owner_b)` the same way. Every one of these is a plain Python data structure
-built and read inside `outflow(state)` -- no group-collapsing second
-registration of a source under an alternate `inc_code`, no build-time
-broadcast pass.
-
-What genuinely needs a read-time join across two DIFFERENT sources with no
-seeding-order guarantee -- an owner GUID resolved to `Owner.display_name`,
-and the draft-tendency `Counter` folds that need `PlayerName` -- reads
-directly off the live `state[...]` snapshots `outflow(state)` is handed each
-wave (the `cls.fjord()` daemon path). The owner-GUID lookup is a one-line
-dict comprehension built once at the top of `outflow(state)` -- `names =
-{o.inc_code: o.display_name for o in owners}`, the same lookup-dict-from-
-instances idiom as [Tutorial 6 -- State Sports](../../06-state-sports/README.md)'s
-`state_code_map` -- then every view site reads `names.get(owner_guid,
-"Unknown")`; `player_names.inc_dict.get(player_id)` stays a direct registry
-read since `PlayerName` only needs single-shot per-pick lookups, not a
-prebuilt map. That's the return-twin of the six view-building blocks a
-plain script would otherwise write inline in `main()`.
-
-`outflow(state)` builds every view exactly once, here -- `main()`'s three
-console tables (Franchise Cards, Records Book, First-Overall Honor Roll)
-do NOT re-read the exported NDJSON files back afterward; they iterate the
-built classes' own registries directly (`FranchiseCard.inc_dict.values()`,
-`RecordRow.inc_dict.values()`, `DraftTendencyRow.inc_dict.values()`) after
-the `async for wave in Incorporator.fjord(...)` loop ends. This is a step
-further than [Tutorial 9 -- NASCAR Fantasy Fjord](../../09-nascar-fantasy-fjord/README.md)
-takes -- T9's own `main()` never reads a derived view class back, only
-prints the export file paths -- see Section 2 for why that requires loading
-`outflow.py` via `load_outflow_module` explicitly rather than a bare
-top-level import.
+The six views (per-owner rollups, rivalry aggregation, records-book
+extremes, top-N draft counts) are plain Python inside `outflow.py`'s
+`outflow(state)` -- see Section 6 for the read-time joins involved and
+Section 2 for why the console report loads `outflow.py` via
+`load_outflow_module` rather than a bare top-level import.
 
 ## 6. `payload_list=` and read-time joins
 
 Every sub-collection (`teams`, `schedule`, `members`, `draftDetail.picks`)
-is pulled off EVERY fetched `Season` row, flattened into one list spanning
-every season in `main()` (each row stamped with `"season": s.season` inline
-via dict-comprehension unpacking -- `{**t.model_dump(by_alias=True),
-"season": s.season}`), and handed to a sibling fjord source's
+is pulled off EVERY fetched `Season` row and flattened into one list
+spanning every season in `main()`, and handed to a sibling fjord source's
 `payload_list=` -- a network-free, in-memory passthrough
 (`incorporator/base.py`'s payload-only mode): one dict entry in, one row
 out, through the full `conv_dict` pipeline, seeded exactly ONCE per class
-by `fjord()` rather than once per season. Every unmentioned payload field
-auto-coerces through schema inference -- ESPN's own JSON is clean-typed, so
+by `fjord()` rather than once per season. Each row is an explicit dict
+literal built by attribute access, carrying only the fields something
+downstream actually consumes:
+
+- **Owner rows** -- 2 keys: `id`, `displayName` -- the pre-rename camelCase
+  key `name_chg=[("displayName", "display_name")]` expects; renaming it in
+  the literal would silently no-op `name_chg`.
+- **Standing rows** -- 12 keys, built in a plain `for` loop (not a
+  comprehension) since flattening the nested `record.overall.*` needs a
+  local: `rec = t.record.overall if t.record else None`, then
+  `rec.wins if rec else 0` (and so on for `losses`/`ties`/`pointsFor`/
+  `pointsAgainst`) directly in the literal. `Standing`'s own `conv_dict`
+  (below) drills the already-flat `wins`/`losses`/`ties`/`pointsFor`/
+  `pointsAgainst` keys, two path tokens shorter than the raw wire shape.
+- **Matchup rows** -- flattens `home`/`away` to scalar `home_points`/
+  `away_points`, preserving the playoff-bye tri-state: `away_points` is
+  `None` for a bye (no `away` key) and `0.0` for a scoreless-but-played
+  game (Section 3a). `home.teamId`/`away.teamId` are consumed only at the
+  pre-fjord guid-threading step below and never reach the row.
+- **DraftPick rows** -- 5 keys: `playerId`, `roundId`, `overallPickNumber`,
+  `season`, `owner_guid` (`teamId` is read for the guid lookup but not
+  emitted; `keeper`/`roundPickNumber` are unused).
+
+Every unmentioned field left IN a literal (or auto-inferred on a source
+with no `conv_dict` at all, like `Matchup`/`DraftPick`) auto-coerces
+through schema inference -- ESPN's own JSON is clean-typed, so
 `season_conv_dict` lists only the fields that need a real transform
 (`pluck()` for the two nested lists, a handful of settings-evolution
-`calc()`s); the framework's dynamic schema builder auto-promotes each
-nested dict/list into its own typed submodel (dotted attribute access) --
-so `season.teams` is a list of submodel instances, not plain dicts, by the
-time `main()` reads it. `t.model_dump(by_alias=True)` flattens each back to
-a plain dict before the
-`payload_list=` handoff. `by_alias=True` matters specifically for
-`rosterSettings.lineupSlotCounts`: its keys are numeric STRINGS (`"0"`,
-`"2"`, ..., `"23"`), and an UNDECLARED dict-valued field's auto-promoted
-submodel sanitizes those into Python attribute names (`field_0`, `field_2`,
-...). `Season.roster_slots` sidesteps this entirely by being a DECLARED
-field (`dict[str, int] | None`) on the `Season` class itself --
-`infer_dynamic_schema` skips inference for any field already present on the
-base class, so the dict's original string keys survive untouched. Its
-`season_conv_dict` entry drills the raw `settings.rosterSettings.
-lineupSlotCounts` path directly (`calc(dict, ...)`, a plain shallow-copy
-coercion), never touching the `settings` field's own (still-inferred,
-still key-mangled) submodel. `Season.roster_slots` is a DECLARED field
-throughout the whole pipeline, including the fjord's own reseed off
-`[s.model_dump(by_alias=True, exclude_unset=True) for s in all_seasons]`
-(no `conv_dict` on that reseed at all) -- `model_dump` already carries
-whatever `roster_slots` the first pass computed, and a declared field is
-copied through untouched rather than re-drilled a second time.
+`calc()`s). `rosterSettings.lineupSlotCounts` needs different handling: its
+keys are numeric STRINGS (`"0"`, `"2"`, ..., `"23"`), and an UNDECLARED
+dict-valued field's auto-promoted submodel sanitizes those into Python
+attribute names (`field_0`, `field_2`, ...). `Season.roster_slots`
+sidesteps this by being a DECLARED field (`dict[str, int] | None`) on the
+`Season` class itself -- `infer_dynamic_schema` skips inference for any
+field already present on the base class, so the dict's original string
+keys survive untouched. Its `season_conv_dict` entry drills
+`settings.rosterSettings.lineupSlotCounts` directly (`calc(dict, ...)`, a
+plain shallow-copy coercion); that entry alone never touches the `settings`
+field's own (still-inferred, still key-mangled) submodel -- the fjord's own
+reseed literal below does, separately, for `division_names`.
+`Season.roster_slots` stays a declared field through the reseed too: its
+literal copies `s.roster_slots` straight off the already-built first-pass
+instance rather than re-drilling it. That same reseed literal also emits
+`division_names` (`[d.name for d in s.settings.scheduleSettings.divisions]`)
+so `outflow.py`'s `SettingsRow` build can read `s.division_names` /
+`len(s.division_names)` directly instead of re-drilling
+`s.settings.scheduleSettings.divisions` three levels deep on every wave;
+`division_names` exists only on the RESEEDED `Season` instances
+`outflow(state)` sees, not on the first-pass network-fetched ones
+`main()` holds in `all_seasons`.
 
 `outflow.py`'s `SettingsRow` -- View 6's derived row class -- does NOT need
 the same declared-field treatment: it's bare, like all six derived view
@@ -296,10 +265,10 @@ null-padded in the exported `settings_evolution.ndjson` -- fjord's own
 dynamic-schema inference union-merges an undeclared dict-valued field's keys
 across every row `outflow(state)` returns in one wave, the derived-row-level
 counterpart of the fan-out-batch union `Season.roster_slots`'s own
-declaration sidesteps at the source level. This is accepted inference
-behavior, not data loss -- the smaller season's own real values stay present
-and correct; only the extra keys another row in the wave carries come back
-`null`. Every real season in the live public-899513 run shares the same key
+declaration sidesteps at the source level. The smaller season's own real
+values stay present and correct; only the extra keys another row in the
+wave carries come back `null`. Every real season in the live public-899513
+run shares the same key
 set, so the padding never surfaces there; the appendix's own private-mode
 test (`OLD_YEAR`, a 3-key roster sharing a flush wave with an 8-key season)
 asserts exactly that shape.
@@ -327,16 +296,16 @@ anywhere; see that file's own module docstring.
 second group-collapsing registration. `outflow(state)` melts
 `state["Matchup"]` into everything team/rivalry-related in a single pass:
 for each decided game (`winner != "UNDECIDED"`), it appends one row per
-perspective to a local `team_games` list (`m.home.totalPoints` /
-`m.away.totalPoints if m.away else 0.0` read directly off the live
-snapshot's auto-promoted `home`/`away` submodels -- `m.away is None` on a
-playoff bye), a canonicalized rivalry-candidate row (the lower owner GUID is
-always side "a"), and, on a `WINNERS_BRACKET` game, both owners' season into
-a `defaultdict[str, set]` that answers `playoff_appearances` directly.
-Everything else -- Franchise Cards, the all-play expected-wins column,
-win/loss streaks, all ten records-book kinds, the rivalry matrix -- is a
-plain `defaultdict` bucket or a `max()`/`min(key=operator.itemgetter(...))`
-pick over that one `team_games` list, read fresh on every fjord wave.
+perspective to a local `team_games` list (`m.home_points` /
+`m.away_points if m.away_points is not None else 0.0`, the flattened fields
+from Section 6 -- `m.away_points is None` on a playoff bye), a canonicalized
+rivalry-candidate row (the lower owner GUID is always side "a"), and, on a
+`WINNERS_BRACKET` game, both owners' season into a `defaultdict[str, set]`
+that answers `playoff_appearances` directly. Everything else -- Franchise
+Cards, the all-play expected-wins column, win/loss streaks, all ten
+records-book kinds, the rivalry matrix -- is a plain `defaultdict` bucket or
+a `max()`/`min(key=operator.itemgetter(...))` pick over that one
+`team_games` list.
 
 ## 7. Player names: one shared fan-out, not two passes
 
@@ -360,13 +329,12 @@ into one `PlayerName.inc_dict`.
 
 Season-matched calls are still genuinely required -- ESPN's player universe
 is season-scoped, so this is the one part of the pipeline that can't batch
-down below one HTTP request per season -- but sending every season the
-SAME shared filter, in ONE `incorp()` call, replaces what used to be up to
-two loops of per-season calls. `DraftPick.player` is now a READ-TIME join
-inside `outflow.py`'s `outflow(state)` (`player_names.inc_dict.get(p.
-playerId)`), not a build-time `link_to`, since `DraftPick` and `PlayerName`
-are sibling fjord sources with no ordering guarantee between them (Section
-6).
+below one HTTP request per season -- but every season shares the SAME
+filter in ONE `incorp()` call. `DraftPick.player` resolves as a read-time
+join inside `outflow.py`'s `outflow(state)`
+(`player_names.inc_dict.get(p.playerId)`), not a build-time `link_to`,
+since `DraftPick` and `PlayerName` are sibling fjord sources with no
+ordering guarantee between them (Section 6).
 
 `defaultPositionId` (not `lineupSlotId`) is the verified position source --
 `1=QB`, `2=RB`, `3=WR`, `4=TE`, `5=K`, `16=D/ST`, computed ONCE per player at
@@ -397,8 +365,8 @@ ESPN_LEAGUE_ID=1234567 ESPN_S2=... ESPN_SWID='{...}' \
 ```
 
 Also runs in Docker via the
-[central mount pattern](../../README.md#running-a-tutorial-in-docker) (not
-run or verified) -- pass the three env vars through with `-e`.
+[central mount pattern](../../README.md#running-a-tutorial-in-docker) --
+pass the three env vars through with `-e`.
 
 ## Where to Go Next
 

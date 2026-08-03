@@ -119,21 +119,29 @@ Always returns an `IncorporatorList[TIncorporator]` — a one-record source yiel
 
 ```python
 payload = [
-    {**athlete.model_dump(), "team_name": team.inc_name}   # stamp parent context
+    {
+        "id": athlete.id,
+        "fullName": athlete.fullName,
+        "team_name": team.inc_name,          # stamp parent context
+        "salary": athlete.contract.salary if athlete.contract else None,
+        "years": athlete.experience.years if athlete.experience else None,
+    }
     for team in rosters for athlete in team.athletes
-    if athlete.active                                       # row filter = plain comprehension
+    if athlete.active                        # row filter = plain comprehension
 ]
 players = await Player.incorp(
     payload_list=payload,
     inc_code="id", inc_name="fullName",
     conv_dict={
-        "salary": pluck("contract.salary"),
-        "salary_per_year": calc(salary_per_year, "contract.salary", "experience.years"),
+        "salary_per_year": calc(salary_per_year, "salary", "years"),
     },
 )
 ```
 
-Prefer this passthrough over a `calc()` helper that walks a nested array and emits a list of per-element dicts inside `conv_dict`.
+Build the literal from attribute reads, carrying only the fields the row actually needs — never a blind
+`model_dump()`/`model_dump(by_alias=True)` reshape, which drags every field (mangled aliases, unset-key
+nulls, submodels the row never reads) along for the ride. Prefer this over a `calc()` helper that walks
+a nested array and emits a list of per-element dicts inside `conv_dict`.
 
 **Ordering:** the build pipeline runs `excl_lst` before `conv_dict` (`Ex -> conv_dict -> Nm -> Pk`) — a field cannot be both read by a converter and excluded in the same call. To consume-and-rename, use an in-place `calc` (output key == source key) followed by `name_chg`.
 
