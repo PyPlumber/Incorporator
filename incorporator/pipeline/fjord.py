@@ -14,7 +14,7 @@ from typing import Any, cast
 import httpx
 
 from ..observability.logger import Wave
-from ..rejects import RejectEntry
+from ..rejects import _ENGINE_DRIVEN_CALL, RejectEntry
 from ._daemons import _export_daemon, _refresh_daemon
 from ._shared import _row_count
 from .outflow import _outflow_daemon
@@ -206,7 +206,15 @@ async def _seed_one_source(
             merged_conv = {**base_params.get("conv_dict", {}), **extra_conv}
             base_params["conv_dict"] = merged_conv
 
-    return await cls.incorp(**base_params)
+    # Engine-driven: this source's incorp() runs as part of a fjord tick whose
+    # rejects are already aggregated onto the yielded Wave, whether reached via
+    # the concurrent asyncio.gather tiers above or the legacy sequential
+    # fallback — suppress the redundant per-source aggregate UserWarning here.
+    token = _ENGINE_DRIVEN_CALL.set(True)
+    try:
+        return await cls.incorp(**base_params)
+    finally:
+        _ENGINE_DRIVEN_CALL.reset(token)
 
 
 def _resolve_per_source_interval(

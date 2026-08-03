@@ -48,7 +48,7 @@ from ..io._retry_defaults import _HTTP_INNER_STOP, _HTTP_INNER_WAIT_MAX
 from ..io.penstock import known_host_rates
 from ..io.source_ref import SourceRef
 from ..observability.wave import Wave
-from ..rejects import RejectEntry
+from ..rejects import _ENGINE_DRIVEN_CALL, RejectEntry
 from ..tools.inspector import ResponseMeta, SourceProfile, analyze_data
 from ._retry_defaults import _CANAL_OUTER_STOP, _COMPOUND_RETRY_BUDGET_SEC
 from .reasons import WakeReason
@@ -377,7 +377,14 @@ async def _probe_one(
     probe_kwargs = {**kwargs, "__capture_into": capture}
     # Re-use test()'s safety guards: 5s timeout, single-page when paginated.
     try:
-        await probe_cls.test(**probe_kwargs)
+        # Engine-driven: this probe runs as an asyncio.gather child with no user
+        # frame on the stack — suppress the redundant aggregate UserWarning here;
+        # the probe's own __probe_error__ marker still surfaces the failure.
+        token = _ENGINE_DRIVEN_CALL.set(True)
+        try:
+            await probe_cls.test(**probe_kwargs)
+        finally:
+            _ENGINE_DRIVEN_CALL.reset(token)
     except Exception as exc:  # noqa: BLE001
         # Surface the failure as an empty profile with a note in provided_kwargs
         # — the topology analyzer treats it as "no signal" and skips it.

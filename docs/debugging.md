@@ -228,6 +228,36 @@ non-standard codes the status code alone appears (e.g. `[HTTP 522]`).
 `failed_sources` stays as a derived view (`[entry.source for entry in
 result.rejects]`) — existing code keeps working unchanged.
 
+**Console visibility: per-reject `WARNING` vs. the aggregate `UserWarning`.**
+Two independent signals fire on a partial failure:
+
+- A **per-reject `WARNING`** — `io/fetch.py` logs `str(reject)` on a
+  dedicated child logger (`incorporator.io.fetch.rejects`), which carries a
+  local `NullHandler` so it no longer free-prints to an unconfigured console
+  via Python's `logging.lastResort` fallback. It is still fully capturable
+  via `caplog`, [`--logs`](cli_and_configuration.md#6-observability--telemetry---logs),
+  or any handler you attach to the `incorporator` logger hierarchy — this
+  only changes the *default*, unconfigured-console case.
+  `LoggedIncorporator`'s disk routing (`_route_reject_to_log`) is
+  unaffected — it reads `result.rejects` directly, never this logger's
+  handler stream.
+- An **aggregate `UserWarning`** — `incorp()`/`refresh()` raise a single
+  `UserWarning` (built by `_format_reject_warning`) summarising every reject
+  in the call, capped at 5 entries. This is the reject-detail rendering that
+  reaches an unconfigured console by default. It is attributed to the
+  actual calling frame, walking outward past framework frames — a
+  `child_incorp` drill, a `LoggedIncorporator` wrap, `test()`, and the
+  chunked `stream()` engine all land on real user code — except on the
+  four task-rooted engine paths (fjord source seeding, the stateful
+  refresh daemon, a Tideweaver Stream tick, the architect probe fan-out),
+  where no user frame exists on the stack; those rejects are already
+  served by `Wave.failed_sources` /
+  `Tideweaver.rejects`, so the aggregate warning is suppressed there instead
+  of misattributing it to `asyncio` internals.
+
+Net effect: a partial failure prints once on an unconfigured console, at an
+actionable line.
+
 On the orchestration side, `Tideweaver.rejects` returns the same
 `list[RejectEntry]` type, but `error_kind` can be one of four
 canal-layer string literals — `"PenstockLimited"`, `"SurgeHalted"`,

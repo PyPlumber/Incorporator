@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Partial-failure console output printed twice and misattributed the
+  warning on nested call paths** (`incorporator/io/fetch.py`,
+  `incorporator/base.py`, `incorporator/rejects.py`,
+  `incorporator/pipeline/fjord.py`, `incorporator/pipeline/_daemons.py`,
+  `incorporator/tideweaver/scheduler.py`,
+  `incorporator/tideweaver/architect.py`): on an unconfigured console, the
+  same `RejectEntry` detail rendered twice — once via a per-source
+  `logger.warning(str(reject))` in `io/fetch.py` (reaching stderr through
+  Python's `logging.lastResort` fallback, since no handler existed anywhere
+  on the `incorporator.*` hierarchy) and again inside the aggregate
+  `UserWarning` body raised by `incorp()`/`refresh()`. The per-reject line
+  now logs on a dedicated child logger
+  (`incorporator.io.fetch.rejects`) carrying a local `logging.NullHandler`,
+  so it stops free-printing while staying fully capturable via `caplog`,
+  `--logs`, or any user-installed handler (`propagate=True`); the aggregate
+  `UserWarning` is now the single console-visible rendering. Separately, the
+  `UserWarning`'s `stacklevel` was hardcoded to `2` — correct only for a
+  direct, un-nested `incorp()`/`refresh()` call — so a `child_incorp` drill,
+  a `LoggedIncorporator` wrap, `test()`, or the chunked `stream()` engine
+  all misattributed the warning to a framework frame instead of user code.
+  `stacklevel` is now computed dynamically by walking outward past every
+  frame under the installed package until the first external frame. On the
+  four genuinely task-rooted engine paths (fjord source seeding, the
+  stateful refresh daemon, a Tideweaver Stream tick, the architect probe
+  fan-out) no user frame exists on the stack at all — those already surface
+  rejects via
+  `Wave.failed_sources`/`Tideweaver.rejects`, so a new `_ENGINE_DRIVEN_CALL`
+  context var (mirroring the existing `_CURRENT_CHUNK_CLASS` precedent)
+  suppresses the aggregate warning there instead of misattributing it to
+  `asyncio` internals.
 - **`architect()` no longer fabricates a clean plan when source probes fail**
   (`incorporator/base.py`, `incorporator/tideweaver/architect.py`): a failed
   probe used to come back as a silent empty profile — `test()` swallows

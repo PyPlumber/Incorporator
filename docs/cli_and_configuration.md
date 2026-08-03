@@ -415,11 +415,14 @@ flag — `--logs` never touches stdout. It does two things instead:
   roughly 20MB total per log type), listed below.
 - **Root diagnostics on stderr.** An INFO-level root log handler is
   installed, shared by `stream`, `fjord`, and `tideweaver run`, so
-  module-logger diagnostics (drain-timeout parse warnings,
-  unknown-current-key typos, source-load-failure summaries) reach the
-  console instead of being silently dropped by Python's default
-  no-handler behavior. This unified handler is available in
-  `incorporator` 1.4.3 and later.
+  INFO-and-below module-logger diagnostics that would otherwise be
+  suppressed (e.g. the per-host penstock summary and 429 rate-limit tips)
+  reach the console too. This unified handler is available in
+  `incorporator` 1.4.3 and later. WARNING-level module-logger diagnostics
+  (e.g. an invalid `INCORPORATOR_DRAIN_TIMEOUT` env-var, an unrecognised
+  watershed current key, a Tideweaver source-load-failure summary) already
+  reach an unconfigured console via Python's `logging.lastResort` fallback
+  handler — they are not gated by `--logs`.
 
 1.  **`logs/{Class}_api.log`**: URL/internet-traffic errors — HTTP 4xx/5xx responses, network timeouts, and connection failures where `RejectEntry.is_url_traffic_error=True`. Use `get_api()` to read these records.
 2.  **`logs/{Class}_error.log`**: All non-API-routed records at INFO and above — successful waves, parse failures, schema errors. Use `get_error()` for codebase failures; `get_rejects()` to union both files.

@@ -56,7 +56,7 @@ from ..io.penstock import FlowState
 from ..list import IncorporatorList
 from ..observability.logger import _route_scheduler_event_to_log, _route_to_log, current_meta
 from ..pipeline.outflow import flush
-from ..rejects import RejectEntry
+from ..rejects import _ENGINE_DRIVEN_CALL, RejectEntry
 from ._retry_defaults import (
     _CANAL_OUTER_STOP,
     _CANAL_OUTER_WAIT_MAX,
@@ -1285,7 +1285,15 @@ class Tideweaver:
             inherited_child_path = getattr(pre_snap, "inc_child_path", None)
             inc_parent = _wrap_snapshot(upstream_current.cls, list(pre_snap), inherited_child_path)
             incorp_call_params = {**params_with_client, "inc_parent": cast(Any, inc_parent)}
-            _pc_result = await current.cls.incorp(**incorp_call_params)
+            # Engine-driven: each Stream tick runs as its own asyncio.create_task child
+            # (no user frame on the stack); the reject is already surfaced via
+            # Tideweaver.rejects / the routed log line below, so suppress the
+            # redundant aggregate warning.
+            token = _ENGINE_DRIVEN_CALL.set(True)
+            try:
+                _pc_result = await current.cls.incorp(**incorp_call_params)
+            finally:
+                _ENGINE_DRIVEN_CALL.reset(token)
             if isinstance(self.logger_name, str) and _log_currents_active:
                 _pc_rejects = getattr(_pc_result, "rejects", None) or []
                 for _reject in _pc_rejects:

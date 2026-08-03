@@ -22,6 +22,8 @@ rejects are always-on and immediate (available the moment
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -218,3 +220,22 @@ def _format_reject_warning(rejects: list[RejectEntry], cap: int = 5) -> str:
     if len(rejects) > cap:
         lines.append(f"... and {len(rejects) - cap} more.")
     return "\n".join(lines)
+
+
+_ENGINE_DRIVEN_CALL: ContextVar[bool] = ContextVar("_ENGINE_DRIVEN_CALL", default=False)
+"""Marks an ``incorp()``/``refresh()`` call as task-rooted (no user frame reachable).
+
+Mirrors the ``_CURRENT_CHUNK_CLASS`` precedent (:mod:`incorporator.io.fetch`,
+set/reset around a chunk's ``incorp()`` in :mod:`incorporator.pipeline.chunked`).
+Set (via ``token = _ENGINE_DRIVEN_CALL.set(True)`` / ``finally: reset(token)``)
+around the four call sites where the coroutine runs as its own
+``asyncio.create_task`` / ``asyncio.gather`` child with no user frame on the
+stack: :func:`incorporator.pipeline.fjord._seed_one_source`,
+:func:`incorporator.pipeline._daemons._refresh_daemon`,
+:meth:`incorporator.tideweaver.scheduler._tick_stream`, and
+:func:`incorporator.tideweaver.architect._probe_one`. ``Incorporator.incorp``/
+``refresh`` check this flag before emitting the aggregate partial-data
+``UserWarning`` — on these paths the reject is already served by
+``Wave.failed_sources`` / ``Tideweaver.rejects``, and there is no actionable
+console frame to attribute the warning to.
+"""

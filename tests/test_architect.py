@@ -882,13 +882,24 @@ def test_incorp_swallowed_fetch_failure_marks_capture_profile(monkeypatch: pytes
     stubbing of ``incorp``/``test``) so this covers the actual bug: a
     per-source fetch failure that lands in ``rejects`` instead of an
     exception must still mark the sidechannel ``SourceProfile``.
+
+    Runs ``test()`` through a local async wrapper (rather than handing
+    ``Incorporator.test(...)`` directly to ``asyncio.run``) so the resulting
+    aggregate ``UserWarning`` attributes to a real caller frame in this file,
+    not the bare coroutine's Task root in ``asyncio`` internals — the same
+    "un-nested await inside a task" shape every other call site in this
+    module already uses.
     """
     monkeypatch.setattr(fetch, "execute_request", _mock_execute_request_refused)
 
     capture: List[SourceProfile] = []
+
+    async def _run_test() -> Any:
+        return await Incorporator.test(inc_url="http://127.0.0.1:1/nope", __capture_into=capture)
+
     buf = io.StringIO()
     with redirect_stdout(buf):
-        result = asyncio.run(Incorporator.test(inc_url="http://127.0.0.1:1/nope", __capture_into=capture))
+        result = asyncio.run(_run_test())
 
     # Public contract unchanged: still an empty IncorporatorList.
     assert list(result) == []
@@ -910,6 +921,26 @@ def test_incorp_genuinely_empty_200_response_stays_healthy(monkeypatch: pytest.M
     assert list(result) == []
     assert len(capture) == 1
     assert "__probe_error__" not in capture[0].provided_kwargs
+
+
+def test_probe_one_real_fetch_failure_fires_no_user_warning(
+    monkeypatch: pytest.MonkeyPatch, recwarn: pytest.WarningsRecorder
+) -> None:
+    """``_probe_one`` runs as an ``asyncio.gather`` child — a real rejecting fetch must not warn.
+
+    Drives the REAL ``fetch_concurrent_payloads`` -> ``rejects`` swallow path
+    (no stubbed ``test``/``incorp``) so this proves ``_ENGINE_DRIVEN_CALL`` is
+    set around the ``await probe_cls.test(...)`` call itself, not just around
+    a caller that happens to stub it out. The probe's own ``__probe_error__``
+    sidechannel still surfaces the failure.
+    """
+    monkeypatch.setattr(fetch, "execute_request", _mock_execute_request_refused)
+
+    name, profile = asyncio.run(_probe_one(Incorporator, "flaky", {"inc_url": "http://127.0.0.1:1/nope"}))
+
+    assert name == "flaky"
+    assert _is_probe_failure(profile)
+    assert not any(issubclass(w.category, UserWarning) for w in recwarn.list)
 
 
 def test_probe_one_marks_failure_when_test_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1154,3 +1185,31 @@ def test_run_mixed_healthy_and_swallowed_failure_via_real_fetch(monkeypatch: pyt
     assert "broken" in plan.failed_sources
     assert "RequestError" in plan.failed_sources["broken"]
     assert {spec.name for spec in plan.currents} == {"users", "broken"}
+
+
+def test_run_rejecting_probe_fires_no_user_warning(
+    monkeypatch: pytest.MonkeyPatch, recwarn: pytest.WarningsRecorder
+) -> None:
+    """A rejecting real-fetch probe run as a gather child fires no aggregate UserWarning.
+
+    ``_probe_one`` runs each source as its own ``asyncio.gather`` child (no user
+    frame reachable) so the aggregate partial-data warning must be suppressed via
+    ``_ENGINE_DRIVEN_CALL``, same as the other three task-rooted engine paths.
+    The failure is still surfaced through the architect's own probe-warnings
+    channel (``OrchestrationPlan.failed_sources``), not silently dropped.
+    """
+    monkeypatch.setattr(fetch, "execute_request", _mock_execute_request_healthy_or_swallowed)
+
+    plan = asyncio.run(
+        run(
+            Incorporator,
+            sources={
+                "users": "https://x.example/users",
+                "broken": "https://x.example/broken",
+            },
+            output="plan",
+        ),
+    )
+    assert isinstance(plan, OrchestrationPlan)
+    assert "broken" in plan.failed_sources
+    assert not any(issubclass(w.category, UserWarning) for w in recwarn.list)

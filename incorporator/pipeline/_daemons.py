@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from ..observability.logger import Wave  # re-exported for callers that still import it from here
+from ..rejects import _ENGINE_DRIVEN_CALL
 from ._shared import _daemon_tick, _interruptible_sleep, _resolve_if_exists_for_export, _row_count
 
 __all__ = ["Wave", "_refresh_daemon", "_export_daemon"]
@@ -46,7 +47,14 @@ async def _refresh_daemon(
             row_count_fn=lambda: _row_count(dataset_ref[0]),
         ):
             async with lock:  # ENSURE ATOMIC MUTATION
-                refreshed = await cls.refresh(instance=dataset_ref[0], **refresh_params)
+                # Engine-driven: this daemon always runs as its own asyncio.create_task
+                # child (no user frame on the stack); the reject is already surfaced via
+                # the Wave this tick enqueues, so suppress the redundant aggregate warning.
+                token = _ENGINE_DRIVEN_CALL.set(True)
+                try:
+                    refreshed = await cls.refresh(instance=dataset_ref[0], **refresh_params)
+                finally:
+                    _ENGINE_DRIVEN_CALL.reset(token)
                 if refreshed is not None:
                     dataset_ref[0] = refreshed
 

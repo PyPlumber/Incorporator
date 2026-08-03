@@ -142,6 +142,20 @@ def _build_reject_entry(
 
 logger = logging.getLogger(__name__)
 
+# Dedicated child logger for per-reject WARNING detail (RejectEntry.__str__).
+# A local NullHandler makes logging.Logger.callHandlers count this logger's own
+# records as "found", so logging.lastResort never free-prints them to an
+# unconfigured console — while propagate=True (default) still carries every
+# record up to incorporator.io.fetch -> incorporator -> root, so caplog,
+# --logs (logging.basicConfig), and any user-installed root handler still see
+# them. The aggregate UserWarning in base.py (_format_reject_warning) is left
+# as the single console-visible rendering of reject detail in unconfigured
+# runs; this arbitration only concerns the duplicate per-reject line, not the
+# other ~35 module-logger DX warnings (e.g. outflow.py's bare-class warning),
+# which keep relying on lastResort untouched.
+_reject_logger = logging.getLogger(__name__ + ".rejects")
+_reject_logger.addHandler(logging.NullHandler())
+
 # 64 KB — consistent with decompress_data buffer discipline.
 _STREAM_CHUNK_SIZE: int = 65_536
 
@@ -1110,7 +1124,7 @@ async def fetch_concurrent_payloads(
             attempt = getattr(e, "_incorporator_attempt_number", None)
             if e.response.status_code == httpx.codes.TOO_MANY_REQUESTS:
                 reject = _build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration)
-                logger.warning(str(reject))
+                _reject_logger.warning(str(reject))
                 logger.info(
                     "Tip: Lower requests_per_second (e.g. 0.2 for ~12 req/min);"
                     " check the host's free-tier docs for the correct ceiling."
@@ -1125,21 +1139,21 @@ async def fetch_concurrent_payloads(
             # / IncorporatorNetworkError branches below — every failure kind
             # collects its own reject inside _safe_execute rather than escaping it.
             reject = _build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration)
-            logger.warning(str(reject))
+            _reject_logger.warning(str(reject))
             rejects.append(reject)
             return []
         except httpx.RequestError as e:
             duration = time.perf_counter() - start
             attempt = getattr(e, "_incorporator_attempt_number", None)
             reject = _build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration)
-            logger.warning(str(reject))
+            _reject_logger.warning(str(reject))
             rejects.append(reject)
             return []
         except IncorporatorFormatError as e:
             duration = time.perf_counter() - start
             # Format errors are not retried by Tenacity, so attempt_number is unavailable.
             reject = _build_reject_entry(src, e, duration_sec=duration)
-            logger.warning(str(reject))
+            _reject_logger.warning(str(reject))
             rejects.append(reject)
             return []
         except IncorporatorNetworkError as e:
@@ -1153,7 +1167,7 @@ async def fetch_concurrent_payloads(
             duration = time.perf_counter() - start
             attempt = getattr(e, "_incorporator_attempt_number", None)
             reject = _build_reject_entry(src, e, attempt_number=attempt, duration_sec=duration)
-            logger.warning(str(reject))
+            _reject_logger.warning(str(reject))
             rejects.append(reject)
             return []
 
@@ -1195,7 +1209,7 @@ async def fetch_concurrent_payloads(
                         raise res
                     if isinstance(res, Exception):
                         reject = _build_reject_entry(str(src), res)
-                        logger.warning(str(reject))
+                        _reject_logger.warning(str(reject))
                         rejects.append(reject)
                     elif res:
                         all_parsed_data.extend(res)
@@ -1229,7 +1243,7 @@ async def fetch_concurrent_payloads(
                         res = await _safe_execute(str(src), p)
                     except Exception as exc:
                         reject = _build_reject_entry(str(src), exc)
-                        logger.warning(str(reject))
+                        _reject_logger.warning(str(reject))
                         rejects.append(reject)
                         continue
                     if res:

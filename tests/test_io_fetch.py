@@ -1,6 +1,7 @@
 """Unit tests for ``incorporator.io.fetch`` helpers."""
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -2878,3 +2879,71 @@ async def test_refresh_after_closed_injected_client_builds_fresh_client(
     refreshed = await _Widget.refresh()
     assert refreshed is not None
     assert "_client" not in _Widget._incorp_kwargs
+
+
+# ----------------------------------------------------------------------
+# Reject console arbitration — _reject_logger must not free-print to an
+# unconfigured console (NullHandler absorbs logging.lastResort) while
+# staying fully capturable via caplog / propagate.
+# ----------------------------------------------------------------------
+
+
+def test_reject_logger_has_null_handler_and_propagates() -> None:
+    """``incorporator.io.fetch.rejects`` carries a local NullHandler and propagates.
+
+    The NullHandler makes ``logging.Logger.callHandlers`` treat this logger's
+    records as "handled", so ``logging.lastResort`` never free-prints them to
+    an unconfigured console.  ``propagate=True`` (the default, left untouched)
+    still carries every record up to ``incorporator.io.fetch`` -> ``incorporator``
+    -> root, so caplog / ``--logs`` / any user-installed root handler still see them.
+    """
+    from incorporator.io import fetch
+
+    assert fetch._reject_logger.name == "incorporator.io.fetch.rejects"
+    assert any(isinstance(h, logging.NullHandler) for h in fetch._reject_logger.handlers)
+    assert fetch._reject_logger.propagate is True
+
+
+@pytest.mark.asyncio
+async def test_rejecting_fetch_reaches_caplog_but_not_an_unconfigured_console(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A real rejecting fetch's per-reject WARNING is caplog-visible but never free-prints.
+
+    Drives the actual ``fetch_concurrent_payloads`` -> ``_safe_execute`` path
+    (mocked ``execute_request``, not ``_process_single_source``) so the
+    per-reject ``_reject_logger.warning(...)`` call actually executes. Before
+    the NullHandler fix, this line reached an unconfigured console via
+    ``logging.lastResort`` -- duplicating the reject text that the aggregate
+    ``UserWarning`` (raised separately by ``incorp()``/``refresh()``) already
+    renders. This test isolates ``fetch_concurrent_payloads`` from that
+    aggregate-warning layer entirely, so any console output here can only
+    have come from the per-reject log line.
+    """
+    from incorporator.io import fetch
+
+    async def _mock_request_error(url: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        raise httpx.RequestError("connection refused", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch, "execute_request", _mock_request_error)
+
+    caplog.set_level(logging.WARNING, logger="incorporator.io.fetch.rejects")
+    parsed, failed = await fetch.fetch_concurrent_payloads(
+        source_list=["https://api.example.com/reject-console"],
+        payload_list=None,
+        is_file_mode=False,
+        limit=1,
+    )
+
+    assert parsed == []
+    assert failed
+    # caplog still receives the per-reject record via propagate=True.
+    assert any("RequestError" in record.message for record in caplog.records)
+
+    captured = capsys.readouterr()
+    # NullHandler on the reject logger absorbs logging.lastResort -- no
+    # free-printing to an unconfigured console.
+    assert "connection refused" not in captured.out
+    assert "connection refused" not in captured.err

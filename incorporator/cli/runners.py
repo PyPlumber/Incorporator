@@ -48,12 +48,24 @@ def set_json_output_mode(enabled: bool) -> None:
 def configure_logs_option(enabled: bool) -> None:
     """Configure the root logger for ``--logs``, shared by ``stream``/``fjord``/``tideweaver run``.
 
-    When ``enabled`` is ``True``, installs an INFO-level root handler via
-    ``logging.basicConfig`` so module-logger diagnostics (drain-timeout parse
-    warnings, unknown-current-key typos, source-load-failure summaries) reach
-    the console instead of being swallowed by Python's default "no handler"
-    behavior.  A no-op when ``enabled`` is ``False`` — preserves the current
-    default (no root handler installed) exactly.
+    WARNING-level module-logger diagnostics (e.g. an invalid
+    ``INCORPORATOR_DRAIN_TIMEOUT`` env-var, an unrecognised watershed current
+    key, a Tideweaver source-load-failure summary) already reach an
+    unconfigured console via Python's ``logging.lastResort`` fallback handler —
+    they are not gated by ``--logs`` and are not "silently dropped" by
+    default.
+
+    When ``enabled`` is ``True``, this installs an INFO-level root handler via
+    ``logging.basicConfig`` so INFO-and-below module-logger diagnostics that
+    would otherwise be suppressed also reach the console (e.g. the per-host
+    penstock summary and 429 rate-limit tips in ``io/fetch.py``). A no-op when
+    ``enabled`` is ``False`` — preserves the current default (no root handler
+    installed) exactly.
+
+    The same ``--logs``/``logs`` value is also forwarded by the calling CLI
+    verb to enable disk logging (``LoggedIncorporator``/``LoggedTideweaver``,
+    ``error.log``/``api.log``/``debug.log``) — a separate mechanism from this
+    function, which only concerns the console root handler.
     """
     if enabled:
         logging.basicConfig(level=logging.INFO)

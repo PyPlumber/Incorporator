@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import threading
 import warnings
 import weakref
@@ -33,13 +34,15 @@ from .io import handlers as format_parsers
 from .io.formats import FormatType, infer_format
 from .io.pagination.base import AsyncPaginator
 from .list import IncorporatorList, _deduplicate_extracted
-from .rejects import _format_reject_warning
+from .rejects import _ENGINE_DRIVEN_CALL, _format_reject_warning
 from .schema import JsonSchemaProperty, router
 from .schema import factory as _factory
 from .schema.directives import _normalize_etl_kwargs
 from .usercode import apply_code_transform, apply_inflow_resolution, load_outflow_module, pascal_case_from_stem
 
 if TYPE_CHECKING:
+    from types import FrameType
+
     from .observability.logger import Wave
 
 # Type variable for strict IDE hinting on subclass generation
@@ -55,6 +58,46 @@ _counter_lock = threading.Lock()
 # ``refresh_params=None``.  Module-private; treat any external comparison
 # against this object as undefined behaviour.
 _UNSET: Any = object()
+
+# Root of the installed package — used to tell package frames from user frames
+# when computing a dynamic ``stacklevel`` for the partial-data warning below.
+_PACKAGE_DIR = Path(__file__).resolve().parent
+
+
+def _reject_warning_stacklevel() -> int:
+    """Compute a ``stacklevel`` that attributes the partial-data warning to user code.
+
+    Replaces a hardcoded ``stacklevel=2`` (only correct for a direct,
+    un-nested ``incorp()``/``refresh()`` call — the sole case it was ever
+    verified against, per git history) with a walk that keeps stepping
+    outward through the caller chain while each frame's file lives under
+    the installed ``incorporator`` package, then stops at the first frame
+    outside it. This generalises correctly across a direct call
+    (``stacklevel=2``, unchanged), a ``child_incorp`` drill
+    (``schema/factory.py``), a ``LoggedIncorporator`` wrap, ``Incorporator.test()``,
+    and the chunked ``stream()`` engine — every path where a real user frame
+    is reachable via ``f_back`` because the nested call is an ``await`` within
+    the same task, not a new ``asyncio.create_task``/``gather`` child.
+
+    Must be called directly at the ``warnings.warn(...)`` call site (this
+    function's own frame is excluded via ``sys._getframe(1)``, matching
+    ``stacklevel``'s convention that level 1 is the frame calling ``warn()``).
+
+    Task-rooted paths (fjord seed, refresh daemon, Tideweaver tick) have no
+    user frame on the stack at all — those are suppressed entirely via the
+    ``_ENGINE_DRIVEN_CALL`` flag before this function would otherwise be
+    called, so an exhausted stack (frame becomes ``None``) is not expected
+    in practice; the loop still guards against it defensively.
+
+    Returns:
+        The ``stacklevel`` value to pass to ``warnings.warn``.
+    """
+    level = 1
+    frame: FrameType | None = sys._getframe(1)
+    while frame is not None and Path(frame.f_code.co_filename).resolve().is_relative_to(_PACKAGE_DIR):
+        frame = frame.f_back
+        level += 1
+    return level
 
 
 class Incorporator(BaseModel):
@@ -742,8 +785,8 @@ class Incorporator(BaseModel):
             normalized=_normalized,
         )
 
-        if isinstance(result, IncorporatorList) and result.rejects:
-            warnings.warn(_format_reject_warning(result.rejects), stacklevel=2)
+        if isinstance(result, IncorporatorList) and result.rejects and not _ENGINE_DRIVEN_CALL.get():
+            warnings.warn(_format_reject_warning(result.rejects), stacklevel=_reject_warning_stacklevel())
 
         # Retain parent linking instructions for potential nested refreshes
         if inc_child is not None and isinstance(result, IncorporatorList):
@@ -1005,8 +1048,8 @@ class Incorporator(BaseModel):
             normalized=_normalized,
         )
 
-        if isinstance(result, IncorporatorList) and result.rejects:
-            warnings.warn(_format_reject_warning(result.rejects), stacklevel=2)
+        if isinstance(result, IncorporatorList) and result.rejects and not _ENGINE_DRIVEN_CALL.get():
+            warnings.warn(_format_reject_warning(result.rejects), stacklevel=_reject_warning_stacklevel())
 
         if inc_child is not None and isinstance(result, IncorporatorList):
             result.inc_child_path = inc_child
