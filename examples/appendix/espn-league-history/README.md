@@ -34,7 +34,7 @@ Wrote 6 views to .../out:
   season_timeline.ndjson    72 rows
   rivalry_matrix.ndjson     75 rows
   records_book.ndjson       10 rows
-  draft_tendencies.ndjson   55 rows
+  draft_tendencies.ndjson   54 rows
   settings_evolution.ndjson 7 rows
 
 FRANCHISE CARDS (all-time, sorted by win%)
@@ -44,10 +44,13 @@ longhorn0010            53-29-0       0.646        7       1     71.4%
 ...
 ```
 
-(`draft_tendencies.ndjson`'s row count drifts slightly season to season --
-2026's draft was still in progress at last run, so its `first_overall` pick
-resolved to `Unknown`/`UNKNOWN` rather than a real name; this is expected,
-not a bug.)
+(`draft_tendencies.ndjson`'s row count drifts slightly season to season -- a
+season entering or leaving the `first_overall` honor roll as its draft
+starts/completes is real drift, not a bug. An in-progress or not-yet-drafted
+season's picks are ESPN's own vacant/placeholder-pick sentinel
+(`playerId == -1`), filtered out before they ever become a `DraftPick` row --
+that season simply produces no `first_overall` row at all, rather than an
+`Unknown`/`UNKNOWN` one, until its draft completes.)
 
 ## 1. Two auth modes, one pipeline
 
@@ -372,11 +375,15 @@ are sibling fjord sources with no ordering guarantee between them (Section
 rather than crashing. Every read site inside `outflow(state)` then takes
 `player.position if player else "UNKNOWN"` against the read-time
 `player_names.inc_dict.get(playerId)` lookup -- a single conditional-dot
-guard, not a repeated `position_name(...)` call. Some very old or vacated
-draft slots resolve to a sentinel `playerId` ESPN doesn't map to a real
-player at all -- that row's name/position fall back to
+guard, not a repeated `position_name(...)` call. Two distinct cases can leave
+a pick's name unresolved: a genuinely unresolved `playerId` -- one
+`players_wl` just doesn't recognise -- falls back to
 `"Unknown"`/`"UNKNOWN"` gracefully, the same fallback used for any
-unresolved lookup.
+unresolved lookup; and ESPN's own vacant/placeholder-pick sentinel
+(`playerId == -1, teamId == -1`, an undrafted or not-yet-reached slot ESPN
+returns fully formed rather than omitting), which never reaches that
+fallback path at all -- it's filtered out of `main()`'s `all_pick_rows`
+flatten before it ever becomes a `DraftPick` row (Section 6).
 
 ## Run it
 

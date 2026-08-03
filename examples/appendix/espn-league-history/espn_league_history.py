@@ -218,6 +218,10 @@ async def main() -> None:
         }
         for s in all_seasons
         for p in s.draft_picks
+        # ESPN's vacant/placeholder-pick sentinel: an undrafted or not-yet-reached
+        # slot comes back fully formed with playerId == -1, teamId == -1 rather than
+        # omitted entirely -- exclude it here so it never becomes a DraftPick row.
+        if p.playerId != -1
     ]
 
     round1_ids = {p["playerId"] for p in all_pick_rows if p["roundId"] == 1}

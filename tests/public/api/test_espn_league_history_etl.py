@@ -26,8 +26,11 @@ front, from `has_cookies` alone -- no probe, no retry:
 
 Both scenarios exercise: a playoff bye (home-only, no `away` key, permanently
 `UNDECIDED`), a tiebreak-decided tie (`winner` still HOME/AWAY, margin can be
-0), a negative D/ST `playerId` that resolves fine through `players_wl`, and
-both `pointsOverrides` guard branches (key entirely absent / value `null` /
+0), a negative D/ST `playerId` that resolves fine through `players_wl`, ESPN's
+own vacant/placeholder-pick sentinel (`playerId == -1, teamId == -1`, occupying
+PREVIOUS_YEAR's actual pick-1 slot) proving the sentinel is filtered at the
+source rather than falling through to an `Unknown` row, and both
+`pointsOverrides` guard branches (key entirely absent / value `null` /
 value present).
 
 The public scenario also asserts that OLD_YEAR's expected 401 reject
@@ -188,7 +191,12 @@ _PREVIOUS_PAYLOAD = {
     "members": _MEMBERS,
     "draftDetail": {
         "picks": [
-            _pick(1, 1, 1, 2001, 1),
+            # ESPN's own vacant/placeholder-pick sentinel occupying this season's
+            # actual pick-1 slot (playerId == -1, teamId == -1) -- proves the
+            # sentinel is filtered before it ever becomes a DraftPick row: no
+            # `Unknown` first_overall row for PREVIOUS_YEAR, no -1 in most_drafted,
+            # and no -1 in the X-Fantasy-Filter header sent to the players mock.
+            _pick(1, 1, 1, -1, -1),
             _pick(1, 2, 2, 2002, 2, keeper=True),
             _pick(3, 1, 25, 3001, 1),
             # Round-2 re-draft of the same player CURRENT_YEAR drafted round-1 --
@@ -238,14 +246,18 @@ _SEASON_RE = re.compile(r"/seasons/(\d+)/segments/0/leagues/")
 _PLAYERS_RE = re.compile(r"/seasons/(\d+)/players")
 
 
-def _players_response(headers: httpx.Headers, req: httpx.Request) -> httpx.Response:
+def _players_response(
+    headers: httpx.Headers, req: httpx.Request, captured_filter_ids: list[int] | None = None
+) -> httpx.Response:
     filt = json.loads(headers.get("X-Fantasy-Filter", "{}"))
     ids = filt.get("filterIds", {}).get("value", [])
+    if captured_filter_ids is not None:
+        captured_filter_ids.extend(ids)
     rows = [PLAYER_DB[pid] for pid in ids if pid in PLAYER_DB]
     return httpx.Response(200, text=json.dumps(rows), request=req)
 
 
-def _make_mock(allow_cookies: bool):
+def _make_mock(allow_cookies: bool, captured_filter_ids: list[int] | None = None):
     """Build a mock `execute_request` -- `allow_cookies` selects which
     endpoint family the pipeline is expected to reach. With cookies present,
     ONE `leagueHistory` call (no `seasonId` query param) returns every other
@@ -253,6 +265,10 @@ def _make_mock(allow_cookies: bool):
     endpoint for a non-current year at all); with no cookies every remaining
     year fans out against the modern endpoint, where OLD_YEAR 401s (an auth
     failure, live-verified) and is left unresolved.
+
+    `captured_filter_ids`, if given, collects every `playerId` the pipeline
+    ever placed in the `X-Fantasy-Filter` header sent to the players endpoint --
+    used to prove the vacant-pick sentinel (-1) never reaches `wanted_ids`.
 
     `execute_request`'s real signature has no `headers=` kwarg -- headers are
     baked onto the `httpx.AsyncClient` at build time
@@ -268,7 +284,7 @@ def _make_mock(allow_cookies: bool):
 
         players_match = _PLAYERS_RE.search(url)
         if players_match:
-            return _players_response(headers, req)
+            return _players_response(headers, req, captured_filter_ids)
 
         season_match = _SEASON_RE.search(url)
         if season_match:
@@ -333,7 +349,10 @@ async def test_public_run_skips_401_season_and_builds_six_views(
     monkeypatch.delenv("ESPN_S2", raising=False)
     monkeypatch.delenv("ESPN_SWID", raising=False)
     monkeypatch.setenv("ESPN_LEAGUE_ID", FAKE_LEAGUE_ID)
-    monkeypatch.setattr(fetch, "execute_request", _make_mock(allow_cookies=False))
+    captured_filter_ids: list[int] = []
+    monkeypatch.setattr(
+        fetch, "execute_request", _make_mock(allow_cookies=False, captured_filter_ids=captured_filter_ids)
+    )
     _reset_all()
 
     with caplog.at_level(logging.WARNING, logger="incorporator"):
@@ -375,10 +394,20 @@ async def test_public_run_skips_401_season_and_builds_six_views(
     assert tendency_kinds == {"round1_position_mix", "most_drafted", "first_overall"}
 
     dst_pick = next(r for r in tendency_rows if r["kind"] == "first_overall" and r["season"] == CURRENT_YEAR)
-    assert dst_pick["player_name"] == "Wanda Reyes"
+    assert dst_pick["player_name"] == "Wanda Reyes"  # the -16003 D/ST trap stays armed
+
+    # PREVIOUS_YEAR's own pick-1 is ESPN's vacant/placeholder sentinel (playerId == -1)
+    # -- it's filtered before ever becoming a DraftPick row, so PREVIOUS_YEAR simply
+    # has NO first_overall row (not an `Unknown` one).
+    first_overall_seasons = {r["season"] for r in tendency_rows if r["kind"] == "first_overall"}
+    assert PREVIOUS_YEAR not in first_overall_seasons
+    assert not any(r["kind"] == "first_overall" and r["player_name"] == "Unknown" for r in tendency_rows)
 
     most_drafted = {r["player_id"]: r["times_drafted"] for r in tendency_rows if r["kind"] == "most_drafted"}
     assert most_drafted[1001] == 2  # drafted round-1 CURRENT_YEAR + round-2 PREVIOUS_YEAR
+    assert -1 not in most_drafted  # the sentinel never reaches most_drafted
+
+    assert -1 not in captured_filter_ids  # the sentinel never reaches the X-Fantasy-Filter header
 
     settings_rows = [json.loads(ln) for ln in (out_dir / "settings_evolution.ndjson").read_text().splitlines() if ln]
     by_season = {r["season"]: r for r in settings_rows}
@@ -403,7 +432,10 @@ async def test_private_run_resolves_old_year_via_league_history(
     monkeypatch.setenv("ESPN_S2", "fake-s2-value")
     monkeypatch.setenv("ESPN_SWID", "{FAKE-SWID}")
     monkeypatch.setenv("ESPN_LEAGUE_ID", FAKE_LEAGUE_ID)
-    monkeypatch.setattr(fetch, "execute_request", _make_mock(allow_cookies=True))
+    captured_filter_ids: list[int] = []
+    monkeypatch.setattr(
+        fetch, "execute_request", _make_mock(allow_cookies=True, captured_filter_ids=captured_filter_ids)
+    )
     _reset_all()
 
     await espn_history.main()
@@ -436,3 +468,15 @@ async def test_private_run_resolves_old_year_via_league_history(
     tendency_rows = [json.loads(ln) for ln in (out_dir / "draft_tendencies.ndjson").read_text().splitlines() if ln]
     old_year_pick = next(r for r in tendency_rows if r["kind"] == "first_overall" and r["season"] == OLD_YEAR)
     assert old_year_pick["player_name"] == "Otis Vance"
+
+    # PREVIOUS_YEAR's own pick-1 is ESPN's vacant/placeholder sentinel (playerId == -1)
+    # -- filtered before ever becoming a DraftPick row, so PREVIOUS_YEAR has NO
+    # first_overall row (not an `Unknown` one) here either.
+    first_overall_seasons = {r["season"] for r in tendency_rows if r["kind"] == "first_overall"}
+    assert PREVIOUS_YEAR not in first_overall_seasons
+    assert not any(r["kind"] == "first_overall" and r["player_name"] == "Unknown" for r in tendency_rows)
+
+    most_drafted = {r["player_id"]: r["times_drafted"] for r in tendency_rows if r["kind"] == "most_drafted"}
+    assert -1 not in most_drafted  # the sentinel never reaches most_drafted
+
+    assert -1 not in captured_filter_ids  # the sentinel never reaches the X-Fantasy-Filter header
