@@ -22,10 +22,16 @@ rejects are always-on and immediate (available the moment
 
 from __future__ import annotations
 
+import sys
 from contextvars import ContextVar
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from types import FrameType
 
 
 class RejectEntry(BaseModel):
@@ -220,6 +226,37 @@ def _format_reject_warning(rejects: list[RejectEntry], cap: int = 5) -> str:
     if len(rejects) > cap:
         lines.append(f"... and {len(rejects) - cap} more.")
     return "\n".join(lines)
+
+
+# Root of the installed package — used to tell package frames from user frames
+# when computing a dynamic ``stacklevel`` for the partial-data warning below.
+_PACKAGE_DIR = Path(__file__).resolve().parent
+
+
+def _reject_warning_stacklevel() -> int:
+    """Compute a ``stacklevel`` that attributes the partial-data warning to user code.
+
+    Walks outward through the caller chain while each frame's file lives under the
+    installed ``incorporator`` package, then stops at the first frame outside it.
+
+    Must be called directly at the ``warnings.warn(...)`` call site (this function's
+    own frame is excluded via ``sys._getframe(1)``, matching ``stacklevel``'s
+    convention that level 1 is the frame calling ``warn()``); wrapping this call in a
+    helper would silently break the attribution.
+
+    The ``None`` guard on an exhausted stack is defensive: task-rooted call paths
+    have no user frame at all, but those are suppressed upstream via the
+    ``_ENGINE_DRIVEN_CALL`` flag before this function runs.
+
+    Returns:
+        The ``stacklevel`` value to pass to ``warnings.warn``.
+    """
+    level = 1
+    frame: FrameType | None = sys._getframe(1)
+    while frame is not None and Path(frame.f_code.co_filename).resolve().is_relative_to(_PACKAGE_DIR):
+        frame = frame.f_back
+        level += 1
+    return level
 
 
 _ENGINE_DRIVEN_CALL: ContextVar[bool] = ContextVar("_ENGINE_DRIVEN_CALL", default=False)

@@ -15,8 +15,8 @@ front, from `has_cookies` alone -- no probe, no retry:
 
 - `test_public_run_...`: no `ESPN_S2`/`ESPN_SWID` env vars. Every remaining
   year fans out against the modern endpoint; OLD_YEAR 401s there (no-cookie
-  behavior, live-verified) and is left out of the final season list --
-  public mode never touches `leagueHistory` at all.
+  behavior) and is left out of the final season list -- public mode never
+  touches `leagueHistory` at all.
 - `test_private_run_...`: `ESPN_S2`/`ESPN_SWID` set. ONE call fans out
   directly against the cookie-gated `leagueHistory` endpoint with no
   `seasonId` query param -- its top-level JSON list response IS every OTHER
@@ -36,7 +36,8 @@ value present).
 The public scenario also asserts that OLD_YEAR's expected 401 reject
 surfaces NORMALLY through the framework's own two channels -- a
 `warnings.warn(UserWarning, ...)` in `incorporator/base.py` and a
-`logger.warning(...)` on the `incorporator.io.fetch` logger -- instead of
+`logger.warning(...)` on the `incorporator.io.fetch.rejects` child logger
+(propagates up to the `incorporator` logger the test captures) -- instead of
 being suppressed: the pipeline defines no `warnings`/logger-suppression
 ceremony, so a failed source's reject is exactly as visible here as
 anywhere else in the examples tree. The private scenario has no failed
@@ -276,7 +277,7 @@ def _make_mock(allow_cookies: bool, captured_filter_ids: list[int] | None = None
     completed season as one JSON list body (never touching the modern
     endpoint for a non-current year at all); with no cookies every remaining
     year fans out against the modern endpoint, where OLD_YEAR 401s (an auth
-    failure, live-verified) and is left unresolved.
+    failure) and is left unresolved.
 
     `captured_filter_ids`, if given, collects every `playerId` the pipeline
     ever placed in the `X-Fantasy-Filter` header sent to the players endpoint --
@@ -307,7 +308,7 @@ def _make_mock(allow_cookies: bool, captured_filter_ids: list[int] | None = None
                 return httpx.Response(200, text=json.dumps(_PREVIOUS_PAYLOAD), request=req)
             # Public mode never resolves a year outside the modern
             # endpoint's own coverage window -- OLD_YEAR 401s (an auth
-            # failure, live-verified) and is never retried.
+            # failure) and is never retried.
             resp = httpx.Response(401, text="unauthorized", request=req)
             raise httpx.HTTPStatusError("401", request=req, response=resp)
 
@@ -354,9 +355,10 @@ async def test_public_run_skips_401_season_and_builds_six_views(
     CURRENT_YEAR + PREVIOUS_YEAR still fetch fine, producing all six views.
 
     Also proves the OLD_YEAR fan-out reject surfaces through the framework's
-    own two channels -- a `UserWarning` (base.py) and an `incorporator.io.fetch`
-    WARNING log line -- since the pipeline no longer defines any suppression
-    ceremony around it (Complaint 1's removal)."""
+    own two channels -- a `UserWarning` (base.py) and an
+    `incorporator.io.fetch.rejects` WARNING log line -- since the pipeline no
+    longer defines any suppression ceremony around it (Complaint 1's
+    removal)."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("ESPN_S2", raising=False)
     monkeypatch.delenv("ESPN_SWID", raising=False)

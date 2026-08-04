@@ -28,7 +28,7 @@ from typing import Any
 import httpx
 import pytest
 
-from incorporator import Incorporator
+from incorporator import Incorporator, LoggedIncorporator
 from incorporator.io import fetch
 
 
@@ -62,9 +62,12 @@ async def test_incorp_warns_from_base_py_with_reject(monkeypatch: pytest.MonkeyP
     assert len(rec) >= 1
     w = rec[0]
     # Warning must NOT originate from thread.py or concurrent internals.
-    # With stacklevel=2 inside the async coroutine body, the attributed frame is
-    # the direct caller of the coroutine — the test file here — which is correct
-    # user-visible attribution.  The old factory.py site pointed to thread.py.
+    # The dynamic stacklevel walker (_reject_warning_stacklevel) skips every frame
+    # whose file lives under the installed incorporator package and stops at the
+    # first external frame — here, this test's own call line.  A hardcoded
+    # stacklevel only happens to work for this single un-nested case; the old
+    # factory.py site pointed to thread.py, and nested call chains (see the drill,
+    # test(), and stream() tests below) would misattribute under a fixed level.
     assert "thread" not in w.filename.lower(), f"Warning attributed to thread internals: {w.filename!r}"
     assert "concurrent" not in w.filename.lower(), f"Warning attributed to concurrent internals: {w.filename!r}"
     # Message must contain the source and error kind
@@ -146,6 +149,101 @@ def _current_lineno() -> int:
     frame = inspect.currentframe()
     assert frame is not None and frame.f_back is not None
     return frame.f_back.f_lineno
+
+
+# ---------------------------------------------------------------------------
+# Three more nested call chains the CHANGELOG claims correct attribution for
+# but that had no line-pinned regression test: a LoggedIncorporator wrap,
+# Incorporator.test(), and the chunked stream() engine.  Each adds one or more
+# package frames between the warn() call site and the test's own call line;
+# the dynamic walker must still land on this file.
+# ---------------------------------------------------------------------------
+
+
+class _LoggedSource(LoggedIncorporator):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_logged_incorporator_wrap_warning_attributed_to_real_caller(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A reject surfaced through LoggedIncorporator.incorp()'s super() wrap still attributes here.
+
+    Call chain at warn(): Incorporator.incorp() (base.py) -> LoggedIncorporator.incorp()
+    (observability/logger.py, ``result = await super().incorp(...)``) -> this test's call line.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fetch, "execute_request", _mock_request_error)
+
+    with pytest.warns(UserWarning) as rec:
+        this_line = _current_lineno() + 1
+        await _LoggedSource.incorp("https://api.example.com/logged")
+
+    assert len(rec) == 1
+    w = rec[0]
+    assert Path(w.filename) == Path(__file__), f"Warning attributed to {w.filename!r}, not this test file"
+    assert w.lineno == this_line, f"Warning attributed to line {w.lineno}, expected {this_line}"
+
+
+class _TestMethodSource(Incorporator):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_test_method_warning_attributed_to_real_caller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A reject surfaced through Incorporator.test()'s internal incorp() call still attributes here.
+
+    Call chain at warn(): Incorporator.incorp() (base.py) -> Incorporator.test() (base.py,
+    ``result = await cls.incorp(**kwargs)``) -> this test's call line.  The fetch must
+    succeed at the HTTP layer's own try/except but still populate ``result.rejects``, so
+    the warning fires from inside incorp() itself rather than through test()'s separate
+    ``except Exception`` branch (a different, non-warning path).
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fetch, "execute_request", _mock_request_error)
+
+    with pytest.warns(UserWarning) as rec:
+        this_line = _current_lineno() + 1
+        await _TestMethodSource.test(inc_url="https://api.example.com/probe")
+
+    assert len(rec) == 1
+    w = rec[0]
+    assert Path(w.filename) == Path(__file__), f"Warning attributed to {w.filename!r}, not this test file"
+    assert w.lineno == this_line, f"Warning attributed to line {w.lineno}, expected {this_line}"
+
+
+class _ChunkedStreamSource(Incorporator):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_chunked_stream_warning_attributed_to_real_caller(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A reject surfaced through the chunked stream() engine still attributes here.
+
+    Call chain at warn(): Incorporator.incorp() (base.py) -> _run_chunking_engine()
+    (pipeline/chunked.py) -> run_pipeline() (pipeline/__init__.py) -> Incorporator.stream()
+    (base.py) -> this test's ``async for`` call line.  The chunked engine (unlike the
+    Tideweaver Stream tick) does not set ``_ENGINE_DRIVEN_CALL``, so the aggregate warning
+    fires here rather than being suppressed.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fetch, "execute_request", _mock_request_error)
+
+    with pytest.warns(UserWarning) as rec:
+        this_line = _current_lineno() + 1
+        async for _wave in _ChunkedStreamSource.stream(
+            incorp_params={"inc_url": "https://api.example.com/chunked"},
+            poll_interval=None,
+        ):
+            break
+
+    assert len(rec) == 1
+    w = rec[0]
+    assert Path(w.filename) == Path(__file__), f"Warning attributed to {w.filename!r}, not this test file"
+    assert w.lineno == this_line, f"Warning attributed to line {w.lineno}, expected {this_line}"
 
 
 # ---------------------------------------------------------------------------
