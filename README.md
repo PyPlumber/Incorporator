@@ -339,6 +339,7 @@ The eleven-tutorial curriculum — rewritten this cycle to one converged style (
 * [🕸️ **Crypto Graph Mapping**](./examples/appendix/crypto-graph-mapping/README.md) — `link_to`-based live in-memory join; T10's fjord pattern as a one-shot.
 * [🏁 **NASCAR Tideweaver**](./examples/appendix/nascar-tideweaver/README.md) — T11's diamond shape against race telemetry (laps + pits + flags → driver state).
 * [⚾ **MLB Pulse**](./examples/appendix/mlb-pulse/README.md) — four MLB Stats API endpoints fused inside a Tideweaver window; mirrors T11's diamond shape and T5's drill pattern.
+* [🏈 **ESPN League History**](./examples/appendix/espn-league-history/README.md) — one-shot `fjord()` multi-season ETL: every reachable ESPN Fantasy Football season fused into six all-time analytical views. Mirrors T9.
 * [🧵 **Tideweaver Deep Dives**](./docs/formats_and_compression.md#columnar-snapshots-in-a-tideweaver-window) — [Parquet at window close](./docs/formats_and_compression.md#columnar-snapshots-in-a-tideweaver-window) and [Tideweaver vs. Prefect](./docs/deployment.md#tideweaver-vs-prefect-or-dagster-airflow-argo) — columnar artifacts plus the in-process-vs-cloud orchestration decision.
 
 ---

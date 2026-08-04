@@ -89,6 +89,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tideweaver's `_tick_fjord` was unaffected (it already passed the user's
   own class as `base_class`).
 
+### Docs
+
+- Reversed the bare-output-class guidance in `docs/api_atlas.md` and
+  `docs/debugging.md`: pre-declaring a bare `fjord()`/Tideweaver `Fjord`
+  output class is now documented as a supported DX choice rather than a
+  pattern to avoid, matching the inference fix above.
+- Corrected the `docs/cli_and_configuration.md` `--logs` section: WARNING-
+  level diagnostics were already reaching the console via
+  `logging.lastResort` before a handler is installed; the doc no longer
+  implies they were previously dropped silently.
+- Replaced the `docs/api_atlas.md` payload-passthrough recipe's
+  `model_dump()`/`by_alias=True` reshape with an attribute-built dict
+  literal.
+- Added `examples/appendix/espn-league-history/`: a six-view ESPN Fantasy
+  Football league-history walkthrough (one-shot `fjord()` over two
+  `Season.incorp` season-discovery calls), with a mocked
+  `tests/public/api/test_espn_league_history_etl.py` twin.
+
 ## [1.4.4] - 2026-07-25
 
 ### Fixed

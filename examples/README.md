@@ -30,6 +30,7 @@ The curriculum alternates CoinGecko-heavy steps with non-CoinGecko domain exampl
 | [`appendix/crypto-graph-mapping/`](./appendix/crypto-graph-mapping/) | T10 | `link_to`-based in-memory join — T10's pattern as a one-shot. |
 | [`appendix/nascar-tideweaver/`](./appendix/nascar-tideweaver/) | T11 | Tideweaver diamond on race telemetry (laps + pits + flags). |
 | [`appendix/mlb-pulse/`](./appendix/mlb-pulse/) | T11 + T5 | Live sports analytics: four MLB Stats API endpoints joined inside a Tideweaver window. |
+| [`appendix/espn-league-history/`](./appendix/espn-league-history/) | T9 | One-shot `fjord()` multi-season ETL: every reachable ESPN Fantasy Football season fused into six all-time analytical views. |
 
 ## CLI templates
 

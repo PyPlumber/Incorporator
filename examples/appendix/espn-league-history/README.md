@@ -71,11 +71,11 @@ of discovery). Season discovery is entirely server-declared (Section 4).
 
 ```
 examples/appendix/espn-league-history/
-  espn_league_history.py   # season discovery (plain Python) + the fjord() call + the console report
+  espn_league_history.py    # season discovery (plain Python) + the fjord() call + the console report
   outflow.py                # 6 source classes + 6 bare view classes + outflow(state) -- the
-                             # one declared field in the whole file is Season.roster_slots
-                             # (Section 6), a source-side concern, not a view-class one
-  README.md                # this file
+                            # one declared field in the whole file is Season.roster_slots
+                            # (Section 6), a source-side concern, not a view-class one
+  README.md                 # this file
   out/                      # gitignored -- six NDJSON views land here
 ```
 
@@ -118,15 +118,18 @@ resolve to the identical module and class objects.
 `best_season_record`, `worst_season_record`, `highest_season_points_for`,
 `lowest_season_points_for`, `longest_win_streak`, `longest_loss_streak`.
 
-Every kind filters to **decided** matchups first (`winner != "UNDECIDED"`):
-a playoff bye (`home`-only, no `away` key, permanently `UNDECIDED`) and an
-in-progress week (both sides `0.0`, `UNDECIDED`) never register. A genuine
-0-point week and a tiebreak-decided tie (`winner` still resolves to a side;
-margin can legitimately be `0.0`) both DO register -- that distinction is
-the whole reason the filter is on `winner`, not on a `totalPoints > 0`
-check. Win/loss streaks are franchise-history streaks, chronological across
-every fetched season (`(season, matchupPeriodId)` order), not reset at a
-season boundary.
+The six game-level kinds filter to **decided** matchups first
+(`winner != "UNDECIDED"`): a playoff bye (`home`-only, no `away` key,
+permanently `UNDECIDED`) and an in-progress week (both sides `0.0`,
+`UNDECIDED`) never register. A genuine 0-point week and a tiebreak-decided
+tie (`winner` still resolves to a side; margin can legitimately be `0.0`)
+both DO register -- that distinction is the whole reason the filter is on
+`winner`, not on a `totalPoints > 0` check. The other four kinds --
+best/worst season record, highest/lowest season points-for -- gate on
+completed season + games-played>0 instead (`outflow.py:332`), never on
+`winner`. Win/loss streaks are franchise-history streaks, chronological
+across every fetched season (`(season, matchupPeriodId)` order), not reset
+at a season boundary.
 
 `RecordRow` is bare, like all six of `outflow.py`'s derived view classes
 (Section 2). All ten kinds share one `value` column, but the column's
@@ -319,10 +322,13 @@ from Section 6 -- `m.away_points is None` on a playoff bye), a canonicalized
 rivalry-candidate row (the lower owner GUID is always side "a"), and, on a
 `WINNERS_BRACKET` game, both owners' season into a `defaultdict[str, set]`
 that answers `playoff_appearances` directly. Everything else -- Franchise
-Cards, the all-play expected-wins column, win/loss streaks, all ten
+Cards, the all-play expected-wins column, win/loss streaks, six of the ten
 records-book kinds, the rivalry matrix -- is a plain `defaultdict` bucket or
 a `max()`/`min(key=operator.itemgetter(...))` pick over that one
-`team_games` list.
+`team_games` list; the other four records-book kinds (best/worst season
+record, highest/lowest season points-for) run over `played_seasons` /
+`standings` via `operator.attrgetter(...)` instead (`outflow.py:332,
+334-337`).
 
 ## 7. Player names: one shared fan-out, not two passes
 
