@@ -5,7 +5,23 @@ All notable changes to Incorporator are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.6] - 2026-08-05
+
+### Docs
+
+- **`examples/appendix/espn-league-history/`** gained teaching comments at
+  its reader stumble points: the read-time `PlayerName` join, the composite
+  team-key coupling, the bound-method `calc()` idiom, the `X-Fantasy-Filter`
+  union header, the vacant-pick consequence, the host penstock, the
+  `load_outflow_module` identity path, optional-source degradation, and
+  ESPN's tri-state `winner` field. Executable code is unchanged.
+- **`examples/appendix/espn-league-history/README.md`** was restructured
+  into the curriculum's walkthrough shape — a reader-problem hook, a goal
+  section with a mermaid of the two-phase topology, a verbatim
+  `stream_params` excerpt, sample output, and a capability table
+  attributing each pattern to the tutorial it extends — with cookie
+  extraction moved beside "Run it"; also corrects a records-book kind
+  miscount.
 
 ## [1.4.5] - 2026-08-04
 
