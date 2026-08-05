@@ -7,8 +7,8 @@ every reachable season, seeding network-free Owner/Standing/Matchup/DraftPick
 sources; `PlayerName` is the one genuinely-networked drill. Rollups and
 records-book extremes are plain Python in `outflow.py`'s `outflow(state)`.
 Two auth modes -- PUBLIC (default) or PRIVATE (`ESPN_S2`/`ESPN_SWID`
-cookies) -- see README Section 1. Classes live in `outflow.py`, loaded via
-`load_outflow_module` (README Section 2 explains why).
+cookies, see README). Classes live in `outflow.py`, loaded via
+`load_outflow_module` so the fjord call later resolves the same class objects.
 
 Run with:
     python examples/appendix/espn-league-history/espn_league_history.py
@@ -29,6 +29,7 @@ from typing import Any
 from incorporator import Incorporator, calc, pluck, register_host_penstock
 from incorporator.usercode import load_outflow_module
 
+# ESPN's fantasy-read API is unauthenticated and publishes no rate limit; 1 req/sec is the polite default here.
 register_host_penstock("lm-api-reads.fantasy.espn.com", rate_per_sec=1.0)
 
 BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
@@ -42,6 +43,8 @@ POSITION_MAP = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST"}
 
 HERE = Path(__file__).resolve().parent
 _outflow_path = str(HERE / "outflow.py")
+# `load_outflow_module` keys its cache on this resolved path; the fjord call below
+# loads the same path again, hitting that cache and binding these SAME class objects.
 _, _outflow_mod = load_outflow_module(_outflow_path)
 Season, Owner, Standing, Matchup, DraftPick, PlayerName = (
     _outflow_mod.Season,
@@ -177,6 +180,7 @@ async def main() -> None:
                 }
             )
 
+    # Must match Standing's "team_key" conv_dict entry below -- drift breaks every owner_guid lookup that follows.
     owner_by_team_key_raw = {f"{r['season']}:{r['id']}": r["primaryOwner"] for r in all_team_rows}
     all_schedule_rows = [
         {
@@ -203,7 +207,8 @@ async def main() -> None:
         }
         for s in all_seasons
         for p in s.draft_picks
-        # ESPN's vacant-pick sentinel (playerId == -1) -- see README Section 7.
+        # ESPN's vacant-pick sentinel (playerId == -1); unfiltered it becomes a real
+        # DraftPick whose name never resolves, polluting most_drafted/first_overall.
         if p.playerId != -1
     ]
 
@@ -253,6 +258,7 @@ async def main() -> None:
                     "inc_code": "team_key",
                     "inc_name": "name",
                     "conv_dict": {
+                        # Must produce the identical string owner_by_team_key_raw builds above.
                         "team_key": calc("{}:{}".format, "season", "id", target_type=str),
                         "division_id": calc(int, "divisionId", default=0, target_type=int),
                         "wins": calc(int, "wins", default=0, target_type=int),
@@ -276,6 +282,8 @@ async def main() -> None:
                         "final_rank": calc(int, "rankCalculatedFinal", default=0, target_type=int),
                         # Must come after wins/losses/ties/final_rank -- conv_dict order matters.
                         "win_pct_equiv": calc(win_pct_equiv, "wins", "losses", "ties", target_type=float),
+                        # (1).__eq__ binds the comparison constant onto the callable itself,
+                        # the same constant-binding idiom as functools.partial above.
                         "is_champion": calc((1).__eq__, "final_rank", target_type=bool),
                         "is_runner_up": calc((2).__eq__, "final_rank", target_type=bool),
                     },
@@ -305,6 +313,8 @@ async def main() -> None:
                     "inc_parent": all_seasons,
                     "inc_child": "season",
                     "inc_url": f"{BASE}/seasons/{{}}/players",
+                    # wanted_ids is the union across all seasons, sent as one shared header so
+                    # every season's players resolve in a single inc_parent/inc_child call.
                     "headers": {**auth_headers, "X-Fantasy-Filter": json.dumps({"filterIds": {"value": wanted_ids}})},
                     "params": {"view": "players_wl"},
                     "inc_code": "id",

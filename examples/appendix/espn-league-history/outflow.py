@@ -83,6 +83,9 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """The `fjord(outflow=)` contract -- the framework calls this by name once
     every source has seeded; its return dict's keys map to the six derived
     view classes."""
+    # Season/Owner/Standing are required -- the fjord returns nothing until all three
+    # seed. Matchup/DraftPick/PlayerName degrade gracefully instead (no team-game melt,
+    # no DraftTendencyRow, Unknown/UNKNOWN placeholders, respectively).
     seasons, owners, standings = state.get("Season"), state.get("Owner"), state.get("Standing")
     if seasons is None or owners is None or standings is None:
         return {}
@@ -92,7 +95,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     names = {o.inc_code: o.display_name for o in owners}
     completed_years = {s.season for s in seasons if s.is_complete}
 
-    # ── Team-game melt: one fold over every decided matchup builds team_games,
+    # ═══ Team-game melt: one fold over every decided matchup builds team_games,
     # rivalry_games, and playoff_seasons_by_owner in a single pass.
     team_games: list[dict[str, Any]] = []
     rivalry_games: list[dict[str, Any]] = []
@@ -104,6 +107,9 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         home_score = float(m.home_points)
         away_score = float(m.away_points) if m.away_points is not None else 0.0
         margin = round(abs(home_score - away_score), 2)
+        # ESPN's winner is HOME / AWAY / any other value means a tie (a tiebreak-decided
+        # game still resolves HOME or AWAY; UNDECIDED was filtered by `continue` above).
+        # Covers both "result" ternaries below.
         if home_owner is not None:
             team_games.append(
                 {
@@ -225,7 +231,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             }
         )
 
-    # ── View 2 — SeasonTimelineRow: one literal per franchise-season.
+    # ═══ View 2 — SeasonTimelineRow: one literal per franchise-season.
     season_timeline = []
     for s in standings:
         expected_wins = round(all_play_wins.get((s.season, s.primaryOwner), 0.0), 2)
@@ -250,7 +256,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             }
         )
 
-    # ── View 3 — RivalryRow: bucket rivalry_games by (owner_a, owner_b).
+    # ═══ View 3 — RivalryRow: bucket rivalry_games by (owner_a, owner_b).
     rivalry_by_pair: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for g in rivalry_games:
         rivalry_by_pair[(g["owner_a"], g["owner_b"])].append(g)
@@ -398,9 +404,14 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             }
         )
 
-    # ── View 5 — DraftTendencyRow: Counter accumulation, three kinds.
+    # ═══ View 5 — DraftTendencyRow: Counter accumulation, three kinds.
     draft_tendencies: list[dict[str, Any]] = []
     round1_picks = [p for p in draft_picks or [] if p.roundId == 1 and p.owner_guid]
+    # DraftPick and PlayerName are sibling fjord sources seeded in the same wave, with
+    # no ordering guarantee between them, so the join is read-time via
+    # player_names.inc_dict.get -- not a build-time link_to. `for player in [...]` is a
+    # comprehension-local binding: a single-element list memoizes the computed lookup
+    # so it runs exactly once per pick, without a walrus operator.
     position_counts = Counter(
         (p.owner_guid, player.position if player else "UNKNOWN")
         for p in round1_picks
@@ -447,7 +458,7 @@ def outflow(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             }
         )
 
-    # ── View 6 — SettingsRow: one literal per season, off Season's own build-time fields.
+    # ═══ View 6 — SettingsRow: one literal per season, off Season's own build-time fields.
     settings_evolution = [
         {
             "season": s.season,
